@@ -21,9 +21,15 @@ class CellPosition:
     def get_trench_id(self) -> int:
         return self._trench_id
 
+    def __str__(self):
+        return f"frame={self._frame_id}, trench={self._trench_id}, (x,y)=({self._x_coord:.2f}, {self._y_coord:.2f})"
+
+    def __eq__(self, other):
+        return ((self._frame_id == other.get_frame_id()) and (self._trench_id == other.get_trench_id()) and
+                (self._x_coord == other.get_x_y_coord()[0]) and (self._y_coord == other.get_x_y_coord()[1]))
+
 
 class CellProperties:
-    # TODO: disp functions
     def __init__(self, area: float, age: float, is_alive: bool,
                  fluo_chan1: float, fluo_chan2: float, fluo_chan3: float):
         self.area: float = area
@@ -33,9 +39,12 @@ class CellProperties:
         self.fluo_chan2: float = fluo_chan2
         self.fluo_chan3: float = fluo_chan3
 
+    def __str__(self):
+        return f"area={self.area}, age={self.age}, alive={self.is_alive}, fluo=({self.fluo_chan1:.2f}, "\
+               f"{self.fluo_chan2:.2f}, {self.fluo_chan3:.2f})"
+
 
 class Cell:
-    # TODO: disp functions, comparisons
     def __init__(self, cell_id: int, mask_id: int, position: 'CellPosition', properties: 'CellProperties'):
         self._cell_id: int = cell_id
         self._mask_id: int = mask_id
@@ -67,6 +76,12 @@ class Cell:
 
     def get_position(self) -> 'CellPosition':
         return self._position
+
+    def __str__(self):
+        return f"Cell ID={self._cell_id}, mask ID={self._mask_id}"
+
+    def __eq__(self, other):
+        return self._cell_id == other.get_cell_id()
 
 
 class CellFactory:
@@ -113,36 +128,15 @@ class CellFactory:
         position: 'CellPosition' = CellPosition(frame_id=self._frame_id, trench_id=self._trench_id,
                                                 x_coord=self._x_coord, y_coord=self._y_coord)
         properties: 'CellProperties' = CellProperties(area=self._area, age=self._age, is_alive=self._is_alive,
-                                                      fluo_chan1=self._fluo_chan1, fluo_chan2=self._fluo_chan3,
+                                                      fluo_chan1=self._fluo_chan1, fluo_chan2=self._fluo_chan2,
                                                       fluo_chan3=self._fluo_chan3)
         cell = Cell(cell_id=self._cell_id, mask_id=self._mask_id, position=position, properties=properties)
         self._cell_id += 1
         return cell
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+class MotherMachine:
+    def __init__(self):
+        # TODO: probably need to index this via frame_id->trench_id
+        self.cells: List['Cell'] = []
+        self.cell_factory: 'CellFactory' = CellFactory()
