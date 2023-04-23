@@ -6,3 +6,4 @@ OMNIPOSE_BATCH_SIZE: int = 8
 
 # Evomachine configuration
 DEBUG_MODE: bool = True
+USE_GPU: bool = True

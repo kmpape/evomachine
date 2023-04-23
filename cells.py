@@ -1,10 +1,10 @@
-from typing import Tuple, List
+from typing import Tuple, Union
 
 
 class CellPosition:
-    def __init__(self, frame_id: int, trench_id: int, x_coord: float, y_coord: float):
+    def __init__(self, frame_id: int, trench_id: Union[int, None], x_coord: float, y_coord: float):
         self._frame_id: int = frame_id
-        self._trench_id: int = trench_id
+        self._trench_id: Union[int, None] = trench_id
         self._x_coord: float = x_coord
         self._y_coord: float = y_coord
 
@@ -18,7 +18,7 @@ class CellPosition:
     def get_frame_id(self) -> int:
         return self._frame_id
 
-    def get_trench_id(self) -> int:
+    def get_trench_id(self) -> Union[int, None]:
         return self._trench_id
 
     def __str__(self):
@@ -91,7 +91,7 @@ class CellFactory:
         self._mask_id: int = 0
         # CellPosition
         self._frame_id: int = 0
-        self._trench_id: int = 0
+        self._trench_id: Union[int, None] = None
         self._x_coord: float = 0.0
         self._y_coord: float = 0.0
         # CellProperties
@@ -108,7 +108,7 @@ class CellFactory:
     def set_frame_id(self, frame_id: int):
         self._frame_id = frame_id
 
-    def set_trench_id(self, trench_id: int):
+    def set_trench_id(self, trench_id: Union[int, None]):
         self._trench_id = trench_id
 
     def set_x_y_coord(self, x_coord: float, y_coord: float):
@@ -133,10 +133,3 @@ class CellFactory:
         cell = Cell(cell_id=self._cell_id, mask_id=self._mask_id, position=position, properties=properties)
         self._cell_id += 1
         return cell
-
-
-class MotherMachine:
-    def __init__(self):
-        # TODO: probably need to index this via frame_id->trench_id
-        self.cells: List['Cell'] = []
-        self.cell_factory: 'CellFactory' = CellFactory()
