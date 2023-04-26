@@ -3,7 +3,8 @@ import numpy as np
 from time import perf_counter
 from typing import List, Tuple
 
-from cellpose_omni import models
+# from cellpose_omni import models
+import delta
 
 import config
 from mothermachine import MotherMachine
@@ -35,16 +36,16 @@ class ImageProcessor(object):
         raise NotImplementedError()
 
 
-class OmniposeProcessor(ImageProcessor):
-    def __init__(self, frame_rows: int, frame_cols: int, num_frames: int, dtype: 'np.dtype',
-                 model_path: str = config.OMNIPOSE_MODEL_PATH):
-        super().__init__(frame_rows=frame_rows, frame_cols=frame_cols, num_frames=num_frames, dtype=dtype)
-        self.model_path: str = model_path
-        self.model: 'models.CellposeModel' = models.CellposeModel(gpu=config.USE_GPU, pretrained_model=self.model_path,
-                                                                  omni=True, concatenation=True)
-
-    def _process_image(self, mother_machine: 'MotherMachine', frame_id: int):
-        masks, flows, styles = self.model.eval(x=new_image, batch_size=config.OMNIPOSE_BATCH_SIZE, channels=[0, 0],
-                                               rescale=None, mask_threshold=-1, transparency=True, flow_threshold=0., omni=omni,
-                                               resample=True, verbose=0)
+# class OmniposeProcessor(ImageProcessor):
+#     def __init__(self, frame_rows: int, frame_cols: int, num_frames: int, dtype: 'np.dtype',
+#                  model_path: str = config.OMNIPOSE_MODEL_PATH):
+#         super().__init__(frame_rows=frame_rows, frame_cols=frame_cols, num_frames=num_frames, dtype=dtype)
+#         self.model_path: str = model_path
+#         self.model: 'models.CellposeModel' = models.CellposeModel(gpu=config.USE_GPU, pretrained_model=self.model_path,
+#                                                                   omni=True, concatenation=True)
+#
+#     def _process_image(self, mother_machine: 'MotherMachine', frame_id: int):
+#         masks, flows, styles = self.model.eval(x=self.new_frames[frame_id], batch_size=config.OMNIPOSE_BATCH_SIZE,
+#                                                channels=[0, 0], rescale=None, mask_threshold=-1, transparency=True,
+#                                                flow_threshold=0., omni=True, resample=True, verbose=0)
 
