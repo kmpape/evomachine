@@ -7,6 +7,8 @@ from delta import utils
 
 from evomachine.exceptions import ConfigError, ErrorCode
 
+# DeLTA lib install directory
+EVOMACHINE_DIR = Path(__file__).parent
 
 @dataclass
 class ConfigDevice:
@@ -36,7 +38,8 @@ class ConfigDevice:
                               ErrorCode.ERROR_DEVICE_CONFIG.value)
         if self.read_from_disk:
             if self.path_to_images is None or not self.path_to_images.exists():
-                raise ConfigError("Must provide a valid path if read_from_disk is True.",
+                raise ConfigError("Must provide a valid path if read_from_disk is True."
+                                  "Received {}".format(self.path_to_images),
                                   ErrorCode.ERROR_DEVICE_CONFIG.value)
             delta_reader: utils.XPReader = \
                 utils.XPReader(self.path_to_images / "Position{p}Channel{c}Frames{t}.tif")
@@ -78,8 +81,7 @@ DEVICE_CONFIG_DELTA_SIM = ConfigDevice(
     num_chan=2,
     num_periods=10,
     read_from_disk=True,
-    path_to_images=Path("/home/lady5906/workspace_python/conda_evomachine3.9/"
-                        "delta/tests/data/movie_mothermachine_tif"),
+    path_to_images=EVOMACHINE_DIR.parent / "tests/data/movie_mothermachine_tif",
     image_processing_verbosity=1,
 )
 

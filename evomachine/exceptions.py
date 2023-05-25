@@ -6,6 +6,7 @@ class ErrorCode(Enum):
     ERROR_IMAGE_CONFIG = auto()
 
     ERROR_STAGE_MOVEMENT = auto()
+    ERROR_STAGE_COORDINATES = auto()
 
     ERROR_NOT_INITIALISED = auto()
 

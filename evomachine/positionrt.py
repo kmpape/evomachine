@@ -35,7 +35,7 @@ class PositionRT(delta.pipeline.Position):
 
     def initialise(
         self,
-        reference: np.ndarray[(int, int, int), ConfigImage.pxl_dtype],
+        reference: np.ndarray[(int, int, int), 'ConfigImage.pxl_dtype'],
     ) -> None:
         self._msg("Starting initialisation")
 
@@ -85,7 +85,10 @@ class PositionRT(delta.pipeline.Position):
 
         self._is_initialised = True
 
-    def process_new_frame(self, new_frame: np.ndarray[(int, int, int), ConfigImage.pxl_dtype]):
+    def process_new_frame(
+            self,
+            new_frame: np.ndarray[(int, int, int), 'ConfigImage.pxl_dtype']
+    ) -> None:
         if not self._is_initialised:
             raise ImageProcessingError("Position {} not initialised.".format(self.position_nb),
                                        ErrorCode.ERROR_NOT_INITIALISED)
@@ -97,7 +100,7 @@ class PositionRT(delta.pipeline.Position):
 
     def _preprocess_new_frame(
         self,
-        new_frame: np.ndarray[(int, int, int), ConfigImage.pxl_dtype],
+        new_frame: np.ndarray[(int, int, int), 'ConfigImage.pxl_dtype'],
     ) -> None:
         self._msg("Starting pre-processing of new frame")
 

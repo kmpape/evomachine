@@ -23,7 +23,10 @@ class AbstractCamera:
         self._step = -1
         self._initialise()
 
-    def move_to_pos(self, i_pos: int) -> None:  # TODO: check if in position index
+    def move_to_pos(self, i_pos: int) -> None:
+        if i_pos not in range(self.cfg_device.num_pos):
+            raise StageError("Position index {} out of range".format(i_pos),
+                             ErrorCode.ERROR_STAGE_COORDINATES)
         self._curr_pos = i_pos
         success = self._move_stage(i_pos=i_pos)
         if not success:
@@ -36,6 +39,9 @@ class AbstractCamera:
     ) -> np.ndarray[(int, int), 'ConfigImage.pxl_dtype']:  # TODO: check frame data type
         self._step += 1
         return self._take_frame(i_chan=i_chan, i_period=i_period)
+
+    def get_pos(self) -> int:
+        return self._curr_pos
 
     def _initialise(self) -> None:
         raise NotImplementedError()
