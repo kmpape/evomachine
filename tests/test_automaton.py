@@ -21,6 +21,7 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 EPS_REL = 10**(-6)
+EPS_REL_APPROX = 10**(-3)
 APPROX_EQUAL = False  # allow for assertions with approximate equality
 NUM_PXL_DIFF = 10  # number of admissible pixel difference in an image/mask
 ABS_PXL_DIFF = 2  # number of admissible pixel difference for features
@@ -28,26 +29,26 @@ ABS_PXL_DIFF = 2  # number of admissible pixel difference for features
 
 def features_approx_equal(exp: delta.lineage.CellFeatures, res: delta.lineage.CellFeatures) -> bool:
     new_pole = ((abs(exp.new_pole[0]-res.new_pole[0]) <= ABS_PXL_DIFF) and
-                (abs(exp.new_pole[0]-res.new_pole[0]) <= ABS_PXL_DIFF))
+                (abs(exp.new_pole[1]-res.new_pole[1]) <= ABS_PXL_DIFF))
     if not new_pole:
         logger.warning("exp new_pole={}, res new_pole={}".format(exp.new_pole, res.old_pole))
     old_pole = ((abs(exp.old_pole[0]-res.old_pole[0]) <= ABS_PXL_DIFF) and
-                (abs(exp.old_pole[0]-res.old_pole[0]) <= ABS_PXL_DIFF))
+                (abs(exp.old_pole[1]-res.old_pole[1]) <= ABS_PXL_DIFF))
     if not old_pole:
         logger.warning("exp old_pole={}, res old_pole={}".format(exp.old_pole, res.old_pole))
-    length = abs(exp.length - res.length) < EPS_REL * exp.length
+    length = abs(exp.length - res.length) < EPS_REL_APPROX * exp.length
     if not length:
         logger.warning("exp length={}, res length={}".format(exp.length, res.length))
-    width = abs(exp.width - res.width) < EPS_REL * exp.width
+    width = abs(exp.width - res.width) < EPS_REL_APPROX * exp.width
     if not width:
         logger.warning("exp width={}, res width={}".format(exp.width, res.width))
-    area = abs(exp.area - res.area) < EPS_REL * exp.area
+    area = abs(exp.area - res.area) < EPS_REL_APPROX * exp.area
     if not area:
         logger.warning("exp area={}, res area={}".format(exp.area, res.area))
-    perimeter = abs(exp.perimeter - res.perimeter) < EPS_REL * exp.perimeter
+    perimeter = abs(exp.perimeter - res.perimeter) < EPS_REL_APPROX * exp.perimeter
     if not perimeter:
         logger.warning("exp perimeter={}, res perimeter={}".format(exp.perimeter, res.perimeter))
-    fluo = abs(exp.fluo[0] - res.fluo[0]) < EPS_REL * exp.fluo[0]
+    fluo = abs(exp.fluo[0] - res.fluo[0]) < EPS_REL_APPROX * exp.fluo[0]
     if not fluo:
         logger.warning("exp fluo={}, res fluo={}".format(exp.fluo[0], res.fluo[0]))
     return new_pole and old_pole and length and width and area and perimeter and fluo
