@@ -2,6 +2,8 @@
 import numpy as np
 from typing import List, Union
 
+from asitiger.tigercontroller import TigerController
+
 import delta
 
 from evomachine.config import ConfigDevice, ConfigImage
@@ -71,6 +73,41 @@ class DeltaCamera(AbstractCamera):
             np.empty((1, 1, 1, 1)) for _ in range(cfg_device.num_periods)
         ]
         "List of all frames by position."
+        self._curr_period: int = -1
+        "Incremented after completing one round of imaging the whole device."
+
+        delta_reader: delta.utils.XPReader = \
+            delta.utils.XPReader(self.cfg_device.path_to_images / "Position{p}Channel{c}Frames{t}.tif")
+        for i_pos, i_delta_pos in enumerate(delta_reader.positions, start=0):
+            self.all_frames[i_pos] = delta_reader.getframes(position=i_delta_pos)
+
+    def _move_stage(
+            self,
+            i_pos: int,
+    ) -> bool:
+        return True
+
+    def _initialise(self) -> None:
+        self._curr_period = -1
+
+    def _take_frame(
+            self,
+            i_chan: int,
+            i_period: Union[int, None],
+    ) -> np.ndarray[(int, int), 'ConfigImage.pxl_dtype']:
+        return self.all_frames[self._curr_pos][i_period, i_chan, :, :]
+
+
+class EvoCamera(AbstractCamera):
+    """
+    A class to mock the acquisition of frames.
+    """
+    def __init__(self, cfg_device: ConfigDevice):
+        super().__init__(cfg_device=cfg_device)
+
+        tiger = TigerController.from_serial_port(port=cfg_device.tiger_port)
+        "Object for serial communication with ASI tiger."
+
         self._curr_period: int = -1
         "Incremented after completing one round of imaging the whole device."
 

@@ -32,6 +32,9 @@ class ConfigDevice:
 
     image_processing_verbosity: int
     "Path to folder containing images. File names follow Delta's naming convention."
+
+    tiger_port: Union[str, None]
+    "Serial port for asitiger connection."
     def check_config(self):
         if self.num_pos != len(self.coord_pos):
             raise ConfigError("num_pos must match number of X/Y coordinates.",
@@ -83,6 +86,19 @@ DEVICE_CONFIG_DELTA_SIM = ConfigDevice(
     read_from_disk=True,
     path_to_images=EVOMACHINE_DIR.parent / "tests/data/movie_mothermachine_tif",
     image_processing_verbosity=1,
+    tiger_port=None,
+)
+
+
+DEVICE_CONFIG_EVO_TEST = ConfigDevice(
+    num_pos=2,
+    coord_pos=[(0, 0) for _ in range(2)],
+    num_chan=4,
+    num_periods=None,
+    read_from_disk=False,
+    path_to_images=None,
+    image_processing_verbosity=1,
+    tiger_port="/dev/ttyUSB0",
 )
 
 
