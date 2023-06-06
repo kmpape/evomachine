@@ -22,15 +22,13 @@ VALUE_LED_OPEN = 'Open'
 VALUE_LED_CLOSE = 'Closed'
 
 
-class Platform:
+class MMCPlatform:
     '''
     Main class for the microscope, DMD, neopixel, microfluidics, etc...
     Also MM GUI. Everything hardware basically (except GPU, computer etc)
     '''
 
-    def __init__(
-            self, load_dmd=True, load_neopixel=True, load_synchronizer=False
-    ):
+    def __init__(self):
 
         print("#### Initializing platform")
 
@@ -128,56 +126,6 @@ class Platform:
         # Turn off continuous focus:
         if mode == 'off':
             self.mmc.enable_continuous_focus(False)
-
-    def move(self, xy=None, z=None):
-        """
-        Move along X, Y, Z
-
-        Parameters
-        ----------
-        xy : Tuple[float, float], optional
-            XY platform position, in um, absolute coordinates. If None, the
-            platform is not moved.
-            The default is None.
-        z : float, optional
-            Objective Z position. Note that setting the Z position turns the
-            continuous PFS mode off. This is a hardware limitation and can not
-            be overridden. If None, the objective is not moved.
-            The default is None.
-
-        Returns
-        -------
-        None.
-
-        """
-
-        if xy is not None:
-            self.mmc.set_xy_position(*xy)
-
-        if z is not None:
-            self.mmc.set_position(z)
-
-        # TODO pfs
-
-    def where(self):
-        """
-        Get current position of XY platform, objective Z position, and
-        PFS offset
-
-        Returns
-        -------
-        position : dict
-            Dictionary containing the following fields: "xy", "z", "pfs".
-
-        """
-
-        position = dict()
-        xy = self.mmc.get_xy_stage_position()
-        position['xy'] = (xy.get_x(), xy.get_y())  # XY
-        position['z'] = self.mmc.get_position()  # Z
-        # TODO PFS offset
-        position['pfs'] = None
-        return position
 
     def channel(self, channel_name='Trans'):
         """

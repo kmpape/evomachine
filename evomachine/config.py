@@ -89,10 +89,10 @@ DEVICE_CONFIG_DELTA_SIM = ConfigDevice(
     tiger_port=None,
 )
 
-
+test_pos_list = [(-10000, 0, 0), (0, 0, 0), (0, 10000, 0)]
 DEVICE_CONFIG_EVO_TEST = ConfigDevice(
-    num_pos=2,
-    coord_pos=[(0, 0) for _ in range(2)],
+    num_pos=len(test_pos_list),
+    coord_pos=test_pos_list,
     num_chan=4,
     num_periods=None,
     read_from_disk=False,

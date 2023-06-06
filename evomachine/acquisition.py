@@ -1,9 +1,9 @@
-
 import numpy as np
-from typing import List, Union
+from typing import Dict, List, Union
 
-from asitiger.tigercontroller import TigerController
+from pycromanager import Core
 
+import asitiger
 import delta
 
 from evomachine.config import ConfigDevice, ConfigImage
@@ -105,29 +105,55 @@ class EvoCamera(AbstractCamera):
     def __init__(self, cfg_device: ConfigDevice):
         super().__init__(cfg_device=cfg_device)
 
-        tiger = TigerController.from_serial_port(port=cfg_device.tiger_port)
+        self.tiger: asitiger.tigercontroller.TigerController = \
+            asitiger.tigercontroller.TigerController.from_serial_port(port=cfg_device.tiger_port)
         "Object for serial communication with ASI tiger."
+        self.channel_settings: Dict[int, Dict] = {
+            0: {"X": 100, "Y": 0, "Z": 0, "F": 0},
+            1: {"X": 0, "Y": 100, "Z": 0, "F": 0},
+            2: {"X": 0, "Y": 0, "Z": 100, "F": 0},
+            3: {"X": 0, "Y": 0, "Z": 0, "F": 100},
+            -1: {"X": 0, "Y": 0, "Z": 0, "F": 0},
+        }
+        "LED intensity for i_chan=0,...,3."
+        self.card_address: int = 7
+        "LED card address on ASI tiger."
 
-        self._curr_period: int = -1
-        "Incremented after completing one round of imaging the whole device."
+        # self.mmc: Core = Core()
+        "Micromanager object for taking images."
 
-        delta_reader: delta.utils.XPReader = \
-            delta.utils.XPReader(self.cfg_device.path_to_images / "Position{p}Channel{c}Frames{t}.tif")
-        for i_pos, i_delta_pos in enumerate(delta_reader.positions, start=0):
-            self.all_frames[i_pos] = delta_reader.getframes(position=i_delta_pos)
+    def _set_channel(self, i_chan: int):
+        self.tiger.led(led_brightnesses=self.channel_settings[i_chan], card_address=self.card_address)
+
+    def _disable_channels(self):
+        self._set_channel(i_chan=-1)
 
     def _move_stage(
             self,
             i_pos: int,
     ) -> bool:
+        pos = {
+            'X': self.cfg_device.coord_pos[i_pos][0],
+            'Y': self.cfg_device.coord_pos[i_pos][1],
+            'Z': self.cfg_device.coord_pos[i_pos][2],
+        }
+        self.tiger.move(coordinates=pos)
         return True
 
     def _initialise(self) -> None:
-        self._curr_period = -1
+        self._disable_channels()
 
     def _take_frame(
             self,
             i_chan: int,
             i_period: Union[int, None],
     ) -> np.ndarray[(int, int), 'ConfigImage.pxl_dtype']:
-        return self.all_frames[self._curr_pos][i_period, i_chan, :, :]
+        self._set_channel(i_chan=i_chan)
+        self.mmc.snap_image()
+        self._disable_channels()
+        tagged_image = self.mmc.get_tagged_image()
+        pixels = np.reshape(
+            tagged_image.pix,
+            newshape=[tagged_image.tags['Height'], tagged_image.tags['Width']]
+        )
+        return pixels

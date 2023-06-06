@@ -39,6 +39,7 @@ class TestDeltaCamera(unittest.TestCase):
                         read_from_disk=True,
                         path_to_images=EVOMACHINE_DIR.parent / "tests/data/movie_mothermachine_tif",
                         image_processing_verbosity=1,
+                        tiger_port=None,
                     )
         with pytest.raises(ConfigError):
             delta_camera = DeltaCamera(cfg_device=faulty_cfg)
