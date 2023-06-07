@@ -7,7 +7,7 @@ import asitiger
 import delta
 
 from evomachine.config import ConfigDevice, ConfigImage
-from evomachine.exceptions import StageError, ErrorCode
+from evomachine.exceptions import ErrorCode, StageError, TigerError
 
 
 class AbstractCamera:
@@ -37,7 +37,7 @@ class AbstractCamera:
     def get_frame(
             self,
             i_chan: int,
-            i_period: Union[int, None],
+            i_period: Union[int, None] = None,
     ) -> np.ndarray[(int, int), 'ConfigImage.pxl_dtype']:  # TODO: check frame data type
         self._step += 1
         return self._take_frame(i_chan=i_chan, i_period=i_period)
@@ -118,9 +118,18 @@ class EvoCamera(AbstractCamera):
         "LED intensity for i_chan=0,...,3."
         self.card_address: int = 7
         "LED card address on ASI tiger."
-
-        # self.mmc: Core = Core()
+        self.mmc: Core = Core()
         "Micromanager object for taking images."
+
+        if not self._tiger_is_alive():
+            raise TigerError(message="Tiger is not alive.", error_code=ErrorCode.ERROR_TIGER_NOT_ALIVE)
+
+    def _tiger_is_alive(self):
+        try:
+            answer = self.tiger.status()
+            return True
+        except ValueError:
+            return False
 
     def _set_channel(self, i_chan: int):
         self.tiger.led(led_brightnesses=self.channel_settings[i_chan], card_address=self.card_address)

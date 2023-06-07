@@ -10,6 +10,8 @@ class ErrorCode(Enum):
 
     ERROR_NOT_INITIALISED = auto()
 
+    ERROR_TIGER_NOT_ALIVE = auto()
+
 
 class ConfigError(Exception):
     def __init__(self, message: str, error_code: ErrorCode):
@@ -24,6 +26,12 @@ class ImageProcessingError(Exception):
 
 
 class StageError(Exception):
+    def __init__(self, message: str, error_code: ErrorCode):
+        super().__init__(message)
+        self.error_code = error_code
+
+
+class TigerError(Exception):
     def __init__(self, message: str, error_code: ErrorCode):
         super().__init__(message)
         self.error_code = error_code
