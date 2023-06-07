@@ -1,0 +1,7 @@
+                                      name  n_calls       avg       min        max
+0                               initialise        2  9.341830  6.239587  12.444073
+1  process_new_frame:_preprocess_new_frame       18  0.012784  0.011677   0.019136
+2                process_new_frame:segment       18  1.807779  1.726172   2.045683
+3                  process_new_frame:track       18  2.088923  1.931733   2.916665
+4    process_new_frame:compute_growthrates       18  0.074422  0.054053   0.100940
+

@@ -10,6 +10,7 @@ from delta.config import DEFAULT_CONFIG_MOTHERMACHINE
 from evomachine.acquisition import DeltaCamera
 from evomachine.automaton import Automaton
 from evomachine.config import IMAGE_CONFIG_DELTA_SIM, DEVICE_CONFIG_DELTA_SIM, EVOMACHINE_DIR
+from evomachine.positionrt import TIMER_POSITION
 
 TEST_VERBOSITY = logging.INFO
 logger = logging.getLogger(__name__)
@@ -254,6 +255,8 @@ class TestAutomaton(unittest.TestCase):
                         self.assertTrue(features_equal(exp_features, res_features),
                                         "features mismatch at pos={}, roi={}, i_cell={}, i_frame".format(
                                             i_pos, i_roi, i_cell, i_frame))
+
+        TIMER_POSITION.display_timings()
 
 
 if __name__ == '__main__':

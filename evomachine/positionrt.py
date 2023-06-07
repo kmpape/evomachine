@@ -10,6 +10,9 @@ from delta.config import Config  # TODO: ask about putting config into init
 
 from evomachine.config import ConfigImage
 from evomachine.exceptions import ImageProcessingError, ErrorCode
+from evomachine.utils import Timer
+
+TIMER_POSITION = Timer(timer_level=0, name="PositionRT", enabled=True)
 
 
 class PositionRT(delta.pipeline.Position):
@@ -38,6 +41,7 @@ class PositionRT(delta.pipeline.Position):
         reference: np.ndarray[(int, int, int), 'ConfigImage.pxl_dtype'],
     ) -> None:
         self._msg("Starting initialisation")
+        TIMER_POSITION.start("initialise", 0)
 
         # Rotation correction
         if self.config.rotation_correction:
@@ -101,6 +105,7 @@ class PositionRT(delta.pipeline.Position):
         self.compute_growthrates(frames=range(2))
 
         self._is_initialised = True
+        TIMER_POSITION.stop("initialise", 0)
 
     def process_new_frame(
             self,
@@ -109,10 +114,21 @@ class PositionRT(delta.pipeline.Position):
         if not self._is_initialised:
             raise ImageProcessingError("Position {} not initialised.".format(self.position_nb),
                                        ErrorCode.ERROR_NOT_INITIALISED)
+        TIMER_POSITION.start("process_new_frame:_preprocess_new_frame", 0)
         self._preprocess_new_frame(new_frame=new_frame)
+        TIMER_POSITION.stop("process_new_frame:_preprocess_new_frame", 0)
+
+        TIMER_POSITION.start("process_new_frame:segment", 0)
         self.segment(frames=range(1, 2))  # This does not affect lineages
+        TIMER_POSITION.stop("process_new_frame:segment", 0)
+
+        TIMER_POSITION.start("process_new_frame:track", 0)
         self.track(frames=range(1, 2))  # This does affect lineages
+        TIMER_POSITION.stop("process_new_frame:track", 0)
+
+        TIMER_POSITION.start("process_new_frame:compute_growthrates", 0)
         self.compute_growthrates(frames=range(1, 2))  # TODO
+        TIMER_POSITION.stop("process_new_frame:compute_growthrates", 0)
 
     def _preprocess_new_frame(
         self,
@@ -121,11 +137,14 @@ class PositionRT(delta.pipeline.Position):
         self._msg("Starting pre-processing of new frame")
 
         # Rotation correction
+        TIMER_POSITION.start("_preprocess_new_frame:rotation_correction", 1)
         if self.config.rotation_correction:  # TODO: remove conditional statement
             for i_chan in range(new_frame.shape[0]):
                 new_frame[i_chan, :, :] = delta.utils.imrotate(new_frame[i_chan, :, :], self.rotate)
+        TIMER_POSITION.stop("_preprocess_new_frame:rotation_correction", 1)
 
         # Drift correction
+        TIMER_POSITION.start("_preprocess_new_frame:drift_correction", 1)
         if self.config.drift_correction:  # TODO: remove conditional statement
             int_frame = delta.utils.to_integer_values(new_frame[0, :, :], np.uint8)
             drift_corr_frame = self.driftcorbox.crop(int_frame)
@@ -140,8 +159,10 @@ class PositionRT(delta.pipeline.Position):
             for i_chan in range(new_frame.shape[0]):
                 new_frame[i_chan, :, :] = cv2.warpAffine(new_frame[i_chan, :, :], transformation,
                                                          new_frame.shape[2:0:-1])
+        TIMER_POSITION.stop("_preprocess_new_frame:drift_correction", 1)
 
         # Swap images and assign new frame
+        TIMER_POSITION.start("_preprocess_new_frame:swap", 1)
         for i_roi, box in enumerate(self.roi_boxes):
             new_roi = box.crop(new_frame[0, :, :])
             (
@@ -175,6 +196,7 @@ class PositionRT(delta.pipeline.Position):
                 self.rois[i_roi].label_stack[1],
                 self.rois[i_roi].label_stack[0]
             )
+        TIMER_POSITION.stop("_preprocess_new_frame:swap", 1)
 
 
 class ROIRT(delta.pipeline.ROI):
