@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 import time
 from typing import Dict, List
@@ -32,7 +33,7 @@ class Timer:
         for func_name, start_end in self.timings.items():
             n_calls = len(start_end)
             elapsed = [end-start for start, end in start_end]
-            timings[func_name] = {'n_calls': n_calls, 'avg': sum(elapsed)/n_calls,
+            timings[func_name] = {'n_calls': n_calls, 'avg': sum(elapsed)/n_calls, 'median': np.median(elapsed),
                                   'min': min(elapsed), 'max': max(elapsed)}
         return timings
 
@@ -40,9 +41,9 @@ class Timer:
         if not self.enabled:
             return
         print(f"\nTimings {self.name} (timer_level {self.timer_level}):\n")
-        data = [[func_name, _data['n_calls'], _data['avg'], _data['min'], _data['max']]
+        data = [[func_name, _data['n_calls'], _data['avg'], _data['median'], _data['min'], _data['max']]
                 for func_name, _data in self.get_timings().items()]
-        headers = ["name", "n_calls", "avg", "min", "max"]
+        headers = ["name", "n_calls", "avg", "median", "min", "max"]
         df = pd.DataFrame(data, columns=headers)
         print(df)
         print("---\n")

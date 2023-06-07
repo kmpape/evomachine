@@ -1,3 +1,4 @@
+On personal machine (default config):
                                       name  n_calls       avg       min        max
 0                               initialise        2  9.341830  6.239587  12.444073
 1  process_new_frame:_preprocess_new_frame       18  0.012784  0.011677   0.019136
@@ -5,3 +6,38 @@
 3                  process_new_frame:track       18  2.088923  1.931733   2.916665
 4    process_new_frame:compute_growthrates       18  0.074422  0.054053   0.100940
 
+
+On microscope machine (default config):
+                                      name  n_calls       avg       min       max
+0                               initialise        2  5.449015  3.319519  7.578510
+1  process_new_frame:_preprocess_new_frame       18  0.011611  0.010691  0.016349
+2                process_new_frame:segment       18  0.954627  0.915954  0.992479
+3                  process_new_frame:track       18  1.149788  1.044589  1.420681
+4    process_new_frame:compute_growthrates       18  0.053461  0.038056  0.071834
+
+
+On microscope machine (with pipeline_chunk_size=256):
+0                               initialise        2  4.948310  3.313610  6.583010
+1  process_new_frame:_preprocess_new_frame       18  0.011506  0.010687  0.015016
+2                process_new_frame:segment       18  0.968820  0.906159  1.189916
+3                  process_new_frame:track       18  1.135462  1.038262  1.473032
+4    process_new_frame:compute_growthrates       18  0.051870  0.037413  0.073591
+
+On microscope machine (with pipeline_chunk_size=256, pipeline_seg_batch=64):
+                                      name  n_calls       avg       min       max
+0                               initialise        2  4.848502  3.192807  6.504197
+1  process_new_frame:_preprocess_new_frame       18  0.011147  0.010053  0.012259
+2                process_new_frame:segment       18  0.985168  0.935758  1.134046
+3                  process_new_frame:track       18  1.119562  1.030561  1.349875
+4    process_new_frame:compute_growthrates       18  0.052399  0.038695  0.069037
+
+
+
+On microscope machine (default config), ROI timer:
+              name  n_calls       avg    median       min       max
+0  segment:prepare      370  0.000031  0.000025  0.000019  0.000087
+1  segment:predict      370  0.029112  0.023072  0.020542  0.321124
+2  segment:process      370  0.000071  0.000061  0.000042  0.000253
+3    track:prepare      407  0.000760  0.000668  0.000027  0.002518
+4    track:process      407  0.002177  0.001821  0.000374  0.005177
+5    track:predict      360  0.038156  0.027530  0.024466  0.343243

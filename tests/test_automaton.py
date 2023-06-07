@@ -6,6 +6,7 @@ import unittest
 import delta
 from delta import utils
 from delta.config import DEFAULT_CONFIG_MOTHERMACHINE
+from delta.pipeline import TIMER_ROI
 
 from evomachine.acquisition import DeltaCamera
 from evomachine.automaton import Automaton
@@ -257,6 +258,7 @@ class TestAutomaton(unittest.TestCase):
                                             i_pos, i_roi, i_cell, i_frame))
 
         TIMER_POSITION.display_timings()
+        TIMER_ROI.display_timings()
 
 
 if __name__ == '__main__':
