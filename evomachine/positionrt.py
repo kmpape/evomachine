@@ -34,6 +34,11 @@ class PositionRT(delta.pipeline.Position):
         self._is_initialised: bool = False
         "Flag set to true after calling initialise()"
 
+        self.segmentation_model = self.config.model("seg")
+        "Preloading segmentation model."
+        self.tracking_model = self.config.model("track")
+        "Preloading tracking model."
+
         self.verbose = verbose
 
     def initialise(
@@ -197,6 +202,46 @@ class PositionRT(delta.pipeline.Position):
                 self.rois[i_roi].label_stack[0]
             )
         TIMER_POSITION.stop("_preprocess_new_frame:swap", 1)
+
+    def segment(self, frames: range) -> None:
+        """
+        Segment cells in all ROIs in position.
+
+        Parameters
+        ----------
+        frames : range
+            Frames to run.
+
+        Returns
+        -------
+        None.
+
+        """
+        self._msg(f"Starting segmentation ({len(frames)} frames)")
+
+        for iroi, roi in enumerate(self.rois, start=1):
+            self._msg(f"Segmentation - ROI {iroi}/{len(self.rois)}")
+            roi.segment(frames, self.segmentation_model)
+
+    def track(self, frames: range) -> None:
+        """
+        Track cells in all ROIs in position.
+
+        Parameters
+        ----------
+        frames : range
+            Frames to track.
+
+        Returns
+        -------
+        None.
+
+        """
+        self._msg(f"Starting tracking ({len(frames)} frames)")
+
+        for iroi, roi in enumerate(self.rois, start=1):
+            self._msg(f"Tracking - ROI {iroi}/{len(self.rois)}")
+            roi.track(frames, self.tracking_model)
 
 
 class ROIRT(delta.pipeline.ROI):
