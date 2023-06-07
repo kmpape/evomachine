@@ -257,6 +257,8 @@ class TestAutomaton(unittest.TestCase):
                                         "features mismatch at pos={}, roi={}, i_cell={}, i_frame".format(
                                             i_pos, i_roi, i_cell, i_frame))
 
+        print(f"Total number of positions {len(automaton._pos_processor)}")
+        print(f"Number of ROI per position {[len(pos.rois) for pos in automaton._pos_processor]}")
         TIMER_POSITION.display_timings()
         TIMER_ROI.display_timings()
 
