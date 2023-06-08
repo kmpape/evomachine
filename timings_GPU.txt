@@ -73,4 +73,32 @@ This gives approx. 0.079520/20=0.003976 per trench
 
 
 
+Personal machine. With segment all at once:
+Timings PositionRT (timer_level 0):
+                                      name  n_calls       avg    median       min       max
+0                               initialise        2  6.988888  6.988888  4.187597  9.790179
+1  process_new_frame:_preprocess_new_frame       18  0.012321  0.012295  0.012076  0.013014
+2                process_new_frame:segment       18  0.295177  0.332224  0.184993  0.338216
+3                  process_new_frame:track       18  1.001591  0.913797  0.852757  1.805771
+4    process_new_frame:compute_growthrates       18  0.073265  0.072718  0.053052  0.100133
+
+Personal machine. With segment all at once and track all at once, tracking batch_size=1:
+Timings PositionRT (timer_level 0):
+                                      name  n_calls       avg    median       min       max
+0                               initialise        2  6.949646  6.949646  4.142806  9.756485
+1  process_new_frame:_preprocess_new_frame       18  0.012435  0.012297  0.012142  0.014283
+2                process_new_frame:segment       18  0.302722  0.332949  0.188514  0.335569
+3                  process_new_frame:track       18  1.001278  0.982279  0.942333  1.135822
+4    process_new_frame:compute_growthrates       18  0.072543  0.070653  0.052552  0.100655
+
+Personal machine. With segment all at once and track all at once, tracking batch_size=64:
+                                      name  n_calls       avg    median       min       max
+0                               initialise        2  6.997898  6.997898  4.218615  9.777181
+1  process_new_frame:_preprocess_new_frame       18  0.010460  0.012225  0.005586  0.012417
+2                process_new_frame:segment       18  0.286566  0.332306  0.185946  0.339221
+3                  process_new_frame:track       18  1.589278  1.800855  0.300650  5.672826
+4    process_new_frame:compute_growthrates       18  0.071338  0.069451  0.052235  0.096664
+
+
+
 

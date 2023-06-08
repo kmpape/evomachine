@@ -129,7 +129,8 @@ class PositionRT(delta.pipeline.Position):
         TIMER_POSITION.stop("process_new_frame:segment", 0)
 
         TIMER_POSITION.start("process_new_frame:track", 0)
-        self.track(frames=range(1, 2))  # This does affect lineages
+        # self.track(frames=range(1, 2))
+        self.track_at_once()
         TIMER_POSITION.stop("process_new_frame:track", 0)
 
         TIMER_POSITION.start("process_new_frame:compute_growthrates", 0)
@@ -227,22 +228,22 @@ class PositionRT(delta.pipeline.Position):
     def segment_at_once(self) -> None:
         self._msg(f"Starting segmentation for {len(self.rois)} ROIs")
 
-        TIMER_POSITION.start("segment_RT:prepare", 1)
+        TIMER_POSITION.start("segment_at_once:prepare", 1)
         inputs = np.concatenate([roi.get_segmentation_inputs(1)[0] for roi in self.rois])
-        TIMER_POSITION.stop("segment_RT:prepare", 1)
+        TIMER_POSITION.stop("segment_at_once:prepare", 1)
 
-        TIMER_POSITION.start("segment_RT:predict", 1)
+        TIMER_POSITION.start("segment_at_once:predict", 1)
         logits = self.segmentation_model.predict(inputs, batch_size=self.config.pipeline_seg_batch, verbose=0)
-        TIMER_POSITION.stop("segment_RT:predict", 1)
+        TIMER_POSITION.stop("segment_at_once:predict", 1)
 
-        TIMER_POSITION.start("segment_RT:process", 1)
+        TIMER_POSITION.start("segment_at_once:process", 1)
         for iroi, roi in enumerate(self.rois):
             roi.process_segmentation_outputs(
                 logits[iroi: iroi + 1],
                 frame=1,
                 windows=None,
             )
-        TIMER_POSITION.stop("segment_RT:process", 1)
+        TIMER_POSITION.stop("segment_at_once:process", 1)
 
     def track(self, frames: range) -> None:
         """
@@ -263,6 +264,63 @@ class PositionRT(delta.pipeline.Position):
         for iroi, roi in enumerate(self.rois, start=1):
             self._msg(f"Tracking - ROI {iroi}/{len(self.rois)}")
             roi.track(frames, self.tracking_model)
+
+    def track_at_once(self) -> None:
+        """
+        Track cells in all ROIs in position.
+
+        Parameters
+        ----------
+        frames : range
+            Frames to track.
+
+        Returns
+        -------
+        None.
+
+        """
+        self._msg(f"Starting tracking for {len(self.rois)} ROIs")
+
+        TIMER_POSITION.start("track_at_once:prepare", 1)
+        inputs_with_cells = []
+        iroi_with_cells = []
+        all_boxes = []
+        num_cells_iroi = [0]
+        for iroi, roi in enumerate(self.rois):
+            inputs, boxes = roi.get_tracking_inputs(frame=1)
+            if inputs.shape[0] > 0:
+                inputs_with_cells.append(inputs)
+                iroi_with_cells.append(iroi)
+                num_cells_iroi.append(inputs.shape[0])
+            all_boxes.append(boxes)
+        iroi_without_cells = set(range(len(self.rois))) - set(iroi_with_cells)
+        num_cells_iroi = np.cumsum(num_cells_iroi)
+        TIMER_POSITION.stop("track_at_once:prepare", 1)
+
+        TIMER_POSITION.start("track_at_once:predict", 1)
+        logits = self.tracking_model.predict(
+            np.concatenate(inputs_with_cells),
+            batch_size=self.config.pipeline_track_batch,
+            verbose=self.verbose,
+        )
+        TIMER_POSITION.stop("track_at_once:predict", 1)
+
+        TIMER_POSITION.start("track_at_once:process", 1)
+        for i, iroi in enumerate(iroi_with_cells):
+            self.rois[iroi].process_tracking_outputs(
+                logits[num_cells_iroi[i]: num_cells_iroi[i+1]],
+                frame=1,
+                boxes=all_boxes[iroi]
+            )
+
+        logits_empty = np.empty(shape=(0, *self.config.target_size_track, 1))
+        for iroi in iroi_without_cells:
+            self.rois[iroi].process_tracking_outputs(
+                logits_empty,
+                frame=1,
+                boxes=all_boxes[iroi],
+            )
+        TIMER_POSITION.stop("track_at_once:process", 1)
 
 
 class ROIRT(delta.pipeline.ROI):
