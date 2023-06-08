@@ -100,5 +100,90 @@ Personal machine. With segment all at once and track all at once, tracking batch
 4    process_new_frame:compute_growthrates       18  0.071338  0.069451  0.052235  0.096664
 
 
+Microscope machine. With segment all at once and track all at once, tracking batch_size=64:
+                                      name  n_calls       avg    median       min       max
+0                               initialise        2  3.835381  3.835381  2.504401  5.166361
+1  process_new_frame:_preprocess_new_frame       18  0.008394  0.008654  0.004483  0.013721
+2                process_new_frame:segment       18  0.081522  0.080013  0.074058  0.093206
+3                  process_new_frame:track       18  0.559378  0.637813  0.128870  1.885376
+4    process_new_frame:compute_growthrates       18  0.051277  0.050759  0.036960  0.068972
 
+Microscope machine. With segment all at once and track all at once, tracking batch_size=1:
+                                      name  n_calls       avg    median       min       max
+0                               initialise        2  3.313751  3.313751  2.295054  4.332449
+1  process_new_frame:_preprocess_new_frame       18  0.010401  0.006750  0.004539  0.057600
+2                process_new_frame:segment       18  0.080585  0.080381  0.074801  0.086813
+3                  process_new_frame:track       18  0.328366  0.329384  0.302598  0.367374
+4    process_new_frame:compute_growthrates       18  0.050383  0.050361  0.036212  0.072588
+
+
+Microscope machine. With segment all at once and track all at once, tracking batch_size=len(cells):
+                                      name  n_calls       avg    median       min       max
+0                               initialise        2  3.319953  3.319953  2.313383  4.326523
+1  process_new_frame:_preprocess_new_frame       18  0.009184  0.010952  0.004272  0.020693
+2                process_new_frame:segment       18  0.081447  0.080813  0.075814  0.088725
+3                  process_new_frame:track       18  1.057781  1.561640  0.134090  1.738081
+4    process_new_frame:compute_growthrates       18  0.050118  0.048937  0.036625  0.067984
+
+Microscope machine. With segment all at once and track all at once, tracking batch_size=2:
+                                      name  n_calls       avg    median       min       max
+0                               initialise        2  3.329488  3.329488  2.290192  4.368785
+1  process_new_frame:_preprocess_new_frame       18  0.007446  0.006080  0.004323  0.012161
+2                process_new_frame:segment       18  0.081950  0.082435  0.072925  0.089320
+3                  process_new_frame:track       18  0.268889  0.245859  0.220218  0.580656
+4    process_new_frame:compute_growthrates       18  0.050920  0.050679  0.036666  0.069231
+
+Microscope machine. With segment all at once and track all at once, tracking batch_size=4:
+                                      name  n_calls       avg    median       min       max
+0                               initialise        2  3.348093  3.348093  2.327647  4.368540
+1  process_new_frame:_preprocess_new_frame       18  0.006799  0.004842  0.004333  0.011725
+2                process_new_frame:segment       18  0.080656  0.079621  0.073691  0.089013
+3                  process_new_frame:track       18  0.222196  0.176535  0.157544  0.511877
+4    process_new_frame:compute_growthrates       18  0.051042  0.049657  0.037103  0.068908
+
+Microscope machine. With segment all at once and track all at once, tracking batch_size=8:
+                                      name  n_calls       avg    median       min       max
+0                               initialise        2  3.334442  3.334442  2.305111  4.363774
+1  process_new_frame:_preprocess_new_frame       18  0.007518  0.005768  0.004209  0.012885
+2                process_new_frame:segment       18  0.081991  0.081965  0.073195  0.089469
+3                  process_new_frame:track       18  0.276012  0.217018  0.152053  0.543766
+4    process_new_frame:compute_growthrates       18  0.050962  0.049535  0.036882  0.071652
+
+Microscope machine. With segment all at once and track all at once, tracking batch_size=20:
+                                      name  n_calls       avg    median       min       max
+0                               initialise        2  3.336336  3.336336  2.311570  4.361102
+1  process_new_frame:_preprocess_new_frame       18  0.008048  0.006762  0.004138  0.017203
+2                process_new_frame:segment       18  0.083255  0.083665  0.077569  0.096156
+3                  process_new_frame:track       18  0.354608  0.362436  0.135871  1.017758
+4    process_new_frame:compute_growthrates       18  0.051052  0.050222  0.036804  0.068705
+
+Microscope machine. With segment all at once and track all at once, tracking batch_size=4, seg batch size=4:
+                                      name  n_calls       avg    median       min       max
+0                               initialise        2  3.326784  3.326784  2.312197  4.341371
+1  process_new_frame:_preprocess_new_frame       18  0.006487  0.004747  0.004300  0.011909
+2                process_new_frame:segment       18  0.102148  0.050716  0.046417  0.622254
+3                  process_new_frame:track       18  0.205585  0.208981  0.166361  0.264152
+4    process_new_frame:compute_growthrates       18  0.050861  0.049404  0.036818  0.068797
+
+Microscope machine. With segment all at once and track all at once, tracking batch_size=4, seg batch size=num(ROIs):
+                                      name  n_calls       avg    median       min       max
+0                               initialise        2  3.317425  3.317425  2.329005  4.305844
+1  process_new_frame:_preprocess_new_frame       18  0.007647  0.006427  0.004772  0.014063
+2                process_new_frame:segment       18  0.103414  0.041217  0.033367  0.611660
+3                  process_new_frame:track       18  0.236736  0.210607  0.163599  0.488548
+4    process_new_frame:compute_growthrates       18  0.051107  0.050768  0.036619  0.068999
+
+Microscope machine. With segment all at once and track all at once, tracking batch_size=4, seg batch size=4:
+                                      name  n_calls       avg    median       min       max
+0                               initialise        2  3.386739  3.386739  2.209417  4.564062
+1  process_new_frame:_preprocess_new_frame       18  0.006748  0.004928  0.004196  0.013361
+2                process_new_frame:segment       18  0.102983  0.050615  0.047620  0.631294
+3                  process_new_frame:track       18  0.196918  0.186401  0.159643  0.268935
+4    process_new_frame:compute_growthrates       18  0.050387  0.049277  0.036256  0.067544
+---
+initialise: [4.56406195400632, 2.209416575002251]
+process_new_frame:_preprocess_new_frame: [0.0113636470050551, 0.004730385000584647, 0.013360753015149385, 0.0050497049815021455, 0.005156558007001877, 0.0048445699794683605, 0.01112379299593158, 0.00439959901268594, 0.004705265979282558, 0.00463596498593688, 0.011296099983155727, 0.004235861997585744, 0.004195936024188995, 0.004896867991192266, 0.011285899992799386, 0.006415323005057871, 0.004812540020793676, 0.0049596950120758265]
+process_new_frame:segment: [0.6312938790069893, 0.3794892390142195, 0.052126233000308275, 0.04874047500197776, 0.05505250199348666, 0.050766948988894, 0.0503760110004805, 0.051665592996869236, 0.05046305397991091, 0.051928330009104684, 0.04938985098851845, 0.04780185400159098, 0.08620011899620295, 0.04761983099160716, 0.05253707699012011, 0.05034291697666049, 0.04847539501497522, 0.04942319300607778]
+process_new_frame:track: [0.2689346150145866, 0.25038166699232534, 0.22131411198643036, 0.19512681200285442, 0.21389030799036846, 0.21922847800306045, 0.16643279301933944, 0.1650929760071449, 0.1701997900090646, 0.15964320398052223, 0.17345387800014578, 0.21684573299717158, 0.16502866501105018, 0.2179491849965416, 0.1851668520248495, 0.18303936999291182, 0.18719206398236565, 0.18561061000218615]
+process_new_frame:compute_growthrates: [0.036256284976843745, 0.03691473600338213, 0.03720285100280307, 0.0390425410005264, 0.04148448698106222, 0.04073052600142546, 0.04613085198798217, 0.04530978298862465, 0.04946910901344381, 0.049084063997725025, 0.053051026014145464, 0.05297100401367061, 0.057901756023056805, 0.05798665701877326, 0.06227297298028134, 0.0662547140091192, 0.06754401701618917, 0.06736474801436998]
 

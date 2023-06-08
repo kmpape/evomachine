@@ -260,6 +260,9 @@ class TestAutomaton(unittest.TestCase):
         print(f"Total number of positions {len(automaton._pos_processor)}")
         print(f"Number of ROI per position {[len(pos.rois) for pos in automaton._pos_processor]}")
         TIMER_POSITION.display_timings()
+        timings_pos = TIMER_POSITION.get_timings_per_call()
+        for key, val in timings_pos.items():
+            print(f"{key}: {val}")
         TIMER_ROI.display_timings()
 
 

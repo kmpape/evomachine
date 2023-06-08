@@ -233,7 +233,7 @@ class PositionRT(delta.pipeline.Position):
         TIMER_POSITION.stop("segment_at_once:prepare", 1)
 
         TIMER_POSITION.start("segment_at_once:predict", 1)
-        logits = self.segmentation_model.predict(inputs, batch_size=self.config.pipeline_seg_batch, verbose=0)
+        logits = self.segmentation_model.predict(inputs, batch_size=4, verbose=0)
         TIMER_POSITION.stop("segment_at_once:predict", 1)
 
         TIMER_POSITION.start("segment_at_once:process", 1)
@@ -298,9 +298,10 @@ class PositionRT(delta.pipeline.Position):
         TIMER_POSITION.stop("track_at_once:prepare", 1)
 
         TIMER_POSITION.start("track_at_once:predict", 1)
+        all_inputs = np.concatenate(inputs_with_cells)
         logits = self.tracking_model.predict(
-            np.concatenate(inputs_with_cells),
-            batch_size=self.config.pipeline_track_batch,
+            all_inputs,
+            batch_size=4,
             verbose=self.verbose,
         )
         TIMER_POSITION.stop("track_at_once:predict", 1)

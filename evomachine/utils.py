@@ -37,6 +37,14 @@ class Timer:
                                   'min': min(elapsed), 'max': max(elapsed)}
         return timings
 
+    def get_timings_per_call(self) -> Dict[str, Dict]:
+        timings = {}
+        for func_name, start_end in self.timings.items():
+            n_calls = len(start_end)
+            elapsed = [end-start for start, end in start_end]
+            timings[func_name] = elapsed
+        return timings
+
     def display_timings(self) -> None:
         if not self.enabled:
             return
