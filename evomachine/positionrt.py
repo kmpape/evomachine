@@ -124,7 +124,8 @@ class PositionRT(delta.pipeline.Position):
         TIMER_POSITION.stop("process_new_frame:_preprocess_new_frame", 0)
 
         TIMER_POSITION.start("process_new_frame:segment", 0)
-        self.segment(frames=range(1, 2))  # This does not affect lineages
+        #self.segment(frames=range(1, 2))  # This does not affect lineages
+        self.segment_at_once()
         TIMER_POSITION.stop("process_new_frame:segment", 0)
 
         TIMER_POSITION.start("process_new_frame:track", 0)
@@ -222,6 +223,26 @@ class PositionRT(delta.pipeline.Position):
         for iroi, roi in enumerate(self.rois, start=1):
             self._msg(f"Segmentation - ROI {iroi}/{len(self.rois)}")
             roi.segment(frames, self.segmentation_model)
+
+    def segment_at_once(self) -> None:
+        self._msg(f"Starting segmentation for {len(self.rois)} ROIs")
+
+        TIMER_POSITION.start("segment_RT:prepare", 1)
+        inputs = np.concatenate([roi.get_segmentation_inputs(1)[0] for roi in self.rois])
+        TIMER_POSITION.stop("segment_RT:prepare", 1)
+
+        TIMER_POSITION.start("segment_RT:predict", 1)
+        logits = self.segmentation_model.predict(inputs, batch_size=self.config.pipeline_seg_batch, verbose=0)
+        TIMER_POSITION.stop("segment_RT:predict", 1)
+
+        TIMER_POSITION.start("segment_RT:process", 1)
+        for iroi, roi in enumerate(self.rois):
+            roi.process_segmentation_outputs(
+                logits[iroi: iroi + 1],
+                frame=1,
+                windows=None,
+            )
+        TIMER_POSITION.stop("segment_RT:process", 1)
 
     def track(self, frames: range) -> None:
         """
