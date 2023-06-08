@@ -41,3 +41,13 @@ On microscope machine (default config), ROI timer:
 3    track:prepare      407  0.000760  0.000668  0.000027  0.002518
 4    track:process      407  0.002177  0.001821  0.000374  0.005177
 5    track:predict      360  0.038156  0.027530  0.024466  0.343243
+
+
+
+Timings ROI (timer_level 0):
+              name  n_calls       avg    median       min       max
+0  segment:prepare       37  0.000399  0.000431  0.000162  0.000634
+1  segment:predict       37  0.148956  0.133260  0.112532  0.701265
+2  segment:process       37  0.000987  0.000997  0.000311  0.001927
+3            track       37  0.565272  0.434251  0.004893  1.880158
+
