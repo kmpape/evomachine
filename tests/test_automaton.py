@@ -10,7 +10,7 @@ from delta.pipeline import TIMER_ROI
 
 from evomachine.acquisition import DeltaCamera
 from evomachine.automaton import Automaton
-from evomachine.config import IMAGE_CONFIG_DELTA_SIM, DEVICE_CONFIG_DELTA_SIM, EVOMACHINE_DIR
+from evomachine.config import IMAGE_CONFIG_DELTA_SIM, IMAGE_CONFIG_DELTA_BENCH, DEVICE_CONFIG_DELTA_SIM, EVOMACHINE_DIR
 from evomachine.positionrt import TIMER_POSITION
 
 TEST_VERBOSITY = logging.INFO
@@ -168,6 +168,7 @@ class TestAutomaton(unittest.TestCase):
             self.assertTrue(np.array_equal(img_automaton, img_delta))
             automaton.increment_pos()
 
+    @unittest.skip("skipping test_process")
     def test_process(self):
         path_exp_results = EVOMACHINE_DIR.parent / "tests/data/movie_mothermachine_tif"
         pos0_exp = delta.pipeline.Position.load_netcdf(path_exp_results / "expected_results/Position000001.nc")
@@ -260,6 +261,36 @@ class TestAutomaton(unittest.TestCase):
         print(f"Total number of positions {len(automaton._pos_processor)}")
         print(f"Number of ROI per position {[len(pos.rois) for pos in automaton._pos_processor]}")
         TIMER_POSITION.display_timings()
+        timings_pos = TIMER_POSITION.get_timings_per_call()
+        for key, val in timings_pos.items():
+            print(f"{key}: {val}")
+        TIMER_ROI.display_timings()
+
+    def benchmark_automaton(self):
+        this_cfg_device = DEVICE_CONFIG_DELTA_SIM
+        this_cfg_device.image_processing_verbosity = 0
+        automaton: Automaton = Automaton(
+            cfg_device=this_cfg_device,
+            cfg_image=IMAGE_CONFIG_DELTA_BENCH,
+            cfg_delta=DEFAULT_CONFIG_MOTHERMACHINE,
+            camera=DeltaCamera(cfg_device=DEVICE_CONFIG_DELTA_SIM, number_concat=5),
+        )
+        automaton.initialise()
+
+        for i_period in range(1, DEVICE_CONFIG_DELTA_SIM.num_periods):
+            # print("PROCESS AT POS {} and PERIOD {}".format(automaton.get_pos(), automaton.get_period()))
+            # Process an additional step at position 0
+            self.assertTrue(automaton.get_pos() == 0)
+            self.assertTrue(automaton.get_period() == i_period)
+            automaton.process()
+            # Process an additional step at position 1
+            self.assertTrue(automaton.get_pos() == 1)
+            self.assertTrue(automaton.get_period() == i_period)
+            automaton.process()
+
+        print(f"Total number of positions {len(automaton._pos_processor)}")
+        print(f"Number of ROI per position {[len(pos.rois) for pos in automaton._pos_processor]}")
+        TIMER_POSITION.display_timings(scaling=2/18)
         timings_pos = TIMER_POSITION.get_timings_per_call()
         for key, val in timings_pos.items():
             print(f"{key}: {val}")

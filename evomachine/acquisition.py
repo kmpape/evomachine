@@ -1,5 +1,5 @@
 import numpy as np
-from typing import Dict, List, Union
+from typing import Dict, List, Optional, Union
 
 from pycromanager import Core
 
@@ -66,7 +66,7 @@ class DeltaCamera(AbstractCamera):
     """
     A class to mock the acquisition of frames.
     """
-    def __init__(self, cfg_device: ConfigDevice):
+    def __init__(self, cfg_device: ConfigDevice, number_concat: Optional[int] = 1):
         super().__init__(cfg_device=cfg_device)
 
         self.all_frames: List[np.ndarray[(int, int, int, int), np.float32]] = [
@@ -75,6 +75,9 @@ class DeltaCamera(AbstractCamera):
         "List of all frames by position."
         self._curr_period: int = -1
         "Incremented after completing one round of imaging the whole device."
+
+        self.number_concat: int = number_concat
+        "Number of images to concatenate when returning images"
 
         delta_reader: delta.utils.XPReader = \
             delta.utils.XPReader(self.cfg_device.path_to_images / "Position{p}Channel{c}Frames{t}.tif")
@@ -95,7 +98,7 @@ class DeltaCamera(AbstractCamera):
             i_chan: int,
             i_period: Union[int, None],
     ) -> np.ndarray[(int, int), 'ConfigImage.pxl_dtype']:
-        return self.all_frames[self._curr_pos][i_period, i_chan, :, :]
+        return np.tile(self.all_frames[self._curr_pos][i_period, i_chan, :, :], (1, self.number_concat))
 
 
 class EvoCamera(AbstractCamera):

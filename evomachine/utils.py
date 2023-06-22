@@ -45,11 +45,16 @@ class Timer:
             timings[func_name] = elapsed
         return timings
 
-    def display_timings(self) -> None:
+    def display_timings(self, scaling: int = 1) -> None:
         if not self.enabled:
             return
-        print(f"\nTimings {self.name} (timer_level {self.timer_level}):\n")
-        data = [[func_name, _data['n_calls'], _data['avg'], _data['median'], _data['min'], _data['max']]
+        if scaling != 1:
+            print(f"\nTimings {self.name} (timer_level {self.timer_level}) (scaling {scaling}):\n")
+        else:
+            print(f"\nTimings {self.name} (timer_level {self.timer_level}):\n")
+
+        data = [[func_name, _data['n_calls'], _data['avg']*scaling, _data['median']*scaling,
+                 _data['min']*scaling, _data['max']*scaling]
                 for func_name, _data in self.get_timings().items()]
         headers = ["name", "n_calls", "avg", "median", "min", "max"]
         df = pd.DataFrame(data, columns=headers)

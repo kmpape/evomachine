@@ -108,6 +108,12 @@ IMAGE_CONFIG_DELTA_SIM = ConfigImage(
     pxl_dtype=np.dtype("float32"),
 )
 
+IMAGE_CONFIG_DELTA_BENCH = ConfigImage(
+    pxl_horiz=696*5,
+    pxl_vert=520,
+    pxl_dtype=np.dtype("float32"),
+)
+
 
 # Evomachine configuration
 DEBUG_MODE: bool = True
