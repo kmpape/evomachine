@@ -1,3 +1,4 @@
+import copy
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal, Optional, Union, cast
@@ -27,7 +28,9 @@ class PositionRT(delta.pipeline.Position):
 
         self.roi_boxes: list[delta.utils.CroppingBox] = []
         "List of CroppingBox indexed by i_roi"
-        self.drifttemplate: delta.utils.Image = np.empty((cfg_image.pxl_vert, cfg_image.pxl_horiz), cfg_image.pxl_dtype)
+        self.drifttemplate: delta.utils.Image = np.empty((cfg_image.pxl_vert*cfg_image.tile_image[0],
+                                                          cfg_image.pxl_horiz*cfg_image.tile_image[1]),
+                                                         cfg_image.pxl_dtype)
         "Drift template obtained from reference image"
         self.driftcorbox: delta.utils.CroppingBox = delta.utils.CroppingBox(0, 0, 0, 0)
         "Cropping box used to correct drift"
@@ -38,6 +41,9 @@ class PositionRT(delta.pipeline.Position):
         "Preloading segmentation model."
         self.tracking_model = self.config.model("track")
         "Preloading tracking model."
+
+        self.cfg_image = cfg_image
+        "Image configuration."
 
         self.verbose = verbose
 
@@ -55,9 +61,14 @@ class PositionRT(delta.pipeline.Position):
             for i_chan in range(reference.shape[0]):
                 reference[i_chan, :, :] = delta.utils.imrotate(reference[i_chan, :, :], self.rotate)
 
+        if any(val != 1 for val in self.cfg_image.tile_image):
+            reference = np.tile(reference, (1, *self.cfg_image.tile_image))
+        # For debugging
+        self.reference = copy.deepcopy(reference)
+
         # Find ROIs
         if "rois" in self.config.models:
-            self.roi_boxes = delta.pipeline.Position.find_roi_boxes(reference[0, :, :], self.config)
+            self.roi_boxes = self.find_roi_boxes(reference[0, :, :], self.config)
         else:
             self.roi_boxes = [delta.utils.CroppingBox.full(reference[0, :, :])]
 
@@ -149,6 +160,8 @@ class PositionRT(delta.pipeline.Position):
             for i_chan in range(new_frame.shape[0]):
                 new_frame[i_chan, :, :] = delta.utils.imrotate(new_frame[i_chan, :, :], self.rotate)
         TIMER_POSITION.stop("_preprocess_new_frame:rotation_correction", 1)
+        if any(val != 1 for val in self.cfg_image.tile_image):
+            new_frame = np.tile(new_frame, (1, *self.cfg_image.tile_image))
 
         # Drift correction
         TIMER_POSITION.start("_preprocess_new_frame:drift_correction", 1)
@@ -167,6 +180,8 @@ class PositionRT(delta.pipeline.Position):
                 new_frame[i_chan, :, :] = cv2.warpAffine(new_frame[i_chan, :, :], transformation,
                                                          new_frame.shape[2:0:-1])
         TIMER_POSITION.stop("_preprocess_new_frame:drift_correction", 1)
+        # For debugging
+        self.new_frame = copy.deepcopy(new_frame)
 
         # Swap images and assign new frame
         TIMER_POSITION.start("_preprocess_new_frame:swap", 1)
@@ -323,6 +338,90 @@ class PositionRT(delta.pipeline.Position):
             )
         TIMER_POSITION.stop("track_at_once:process", 1)
 
+    def find_roi_boxes(self, reference: delta.utils.Image, config: Config) -> list[delta.utils.CroppingBox]:
+        """
+        Use U-Net to detect ROIs (chambers etc...).
+
+        Parameters
+        ----------
+        reference : utils.Image
+            Reference image to use to detect ROIs.
+        config : Config
+            DeLTA configuration object.
+
+        Returns
+        -------
+        boxes : List[CroppingBox]
+            List of ROI boxes.
+
+        """
+        # Rescale pixel values between 0 and 1 for the old model
+        reference = (reference - reference.min()) / reference.ptp()
+
+        if self.cfg_image.crop_out_ROI:
+            # Debug
+            print("Cropping out ROI")
+            lim_resize = 0.1
+            if abs(reference.shape[0]-self.config.target_size_rois[0]) < lim_resize*self.config.target_size_rois[0]:
+                reference = cv2.resize(reference, (reference.shape[1], self.config.target_size_rois[0]))
+            if abs(reference.shape[1]-self.config.target_size_rois[1]) < lim_resize*self.config.target_size_rois[1]:
+                reference = cv2.resize(reference, (self.config.target_size_rois[1], reference.shape[0]))
+            # Crop out windows
+            inputs, windows_y, windows_x = delta.utils.create_windows(
+                reference, target_size=self.config.target_size_rois
+            )
+            windows = (windows_y, windows_x)
+            # Shape to expected format
+            inputs = inputs[:, :, :, np.newaxis]
+            # Predict
+            logits = self.config.model("rois").predict(
+                inputs,
+                batch_size=4,
+                verbose=0,
+            )
+            rois_pred = delta.utils.stitch_pic(logits[..., 0], windows[0], windows[1])
+            # Clean up
+            rois_mask = delta.data.postprocess(
+                cv2.resize(np.squeeze(rois_pred), reference.shape[::-1]),
+                min_size=self.config.min_roi_area,
+            )
+        else:
+            # Predict
+            rois_pred = self.config.model("rois").predict(
+                cv2.resize(reference, self.config.target_size_rois)[
+                    np.newaxis, :, :, np.newaxis
+                ],
+                verbose=0,
+            )
+            # Clean up
+            rois_mask = delta.data.postprocess(
+                cv2.resize(np.squeeze(rois_pred), reference.shape[::-1]),
+                min_size=config.min_roi_area,
+            )
+
+        # Get boxes
+        # Implementation note: cv2.findContours (even including
+        # cv2.boundingRect) is about twice as fast as
+        # cv2.connectedComponentsWithStats here.
+        roi_boxes = []
+        contours = delta.utils.find_contours(rois_mask)
+        for chamber in contours:
+            xtl, ytl, boxwidth, boxheight = cv2.boundingRect(chamber)
+            roi_boxes.append(
+                delta.utils.CroppingBox(
+                    xtl=xtl,
+                    # -10% of height to make sure the top is not cropped
+                    ytl=ytl - int(0.1 * boxheight),
+                    xbr=xtl + boxwidth,
+                    ybr=ytl + boxheight,
+                )
+            )
+
+        # Sorting by top-left X (normally sorted by top-left Y)
+        roi_boxes.sort(key=lambda box: box.xtl)
+
+        return roi_boxes
+
 
 class ROIRT(delta.pipeline.ROI):
     def __init__(
@@ -462,6 +561,8 @@ class ROIRT(delta.pipeline.ROI):
         )
 
         # Make sure the same cell_ids are present in both dicts
+        if poles.keys() != extracted_features.keys():
+            print(f"ROI={self.roi_nb}\npoles.keys()={poles.keys()}\nextra.keys()={extracted_features.keys()}")
         assert poles.keys() == extracted_features.keys()
 
         # Assign poles to extracted features:

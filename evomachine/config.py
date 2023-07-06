@@ -71,6 +71,10 @@ class ConfigImage:
     "Number of pixels in vertical direction."
     pxl_dtype: np.dtype
     "Datatype of images"
+    tile_image: Optional[Tuple[int, int]] = (1, 1)
+    "Tile images returned from camera"
+    crop_out_ROI: Optional[bool] = True
+    "Apply ROI segmentation to overlapping image portions with size of ROI segmentation model"
 
     def check_config(self):
         if self.pxl_x <= 0 or self.pxl_y <= 0:
@@ -109,9 +113,11 @@ IMAGE_CONFIG_DELTA_SIM = ConfigImage(
 )
 
 IMAGE_CONFIG_DELTA_BENCH = ConfigImage(
-    pxl_horiz=696*5,
+    pxl_horiz=696,
     pxl_vert=520,
     pxl_dtype=np.dtype("float32"),
+    tile_image=(1, 5),
+    crop_out_ROI=True,
 )
 
 

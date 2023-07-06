@@ -273,7 +273,7 @@ class TestAutomaton(unittest.TestCase):
             cfg_device=this_cfg_device,
             cfg_image=IMAGE_CONFIG_DELTA_BENCH,
             cfg_delta=DEFAULT_CONFIG_MOTHERMACHINE,
-            camera=DeltaCamera(cfg_device=DEVICE_CONFIG_DELTA_SIM, number_concat=5),
+            camera=DeltaCamera(cfg_device=DEVICE_CONFIG_DELTA_SIM),
         )
         automaton.initialise()
 

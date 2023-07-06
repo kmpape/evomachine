@@ -26,7 +26,7 @@ class Automaton:
         "Current position."
         self._curr_period: int = 0
         "Incremented after completing one round of imaging the whole device."
-        self._curr_step: int = 0  # TODO: should be called differently
+        self._curr_step: int = 0
         "Incremented every time a picture is taken."
         self._camera: AbstractCamera = camera
         "Camera object which can be a real camera or a class that reads from the disk."
