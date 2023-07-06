@@ -63,7 +63,7 @@ class PositionRT(delta.pipeline.Position):
 
         if any(val != 1 for val in self.cfg_image.tile_image):
             reference = np.tile(reference, (1, *self.cfg_image.tile_image))
-        # For debugging
+        # For debugging TODO
         self.reference = copy.deepcopy(reference)
 
         # Find ROIs
@@ -359,8 +359,6 @@ class PositionRT(delta.pipeline.Position):
         reference = (reference - reference.min()) / reference.ptp()
 
         if self.cfg_image.crop_out_ROI:
-            # Debug
-            print("Cropping out ROI")
             lim_resize = 0.1
             if abs(reference.shape[0]-self.config.target_size_rois[0]) < lim_resize*self.config.target_size_rois[0]:
                 reference = cv2.resize(reference, (reference.shape[1], self.config.target_size_rois[0]))
@@ -561,8 +559,6 @@ class ROIRT(delta.pipeline.ROI):
         )
 
         # Make sure the same cell_ids are present in both dicts
-        if poles.keys() != extracted_features.keys():
-            print(f"ROI={self.roi_nb}\npoles.keys()={poles.keys()}\nextra.keys()={extracted_features.keys()}")
         assert poles.keys() == extracted_features.keys()
 
         # Assign poles to extracted features:
@@ -572,10 +568,6 @@ class ROIRT(delta.pipeline.ROI):
 
         # Go through old cells
         for cellid, attribs in zip(previous_cell_nbs, attributions):
-            if self.lineage.cells[cellid].last_frame != self._frame_id - 1:
-                print("frame={}, last_frame={}, _frame_id={}".format(
-                    frame, self.lineage.cells[cellid].last_frame, self._frame_id
-                ))
             assert self.lineage.cells[cellid].last_frame == self._frame_id - 1  # Changed
             attrib = attribs.nonzero()[0]
             previous_poles = self.lineage.cells[cellid].poles(self._frame_id - 1)  # Changed
