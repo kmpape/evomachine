@@ -30,6 +30,53 @@ automaton: Automaton = Automaton(
             camera=DeltaCamera(cfg_device=DEVICE_CONFIG_DELTA_SIM),
         )
 automaton.initialise()
+automaton.process()
+
+ipos = 0
+iroi = 0
+pos = automaton._pos_processor[ipos]
+roi = pos.rois[iroi]
+prev_seg = roi.get_seg(0)
+curr_seg = roi.get_seg(1)
+
+fig, axs = plt.subplots(1, 2)
+axs[0].imshow(prev_seg, cmap='gray', vmin=0, vmax=max(prev_seg.max(), curr_seg.max()))
+axs[0].set_title('Seg Mask t-1')
+axs[1].imshow(curr_seg, cmap='gray', vmin=0, vmax=max(prev_seg.max(), curr_seg.max()))
+axs[1].set_title('Seg Mask t')
+plt.show()
+fig.savefig('segmentation_masks.png')
+
+prev_cell_contours = utils.find_contours(prev_seg)
+
+prev_drawn_0 = cv2.drawContours(
+    np.zeros(DEFAULT_CONFIG_MOTHERMACHINE.target_size_track, dtype=np.float32),
+    [prev_cell_contours[0]],
+    0,
+    offset=None,
+    color=1.0,
+    thickness=cv2.FILLED,
+)
+
+prev_drawn_1 = cv2.drawContours(
+    np.zeros(DEFAULT_CONFIG_MOTHERMACHINE.target_size_track, dtype=np.float32),
+    [prev_cell_contours[1]],
+    0,
+    offset=None,
+    color=1.0,
+    thickness=cv2.FILLED,
+)
+
+fig, axs = plt.subplots(1, 2)
+axs[0].imshow(prev_drawn_0, cmap='gray', vmin=0, vmax=max(prev_drawn_0.max(), prev_drawn_1.max()))
+axs[0].set_title('Contour Mask t-1 Cell 0')
+axs[1].imshow(prev_drawn_1, cmap='gray', vmin=0, vmax=max(prev_drawn_0.max(), prev_drawn_1.max()))
+axs[1].set_title('Contour Mask t-1 Cell 1')
+plt.show()
+fig.savefig('contour.png')
+
+area_0 = cv2.contourArea(prev_cell_contours[0])
+area_1 = cv2.contourArea(prev_cell_contours[1])
 
 ipos = 0
 pos = automaton._pos_processor[ipos]

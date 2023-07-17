@@ -2,6 +2,8 @@ from enum import Enum, auto
 
 
 class ErrorCode(Enum):
+    NO_ERROR = auto()
+
     ERROR_DEVICE_CONFIG = auto()
     ERROR_IMAGE_CONFIG = auto()
 
@@ -11,6 +13,9 @@ class ErrorCode(Enum):
     ERROR_NOT_INITIALISED = auto()
 
     ERROR_TIGER_NOT_ALIVE = auto()
+
+    # Tracking errors
+    ERROR_TRACK_DIV_NOT_DETECTED = auto()
 
 
 class ConfigError(Exception):
