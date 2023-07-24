@@ -72,9 +72,10 @@ class ConfigImage:
     pxl_dtype: np.dtype
     "Datatype of images"
     tile_image: Optional[Tuple[int, int]] = (1, 1)
-    "Tile images returned from camera"
+    "Tile images returned from camera."
     crop_out_ROI: Optional[bool] = True
-    "Apply ROI segmentation to overlapping image portions with size of ROI segmentation model"
+    "Apply ROI segmentation to overlapping image portions with size of ROI segmentation model."
+    use_track_RT: Optional[bool] = False
 
     def check_config(self):
         if self.pxl_x <= 0 or self.pxl_y <= 0:

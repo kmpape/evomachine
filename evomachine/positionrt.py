@@ -1,19 +1,25 @@
 import copy
 from collections.abc import Sequence
+import logging
 from pathlib import Path
-from typing import Any, Literal, Optional, Union, cast
+from typing import Any, Dict, List, Literal, Optional, Union, cast
 
 import cv2
 import numpy as np
+import tqdm
 
 import delta
 from delta.config import Config  # TODO: ask about putting config into init
+from delta.pipeline import TIMER_ROI
 
 from evomachine.config import ConfigImage
-from evomachine.exceptions import ImageProcessingError, ErrorCode
+from evomachine.exceptions import ImageProcessingError, ErrorCode, ErrorContainer
+import evomachine.trackingrt as trackingrt
 from evomachine.utils import Timer
 
 TIMER_POSITION = Timer(timer_level=0, name="PositionRT", enabled=True)
+
+logger = logging.getLogger(__name__)
 
 
 class PositionRT(delta.pipeline.Position):
@@ -63,8 +69,6 @@ class PositionRT(delta.pipeline.Position):
 
         if any(val != 1 for val in self.cfg_image.tile_image):
             reference = np.tile(reference, (1, *self.cfg_image.tile_image))
-        # For debugging TODO
-        self.reference = copy.deepcopy(reference)
 
         # Find ROIs
         if "rois" in self.config.models:
@@ -117,8 +121,16 @@ class PositionRT(delta.pipeline.Position):
 
         # Run pipeline after init
         self.segment(frames=range(2))
-        self.track(frames=range(2))
+        if self.cfg_image.use_track_RT:
+            self.init_track_rt()
+        else:
+            self.track(frames=range(2))
         self.compute_growthrates(frames=range(2))
+
+        # Remove redundant cell lineage object
+        #for roi in self.rois:
+        #    for cell in roi.lineage.cells.values():
+        #        cell._features.pop()  # TODO: ask for delete function
 
         self._is_initialised = True
         TIMER_POSITION.stop("initialise", 0)
@@ -135,13 +147,14 @@ class PositionRT(delta.pipeline.Position):
         TIMER_POSITION.stop("process_new_frame:_preprocess_new_frame", 0)
 
         TIMER_POSITION.start("process_new_frame:segment", 0)
-        #self.segment(frames=range(1, 2))  # This does not affect lineages
         self.segment_at_once()
         TIMER_POSITION.stop("process_new_frame:segment", 0)
 
         TIMER_POSITION.start("process_new_frame:track", 0)
-        # self.track(frames=range(1, 2))
-        self.track_at_once()
+        if self.cfg_image.use_track_RT:
+            self.track_rt()
+        else:
+            self.track_at_once()
         TIMER_POSITION.stop("process_new_frame:track", 0)
 
         TIMER_POSITION.start("process_new_frame:compute_growthrates", 0)
@@ -194,7 +207,7 @@ class PositionRT(delta.pipeline.Position):
                 self.rois[i_roi].img_stack[1],
                 self.rois[i_roi].img_stack[0]
             )
-            self.rois[i_roi].img_stack[1] = (new_roi - new_roi.min()) / new_roi.ptp()
+            self.rois[i_roi].img_stack[1] = (new_roi - new_roi.min()) / new_roi.ptp()  # noqa
             (
                 self.rois[i_roi].fluo_stack[0, :, :, :],
                 self.rois[i_roi].fluo_stack[1, :, :, :]
@@ -283,16 +296,6 @@ class PositionRT(delta.pipeline.Position):
     def track_at_once(self) -> None:
         """
         Track cells in all ROIs in position.
-
-        Parameters
-        ----------
-        frames : range
-            Frames to track.
-
-        Returns
-        -------
-        None.
-
         """
         self._msg(f"Starting tracking for {len(self.rois)} ROIs")
 
@@ -303,10 +306,10 @@ class PositionRT(delta.pipeline.Position):
         num_cells_iroi = [0]
         for iroi, roi in enumerate(self.rois):
             inputs, boxes = roi.get_tracking_inputs(frame=1)
-            if inputs.shape[0] > 0:
+            if inputs.shape[0] > 0:  # noqa
                 inputs_with_cells.append(inputs)
                 iroi_with_cells.append(iroi)
-                num_cells_iroi.append(inputs.shape[0])
+                num_cells_iroi.append(inputs.shape[0])  # noqa
             all_boxes.append(boxes)
         iroi_without_cells = set(range(len(self.rois))) - set(iroi_with_cells)
         num_cells_iroi = np.cumsum(num_cells_iroi)
@@ -338,6 +341,24 @@ class PositionRT(delta.pipeline.Position):
             )
         TIMER_POSITION.stop("track_at_once:process", 1)
 
+    def init_track_rt(self) -> None:
+        """
+        Track cells in all ROIs in position. Uses the faster tracking algorithm for mother-machine devices.
+        """
+
+        for i_roi, roi in enumerate(self.rois):
+            logging.debug(f"{self}:init_track_rt for ROI {i_roi}")
+            roi.init_track_rt()
+            roi.track_rt()
+
+    def track_rt(self) -> None:
+        """
+        Track cells in all ROIs in position. Uses the faster tracking algorithm for mother-machine devices.
+        """
+        for i_roi, roi in enumerate(self.rois):
+            logging.debug(f"{self}:track_rt for ROI {i_roi}")
+            roi.track_rt()
+
     def find_roi_boxes(self, reference: delta.utils.Image, config: Config) -> list[delta.utils.CroppingBox]:
         """
         Use U-Net to detect ROIs (chambers etc...).
@@ -356,7 +377,7 @@ class PositionRT(delta.pipeline.Position):
 
         """
         # Rescale pixel values between 0 and 1 for the old model
-        reference = (reference - reference.min()) / reference.ptp()
+        reference = (reference - reference.min()) / reference.ptp()  # noqa
 
         if self.cfg_image.crop_out_ROI:
             lim_resize = 0.1
@@ -420,6 +441,9 @@ class PositionRT(delta.pipeline.Position):
 
         return roi_boxes
 
+    def __str__(self):
+        return f"POS_{self.position_nb:03}"
+
 
 class ROIRT(delta.pipeline.ROI):
     def __init__(
@@ -442,7 +466,10 @@ class ROIRT(delta.pipeline.ROI):
         )
         self._frame_id: int = 0
         "This flag keeps track of the actual time index, which might be different from the position index in img_stack"\
-        "It is automatically incremented in process_segmentation_outputs() and assumes that things are called in order."
+        "It is automatically incremented in process_segmentation_outputs() and assumes that things are called in order."  # noqa
+
+        self.error_container: ErrorContainer = ErrorContainer()
+        "Deque object for recording errors."
 
         assert len(self.img_stack) == 2  # Otherwise, change code in process_XXX_outputs
 
@@ -455,6 +482,11 @@ class ROIRT(delta.pipeline.ROI):
             np.empty(shape=self.config.target_size_track, dtype=np.dtype("uint8"))
             for _ in range(len(self.img_stack))
         ]
+
+        self.state_old: List[Dict[str, Union[float, int, bool]]] = [{"y": 0.0, "area": 0.0, "div": False}]
+        "Variable for tracking algorithm at previous time step."
+        self.max_id: int = 0
+        "Keeps track of the maximum ID ever assigned to a cell in the ROI."
 
     def process_segmentation_outputs(
         self,
@@ -530,9 +562,195 @@ class ROIRT(delta.pipeline.ROI):
         # Get scores and attributions:
         # Label frame but numbered 1, 2, 3, 4, etc. (temporary labels)
         labels = delta.utils.label_seg(self.get_seg(frame))
+        self.tmp_labels = copy.deepcopy(labels)  # TODO
         scores = delta.utils.getTrackingScores(labels, logits[:, :, :, 0], boxes=boxes)
+        self.tmp_scores = copy.deepcopy(scores)  # TODO
 
         attributions = delta.utils.getAttributions(scores)
+        self.tmp_attributions = copy.deepcopy(attributions)  # TODO
+        previous_cell_nbs = (
+            delta.utils.getcellsinframe(self.get_labels(frame - 1)[::-1, :])[::-1]
+            if frame > self.first_frame
+            else []
+        )
+        self.tmp_previous_cell_nbs = copy.deepcopy(previous_cell_nbs)  # TODO
+        assert len(previous_cell_nbs) == attributions.shape[0]
+        cell_nbs = [None] * attributions.shape[1]
+
+        # Get poles:
+        poles = delta.utils.getpoles(self.get_seg(frame), labels, scaling=self.scaling)
+        self.tmp_poles = copy.deepcopy(poles)  # TODO
+
+        # Resize labels if not using crop windows:
+        if not self.config.crop_windows:
+            resize = (
+                self.box.xbr - self.box.xtl,
+                self.box.ybr - self.box.ytl,
+            )
+            labels = cv2.resize(labels, resize, interpolation=cv2.INTER_NEAREST)
+        self.tmp_labels_resized = copy.deepcopy(labels)  # TODO
+
+        # Extract features for all cells in the ROI:
+        extracted_features = delta.utils.roi_features(
+            labels,
+            fluo_frames=self.get_fluo(frame),
+        )
+        self.tmp_extracted_features = copy.deepcopy(extracted_features)  # TODO
+
+        # Make sure the same cell_ids are present in both dicts
+        assert poles.keys() == extracted_features.keys()
+
+        # Assign poles to extracted features:
+        for cellid, (old_pole, new_pole) in poles.items():
+            extracted_features[cellid].old_pole = old_pole
+            extracted_features[cellid].new_pole = new_pole
+
+        # Go through old cells
+        for cellid, attribs in zip(previous_cell_nbs, attributions):
+            assert self.lineage.cells[cellid].last_frame == self._frame_id - 1  # Changed
+            attrib = attribs.nonzero()[0]
+            previous_poles = self.lineage.cells[cellid].poles(self._frame_id - 1)  # Changed
+            if len(attrib) == 1:
+                # Simple tracking event
+                [n] = attrib
+                features = delta.utils.track_poles(extracted_features[n + 1], *previous_poles)
+                self.lineage.extend(cellid, features)
+                cell_nbs[n] = cellid
+            elif len(attrib) == 2:
+                # Division event
+                n0, n1 = attrib
+                (
+                    mother_features,
+                    daughter_features,
+                    first_cell_is_mother,
+                ) = delta.utils.division_poles(
+                    extracted_features[n0 + 1],
+                    extracted_features[n1 + 1],
+                    *previous_poles,
+                )
+                if not first_cell_is_mother:
+                    # mother_features, daughter_features = daughter_features, mother_features
+                    n0, n1 = n1, n0
+                self.lineage.extend(cellid, mother_features)
+                newcellid = self.lineage.create(
+                    self._frame_id, daughter_features, motherid=cellid  # Changed
+                )
+                cell_nbs[n0] = cellid
+                cell_nbs[n1] = newcellid
+
+        # Go through new cells
+        for n, attribs in enumerate(attributions.T):
+            attrib = attribs.nonzero()[0]
+            if len(attrib) == 1:
+                # Case already treated
+                continue
+            # Brand new cell event: attribute poles arbitrarily
+            if (
+                extracted_features[n + 1].old_pole[0]
+                >= extracted_features[n + 1].new_pole[0]
+            ):
+                extracted_features[n + 1].swap_poles()
+            cellid = self.lineage.create(
+                self._frame_id, extracted_features[n + 1], motherid=None  # Changed
+            )
+            cell_nbs[n] = cellid
+
+        assert None not in cell_nbs
+        # Recompile label frame with new labels
+        labels = delta.utils.label_seg(self.get_seg(frame), cell_nbs)
+
+        # Resize image:
+        if not self.config.crop_windows:
+            resize = (
+                self.box.xbr - self.box.xtl,
+                self.box.ybr - self.box.ytl,
+            )
+            labels = cv2.resize(labels, resize, interpolation=cv2.INTER_NEAREST)
+
+        # assert len(self.label_stack) == frame - self.first_frame
+        self.label_stack[frame - self.first_frame] = labels
+
+    def init_track_rt(self) -> None:
+        """
+        """
+        seg_mask = self.get_seg(self.first_frame)
+        state_new, attributions_matrix = trackingrt.init_track_trench_rt(seg_mask=seg_mask)
+
+        # Update tracking algorithm variables
+        self.state_old = state_new
+        if state_new:
+            self.max_id = max(self.max_id, max([state["id"] for state in state_new]))
+
+        # Dispatch tracking outputs
+        self.process_tracking_outputs_rt(attributions=attributions_matrix, frame=self.first_frame)
+
+    def track_rt(self) -> None:
+        """
+        """
+
+        # Run through frames and compile inputs and references
+        TIMER_ROI.start("track_rt", 0)
+        seg_mask = self.get_seg(frame=self.first_frame+1)
+
+        TIMER_ROI.start("track_rt:prepare", 1)
+        tracking_inputs = trackingrt.get_tracking_inputs_rt(seg_mask)
+        TIMER_ROI.stop("track_rt:prepare", 1)
+
+        # Track
+        TIMER_ROI.start("track_rt:predict", 1)
+        if not self.state_old:
+            state_new, attributions_matrix = trackingrt.init_track_trench_rt(seg_mask=seg_mask)
+        else:
+            state_new, attributions_matrix, image_processing_error = trackingrt.track_trench_rt(  # noqa
+                self.state_old,
+                tracking_inputs,
+                self.max_id,
+            )
+            if image_processing_error.error_code.value:
+                logging.warning(f"{self}: {image_processing_error}")
+                self.error_container.add_error(new_error=image_processing_error)
+        TIMER_ROI.stop("track_rt:predict", 1)
+
+        # Update tracking algorithm variables
+        self.state_old = state_new
+        if state_new:
+            self.max_id = max(self.max_id, max([state["id"] for state in state_new]))
+
+        # Dispatch tracking outputs
+        TIMER_ROI.start("track_rt:process", 1)
+        self.process_tracking_outputs_rt(attributions=attributions_matrix, frame=self.first_frame+1)
+        TIMER_ROI.stop("track_rt:process", 1)
+        TIMER_ROI.stop("track_rt", 0)
+
+    def process_tracking_outputs_rt(
+        self,
+        attributions: np.typing.NDArray[bool],
+        frame: int,
+    ) -> None:
+        """
+        Process output from tracking algorithm.
+
+        Get poles, update lineage and create label_stack.
+
+        Parameters
+        ----------
+        attributions: np.typing.NDArray[bool]
+            Delta-style attributions matrix.
+        frame: int
+            Frame to process.
+
+        Returns
+        -------
+        None.
+
+        """
+        if frame > 0:  # Changed
+            self._frame_id += 1
+
+        # Get scores and attributions:
+        # Label frame but numbered 1, 2, 3, 4, etc. (temporary labels)
+        labels = delta.utils.label_seg(self.get_seg(frame))
+
         previous_cell_nbs = (
             delta.utils.getcellsinframe(self.get_labels(frame - 1)[::-1, :])[::-1]
             if frame > self.first_frame
@@ -628,5 +846,7 @@ class ROIRT(delta.pipeline.ROI):
             )
             labels = cv2.resize(labels, resize, interpolation=cv2.INTER_NEAREST)
 
-        # assert len(self.label_stack) == frame - self.first_frame
         self.label_stack[frame - self.first_frame] = labels
+
+    def __str__(self):
+        return f"ROI_{self.roi_nb:03}"
