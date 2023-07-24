@@ -1,17 +1,23 @@
+import logging
 import numpy as np
 from typing import Dict, List, Optional, Union
 
 from pycromanager import Core
 
-import asitiger
+import asitiger.tigercontroller
 import delta
 
 from evomachine.config import ConfigDevice, ConfigImage
-from evomachine.exceptions import ErrorCode, StageError, TigerError
+from evomachine.exceptions import CameraError, ErrorCode, ErrorContainer, EvoMachineError, StageError, TigerError
+
+
+logger = logging.getLogger(__name__)
 
 
 class AbstractCamera:
     def __init__(self, cfg_device: ConfigDevice):
+        self.error_container: ErrorContainer = ErrorContainer()
+        "Deque to store all errors."
         self.cfg_device: ConfigDevice = cfg_device
         "Device configuration object."
         self._step: int = -1
@@ -24,6 +30,13 @@ class AbstractCamera:
     def initialise(self):
         self._step = -1
         self._initialise()
+
+    def check_status(self):
+        if len(self.error_container) > 0:
+            msg = "\n".join([str(e) for e in self.error_container.error_list])
+            logging.warning(msg=msg)
+        else:
+            logging.warning("No errors for acquisition found.")
 
     def move_to_pos(self, i_pos: int) -> None:
         if i_pos not in range(self.cfg_device.num_pos):
@@ -100,14 +113,22 @@ class DeltaCamera(AbstractCamera):
 
 class EvoCamera(AbstractCamera):
     """
-    A class to mock the acquisition of frames.
+    EvoMachine acquisition class.
     """
     def __init__(self, cfg_device: ConfigDevice):
         super().__init__(cfg_device=cfg_device)
 
-        self.tiger: asitiger.tigercontroller.TigerController = \
-            asitiger.tigercontroller.TigerController.from_serial_port(port=cfg_device.tiger_port)
+        self.tiger: Union[asitiger.tigercontroller.TigerController, None] = None
         "Object for serial communication with ASI tiger."
+        try:
+            self.tiger: asitiger.tigercontroller.TigerController = \
+                asitiger.tigercontroller.TigerController.from_serial_port(port=cfg_device.tiger_port)
+        except Exception as e:
+            logging.warning(f"Error connecting to ASITiger:\n{e}\n---\nContinuing with execution.")
+            self.error_container.add_error(
+                new_error=TigerError(message=str(e), error_code=ErrorCode.ERROR_TIGER_SERIAL_CONNECTION)
+            )
+
         self.channel_settings: Dict[int, Dict] = {
             0: {"X": 100, "Y": 0, "Z": 0, "F": 0},
             1: {"X": 0, "Y": 100, "Z": 0, "F": 0},
@@ -118,13 +139,25 @@ class EvoCamera(AbstractCamera):
         "LED intensity for i_chan=0,...,3."
         self.card_address: int = 7
         "LED card address on ASI tiger."
-        self.mmc: Core = Core()
+        self.mmc: Union[Core, None] = None
         "Micromanager object for taking images."
+        try:
+            self.mmc = Core()
+        except Exception as e:
+            logging.warning(f"Error connecting to Micro Manager:\n{e}\n---\nContinuing with execution.")
+            self.error_container.add_error(
+                new_error=CameraError(message=str(e), error_code=ErrorCode.ERROR_MMC_NOT_ALIVE)
+            )
 
         if not self._tiger_is_alive():
-            raise TigerError(message="Tiger is not alive.", error_code=ErrorCode.ERROR_TIGER_NOT_ALIVE)
+            logging.warning("ASITiger is not alive.\n---\nContinuing with execution.")
+            self.error_container.add_error(
+                new_error=TigerError(message="ASITiger is not alive.", error_code=ErrorCode.ERROR_TIGER_NOT_ALIVE)
+            )
 
-    def _tiger_is_alive(self):
+    def _tiger_is_alive(self) -> bool:
+        if not self.tiger:
+            return False
         try:
             answer = self.tiger.status()
             return True

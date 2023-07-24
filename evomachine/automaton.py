@@ -1,3 +1,4 @@
+import logging
 import numpy as np
 from numpy import ndarray
 from typing import List, Type
@@ -7,7 +8,11 @@ from delta.config import Config
 
 from evomachine.acquisition import AbstractCamera
 from evomachine.config import ConfigDevice, ConfigImage
+from evomachine.exceptions import ErrorContainer
 from evomachine.positionrt import PositionRT
+
+
+logger = logging.getLogger(__name__)
 
 
 class Automaton:
@@ -53,6 +58,9 @@ class Automaton:
         ]
         "List indexed by i_pos w. reference image array: channels x pxl_vert x pxl_horiz."
 
+        self.error_container: ErrorContainer = ErrorContainer()
+        "Container for errors."
+
     def initialise(self):
         self._camera.initialise()
         for i_pos in range(self._cfg_device.num_pos):
@@ -65,6 +73,14 @@ class Automaton:
         assert self._curr_pos == 0
         assert self._curr_period == 1
         # Note that each ROI keeps track of _curr_period as well
+
+    def check_status(self):
+        if len(self.error_container) > 0:
+            msg = "\n".join([str(e) for e in self.error_container.error_list])
+            logging.warning(msg=msg)
+        else:
+            logging.warning("No errors for automaton found.")
+        self._camera.check_status()
 
     def increment_pos(self) -> None:
         self._curr_period = ((self._curr_period + 1) if (self._curr_pos + 1 == self._cfg_device.num_pos)

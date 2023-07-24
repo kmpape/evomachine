@@ -11,6 +11,7 @@ sys.path.append('/home/lady5906/workspace_python/conda_evomachine3.9/evomachine_
 sys.path.append('/home/lady5906/workspace_python/conda_evomachine3.9/de-lta-rt')
 sys.path.append('/home/lady5906/workspace_python/conda_evomachine3.9/asitiger')
 import logging
+logging.basicConfig(level=logging.INFO, format='%(message)s')
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
@@ -21,9 +22,9 @@ from delta import utils
 from delta.config import DEFAULT_CONFIG_MOTHERMACHINE
 from delta.pipeline import TIMER_ROI
 
-from evomachine.acquisition import DeltaCamera
+from evomachine.acquisition import DeltaCamera, EvoCamera
 from evomachine.automaton import Automaton
-from evomachine.config import IMAGE_CONFIG_DELTA_SIM, DEVICE_CONFIG_DELTA_SIM, EVOMACHINE_DIR
+from evomachine.config import IMAGE_CONFIG_DELTA_SIM, DEVICE_CONFIG_DELTA_SIM, DEVICE_CONFIG_EVO_TEST, EVOMACHINE_DIR
 import evomachine.trackingrt as trackingrt
 from evomachine.positionrt import TIMER_POSITION
 
@@ -34,8 +35,6 @@ EPS_REL_APPROX = 10**(-2)
 APPROX_EQUAL = False  # allow for assertions with approximate equality
 NUM_PXL_DIFF = 10  # number of admissible pixel difference in an image/mask
 ABS_PXL_DIFF = 2  # number of admissible pixel difference for features
-
-THIS_DIR = Path(__file__).parent
 
 
 def features_approx_equal(exp: delta.lineage.CellFeatures, res: delta.lineage.CellFeatures) -> bool:
@@ -93,7 +92,7 @@ axs[0].imshow(bla1, cmap=cmap, vmin=0, vmax=20)
 axs[1].imshow(bla2, cmap=cmap, vmin=0, vmax=20)
 
 
-logging.basicConfig(level=logging.WARNING, format='%(message)s')
+logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 path_exp_results = EVOMACHINE_DIR.parent / "tests/data/movie_mothermachine_tif"
 pos0_exp = delta.pipeline.Position.load_netcdf(path_exp_results / "expected_results/Position000001.nc")
