@@ -26,6 +26,7 @@ class ErrorCode(Enum):
     # Tracking errors
     ERROR_TRACK_DIV_NOT_DETECTED = auto()
     ERROR_TRACK_NO_INPUTS = auto()
+    ERROR_TRACK_NO_PREV_STATE = auto()
 
 
 class EvoMachineError(Exception):

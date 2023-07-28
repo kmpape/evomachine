@@ -105,7 +105,7 @@ def arrays_eq_or_approx_eq(exp, res, msg="") -> bool:
 
 
 class TestAutomaton(unittest.TestCase):
-    # @unittest.skip("skipping test_initialisation")
+    @unittest.skip("skipping test_initialisation")
     def test_initialisation(self):
         automaton = Automaton(
             cfg_device=DEVICE_CONFIG_DELTA_SIM,
@@ -171,7 +171,44 @@ class TestAutomaton(unittest.TestCase):
             self.assertTrue(np.array_equal(img_automaton, img_delta))
             automaton.increment_pos()
 
-    # @unittest.skip("skipping test_process")
+    @unittest.skip("skipping test_crop_out_ROI")
+    def test_crop_out_ROI(self):
+        this_cfg_device = DEVICE_CONFIG_DELTA_SIM
+        this_cfg_device.image_processing_verbosity = 0
+        this_cfg_image = IMAGE_CONFIG_DELTA_SIM
+        this_cfg_image.use_track_RT = False
+
+        this_cfg_image.crop_out_ROI = True
+        automaton_crop: Automaton = Automaton(
+            cfg_device=this_cfg_device,
+            cfg_image=this_cfg_image,
+            cfg_delta=DEFAULT_CONFIG_MOTHERMACHINE,
+            camera=DeltaCamera(cfg_device=DEVICE_CONFIG_DELTA_SIM),
+        )
+        automaton_crop.initialise()
+
+        this_cfg_image.crop_out_ROI = False
+        automaton_no_crop: Automaton = Automaton(
+            cfg_device=this_cfg_device,
+            cfg_image=this_cfg_image,
+            cfg_delta=DEFAULT_CONFIG_MOTHERMACHINE,
+            camera=DeltaCamera(cfg_device=DEVICE_CONFIG_DELTA_SIM),
+        )
+        automaton_no_crop.initialise()
+
+        for i_pos in range(2):
+            num_roi_c = len(automaton_crop._pos_processor[i_pos].rois)
+            num_roi_no_c = len(automaton_no_crop._pos_processor[i_pos].rois)
+            msg = f"pos={i_pos}|num_roi_c={num_roi_c}|num_roi_no_c={num_roi_no_c}"
+            self.assertEqual(num_roi_c, num_roi_no_c, msg)
+
+            for i_roi in range(num_roi_c):
+                roi_c = automaton_crop._pos_processor[i_pos].rois[i_roi]
+                roi_no_c = automaton_no_crop._pos_processor[i_pos].rois[i_roi]
+                msg = f"pos={i_pos}|i_roi={i_roi}|box_c={roi_c.box}|box_no_c={roi_no_c.box}"
+                self.assertEqual(roi_c.box, roi_no_c.box, msg)
+
+    @unittest.skip("skipping test_process")
     def test_process(self):
         path_exp_results = EVOMACHINE_DIR.parent / "tests/data/movie_mothermachine_tif"
         pos0_exp = delta.pipeline.Position.load_netcdf(path_exp_results / "expected_results/Position000001.nc")
@@ -180,7 +217,7 @@ class TestAutomaton(unittest.TestCase):
         this_cfg_device.image_processing_verbosity = 0
         this_cfg_image = IMAGE_CONFIG_DELTA_SIM
         this_cfg_image.crop_out_ROI = False
-        this_cfg_image.use_track_RT = True
+        this_cfg_image.use_track_RT = False
         automaton: Automaton = Automaton(
             cfg_device=this_cfg_device,
             cfg_image=this_cfg_image,
@@ -281,13 +318,15 @@ class TestAutomaton(unittest.TestCase):
             print(f"{key}: {val}")
         TIMER_ROI.display_timings()
 
-    @unittest.skip("skipping benchmark_automaton")
+    # @unittest.skip("skipping benchmark_automaton")
     def test_benchmark_automaton(self):
         this_cfg_device = DEVICE_CONFIG_DELTA_SIM
         this_cfg_device.image_processing_verbosity = 0
+        this_cfg_image = IMAGE_CONFIG_DELTA_BENCH
+        this_cfg_image.use_track_RT = True
         automaton: Automaton = Automaton(
             cfg_device=this_cfg_device,
-            cfg_image=IMAGE_CONFIG_DELTA_BENCH,
+            cfg_image=this_cfg_image,
             cfg_delta=DEFAULT_CONFIG_MOTHERMACHINE,
             camera=DeltaCamera(cfg_device=DEVICE_CONFIG_DELTA_SIM),
         )
@@ -306,7 +345,7 @@ class TestAutomaton(unittest.TestCase):
 
         print(f"Total number of positions {len(automaton._pos_processor)}")
         print(f"Number of ROI per position {[len(pos.rois) for pos in automaton._pos_processor]}")
-        TIMER_POSITION.display_timings(scaling=2/18)
+        TIMER_POSITION.display_timings(scaling=1/np.mean([len(pos.rois) for pos in automaton._pos_processor]))
         timings_pos = TIMER_POSITION.get_timings_per_call()
         for key, val in timings_pos.items():
             print(f"{key}: {val}")

@@ -1,7 +1,6 @@
 import logging
 import numpy as np
-from numpy import ndarray
-from typing import List, Type
+from typing import List
 
 import delta
 from delta.config import Config

@@ -5,6 +5,7 @@ import logging
 import matplotlib.pyplot as plt
 import numpy as np
 import unittest
+from skimage.transform import hough_line, hough_line_peaks
 import sys
 
 sys.path.append('/home/lady5906/workspace_python/conda_evomachine3.9/evomachine_repo')
@@ -35,7 +36,7 @@ this_cam = DeltaCamera(cfg_device=this_cfg_device)
 this_cam.initialise()
 this_cfg_image = ConfigImage(
     pxl_horiz=3200,
-    pxl_vert=3200,
+    pxl_vert=2750,
     pxl_dtype=np.dtype("float32"),
     tile_image=(1, 1),
     crop_out_ROI=True,
@@ -50,22 +51,25 @@ automaton: Automaton = Automaton(
 
 ipos = 0
 pos = automaton._pos_processor[ipos]
-self = pos
 ref = this_cam.get_frame(0, 0)
 ref = np.ones(ref.shape) - ref
-ref = ref[np.newaxis, :, :]
+ref = ref[:, :]
+
+rotate_delta = delta.utils.deskew(ref[:, :], None)
+rotate_evo = delta.utils.deskew(ref[:, :], (148, 255))
+# DESKEW
 reference = copy.deepcopy(ref)
+reference_delta = delta.utils.imrotate(reference, rotate_delta)
+reference_evo = delta.utils.imrotate(reference, rotate_evo)
 
-self.rotate = delta.utils.deskew(reference[0, :, :])
-self._msg(f"Rotation correction: {self.rotate} degrees")
-for i_chan in range(reference.shape[0]):
-    reference[i_chan, :, :] = delta.utils.imrotate(reference[i_chan, :, :], self.rotate)
 
-fig, axs = plt.subplots(1, 2)
-axs[0].imshow(ref[0, :, :], cmap='gray', vmin=0, vmax=1)
+fig, axs = plt.subplots(1, 3)
+axs[0].imshow(ref, cmap='gray', vmin=0, vmax=1)
 axs[0].set_title('Reference')
-axs[1].imshow(reference[0, :, :], cmap='gray', vmin=0, vmax=1)
-axs[1].set_title('Reference rotated')
+axs[1].imshow(reference_delta, cmap='gray', vmin=0, vmax=1)
+axs[1].set_title('Reference rotated\nDelta')
+axs[2].imshow(reference_evo, cmap='gray', vmin=0, vmax=1)
+axs[2].set_title('Reference rotated\nEvo')
 plt.show()
 
 # For debugging

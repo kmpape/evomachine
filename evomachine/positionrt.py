@@ -380,28 +380,24 @@ class PositionRT(delta.pipeline.Position):
         reference = (reference - reference.min()) / reference.ptp()  # noqa
 
         if self.cfg_image.crop_out_ROI:
-            lim_resize = 0.1
-            if abs(reference.shape[0]-self.config.target_size_rois[0]) < lim_resize*self.config.target_size_rois[0]:
-                reference = cv2.resize(reference, (reference.shape[1], self.config.target_size_rois[0]))
-            if abs(reference.shape[1]-self.config.target_size_rois[1]) < lim_resize*self.config.target_size_rois[1]:
-                reference = cv2.resize(reference, (self.config.target_size_rois[1], reference.shape[0]))
+            reference_shape = reference.shape
+            frac = 0.5
+            res_width = abs(reference.shape[1]-self.config.target_size_rois[0]) < frac*self.config.target_size_rois[0]
+            res_height = abs(reference.shape[0]-self.config.target_size_rois[1]) < frac*self.config.target_size_rois[1]
+            if res_width and res_height:
+                reference = cv2.resize(reference, self.config.target_size_rois)
+            elif res_width:
+                reference = cv2.resize(reference, (self.config.target_size_rois[0], reference.shape[0]))
+            elif res_height:
+                reference = cv2.resize(reference, (reference.shape[1], self.config.target_size_rois[1]))
             # Crop out windows
-            inputs, windows_y, windows_x = delta.utils.create_windows(
-                reference, target_size=self.config.target_size_rois
-            )
-            windows = (windows_y, windows_x)
-            # Shape to expected format
-            inputs = inputs[:, :, :, np.newaxis]
+            inputs, win_y, win_x = delta.utils.create_windows(image=reference, target_size=self.config.target_size_rois)
             # Predict
-            logits = self.config.model("rois").predict(
-                inputs,
-                batch_size=4,
-                verbose=0,
-            )
-            rois_pred = delta.utils.stitch_pic(logits[..., 0], windows[0], windows[1])
+            logits = self.config.model("rois").predict(inputs[:, :, :, np.newaxis], verbose=0)
+            rois_pred = delta.utils.stitch_pic(logits[..., 0], win_y, win_x)
             # Clean up
             rois_mask = delta.data.postprocess(
-                cv2.resize(np.squeeze(rois_pred), reference.shape[::-1]),
+                cv2.resize(np.squeeze(rois_pred), reference_shape[::-1]),
                 min_size=self.config.min_roi_area,
             )
         else:
@@ -483,7 +479,7 @@ class ROIRT(delta.pipeline.ROI):
             for _ in range(len(self.img_stack))
         ]
 
-        self.state_old: List[Dict[str, Union[float, int, bool]]] = [{"y": 0.0, "area": 0.0, "div": False}]
+        self.state_old: List[Dict[str, Union[float, int, bool]]] = [{"y": 0.0, "area": 0.0, "div": False, 'id': -1}]
         "Variable for tracking algorithm at previous time step."
         self.max_id: int = 0
         "Keeps track of the maximum ID ever assigned to a cell in the ROI."

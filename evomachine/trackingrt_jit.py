@@ -1,8 +1,8 @@
 import logging
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import cv2
-from numba import jit
+import numba as nb
 import numpy as np
 
 import delta
@@ -11,11 +11,25 @@ from evomachine.exceptions import ErrorCode, ImageProcessingError
 
 logger = logging.getLogger(__name__)
 
+# Custom error codes to allow for JIT compilation
+NO_ERROR = 0
+ERROR_TRACK_NO_INPUTS = 1
+ERROR_TRACK_DIV_NOT_DETECTED = 2
+ERROR_NO_PREV_STATE = 3
+ERROR = 4
+ERROR_MAP = {
+    NO_ERROR: ErrorCode.NO_ERROR,
+    ERROR: ErrorCode.ERROR,
+    ERROR_TRACK_NO_INPUTS: ErrorCode.ERROR_TRACK_NO_INPUTS,
+    ERROR_TRACK_DIV_NOT_DETECTED: ErrorCode.ERROR_TRACK_DIV_NOT_DETECTED,
+    ERROR_NO_PREV_STATE: ErrorCode.ERROR_TRACK_NO_PREV_STATE,
+}
 
+
+@nb.njit(nb.boolean(nb.float32, nb.float32))
 def is_division(
         area_old: float,
         area_new: float,
-        diff_param: float = 0.9,
 ) -> bool:
     """
     Decides based on the formulate "area_new <= diff_param * area_old" whether the cell divided or not.
@@ -26,8 +40,6 @@ def is_division(
         Area of cell at previous time step.
     area_new: float
         Area of cell at current time step.
-    diff_param: float
-        Parameter for cell division formula. Should be chosen as 0 < diff_param < 1 to give meaningful results.
 
     Returns
     -------
@@ -35,6 +47,7 @@ def is_division(
         Returns true if a cell division occurred.
 
     """
+    diff_param: float = 0.9
     cell_division_occurred = area_new <= diff_param * area_old
     return cell_division_occurred
 
@@ -88,73 +101,60 @@ def init_track_trench_rt(
     return x_new, attributions_matrix
 
 
+@nb.njit(nb.int32[:](nb.float32[:], nb.float32[:], nb.int32[:],
+                     nb.float32[:], nb.float32[:], nb.int32[:],
+                     nb.boolean[:],
+                     nb.int32[:],
+                     nb.boolean[:, :],
+                     np.int32))
 def track_trench_rt(
-        x_old: List[Dict[str, Union[float, int, bool]]],
-        u_new: List[Dict[str, float]],
+        y_old: List[float],
+        area_old: List[float],
+        id_old: List[int],
+        y_new: List[float],
+        area_new: List[float],
+        id_new: List[int],
+        div_new: List[bool],
+        error_codes: List[int],
+        attributions_matrix: np.typing.NDArray[(Any, Any), np.bool_],
         max_id: int,
-) -> Tuple[List[Dict[str, Union[float, int, bool]]], np.typing.NDArray[bool], "ImageProcessingError"]:
-    """
-    Function for tracking cells in mother machine trenches.
-
-    Parameters
-    ----------
-    x_old: [{"y":float, "area": float, "id": int}, {...}, ...] sorted by "y" value.
-        State of trench at time t-1. First cell of list is expected to be the mother cell.
-    u_new: [{"y":float, "area": float}, {...}, ...] sorted by "y" value.
-        Output from segmentation at time t. First cell of list is expected to be the mother cell.
-    max_id: int
-        Highest ID ever used in this trench. New IDs are created as max_id+1, max_id+2 etc.
-
-    Returns
-    -------
-    x_new: [{"y":float, "area": float, "id": int, "div": bool}, {...}, ...] sorted by "y" value.
-        State of trench at time t.
-    attributions_matrix: np.typing.NDArray[bool]
-        Delta-style attributions matrix.
-    image_processing_error: Union[None, ImageProcessingError]
-        Returns a non-zero error if a cell division was not detected.
-
-    TODO:
-    - what if a new cell disappears?
-    - what if we haven't detected division events?
-    - what if max_id overflows?
-    """
-    len_old = len(x_old)
-    len_new = len(u_new)
-    attributions_matrix = np.zeros((len_old, len_new), dtype=bool)
-    x_new = [{"y": u_i["y"], "area": u_i["area"], "id": -1, "div": False}
-             for u_i in u_new]
+) -> int:
+    len_old = len(id_old)
+    len_new = len(id_new)
     new_id = max_id + 1
-    image_processing_error = ImageProcessingError("", ErrorCode.NO_ERROR)
-    logger.debug(f"x_old={x_old}\nu_new={u_new}")
 
-    # Initialise with mother cell
-    if x_old and x_new:
-        x_new[0]["id"] = x_old[0]["id"]
-        x_new[0]["div"] = is_division(x_old[0]["area"], x_new[0]["area"])
-        attributions_matrix[0, 0] = True
-    else:
-        image_processing_error = ImageProcessingError("u_new or x_old is empty.", ErrorCode.ERROR_TRACK_NO_INPUTS)
-        return x_new, attributions_matrix, image_processing_error
+    # Handle special cases, TODO: move elsewhere
+    if len_old == 0:
+        for i_new in range(len_new):
+            id_new[i_new] = new_id + i_new
+            error_codes[i_new] = ERROR_NO_PREV_STATE
+        return ERROR_NO_PREV_STATE
+    elif len_new == 0:
+        return ERROR_TRACK_NO_INPUTS
 
-    # Iterate over remaining cells
+    # Initialise mother cell
+    id_new[0] = id_old[0]
+    div_new[0] = is_division(area_old[0], area_new[0])
+    attributions_matrix[0, 0] = True
+
+    # Loop over remaining cells
     i_old = 1
     for i_new in range(1, len_new):
-        if x_new[i_new-1]["div"]:
-            x_new[i_new]["id"] = new_id
-            attributions_matrix[i_old-1, i_new] = True
+        if div_new[i_new]:
+            id_new[i_new] = new_id
             new_id = new_id + 1
+            attributions_matrix[i_old - 1, i_new] = True
         elif i_old >= len_old:
-            x_new[i_new]["id"] = new_id
+            id_new[i_new] = new_id
             new_id = new_id + 1
-            image_processing_error = ImageProcessingError("Divisions not detected. Assigning new IDs instead.",
-                                                          ErrorCode.ERROR_TRACK_DIV_NOT_DETECTED)
+            error_codes[i_new] = ERROR_TRACK_DIV_NOT_DETECTED
         else:
-            x_new[i_new]["id"] = x_old[i_old]["id"]
-            x_new[i_new]["div"] = is_division(x_old[i_old]["area"], x_new[i_new]["area"])
+            id_new[i_new] = id_old[i_old]
+            div_new[i_new] = is_division(area_old[i_old], area_new[i_new])
             attributions_matrix[i_old, i_new] = True
             i_old = i_old + 1
-    logger.debug(f"x_new={x_new}")
 
-    return x_new, attributions_matrix, image_processing_error
-
+    if sum(error_codes):
+        return ERROR
+    else:
+        return NO_ERROR

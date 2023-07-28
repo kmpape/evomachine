@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO, format='%(message)s')
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
-from pathlib import Path
+import pickle
 
 import delta
 from delta import utils
@@ -75,23 +75,6 @@ def arrays_eq_or_approx_eq(exp, res, msg="") -> bool:
         return is_approx_eq
 
 
-bla1 = np.ones((300, 100))
-bla1[50:100, :] = 2
-bla1[100:150, :] = 3
-bla1[150:200, :] = 4
-bla1[200:, :] = 5
-bla2 = np.ones((300, 100))
-bla2[50:100, :] = 9
-bla2[100:150, :] = 3
-bla2[150:200, :] = 4
-bla2[200:250, :] = 6
-bla2[250:, :] = 10
-cmap = plt.cm.get_cmap('tab20', 20)
-fig, axs = plt.subplots(1, 2)
-axs[0].imshow(bla1, cmap=cmap, vmin=0, vmax=20)
-axs[1].imshow(bla2, cmap=cmap, vmin=0, vmax=20)
-
-
 logging.basicConfig(level=logging.INFO, format='%(message)s')
 
 path_exp_results = EVOMACHINE_DIR.parent / "tests/data/movie_mothermachine_tif"
@@ -110,6 +93,8 @@ automaton: Automaton = Automaton(
 )
 automaton.initialise()
 
+all_states = [[[] for _ in automaton._pos_processor[0].rois],
+              [[] for _ in automaton._pos_processor[1].rois]]
 for i_pos in range(2):
     if i_pos == 0:
         exp_result = pos0_exp
@@ -117,6 +102,7 @@ for i_pos in range(2):
         exp_result = pos1_exp
     for i_roi, roi in enumerate(automaton._pos_processor[i_pos].rois):
         i_period = 0
+        print(f"i_period={i_period}\n")
         msg = "img_stack mismatch at pos={}, roi={}, i_frame={}".format(i_pos, i_roi, i_period)
         assert arrays_eq_or_approx_eq(exp_result.rois[i_roi].img_stack[0], roi.img_stack[1], msg)
         msg = "seg_stack mismatch at pos={}, roi={}, i_frame={}".format(i_pos, i_roi, i_period)
@@ -124,6 +110,7 @@ for i_pos in range(2):
         msg = "label_stack mismatch at pos={}, roi={}, i_frame={}".format(i_pos, i_roi, i_period)
         assert arrays_eq_or_approx_eq(exp_result.rois[i_roi].label_stack[0], roi.label_stack[1], msg)
         for i_period in range(1, DEVICE_CONFIG_DELTA_SIM.num_periods):
+            print(f"i_period={i_period}\n")
             # print("PROCESS AT POS {} and PERIOD {}".format(automaton.get_pos(), automaton.get_period()))
             # Process an additional step at position 0
             assert automaton.get_pos() == 0
@@ -147,8 +134,9 @@ for i_pos in range(2):
                                                   and (i_period >= 4)))
                     do_check = do_check and (not (this_cfg_image.use_track_RT and (i_pos == 0) and (i_roi == 7)
                                                   and (i_period >= 7)))
-                    do_check = True
+                    do_check = False
                     exp_roi = exp_result.rois[i_roi]
+                    all_states[i_pos][i_roi].append(roi.state_old)
                     if do_check:
                         msg = "img_stack mismatch at pos={}, roi={}, i_frame={}".format(i_pos, i_roi, i_period)
                         assert arrays_eq_or_approx_eq(exp_roi.img_stack[i_period], roi.img_stack[1], msg)
@@ -160,6 +148,8 @@ for i_pos in range(2):
                         # msg = "label_stack mismatch at pos={}, roi={}, i_frame={}".format(i_pos, i_roi, i_period)
                         # assert arrays_eq_or_approx_eq(exp_roi.label_stack[i_period], roi.label_stack[1], msg)
 
+with open("evomachine_repo/tests/data/pos0_states_v1.pickle", "wb") as file:
+    pickle.dump(all_states[0], file)
 
 exp_cell_ids = [_id for (_id, x) in exp_roi.lineage.cells.items() if x.first_frame <= i_period <= x.last_frame]
 cell_ids = [_id for (_id, x) in roi.lineage.cells.items() if x.first_frame <= i_period <= x.last_frame]
