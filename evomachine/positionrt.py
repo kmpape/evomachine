@@ -479,7 +479,7 @@ class ROIRT(delta.pipeline.ROI):
             for _ in range(len(self.img_stack))
         ]
 
-        self.state_old: List[Dict[str, Union[float, int, bool]]] = [{"y": 0.0, "area": 0.0, "div": False, 'id': -1}]
+        self.state_old: List[Dict[str, Union[float, int, bool]]] = []
         "Variable for tracking algorithm at previous time step."
         self.max_id: int = 0
         "Keeps track of the maximum ID ever assigned to a cell in the ROI."

@@ -12,17 +12,17 @@ from evomachine.exceptions import ErrorCode, ImageProcessingError
 logger = logging.getLogger(__name__)
 
 # Custom error codes to allow for JIT compilation
-NO_ERROR = 0
-ERROR_TRACK_NO_INPUTS = 1
-ERROR_TRACK_DIV_NOT_DETECTED = 2
-ERROR_NO_PREV_STATE = 3
-ERROR = 4
+NO_ERROR = np.int32(0)
+ERROR_TRACK_NO_INPUTS = np.int32(1)
+ERROR_TRACK_DIV_NOT_DETECTED = np.int32(2)
+ERROR_NO_PREV_STATE = np.int32(3)
+ERROR = np.int32(4)
 ERROR_MAP = {
-    NO_ERROR: ErrorCode.NO_ERROR,
-    ERROR: ErrorCode.ERROR,
-    ERROR_TRACK_NO_INPUTS: ErrorCode.ERROR_TRACK_NO_INPUTS,
-    ERROR_TRACK_DIV_NOT_DETECTED: ErrorCode.ERROR_TRACK_DIV_NOT_DETECTED,
-    ERROR_NO_PREV_STATE: ErrorCode.ERROR_TRACK_NO_PREV_STATE,
+    NO_ERROR: ErrorCode.NO_ERROR.value,
+    ERROR: ErrorCode.ERROR.value,
+    ERROR_TRACK_NO_INPUTS: ErrorCode.ERROR_TRACK_NO_INPUTS.value,
+    ERROR_TRACK_DIV_NOT_DETECTED: ErrorCode.ERROR_TRACK_DIV_NOT_DETECTED.value,
+    ERROR_NO_PREV_STATE: ErrorCode.ERROR_TRACK_NO_PREV_STATE.value,
 }
 
 
@@ -74,51 +74,38 @@ def get_tracking_inputs_rt(seg_mask: np.typing.NDArray[np.uint8]) -> List[Dict[s
     return tracking_inputs
 
 
-def init_track_trench_rt(
-        seg_mask: np.typing.NDArray[np.uint8]
-) -> Tuple[List[Dict[str, Union[float, int]]], np.typing.NDArray[bool]]:
-    """
-    Computes the output of track_trench_rt for the first frame.
-
-    Parameters
-    ----------
-    seg_mask: np.typing.NDArray[np.uint8])
-        Output from ROI.get_frame().
-
-    Returns
-    -------
-    x_new: [{"y":float, "y_new":float, "y_old":float, "area": float, "id": int}, {...}, ...] sorted by "y"
-        y is the y-coordinate of the "center", i.e. y_new+y_old (Note: multiply by 0.5 to get the real coordinate).
-    attributions_matrix: np.typing.NDArray[bool]
-        Delta-style attributions matrix.
-    """
-    x_new = get_tracking_inputs_rt(seg_mask)
-    for cell_id, x_i in enumerate(x_new, start=1):  # modifies the list in-place
-        x_i["id"] = cell_id
-        x_i["div"] = False
-    attributions_matrix = np.empty((0, len(x_new)), dtype=bool)
-    logger.debug(f"x_new={x_new}")
-    return x_new, attributions_matrix
-
-
-@nb.njit(nb.int32[:](nb.float32[:], nb.float32[:], nb.int32[:],
-                     nb.float32[:], nb.float32[:], nb.int32[:],
-                     nb.boolean[:],
-                     nb.int32[:],
-                     nb.boolean[:, :],
-                     np.int32))
 def track_trench_rt(
-        y_old: List[float],
-        area_old: List[float],
-        id_old: List[int],
-        y_new: List[float],
-        area_new: List[float],
-        id_new: List[int],
-        div_new: List[bool],
-        error_codes: List[int],
-        attributions_matrix: np.typing.NDArray[(Any, Any), np.bool_],
+        x_old: List[Dict[str, Union[float, int, bool]]],
+        u_new: List[Dict[str, float]],
         max_id: int,
-) -> int:
+) -> Tuple[List[Dict[str, Union[float, int, bool]]], np.typing.NDArray[bool], int]:
+    area_old = np.array([x['area'] for x in x_old], dtype=np.float32)
+    id_old = np.array([x['id'] for x in x_old], dtype=np.int32)
+    area_new = np.array([u['area'] for u in u_new], dtype=np.float32)
+    id_new = np.array([-1 for u in u_new], dtype=np.int32)
+    div_new = np.array([False for u in u_new], dtype=np.bool_)
+    error_codes = np.array([NO_ERROR for u in u_new], dtype=np.int32)
+    attributions_matrix = np.zeros((len(x_old), len(u_new)), dtype=np.bool_)
+    error_code = track_trench_rt_jit(
+        area_old, id_old, area_new, id_new, div_new, error_codes, attributions_matrix, np.int32(max_id),
+    )
+    x_new = [{"y": u_i["y"], "area": u_i["area"], "id": id_i, "div": div_i, "ErrorCode.value": ERROR_MAP[e_i]}
+             for (u_i, id_i, div_i, e_i) in zip(u_new, id_new, div_new, error_codes)]
+    return x_new, attributions_matrix, ERROR_MAP[error_code]
+
+
+@nb.njit(nb.int32(nb.float32[:], nb.int32[:], nb.float32[:], nb.int32[:], nb.boolean[:], nb.int32[:], nb.boolean[:, :],
+                  nb.int32))
+def track_trench_rt_jit(
+        area_old: np.typing.NDArray[nb.float32],
+        id_old: np.typing.NDArray[nb.int32],
+        area_new: np.typing.NDArray[nb.float32],
+        id_new: np.typing.NDArray[nb.int32],
+        div_new: np.typing.NDArray[nb.bool_],
+        error_codes: np.typing.NDArray[nb.int32],
+        attributions_matrix: np.typing.NDArray[np.bool_],
+        max_id: np.int32,
+) -> np.int32:
     len_old = len(id_old)
     len_new = len(id_new)
     new_id = max_id + 1
@@ -135,15 +122,15 @@ def track_trench_rt(
     # Initialise mother cell
     id_new[0] = id_old[0]
     div_new[0] = is_division(area_old[0], area_new[0])
-    attributions_matrix[0, 0] = True
+    attributions_matrix[0] = True
 
     # Loop over remaining cells
     i_old = 1
     for i_new in range(1, len_new):
-        if div_new[i_new]:
+        if div_new[i_new-1]:
             id_new[i_new] = new_id
             new_id = new_id + 1
-            attributions_matrix[i_old - 1, i_new] = True
+            attributions_matrix[i_old-1, i_new] = True
         elif i_old >= len_old:
             id_new[i_new] = new_id
             new_id = new_id + 1
