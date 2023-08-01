@@ -67,9 +67,10 @@ def get_tracking_inputs_rt(seg_mask: np.typing.NDArray[np.uint8]) -> List[Dict[s
         y is the y-coordinate of the "center", i.e. y_new+y_old (Note: multiply by 0.5 to get the real coordinate).
     """
     contours = delta.utils.find_contours(seg_mask)
-    areas = [cv2.contourArea(contour) for contour in contours]  # *0.5 not needed
-    centers = [contour[:, 0, 1].min() + contour[:, 0, 1].max() for contour in contours]
-    tracking_inputs = [{"y": y, "area":  area} for (y, area) in zip(centers, areas)]
+    areas = [cv2.contourArea(contour) for contour in contours]
+    y_min_max = [(contour[:, 0, 1].min(), contour[:, 0, 1].max()) for contour in contours]
+    tracking_inputs = [{"y": y[0] + y[1], "y_min": y[0], "y_max": y[1], "area":  area}
+                       for (y, area) in zip(y_min_max, areas)]
     tracking_inputs.sort(key=lambda x: x["y"], reverse=False)  # assuming that the mother cell is on top
     return tracking_inputs
 
@@ -78,7 +79,7 @@ def track_trench_rt(
         x_old: List[Dict[str, Union[float, int, bool]]],
         u_new: List[Dict[str, float]],
         max_id: int,
-) -> Tuple[List[Dict[str, Union[float, int, bool]]], np.typing.NDArray[bool], int]:
+) -> Tuple[List[Dict[str, Union[float, int, bool]]], np.typing.NDArray[bool], ImageProcessingError]:
     area_old = np.array([x['area'] for x in x_old], dtype=np.float32)
     id_old = np.array([x['id'] for x in x_old], dtype=np.int32)
     area_new = np.array([u['area'] for u in u_new], dtype=np.float32)
@@ -89,9 +90,10 @@ def track_trench_rt(
     error_code = track_trench_rt_jit(
         area_old, id_old, area_new, id_new, div_new, error_codes, attributions_matrix, np.int32(max_id),
     )
-    x_new = [{"y": u_i["y"], "area": u_i["area"], "id": id_i, "div": div_i, "ErrorCode.value": ERROR_MAP[e_i]}
+    x_new = [{**u_i, **{"id": id_i, "div": div_i, "ErrorCode.value": ERROR_MAP[e_i]}}
              for (u_i, id_i, div_i, e_i) in zip(u_new, id_new, div_new, error_codes)]
-    return x_new, attributions_matrix, ERROR_MAP[error_code]
+    image_processing_error = ImageProcessingError(message="", error_code=ErrorCode(ERROR_MAP[error_code]))
+    return x_new, attributions_matrix, image_processing_error
 
 
 @nb.njit(nb.int32(nb.float32[:], nb.int32[:], nb.float32[:], nb.int32[:], nb.boolean[:], nb.int32[:], nb.boolean[:, :],
@@ -110,7 +112,7 @@ def track_trench_rt_jit(
     len_new = len(id_new)
     new_id = max_id + 1
 
-    # Handle special cases, TODO: move elsewhere
+    # Handle special cases
     if len_old == 0:
         for i_new in range(len_new):
             id_new[i_new] = new_id + i_new

@@ -2,7 +2,7 @@ import copy
 from collections.abc import Sequence
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Union, cast
+from typing import Any, Dict, List, Literal, Optional, Union, cast, Tuple
 
 import cv2
 import numpy as np
@@ -348,8 +348,8 @@ class PositionRT(delta.pipeline.Position):
 
         for i_roi, roi in enumerate(self.rois):
             logging.debug(f"{self}:init_track_rt for ROI {i_roi}")
-            roi.init_track_rt()
-            roi.track_rt()
+            roi.track_rt(frame=0)
+            roi.track_rt(frame=1)
 
     def track_rt(self) -> None:
         """
@@ -357,7 +357,7 @@ class PositionRT(delta.pipeline.Position):
         """
         for i_roi, roi in enumerate(self.rois):
             logging.debug(f"{self}:track_rt for ROI {i_roi}")
-            roi.track_rt()
+            roi.track_rt(frame=1)
 
     def find_roi_boxes(self, reference: delta.utils.Image, config: Config) -> list[delta.utils.CroppingBox]:
         """
@@ -479,7 +479,7 @@ class ROIRT(delta.pipeline.ROI):
             for _ in range(len(self.img_stack))
         ]
 
-        self.state_old: List[Dict[str, Union[float, int, bool]]] = []
+        self.tracking_state: List[Dict[str, Union[float, int, bool]]] = []
         "Variable for tracking algorithm at previous time step."
         self.max_id: int = 0
         "Keeps track of the maximum ID ever assigned to a cell in the ROI."
@@ -666,27 +666,18 @@ class ROIRT(delta.pipeline.ROI):
         # assert len(self.label_stack) == frame - self.first_frame
         self.label_stack[frame - self.first_frame] = labels
 
-    def init_track_rt(self) -> None:
-        """
-        """
-        seg_mask = self.get_seg(self.first_frame)
-        state_new, attributions_matrix = trackingrt.init_track_trench_rt(seg_mask=seg_mask)
-
-        # Update tracking algorithm variables
-        self.state_old = state_new
+    def update_track_rt_state(self, state_new: List[Dict[str, Union[float, int, bool]]]) -> None:
+        self.tracking_state = state_new
         if state_new:
             self.max_id = max(self.max_id, max([state["id"] for state in state_new]))
 
-        # Dispatch tracking outputs
-        self.process_tracking_outputs_rt(attributions=attributions_matrix, frame=self.first_frame)
-
-    def track_rt(self) -> None:
+    def track_rt(self, frame: int = 1) -> None:
         """
         """
 
         # Run through frames and compile inputs and references
         TIMER_ROI.start("track_rt", 0)
-        seg_mask = self.get_seg(frame=self.first_frame+1)
+        seg_mask = self.get_seg(frame=self.first_frame + frame)
 
         TIMER_ROI.start("track_rt:prepare", 1)
         tracking_inputs = trackingrt.get_tracking_inputs_rt(seg_mask)
@@ -694,27 +685,22 @@ class ROIRT(delta.pipeline.ROI):
 
         # Track
         TIMER_ROI.start("track_rt:predict", 1)
-        if not self.state_old:
-            state_new, attributions_matrix = trackingrt.init_track_trench_rt(seg_mask=seg_mask)
-        else:
-            state_new, attributions_matrix, image_processing_error = trackingrt.track_trench_rt(  # noqa
-                self.state_old,
-                tracking_inputs,
-                self.max_id,
-            )
-            if image_processing_error.error_code.value:
-                logging.warning(f"{self}: {image_processing_error}")
-                self.error_container.add_error(new_error=image_processing_error)
+        state_new, attributions_matrix, image_processing_error = trackingrt.track_trench_rt(  # noqa
+            self.tracking_state,
+            tracking_inputs,
+            self.max_id,
+        )
+        if image_processing_error.error_code.value:
+            logging.warning(f"{self}: {image_processing_error}")
+            self.error_container.add_error(new_error=image_processing_error)
         TIMER_ROI.stop("track_rt:predict", 1)
 
         # Update tracking algorithm variables
-        self.state_old = state_new
-        if state_new:
-            self.max_id = max(self.max_id, max([state["id"] for state in state_new]))
+        self.update_track_rt_state(state_new=state_new)
 
         # Dispatch tracking outputs
         TIMER_ROI.start("track_rt:process", 1)
-        self.process_tracking_outputs_rt(attributions=attributions_matrix, frame=self.first_frame+1)
+        self.process_tracking_outputs_rt(attributions=attributions_matrix, frame=self.first_frame+frame)
         TIMER_ROI.stop("track_rt:process", 1)
         TIMER_ROI.stop("track_rt", 0)
 
@@ -745,8 +731,11 @@ class ROIRT(delta.pipeline.ROI):
 
         # Get scores and attributions:
         # Label frame but numbered 1, 2, 3, 4, etc. (temporary labels)
+        TIMER_ROI.start("process:label_seg", 2)
         labels = delta.utils.label_seg(self.get_seg(frame))
+        TIMER_ROI.stop("process:label_seg", 2)
 
+        TIMER_ROI.start("process:getcellsinframe", 2)
         previous_cell_nbs = (
             delta.utils.getcellsinframe(self.get_labels(frame - 1)[::-1, :])[::-1]
             if frame > self.first_frame
@@ -754,33 +743,45 @@ class ROIRT(delta.pipeline.ROI):
         )
         assert len(previous_cell_nbs) == attributions.shape[0]
         cell_nbs = [None] * attributions.shape[1]
+        TIMER_ROI.stop("process:getcellsinframe", 2)
 
         # Get poles:
-        poles = delta.utils.getpoles(self.get_seg(frame), labels, scaling=self.scaling)
+        TIMER_ROI.start("process:getpoles", 2)
+        # poles = delta.utils.getpoles(self.get_seg(frame), labels, scaling=self.scaling)
+        poles = {s_i["id"]: (np.round(np.array([0.0, s_i["y_min"]], dtype=np.float32) * self.scaling).astype(np.int16),
+                             np.round(np.array([0.0, s_i["y_max"]], dtype=np.float32) * self.scaling).astype(np.int16))
+                 for s_i in self.tracking_state}
+        TIMER_ROI.stop("process:getpoles", 2)
 
         # Resize labels if not using crop windows:
+        TIMER_ROI.start("process:resize", 2)
         if not self.config.crop_windows:
             resize = (
                 self.box.xbr - self.box.xtl,
                 self.box.ybr - self.box.ytl,
             )
             labels = cv2.resize(labels, resize, interpolation=cv2.INTER_NEAREST)
+        TIMER_ROI.stop("process:resize", 2)
 
         # Extract features for all cells in the ROI:
-        extracted_features = delta.utils.roi_features(
-            labels,
+        TIMER_ROI.start("process:roi_features", 2)
+        extracted_features = self.roi_features(
+            labels_frame=labels,
             fluo_frames=self.get_fluo(frame),
+            poles=poles,
         )
+        TIMER_ROI.stop("process:roi_features", 2)
 
         # Make sure the same cell_ids are present in both dicts
-        assert poles.keys() == extracted_features.keys()
-
-        # Assign poles to extracted features:
-        for cellid, (old_pole, new_pole) in poles.items():
-            extracted_features[cellid].old_pole = old_pole
-            extracted_features[cellid].new_pole = new_pole
+        # assert poles.keys() == extracted_features.keys()
+        #
+        # # Assign poles to extracted features:
+        # for cellid, (old_pole, new_pole) in poles.items():
+        #     extracted_features[cellid].old_pole = old_pole
+        #     extracted_features[cellid].new_pole = new_pole
 
         # Go through old cells
+        TIMER_ROI.start("process:oldcells", 2)
         for cellid, attribs in zip(previous_cell_nbs, attributions):
             assert self.lineage.cells[cellid].last_frame == self._frame_id - 1  # Changed
             attrib = attribs.nonzero()[0]
@@ -812,8 +813,10 @@ class ROIRT(delta.pipeline.ROI):
                 )
                 cell_nbs[n0] = cellid
                 cell_nbs[n1] = newcellid
+        TIMER_ROI.stop("process:oldcells", 2)
 
         # Go through new cells
+        TIMER_ROI.start("process:newcells", 2)
         for n, attribs in enumerate(attributions.T):
             attrib = attribs.nonzero()[0]
             if len(attrib) == 1:
@@ -829,20 +832,57 @@ class ROIRT(delta.pipeline.ROI):
                 self._frame_id, extracted_features[n + 1], motherid=None  # Changed
             )
             cell_nbs[n] = cellid
+        TIMER_ROI.stop("process:newcells", 2)
 
         assert None not in cell_nbs
         # Recompile label frame with new labels
+        TIMER_ROI.start("process:label_seg", 2)
         labels = delta.utils.label_seg(self.get_seg(frame), cell_nbs)
+        TIMER_ROI.stop("process:label_seg", 2)
 
         # Resize image:
+        TIMER_ROI.start("process:resize", 2)
         if not self.config.crop_windows:
             resize = (
                 self.box.xbr - self.box.xtl,
                 self.box.ybr - self.box.ytl,
             )
             labels = cv2.resize(labels, resize, interpolation=cv2.INTER_NEAREST)
+        TIMER_ROI.stop("process:resize", 2)
 
         self.label_stack[frame - self.first_frame] = labels
+
+    def roi_features(
+            self,
+            labels_frame: np.typing.NDArray[np.uint16],
+            fluo_frames: np.ndarray,
+            poles: dict[int, Tuple[np.ndarray]]
+    ) -> dict[int, delta.lineage.CellFeatures]:
+        cell_features = {}
+        for state_i in self.tracking_state:
+            cellid = state_i["id"]
+            mask = labels_frame == cellid
+
+            fluo_values = 2 ** 16 * delta.utils.cell_fluo(fluo_frames, mask)
+
+            #  width, length = cell_width_length(contour)
+            tmp_length = float(abs(state_i["y_max"] - state_i["y_min"]))
+            length = tmp_length if tmp_length > 0 else 0.1
+            area = state_i["area"] if state_i["area"] > 0 else 0.1
+            width = length / area
+
+            cell_features[cellid] = delta.lineage.CellFeatures(
+                new_pole=poles[cellid][1],
+                old_pole=poles[cellid][0],
+                edges="",  # image_edges(contour, mask)
+                width=width,
+                length=length,
+                area=area,
+                perimeter=0.0,  #cell_perimeter(contour)
+                fluo=fluo_values,
+            )
+
+        return cell_features
 
     def __str__(self):
         return f"ROI_{self.roi_nb:03}"
