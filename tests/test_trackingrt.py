@@ -118,7 +118,8 @@ class TestTracking(unittest.TestCase):
             x_old, u_new, 0,
         )
         self.assertEqual(image_processing_error_jit.error_code.value, ErrorCode.ERROR_TRACK_NO_PREV_STATE.value)
-        x_new = [{"y": u_i["y"], "area": u_i["area"], "id": id_new+1, "div": False}
+        x_new = [{"y": u_i["y"], "area": u_i["area"], "id": id_new+1, "div": False,
+                  "ErrorCode.value": ErrorCode.ERROR_TRACK_NO_PREV_STATE.value}
                  for id_new, u_i in enumerate(u_new)]
         for (x_new_i, state_new_jit_i) in zip(x_new, state_new_jit):
             self.assertDictEqual(x_new_i, state_new_jit_i)
