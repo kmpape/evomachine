@@ -117,7 +117,7 @@ IMAGE_CONFIG_DELTA_BENCH = ConfigImage(
     pxl_horiz=696,
     pxl_vert=520,
     pxl_dtype=np.dtype("float32"),
-    tile_image=(1, 5),
+    tile_image=(1, 25),
     crop_out_ROI=True,
 )
 
