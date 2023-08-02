@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Union, cast, Tuple
 
 import cv2
+import dask
 from joblib import Parallel, delayed
 import numpy as np
 import tqdm
@@ -24,6 +25,9 @@ from evomachine.utils import Timer
 TIMER_POSITION = Timer(timer_level=0, name="PositionRT", enabled=True)
 
 logger = logging.getLogger(__name__)
+
+num_workers = 2
+dask.config.set(scheduler='threads', num_workers=num_workers)
 
 
 class PositionRT(delta.pipeline.Position):
@@ -361,8 +365,7 @@ class PositionRT(delta.pipeline.Position):
         """
         # for i_roi, roi in enumerate(self.rois):
         #     roi.track_rt(frame=1)
-        # with concurrent.futures.ThreadPoolExecutor() as executor:
-        #     # Submit the track_rt_roi function for each ROI to the executor
+        # with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         #     futures = [executor.submit(this_track_rt_roi, roi) for roi in self.rois]
         #     concurrent.futures.wait(futures)
         # with multiprocessing.Pool(processes=2) as pool:
@@ -370,9 +373,9 @@ class PositionRT(delta.pipeline.Position):
         #     pool.map(this_track_rt_roi, self.rois)
         # def this_track_rt_roi(roi: ROIRT):
         #     roi.track_rt(frame=1)
-        #
-        # # Use joblib to parallelize the track_rt_roi calls
-        Parallel(n_jobs=2)(delayed(this_track_rt_roi)(roi) for roi in self.rois)
+        # Parallel(n_jobs=2)(delayed(this_track_rt_roi)(roi) for roi in self.rois)
+        delayed_calls = [dask.delayed(this_track_rt_roi)(roi) for roi in self.rois]
+        dask.compute(*delayed_calls)
 
     def find_roi_boxes(self, reference: delta.utils.Image, config: Config) -> list[delta.utils.CroppingBox]:
         """
