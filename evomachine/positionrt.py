@@ -1,6 +1,8 @@
 import copy
 from collections.abc import Sequence
+import concurrent.futures
 import logging
+import multiprocessing
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Union, cast, Tuple
 
@@ -359,11 +361,18 @@ class PositionRT(delta.pipeline.Position):
         """
         # for i_roi, roi in enumerate(self.rois):
         #     roi.track_rt(frame=1)
-        def this_track_rt_roi(roi: ROIRT):
-            roi.track_rt(frame=1)
-
-        # Use joblib to parallelize the track_rt_roi calls
-        Parallel(n_jobs=-1)(delayed(this_track_rt_roi)(roi) for roi in self.rois)
+        # with concurrent.futures.ThreadPoolExecutor() as executor:
+        #     # Submit the track_rt_roi function for each ROI to the executor
+        #     futures = [executor.submit(this_track_rt_roi, roi) for roi in self.rois]
+        #     concurrent.futures.wait(futures)
+        # with multiprocessing.Pool(processes=2) as pool:
+        #     # Map the track_rt_roi function to each ROI in self.rois
+        #     pool.map(this_track_rt_roi, self.rois)
+        # def this_track_rt_roi(roi: ROIRT):
+        #     roi.track_rt(frame=1)
+        #
+        # # Use joblib to parallelize the track_rt_roi calls
+        Parallel(n_jobs=2)(delayed(this_track_rt_roi)(roi) for roi in self.rois)
 
     def find_roi_boxes(self, reference: delta.utils.Image, config: Config) -> list[delta.utils.CroppingBox]:
         """
@@ -869,3 +878,9 @@ class ROIRT(delta.pipeline.ROI):
 
     def __str__(self):
         return f"ROI_{self.roi_nb:03}"
+
+
+
+# For parallel jobs
+def this_track_rt_roi(roi: ROIRT):
+    roi.track_rt(frame=1)
