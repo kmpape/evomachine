@@ -15,7 +15,7 @@ from delta.pipeline import TIMER_ROI
 from evomachine.config import ConfigImage
 from evomachine.exceptions import ImageProcessingError, ErrorCode, ErrorContainer
 # import evomachine.trackingrt as trackingrt
-import evomachine.trackingrt as trackingrt
+import evomachine.trackingrt_jit as trackingrt
 from evomachine.utils import Timer
 
 TIMER_POSITION = Timer(timer_level=0, name="PositionRT", enabled=True)
@@ -753,6 +753,7 @@ class ROIRT(delta.pipeline.ROI):
                        np.round(np.array([0.0, s_i["y_max"]], dtype=np.float32) * self.scaling).astype(np.int16))
                  for id_, s_i in enumerate(self.tracking_state, start=1)}
         # TIMER_ROI.stop("process:getpoles", 2)
+        assert None not in poles.keys()
 
         # Resize labels if not using crop windows:
         # TIMER_ROI.start("process:resize", 2)

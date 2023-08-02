@@ -124,7 +124,7 @@ def track_trench_rt_jit(
     # Initialise mother cell
     id_new[0] = id_old[0]
     div_new[0] = is_division(area_old[0], area_new[0])
-    attributions_matrix[0] = True
+    attributions_matrix[0, 0] = True
 
     # Loop over remaining cells
     i_old = 1
