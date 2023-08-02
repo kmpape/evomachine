@@ -345,11 +345,12 @@ class TestAutomaton(unittest.TestCase):
 
         print(f"Total number of positions {len(automaton._pos_processor)}")
         print(f"Number of ROI per position {[len(pos.rois) for pos in automaton._pos_processor]}")
-        TIMER_POSITION.display_timings(scaling=1/np.mean([len(pos.rois) for pos in automaton._pos_processor]))
+        TIMER_POSITION.display_timings(scaling=1.0 / np.mean([len(pos.rois) for pos in automaton._pos_processor]))
         timings_pos = TIMER_POSITION.get_timings_per_call()
         for key, val in timings_pos.items():
             print(f"{key}: {val}")
-        TIMER_ROI.display_timings()
+        if TIMER_ROI.enabled:
+            TIMER_ROI.display_timings()
 
 
 if __name__ == '__main__':

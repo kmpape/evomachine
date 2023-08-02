@@ -96,13 +96,15 @@ def track_trench_rt(
     len_old = len(x_old)
     len_new = len(u_new)
     attributions_matrix = np.zeros((len_old, len_new), dtype=bool)
-    x_new = [{**u_i, **{"id": -1, "div": False}} for u_i in u_new]
+    x_new = [{**u_i, **{"id": -1, "div": False, "ErrorCode.value": ErrorCode.NO_ERROR.value}}
+             for u_i in u_new]
     new_id = max_id + 1
     image_processing_error = ImageProcessingError("", ErrorCode.NO_ERROR)
 
     # Handle special cases
     if len_old == 0:
         for i_new in range(len_new):
+            x_new[i_new]["ErrorCode.value"] = ErrorCode.ERROR_TRACK_NO_PREV_STATE.value
             x_new[i_new]["id"] = new_id + i_new
         image_processing_error = ImageProcessingError("x_old is empty.", ErrorCode.ERROR_TRACK_NO_PREV_STATE)
         return x_new, attributions_matrix, image_processing_error
@@ -123,6 +125,7 @@ def track_trench_rt(
             attributions_matrix[i_old-1, i_new] = True
             new_id = new_id + 1
         elif i_old >= len_old:
+            x_new[i_new]["ErrorCode.value"] = ErrorCode.ERROR_TRACK_DIV_NOT_DETECTED.value
             x_new[i_new]["id"] = new_id
             new_id = new_id + 1
             image_processing_error = ImageProcessingError("Divisions not detected. Assigning new IDs instead.",
