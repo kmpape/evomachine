@@ -40,30 +40,48 @@ class EvoMachineError(Exception):
         t_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.time))
         return f"{t_str} (code {self.error_code.value}): {self.message}"
 
+    def __reduce__(self):
+        return self.__class__, (self.message, self.error_code)
+
 
 class ConfigError(EvoMachineError):
     def __init__(self, message: str, error_code: ErrorCode):
         super().__init__(message=message, error_code=error_code)
+
+    def __reduce__(self):
+        return super().__reduce__()
 
 
 class ImageProcessingError(EvoMachineError):
     def __init__(self, message: str, error_code: ErrorCode):
         super().__init__(message=message, error_code=error_code)
 
+    def __reduce__(self):
+        return super().__reduce__()
+
 
 class StageError(EvoMachineError):
     def __init__(self, message: str, error_code: ErrorCode):
         super().__init__(message=message, error_code=error_code)
+
+    def __reduce__(self):
+        return super().__reduce__()
 
 
 class TigerError(EvoMachineError):
     def __init__(self, message: str, error_code: ErrorCode):
         super().__init__(message=message, error_code=error_code)
 
+    def __reduce__(self):
+        return super().__reduce__()
+
 
 class CameraError(EvoMachineError):
     def __init__(self, message: str, error_code: ErrorCode):
         super().__init__(message=message, error_code=error_code)
+
+    def __reduce__(self):
+        return super().__reduce__()
 
 
 class ErrorContainer:

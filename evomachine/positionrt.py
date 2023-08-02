@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Union, cast, Tuple
 
 import cv2
+from joblib import Parallel, delayed
 import numpy as np
 import tqdm
 
@@ -356,9 +357,13 @@ class PositionRT(delta.pipeline.Position):
         """
         Track cells in all ROIs in position. Uses the faster tracking algorithm for mother-machine devices.
         """
-        for i_roi, roi in enumerate(self.rois):
-            logging.debug(f"{self}:track_rt for ROI {i_roi}")
+        # for i_roi, roi in enumerate(self.rois):
+        #     roi.track_rt(frame=1)
+        def this_track_rt_roi(roi: ROIRT):
             roi.track_rt(frame=1)
+
+        # Use joblib to parallelize the track_rt_roi calls
+        Parallel(n_jobs=-1)(delayed(this_track_rt_roi)(roi) for roi in self.rois)
 
     def find_roi_boxes(self, reference: delta.utils.Image, config: Config) -> list[delta.utils.CroppingBox]:
         """
@@ -692,7 +697,7 @@ class ROIRT(delta.pipeline.ROI):
             self.max_id,
         )
         if image_processing_error.error_code.value:
-            logging.warning(f"{self}: {image_processing_error}")
+            # logging.warning(f"{self}: {image_processing_error}")
             self.error_container.add_error(new_error=image_processing_error)
         TIMER_ROI.stop("track_rt:predict", 1)
 
@@ -732,11 +737,8 @@ class ROIRT(delta.pipeline.ROI):
 
         # Get scores and attributions:
         # Label frame but numbered 1, 2, 3, 4, etc. (temporary labels)
-        # TIMER_ROI.start("process:label_seg", 2)
         labels = delta.utils.label_seg(self.get_seg(frame))
-        # TIMER_ROI.stop("process:label_seg", 2)
 
-        # TIMER_ROI.start("process:getcellsinframe", 2)
         previous_cell_nbs = (
             delta.utils.getcellsinframe(self.get_labels(frame - 1)[::-1, :])[::-1]
             if frame > self.first_frame
@@ -744,51 +746,32 @@ class ROIRT(delta.pipeline.ROI):
         )
         assert len(previous_cell_nbs) == attributions.shape[0]
         cell_nbs = [None] * attributions.shape[1]
-        # TIMER_ROI.stop("process:getcellsinframe", 2)
 
         # Get poles:
-        # TIMER_ROI.start("process:getpoles", 2)
-        # poles = delta.utils.getpoles(self.get_seg(frame), labels, scaling=self.scaling)
         poles = {id_: (np.round(np.array([0.0, s_i["y_min"]], dtype=np.float32) * self.scaling).astype(np.int16),
                        np.round(np.array([0.0, s_i["y_max"]], dtype=np.float32) * self.scaling).astype(np.int16))
                  for id_, s_i in enumerate(self.tracking_state, start=1)}
-        # TIMER_ROI.stop("process:getpoles", 2)
         assert None not in poles.keys()
 
         # Resize labels if not using crop windows:
-        # TIMER_ROI.start("process:resize", 2)
         if not self.config.crop_windows:
             resize = (
                 self.box.xbr - self.box.xtl,
                 self.box.ybr - self.box.ytl,
             )
             labels = cv2.resize(labels, resize, interpolation=cv2.INTER_NEAREST)
-        # TIMER_ROI.stop("process:resize", 2)
 
         # Extract features for all cells in the ROI:
-        # TIMER_ROI.start("process:roi_features", 2)
         extracted_features = self.roi_features(
             labels_frame=labels,
             fluo_frames=self.get_fluo(frame),
             poles=poles,
         )
 
-        # extracted_features = delta.utils.roi_features(
-        #     labels,
-        #     fluo_frames=self.get_fluo(frame),
-        # )
-
         # Make sure the same cell_ids are present in both dicts
         assert poles.keys() == extracted_features.keys()
 
-        # Assign poles to extracted features:
-        # for cellid, (old_pole, new_pole) in poles.items():
-        #     extracted_features[cellid].old_pole = old_pole
-        #     extracted_features[cellid].new_pole = new_pole
-        # TIMER_ROI.stop("process:roi_features", 2)
-
         # Go through old cells
-        # TIMER_ROI.start("process:oldcells", 2)
         for cellid, attribs in zip(previous_cell_nbs, attributions):
             assert self.lineage.cells[cellid].last_frame == self._frame_id - 1  # Changed
             attrib = attribs.nonzero()[0]
@@ -820,10 +803,8 @@ class ROIRT(delta.pipeline.ROI):
                 )
                 cell_nbs[n0] = cellid
                 cell_nbs[n1] = newcellid
-        # TIMER_ROI.stop("process:oldcells", 2)
 
         # Go through new cells
-        # TIMER_ROI.start("process:newcells", 2)
         for n, attribs in enumerate(attributions.T):
             attrib = attribs.nonzero()[0]
             if len(attrib) == 1:
@@ -839,23 +820,18 @@ class ROIRT(delta.pipeline.ROI):
                 self._frame_id, extracted_features[n + 1], motherid=None  # Changed
             )
             cell_nbs[n] = cellid
-        # TIMER_ROI.stop("process:newcells", 2)
 
         assert None not in cell_nbs
         # Recompile label frame with new labels
-        # TIMER_ROI.start("process:label_seg", 2)
         labels = delta.utils.label_seg(self.get_seg(frame), cell_nbs)
-        # TIMER_ROI.stop("process:label_seg", 2)
 
         # Resize image:
-        # TIMER_ROI.start("process:resize", 2)
         if not self.config.crop_windows:
             resize = (
                 self.box.xbr - self.box.xtl,
                 self.box.ybr - self.box.ytl,
             )
             labels = cv2.resize(labels, resize, interpolation=cv2.INTER_NEAREST)
-        # TIMER_ROI.stop("process:resize", 2)
 
         self.label_stack[frame - self.first_frame] = labels
 
