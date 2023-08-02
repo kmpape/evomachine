@@ -14,6 +14,7 @@ from delta.pipeline import TIMER_ROI
 
 from evomachine.config import ConfigImage
 from evomachine.exceptions import ImageProcessingError, ErrorCode, ErrorContainer
+# import evomachine.trackingrt as trackingrt
 import evomachine.trackingrt as trackingrt
 from evomachine.utils import Timer
 
@@ -748,9 +749,9 @@ class ROIRT(delta.pipeline.ROI):
         # Get poles:
         TIMER_ROI.start("process:getpoles", 2)
         # poles = delta.utils.getpoles(self.get_seg(frame), labels, scaling=self.scaling)
-        poles = {s_i["id"]: (np.round(np.array([0.0, s_i["y_min"]], dtype=np.float32) * self.scaling).astype(np.int16),
-                             np.round(np.array([0.0, s_i["y_max"]], dtype=np.float32) * self.scaling).astype(np.int16))
-                 for s_i in self.tracking_state}
+        poles = {id_: (np.round(np.array([0.0, s_i["y_min"]], dtype=np.float32) * self.scaling).astype(np.int16),
+                       np.round(np.array([0.0, s_i["y_max"]], dtype=np.float32) * self.scaling).astype(np.int16))
+                 for id_, s_i in enumerate(self.tracking_state, start=1)}
         TIMER_ROI.stop("process:getpoles", 2)
 
         # Resize labels if not using crop windows:
@@ -859,8 +860,8 @@ class ROIRT(delta.pipeline.ROI):
             poles: dict[int, Tuple[np.ndarray]]
     ) -> dict[int, delta.lineage.CellFeatures]:
         cell_features = {}
-        for state_i in self.tracking_state:
-            cellid = state_i["id"]
+        for cellid, state_i in enumerate(self.tracking_state, start=1):
+            # cellid = state_i["id"]
             mask = labels_frame == cellid
 
             fluo_values = 2 ** 16 * delta.utils.cell_fluo(fluo_frames, mask)
