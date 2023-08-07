@@ -2,13 +2,11 @@ import copy
 from collections.abc import Sequence
 import concurrent.futures
 import logging
-import multiprocessing
 from pathlib import Path
+import threading
 from typing import Any, Dict, List, Literal, Optional, Union, cast, Tuple
 
 import cv2
-import dask
-from joblib import Parallel, delayed
 import numpy as np
 import tqdm
 
@@ -25,9 +23,6 @@ from evomachine.utils import Timer
 TIMER_POSITION = Timer(timer_level=0, name="PositionRT", enabled=True)
 
 logger = logging.getLogger(__name__)
-
-num_workers = 2
-dask.config.set(scheduler='threads', num_workers=num_workers)
 
 
 class PositionRT(delta.pipeline.Position):
@@ -58,6 +53,18 @@ class PositionRT(delta.pipeline.Position):
 
         self.cfg_image = cfg_image
         "Image configuration."
+
+        self._new_frame: np.ndarray[(int, int, int), 'ConfigImage.pxl_dtype'] = np.empty((0, 0, 0),
+                                                                                         dtype=cfg_image.pxl_dtype)
+        "Copy of new frame that is accessed by the thread."
+        self._new_frame_lock: threading.Lock = threading.Lock()
+        "Lock associated with _new_frame."
+        self._new_frame_event = threading.Event()
+        "Event for communicating with the thread."
+        self._new_frame_processed = threading.Event()
+        "Event for communicating that the thread is processing."
+        self._stop_event = threading.Event()
+        "Event for stopping the processing threads."
 
         self.verbose = verbose
 
@@ -147,27 +154,60 @@ class PositionRT(delta.pipeline.Position):
             self,
             new_frame: np.ndarray[(int, int, int), 'ConfigImage.pxl_dtype']
     ) -> None:
-        if not self._is_initialised:
-            raise ImageProcessingError("Position {} not initialised.".format(self.position_nb),
-                                       ErrorCode.ERROR_NOT_INITIALISED)
-        TIMER_POSITION.start("process_new_frame:_preprocess_new_frame", 0)
-        self._preprocess_new_frame(new_frame=new_frame)
-        TIMER_POSITION.stop("process_new_frame:_preprocess_new_frame", 0)
+        if self._new_frame_event.is_set():
+            logger.warning(f"{self}: Setting _new_frame_event but processor still running.")
+        with self._new_frame_lock:
+            self._new_frame = new_frame
+        self._new_frame_event.set()
+        self._new_frame_processed.wait()
+        self._new_frame_processed.clear()
 
-        TIMER_POSITION.start("process_new_frame:segment", 0)
-        self.segment_at_once()
-        TIMER_POSITION.stop("process_new_frame:segment", 0)
+    def is_processing_new_frame(self) -> bool:
+        return self._new_frame_event.is_set()
 
-        TIMER_POSITION.start("process_new_frame:track", 0)
-        if self.cfg_image.use_track_RT:
-            self.track_rt()
-        else:
-            self.track_at_once()
-        TIMER_POSITION.stop("process_new_frame:track", 0)
+    def stop(self) -> None:
+        self._stop_event.set()
+        self._new_frame_event.set()
+        while self._stop_event.is_set():
+            pass
 
-        TIMER_POSITION.start("process_new_frame:compute_growthrates", 0)
-        self.compute_growthrates(frames=range(1, 2))  # TODO
-        TIMER_POSITION.stop("process_new_frame:compute_growthrates", 0)
+    def _process_new_frame(self) -> None:
+        while True:
+            self._new_frame_processed.clear()
+            self._new_frame_event.wait()
+
+            if self._stop_event.is_set():
+                self._new_frame_event.clear()
+                self._stop_event.clear()
+                break
+
+            with self._new_frame_lock:
+                new_frame = self._new_frame
+
+            if not self._is_initialised:
+                raise ImageProcessingError("Position {} not initialised.".format(self.position_nb),
+                                           ErrorCode.ERROR_NOT_INITIALISED)
+            TIMER_POSITION.start("process_new_frame:_preprocess_new_frame", 0)
+            self._preprocess_new_frame(new_frame=new_frame)
+            TIMER_POSITION.stop("process_new_frame:_preprocess_new_frame", 0)
+
+            TIMER_POSITION.start("process_new_frame:segment", 0)
+            self.segment_at_once()
+            TIMER_POSITION.stop("process_new_frame:segment", 0)
+
+            TIMER_POSITION.start("process_new_frame:track", 0)
+            if self.cfg_image.use_track_RT:
+                self.track_rt()
+            else:
+                self.track_at_once()
+            TIMER_POSITION.stop("process_new_frame:track", 0)
+
+            TIMER_POSITION.start("process_new_frame:compute_growthrates", 0)
+            self.compute_growthrates(frames=range(1, 2))  # TODO
+            TIMER_POSITION.stop("process_new_frame:compute_growthrates", 0)
+
+            self._new_frame_event.clear()
+            self._new_frame_processed.set()
 
     def _preprocess_new_frame(
         self,
@@ -363,19 +403,8 @@ class PositionRT(delta.pipeline.Position):
         """
         Track cells in all ROIs in position. Uses the faster tracking algorithm for mother-machine devices.
         """
-        # for i_roi, roi in enumerate(self.rois):
-        #     roi.track_rt(frame=1)
-        # with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        #     futures = [executor.submit(this_track_rt_roi, roi) for roi in self.rois]
-        #     concurrent.futures.wait(futures)
-        # with multiprocessing.Pool(processes=2) as pool:
-        #     # Map the track_rt_roi function to each ROI in self.rois
-        #     pool.map(this_track_rt_roi, self.rois)
-        # def this_track_rt_roi(roi: ROIRT):
-        #     roi.track_rt(frame=1)
-        # Parallel(n_jobs=2)(delayed(this_track_rt_roi)(roi) for roi in self.rois)
-        delayed_calls = [dask.delayed(this_track_rt_roi)(roi) for roi in self.rois]
-        dask.compute(*delayed_calls)
+        for i_roi, roi in enumerate(self.rois):
+            roi.track_rt(frame=1)
 
     def find_roi_boxes(self, reference: delta.utils.Image, config: Config) -> list[delta.utils.CroppingBox]:
         """

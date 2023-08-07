@@ -208,7 +208,7 @@ class TestAutomaton(unittest.TestCase):
                 msg = f"pos={i_pos}|i_roi={i_roi}|box_c={roi_c.box}|box_no_c={roi_no_c.box}"
                 self.assertEqual(roi_c.box, roi_no_c.box, msg)
 
-    @unittest.skip("skipping test_process")
+    # @unittest.skip("skipping test_process")
     def test_process(self):
         path_exp_results = EVOMACHINE_DIR.parent / "tests/data/movie_mothermachine_tif"
         pos0_exp = delta.pipeline.Position.load_netcdf(path_exp_results / "expected_results/Position000001.nc")
@@ -246,36 +246,36 @@ class TestAutomaton(unittest.TestCase):
                 msg = "label_stack mismatch at pos={}, roi={}, i_frame={}".format(i_pos, i_roi, i_period)
                 self.assertTrue(arrays_eq_or_approx_eq(exp_result.rois[i_roi].label_stack[0], roi.label_stack[1], msg), msg)
 
-                for i_period in range(1, DEVICE_CONFIG_DELTA_SIM.num_periods):
-                    # print("PROCESS AT POS {} and PERIOD {}".format(automaton.get_pos(), automaton.get_period()))
-                    # Process an additional step at position 0
-                    self.assertTrue(automaton.get_pos() == 0)
-                    self.assertTrue(automaton.get_period() == i_period)
-                    automaton.process()
-                    # Process an additional step at position 1
-                    self.assertTrue(automaton.get_pos() == 1)
-                    self.assertTrue(automaton.get_period() == i_period)
-                    automaton.process()
-                    for i_pos in range(2):
-                        if i_pos == 0:
-                            exp_result = pos0_exp
-                        else:
-                            exp_result = pos1_exp
-                        for i_roi, roi in enumerate(automaton._pos_processor[i_pos].rois):
-                            do_check = not (this_cfg_image.use_track_RT and (i_pos == 1) and (i_roi == 17)
-                                            and (i_period >= 3))
-                            do_check = do_check and (not (this_cfg_image.use_track_RT and (i_pos == 0) and (i_roi == 3))
-                                                     and (i_period >= 4))
-                            do_check = do_check and (not (this_cfg_image.use_track_RT and (i_pos == 1) and (i_roi == 1)
-                                                          and (i_period >= 4)))
-                            if do_check:
-                                exp_roi = exp_result.rois[i_roi]
-                                msg = "img_stack mismatch at pos={}, roi={}, i_frame={}".format(i_pos, i_roi, i_period)
-                                self.assertTrue(arrays_eq_or_approx_eq(exp_roi.img_stack[i_period], roi.img_stack[1], msg), msg)
-                                msg = "seg_stack mismatch at pos={}, roi={}, i_frame={}".format(i_pos, i_roi, i_period)
-                                self.assertTrue(arrays_eq_or_approx_eq(exp_roi.seg_stack[i_period], roi.seg_stack[1], msg), msg)
-                                msg = "label_stack mismatch at pos={}, roi={}, i_frame={}".format(i_pos, i_roi, i_period)
-                                self.assertTrue(arrays_eq_or_approx_eq(exp_roi.label_stack[i_period], roi.label_stack[1], msg), msg)
+        for i_period in range(1, DEVICE_CONFIG_DELTA_SIM.num_periods):
+            # print("PROCESS AT POS {} and PERIOD {}".format(automaton.get_pos(), automaton.get_period()))
+            # Process an additional step at position 0
+            self.assertTrue(automaton.get_pos() == 0)
+            self.assertTrue(automaton.get_period() == i_period)
+            automaton.process()
+            # Process an additional step at position 1
+            self.assertTrue(automaton.get_pos() == 1)
+            self.assertTrue(automaton.get_period() == i_period)
+            automaton.process()
+            for i_pos in range(2):
+                if i_pos == 0:
+                    exp_result = pos0_exp
+                else:
+                    exp_result = pos1_exp
+                for i_roi, roi in enumerate(automaton._pos_processor[i_pos].rois):
+                    do_check = not (this_cfg_image.use_track_RT and (i_pos == 1) and (i_roi == 17)
+                                    and (i_period >= 3))
+                    do_check = do_check and (not (this_cfg_image.use_track_RT and (i_pos == 0) and (i_roi == 3))
+                                             and (i_period >= 4))
+                    do_check = do_check and (not (this_cfg_image.use_track_RT and (i_pos == 1) and (i_roi == 1)
+                                                  and (i_period >= 4)))
+                    if do_check:
+                        exp_roi = exp_result.rois[i_roi]
+                        msg = "img_stack mismatch at pos={}, roi={}, i_frame={}".format(i_pos, i_roi, i_period)
+                        self.assertTrue(arrays_eq_or_approx_eq(exp_roi.img_stack[i_period], roi.img_stack[1], msg), msg)
+                        msg = "seg_stack mismatch at pos={}, roi={}, i_frame={}".format(i_pos, i_roi, i_period)
+                        self.assertTrue(arrays_eq_or_approx_eq(exp_roi.seg_stack[i_period], roi.seg_stack[1], msg), msg)
+                        msg = "label_stack mismatch at pos={}, roi={}, i_frame={}".format(i_pos, i_roi, i_period)
+                        self.assertTrue(arrays_eq_or_approx_eq(exp_roi.label_stack[i_period], roi.label_stack[1], msg), msg)
 
         for i_pos in range(2):
             if i_pos == 0:
@@ -318,7 +318,9 @@ class TestAutomaton(unittest.TestCase):
             print(f"{key}: {val}")
         TIMER_ROI.display_timings()
 
-    # @unittest.skip("skipping benchmark_automaton")
+        automaton.finalise()
+
+    @unittest.skip("skipping benchmark_automaton")
     def test_benchmark_automaton(self):
         this_cfg_device = DEVICE_CONFIG_DELTA_SIM
         this_cfg_device.image_processing_verbosity = 0
@@ -351,6 +353,8 @@ class TestAutomaton(unittest.TestCase):
             print(f"{key}: {val}")
         if TIMER_ROI.enabled:
             TIMER_ROI.display_timings()
+
+        automaton.finalise()
 
 
 if __name__ == '__main__':

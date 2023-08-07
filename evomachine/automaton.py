@@ -1,4 +1,6 @@
 import logging
+import threading
+
 import numpy as np
 from typing import List
 
@@ -44,6 +46,13 @@ class Automaton:
             for i in range(self._cfg_device.num_pos)
         ]
         "List of Delta objects to process the images."
+        self._threads: List[threading.Thread] = [
+            threading.Thread(target=pos._process_new_frame) for pos in self._pos_processor
+        ]
+        for thread in self._threads:
+            thread.start()
+        assert all(thread.is_alive() for thread in self._threads)
+
         self._all_frames: List[np.ndarray[(int, int, int, int), ConfigImage.pxl_dtype]] = [
             np.empty((2, self._cfg_device.num_chan, self._cfg_image.pxl_vert, self._cfg_image.pxl_horiz),
                      dtype=self._cfg_image.pxl_dtype)
@@ -60,7 +69,7 @@ class Automaton:
         self.error_container: ErrorContainer = ErrorContainer()
         "Container for errors."
 
-    def initialise(self):
+    def initialise(self) -> None:
         self._camera.initialise()
         for i_pos in range(self._cfg_device.num_pos):
             self._camera.move_to_pos(i_pos=i_pos)
@@ -72,6 +81,11 @@ class Automaton:
         assert self._curr_pos == 0
         assert self._curr_period == 1
         # Note that each ROI keeps track of _curr_period as well
+
+    def finalise(self) -> None:
+        for pos, thread in zip(self._pos_processor, self._threads):
+            pos.stop()
+            thread.join()
 
     def check_status(self):
         if len(self.error_container) > 0:
