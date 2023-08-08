@@ -137,8 +137,10 @@ class EvoCamera(AbstractCamera):
             -1: {"X": 0, "Y": 0, "Z": 0, "F": 0},
         }
         "LED intensity for i_chan=0,...,3."
-        self.card_address: int = 7
+        self.card_address_led: int = 7
         "LED card address on ASI tiger."
+        self.card_address_fw: int = 8
+        "Filter wheel card address on ASI tiger."
         self.mmc: Union[Core, None] = None
         "Micromanager object for taking images."
         try:
@@ -165,7 +167,10 @@ class EvoCamera(AbstractCamera):
             return False
 
     def _set_channel(self, i_chan: int):
-        self.tiger.led(led_brightnesses=self.channel_settings[i_chan], card_address=self.card_address)
+        self.tiger.led(led_brightnesses=self.channel_settings[i_chan], card_address=self.card_address_led)
+
+    def _set_filter_wheel(self, i_pos: int):
+        self.tiger.filter_wheel(position=i_pos, card_address=self.card_address_fw)
 
     def _disable_channels(self):
         self._set_channel(i_chan=-1)
