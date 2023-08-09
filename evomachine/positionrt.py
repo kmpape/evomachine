@@ -1,9 +1,8 @@
 import copy
 from collections.abc import Sequence
-import concurrent.futures
 import logging
 from pathlib import Path
-import threading
+import multiprocessing
 from typing import Any, Dict, List, Literal, Optional, Union, cast, Tuple
 
 import cv2
@@ -31,6 +30,8 @@ class PositionRT(delta.pipeline.Position):
         position_nb: int,
         config: delta.config.Config,
         cfg_image: ConfigImage,
+        input_queue: multiprocessing.Queue,
+        output_queue: multiprocessing.Queue,
         verbose: Optional[int] = 0,
     ) -> None:
         super().__init__(position_nb=position_nb, config=config)
@@ -54,17 +55,9 @@ class PositionRT(delta.pipeline.Position):
         self.cfg_image = cfg_image
         "Image configuration."
 
-        self._new_frame: np.ndarray[(int, int, int), 'ConfigImage.pxl_dtype'] = np.empty((0, 0, 0),
-                                                                                         dtype=cfg_image.pxl_dtype)
-        "Copy of new frame that is accessed by the thread."
-        self._new_frame_lock: threading.Lock = threading.Lock()
-        "Lock associated with _new_frame."
-        self._new_frame_event = threading.Event()
-        "Event for communicating with the thread."
-        self._new_frame_processed = threading.Event()
-        "Event for communicating that the thread is processing."
-        self._stop_event = threading.Event()
-        "Event for stopping the processing threads."
+        self.input_queue = input_queue
+        self.output_queue = output_queue
+        self.process = multiprocessing.Process(target=self.run)
 
         self.verbose = verbose
 
@@ -150,26 +143,16 @@ class PositionRT(delta.pipeline.Position):
         self._is_initialised = True
         TIMER_POSITION.stop("initialise", 0)
 
-    def process_new_frame(
-            self,
-            new_frame: np.ndarray[(int, int, int), 'ConfigImage.pxl_dtype']
-    ) -> None:
-        if self._new_frame_event.is_set():
-            logger.warning(f"{self}: Setting _new_frame_event but processor still running.")
-        with self._new_frame_lock:
-            self._new_frame = new_frame
-        self._new_frame_event.set()
-        self._new_frame_processed.wait()
-        self._new_frame_processed.clear()
+    def run(self):
+        for func, args in iter(self.input_queue.get, 'STOP'):
+            result = self.calculate(func, args)
+            self.output_queue.put(result)
 
-    def is_processing_new_frame(self) -> bool:
-        return self._new_frame_event.is_set()
+    def start(self):
+        self.process.start()
 
-    def stop(self) -> None:
-        self._stop_event.set()
-        self._new_frame_event.set()
-        while self._stop_event.is_set():
-            pass
+    def join(self):
+        self.process.join()
 
     def _process_new_frame(self) -> None:
         while True:
