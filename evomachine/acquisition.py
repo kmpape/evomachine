@@ -2,7 +2,9 @@ import logging
 import numpy as np
 from typing import Dict, List, Optional, Union
 
-from pycromanager import Core
+import cv2
+import matplotlib.pyplot as plt
+from pycromanager import Core, Studio
 
 import asitiger.tigercontroller
 import delta
@@ -43,7 +45,7 @@ class AbstractCamera:
             raise StageError("Position index {} out of range".format(i_pos),
                              ErrorCode.ERROR_STAGE_COORDINATES)
         self._curr_pos = i_pos
-        success = self._move_stage(i_pos=i_pos)
+        success = self._move_stage_to_pos(i_pos=i_pos)
         if not success:
             raise StageError("Fault moving to position={}.".format(i_pos), ErrorCode.ERROR_STAGE_MOVEMENT)
 
@@ -58,10 +60,13 @@ class AbstractCamera:
     def get_pos(self) -> int:
         return self._curr_pos
 
+    def autofocus(self):
+        raise NotImplementedError()
+
     def _initialise(self) -> None:
         raise NotImplementedError()
 
-    def _move_stage(
+    def _move_stage_to_pos(
             self,
             i_pos: int,
     ) -> bool:
@@ -94,7 +99,7 @@ class DeltaCamera(AbstractCamera):
         for i_pos, i_delta_pos in enumerate(delta_reader.positions, start=0):
             self.all_frames[i_pos] = delta_reader.getframes(position=i_delta_pos)
 
-    def _move_stage(
+    def _move_stage_to_pos(
             self,
             i_pos: int,
     ) -> bool:
@@ -129,6 +134,8 @@ class EvoCamera(AbstractCamera):
                 new_error=TigerError(message=str(e), error_code=ErrorCode.ERROR_TIGER_SERIAL_CONNECTION)
             )
 
+        self.current_channel: int = -1
+        "Current LED channel set"
         self.channel_settings: Dict[int, Dict] = {
             0: {"X": 100, "Y": 0, "Z": 0, "F": 0},
             1: {"X": 0, "Y": 100, "Z": 0, "F": 0},
@@ -142,9 +149,11 @@ class EvoCamera(AbstractCamera):
         self.card_address_fw: int = 8
         "Filter wheel card address on ASI tiger."
         self.mmc: Union[Core, None] = None
-        "Micromanager object for taking images."
+        self.studio: Union[Studio, None] = None
+        "Micromanager objects for taking images."
         try:
             self.mmc = Core()
+            self.studio = Studio()
         except Exception as e:
             logging.warning(f"Error connecting to Micro Manager:\n{e}\n---\nContinuing with execution.")
             self.error_container.add_error(
@@ -167,6 +176,7 @@ class EvoCamera(AbstractCamera):
             return False
 
     def _set_channel(self, i_chan: int):
+        self.current_channel = i_chan
         self.tiger.led(led_brightnesses=self.channel_settings[i_chan], card_address=self.card_address_led)
 
     def _set_filter_wheel(self, i_pos: int):
@@ -175,7 +185,7 @@ class EvoCamera(AbstractCamera):
     def _disable_channels(self):
         self._set_channel(i_chan=-1)
 
-    def _move_stage(
+    def _move_stage_to_pos(
             self,
             i_pos: int,
     ) -> bool:
@@ -184,8 +194,14 @@ class EvoCamera(AbstractCamera):
             'Y': self.cfg_device.coord_pos[i_pos][1],
             'Z': self.cfg_device.coord_pos[i_pos][2],
         }
-        self.tiger.move(coordinates=pos)
-        return True
+        return self._move_stage_to_coord(pos)
+
+    def _move_stage_to_coord(
+            self,
+            coordinates: Dict[str, int],
+    ) -> bool:
+        answer = self.tiger.move(coordinates=coordinates)
+        return True if isinstance(answer, str) else False
 
     def _initialise(self) -> None:
         self._disable_channels()
@@ -204,3 +220,37 @@ class EvoCamera(AbstractCamera):
             newshape=[tagged_image.tags['Height'], tagged_image.tags['Width']]
         )
         return pixels
+
+    def autofocus(self, focus_channel: int = 0, focus_exposure: int = 100):
+        # Settings
+        FOCUS_MIN = -76000
+        FOCUS_MAX = -73000
+        FOCUS_STEP = 50
+        FOCUS_SMALL_STEP = 1
+        FOCUS_SMALL_DIFF = 50
+
+        # Prepare
+        old_channel = self.current_channel
+        self.mmc.set_exposure(focus_exposure)
+        self.studio.live().set_live_mode(False)
+
+        # Focus
+        coordinates = range(FOCUS_MIN, FOCUS_MAX, FOCUS_STEP)
+        best_coordinate: int = 0
+        for raw_fine in range(2):
+            best_focus_score = 0
+            best_focus_position = 0
+            for ipos, zcoord in enumerate(coordinates):
+                self._move_stage_to_coord({'Z': zcoord})
+                image_raw = self._take_frame(i_chan=focus_channel, i_period=None)
+                laplacian = cv2.Laplacian(image_raw, cv2.CV_64F)
+                focus_score = laplacian.var()
+                # print(f"{ipos}/{len(coordinates)}: Z={zcoord}, Score={focus_score}\n")
+                if focus_score > best_focus_score:
+                    best_focus_position = ipos
+                    best_focus_score = focus_score
+            best_coordinate = coordinates[best_focus_position]
+            coordinates = range(best_coordinate - FOCUS_SMALL_DIFF, best_coordinate + FOCUS_SMALL_DIFF, FOCUS_SMALL_STEP)
+        self._move_stage_to_coord({'Z': best_coordinate})
+        self._set_channel(i_chan=old_channel)
+
