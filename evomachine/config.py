@@ -103,7 +103,7 @@ DEVICE_CONFIG_EVO_TEST = ConfigDevice(
     read_from_disk=False,
     path_to_images=None,
     image_processing_verbosity=1,
-    tiger_port="/dev/ttyUSB1",
+    tiger_port="/dev/ttyUSB0",
 )
 
 

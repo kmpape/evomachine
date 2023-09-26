@@ -17,6 +17,9 @@ class ErrorCode(Enum):
     # Camera errors
     ERROR_MMC_NOT_ALIVE = auto()
 
+    # DMD errors
+    ERROR_MONITORS = auto()
+
     # Tiger errors
     ERROR_TIGER_SERIAL_CONNECTION = auto()
     ERROR_TIGER_NOT_ALIVE = auto()
@@ -69,6 +72,14 @@ class StageError(EvoMachineError):
 
 
 class TigerError(EvoMachineError):
+    def __init__(self, message: str, error_code: ErrorCode):
+        super().__init__(message=message, error_code=error_code)
+
+    def __reduce__(self):
+        return super().__reduce__()
+
+
+class DMDError(EvoMachineError):
     def __init__(self, message: str, error_code: ErrorCode):
         super().__init__(message=message, error_code=error_code)
 
