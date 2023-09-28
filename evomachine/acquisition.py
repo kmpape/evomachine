@@ -2,6 +2,7 @@ from datetime import datetime
 import logging
 import numpy as np
 import os
+from PIL import Image, ImageFont, ImageDraw
 import sys
 from typing import Dict, List, Optional, Union, Tuple
 
@@ -70,27 +71,44 @@ class AbstractCamera:
         self._step += 1
         return self._take_frame(i_chan=i_chan, i_period=i_period)
 
-    def display_frame(
+    def display_save_frame(
             self,
             i_chan: int,
-            i_period: Union[int, None] = None,
-            path_to_save: Union[str, None] = None,
+            i_period: Optional[Union[int, None]] = None,
+            path_to_save: Optional[Union[str, None]] = None,
+            filename: Optional[Union[str, None]] = None,
+            display_frame: Optional[bool] = True,
     ) -> np.ndarray[(int, int), 'ConfigImage.pxl_dtype']:
         frame = self.get_frame(i_chan=i_chan, i_period=i_period)
-        cmap = plt.cm.gray
+
+        if display_frame:
+            self.plot_normalised_frame(frame=frame)
+
+        if path_to_save:
+            self.save_frame(path_to_save=path_to_save, frame=frame, filename=filename)
+
+        return frame
+
+    def plot_normalised_frame(self, frame: np.ndarray[(int, int), 'ConfigImage.pxl_dtype']):
+        cmap = plt.cm.jet
         norm = plt.Normalize(vmin=frame.min(), vmax=frame.max())
         image = cmap(norm(frame))
         plt.imshow(image)
         plt.show()
-        if path_to_save:
-            filename = "evom_pos{:02d}_chan{}_{}.png".format(
+
+    def save_frame(
+            self,
+            path_to_save: str,
+            frame: np.ndarray[(int, int), 'ConfigImage.pxl_dtype'],
+            filename: Optional[Union[str, None]] = None,
+    ):
+        if not filename:
+            filename = "evom_pos{:02d}_{}.png".format(
                 self._curr_pos,
-                i_chan,
                 datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f")
             )
-            plt.imsave(path_to_save+filename, image)
-
-        return frame
+        # TODO: save differently
+        plt.imsave(path_to_save + filename, frame)
 
     def get_pos(self) -> int:
         return self._curr_pos
@@ -281,6 +299,7 @@ class EvoCamera(AbstractCamera):
         if not self._mmc_is_alive:
             logger.error(msg=f"EvoCamera._take_frame: MMC is not alive. Check Camera and Micro-Manager.")
             return None
+        curr_channel = self.current_channel
         self._set_channel(i_chan=i_chan)
         self.mmc.snap_image()
         self._disable_channels()
@@ -289,6 +308,7 @@ class EvoCamera(AbstractCamera):
             tagged_image.pix,
             newshape=[tagged_image.tags['Height'], tagged_image.tags['Width']]
         )
+        self._set_channel(i_chan=curr_channel)
         return pixels
 
     def autofocus(self, focus_channel: int = 0, focus_exposure: int = 100):
@@ -331,7 +351,18 @@ class EvoCamera(AbstractCamera):
 
 
 class DMDControl:
+    DEFAULT_LINE_WIDTH: int = 5
+    "Line width used for calibration and displaying lines. Use odd values."
+
     def __init__(self):
+        """
+        ___________________________ (dmd_width, dmd_height)
+        |                                                 |
+        |                                                 |
+        |                                                 |
+        |                                                 |
+        (0,0)______________________________________________
+        """
         self.error_container: ErrorContainer = ErrorContainer()
         "Deque to store all errors."
         self._dmd_is_alive: bool = False
@@ -342,6 +373,10 @@ class DMDControl:
         "Size of DMD. Double-checked in initialise."
         self.surface: Union[None, pygame.surface] = None
         "PyGame object to display images. Initialised in initialise."
+        self.rect_full: Union[None, pygame.Rect] = None
+        "PyGame rectangle object. Initialised in initialise."
+        self.default_line_width: int = 5
+        "Line width used for calibration and displaying lines. Use odd values."
 
         self.initialise()
 
@@ -360,6 +395,8 @@ class DMDControl:
                     pygame.init()
                     os.environ['SDL_VIDEO_WINDOW_POS'] = f"{self.offset_DMD[0]}, {self.offset_DMD[1]}"
                     self.surface = pygame.display.set_mode(size=self.width_height_DMD, flags=pygame.NOFRAME)
+                    self.rect_full = pygame.locals.Rect(0, 0, *self.width_height_DMD)
+                    self.line_horiz = pygame.locals.Rect(0, 0, *self.width_height_DMD)
                     self._dmd_is_alive = True
                     self.display_none()
                     logging.info(f"DMD: initialised at pos={self.offset_DMD} with size={self.width_height_DMD}.")
@@ -376,6 +413,14 @@ class DMDControl:
             logger.warning(msg)
             self.error_container.add_error(new_error=DMDError(message=msg, error_code=ErrorCode.ERROR_MONITORS))
 
+    def finalise(self):
+        self.display_none()
+        DMDControl.close_window()
+
+    @staticmethod
+    def close_window():
+        pygame.quit()
+
     def display_image(self, img: np.ndarray[(int, int), int]):
         if not self._dmd_is_alive:
             logger.error(f"DMDControl.display_image: DMD not initialised. Try running DMDControl.initialise.")
@@ -387,10 +432,73 @@ class DMDControl:
             logger.error(f"DMDControl.display_image: provided image of shape={img.shape}, "
                          f"but DMD shape={(*self.width_height_DMD, 3)}.")
 
+    def display_full_depreciated2(self):
+        if not self._dmd_is_alive:
+            logger.error(f"DMDControl.display_image: DMD not initialised. Try running DMDControl.initialise.")
+            return
+        pygame.draw.rect(surface=self.surface, color=(255, 255, 255), rect=self.rect_full)
+        pygame.display.update()
+
+    def display_none_depreciated2(self):
+        if not self._dmd_is_alive:
+            logger.error(f"DMDControl.display_image: DMD not initialised. Try running DMDControl.initialise.")
+            return
+        pygame.draw.rect(surface=self.surface, color=(0, 0, 0), rect=self.rect_full)
+        pygame.display.update()
+
     def display_full(self):
-        self.display_image(img=np.ones((*self.width_height_DMD, 3), dtype=int) * 255)
+        if not self._dmd_is_alive:
+            logger.error(f"DMDControl.display_full: DMD not initialised. Try running DMDControl.initialise.")
+            return
+        self.surface.fill((255, 255, 255))
+        pygame.display.update()
 
     def display_none(self):
+        if not self._dmd_is_alive:
+            logger.error(f"DMDControl.display_none: DMD not initialised. Try running DMDControl.initialise.")
+            return
+        self.surface.fill((0, 0, 0))
+        pygame.display.update()
+
+    def display_line(
+            self,
+            start_pos: Tuple[int, int],
+            end_pos: Tuple[int, int],
+            line_width: Optional[Union[int, None]] = None,
+    ):
+        if not self._dmd_is_alive:
+            logger.error(f"DMDControl.display_line: DMD not initialised. Try running DMDControl.initialise.")
+            return
+        if not line_width:
+            line_width = DMDControl.DEFAULT_LINE_WIDTH
+        pygame.draw.line(
+            surface=self.surface,
+            color=(255, 255, 255),
+            start_pos=start_pos,
+            end_pos=end_pos,
+            width=line_width,
+        )
+        pygame.display.update()
+
+    def display_line_horiz(self, at_height: int, line_width: Optional[Union[int, None]] = None):
+        self.display_line(
+            start_pos=(0, at_height),
+            end_pos=(self.width_height_DMD[0], at_height),
+            line_width=line_width,
+        )
+
+    def display_line_vert(self, at_width: int, line_width: Optional[Union[int, None]] = None):
+        self.display_line(
+            start_pos=(at_width, 0),
+            end_pos=(at_width, self.width_height_DMD[1]),
+            line_width=line_width,
+        )
+
+
+    def display_full_depreciated(self):
+        self.display_image(img=np.ones((*self.width_height_DMD, 3), dtype=int) * 255)
+
+    def display_none_depreciated(self):
         self.display_image(img=np.zeros((*self.width_height_DMD, 3), dtype=int))
 
     def display_crosshair(self, line_width: int = 1):
@@ -398,6 +506,42 @@ class DMDControl:
         center = (np.floor_divide(self.width_height_DMD[0], 2), np.floor_divide(self.width_height_DMD[1], 2))
         img[center[0] - int(np.floor(line_width / 2)): center[0] + int(np.ceil(line_width / 2)), :, :] = 255
         img[:, center[1] - int(np.floor(line_width / 2)): center[1] + int(np.ceil(line_width / 2)), :] = 255
+        self.display_image(img=img)
+
+    def display_line_horiz_depreciated(self, at_vert_pos: int, line_width: int = 1):
+        if not ((at_vert_pos <= self.width_height_DMD[1]) and (at_vert_pos >= 0)):
+            logger.error(f"DMDControl.display_line_horizontal: at_vert_pos={at_vert_pos} is "
+                         f"beyond [0, {self.width_height_DMD[1]}].")
+        img = np.zeros((*self.width_height_DMD, 3), dtype=int)
+        img[:, at_vert_pos - int(np.floor(line_width / 2)): at_vert_pos + int(np.ceil(line_width / 2)), :] = 255
+        self.display_image(img=img)
+
+    def display_line_vert_depreciated(self, at_horiz_pos: int, line_width: int = 1):
+        if not ((at_horiz_pos <= self.width_height_DMD[0]) and (at_horiz_pos >= 0)):
+            logger.error(f"DMDControl.display_line_horizontal: at_horiz_pos={at_horiz_pos} is "
+                         f"beyond [0, {self.width_height_DMD[0]}].")
+        img = np.zeros((*self.width_height_DMD, 3), dtype=int)
+        img[at_horiz_pos - int(np.floor(line_width / 2)): at_horiz_pos + int(np.ceil(line_width / 2)), :, :] = 255
+        self.display_image(img=img)
+
+    def display_text(
+            self,
+            text: Optional[str] = "Hello, World!",
+            img_fraction: Optional[float] = 0.5,
+            path_to_font: Optional[str] = "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+    ):
+        image_pil = Image.fromarray(np.transpose(np.zeros(self.width_height_DMD, dtype=np.uint8)))
+        img_height, img_width = self.width_height_DMD
+        font_size = 2
+        font = ImageFont.truetype(path_to_font, font_size)
+        while font.getlength(text) < img_fraction * image_pil.size[0]:
+            font_size += 1
+            font = ImageFont.truetype(path_to_font, font_size)
+        draw = ImageDraw.Draw(image_pil)
+        font = ImageFont.truetype(path_to_font, font_size)
+        draw.text((int(img_width / 2), int(img_height / 2)), text, fill=255, font=font, anchor='mm')
+        img = np.transpose(np.array(image_pil))
+        img = np.repeat(img[:, :, np.newaxis], 3, axis=2)
         self.display_image(img=img)
 
     def moving_rectangles(self):  # TODO
@@ -428,3 +572,9 @@ class DMDControl:
                 clock.tick(50)  # Framerate: 50 Hz
         except KeyboardInterrupt:
             pass
+
+
+
+
+
+
