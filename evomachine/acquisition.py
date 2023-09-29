@@ -89,6 +89,11 @@ class AbstractCamera:
 
         return frame
 
+    def normalise_frame(self, frame: np.ndarray[(int, int), 'ConfigImage.pxl_dtype']):
+        cmap = plt.cm.jet
+        norm = plt.Normalize(vmin=frame.min(), vmax=frame.max())
+        return cmap(norm(frame))
+
     def plot_normalised_frame(self, frame: np.ndarray[(int, int), 'ConfigImage.pxl_dtype']):
         cmap = plt.cm.jet
         norm = plt.Normalize(vmin=frame.min(), vmax=frame.max())
@@ -101,14 +106,21 @@ class AbstractCamera:
             path_to_save: str,
             frame: np.ndarray[(int, int), 'ConfigImage.pxl_dtype'],
             filename: Optional[Union[str, None]] = None,
+            normalise: Optional[bool] = False,
     ):
         if not filename:
             filename = "evom_pos{:02d}_{}.png".format(
                 self._curr_pos,
                 datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f")
             )
+
+        if normalise:
+            image = self.normalise_frame(frame)
+        else:
+            image = frame
+
         # TODO: save differently
-        plt.imsave(path_to_save + filename, frame)
+        plt.imsave(path_to_save + filename, image)
 
     def get_pos(self) -> int:
         return self._curr_pos
@@ -356,12 +368,15 @@ class DMDControl:
 
     def __init__(self):
         """
-        ___________________________ (dmd_width, dmd_height)
-        |                                                 |
-        |                                                 |
-        |                                                 |
-        |                                                 |
-        (0,0)______________________________________________
+
+        _____________________________________________________
+        | (width,0)                                   (0,0) |
+        |                                                   |
+        | SCREEN AS SEEN ON A SURFACE BEFORE THE MICROSCOPE |
+        |                                                   |
+        | (width,height)                         (0,height) |
+        |___________________________________________________|
+
         """
         self.error_container: ErrorContainer = ErrorContainer()
         "Deque to store all errors."
@@ -421,50 +436,40 @@ class DMDControl:
     def close_window():
         pygame.quit()
 
-    def display_image(self, img: np.ndarray[(int, int), int]):
+    def display_image(self, img: np.ndarray[(int, int), int], update_display: Optional[bool]=True):
         if not self._dmd_is_alive:
             logger.error(f"DMDControl.display_image: DMD not initialised. Try running DMDControl.initialise.")
             return
         if img.shape == (*self.width_height_DMD, 3):
             self.surface.blit(pygame.surfarray.make_surface(img), (0, 0))
-            pygame.display.update()
+            if update_display:
+                pygame.display.update()
         else:
             logger.error(f"DMDControl.display_image: provided image of shape={img.shape}, "
                          f"but DMD shape={(*self.width_height_DMD, 3)}.")
 
-    def display_full_depreciated2(self):
-        if not self._dmd_is_alive:
-            logger.error(f"DMDControl.display_image: DMD not initialised. Try running DMDControl.initialise.")
-            return
-        pygame.draw.rect(surface=self.surface, color=(255, 255, 255), rect=self.rect_full)
-        pygame.display.update()
-
-    def display_none_depreciated2(self):
-        if not self._dmd_is_alive:
-            logger.error(f"DMDControl.display_image: DMD not initialised. Try running DMDControl.initialise.")
-            return
-        pygame.draw.rect(surface=self.surface, color=(0, 0, 0), rect=self.rect_full)
-        pygame.display.update()
-
-    def display_full(self):
+    def display_full(self, update_display: Optional[bool] = True):
         if not self._dmd_is_alive:
             logger.error(f"DMDControl.display_full: DMD not initialised. Try running DMDControl.initialise.")
             return
         self.surface.fill((255, 255, 255))
-        pygame.display.update()
+        if update_display:
+            pygame.display.update()
 
-    def display_none(self):
+    def display_none(self, update_display: Optional[bool] = True):
         if not self._dmd_is_alive:
             logger.error(f"DMDControl.display_none: DMD not initialised. Try running DMDControl.initialise.")
             return
         self.surface.fill((0, 0, 0))
-        pygame.display.update()
+        if update_display:
+            pygame.display.update()
 
     def display_line(
             self,
             start_pos: Tuple[int, int],
             end_pos: Tuple[int, int],
             line_width: Optional[Union[int, None]] = None,
+            update_display: Optional[bool] = True,
     ):
         if not self._dmd_is_alive:
             logger.error(f"DMDControl.display_line: DMD not initialised. Try running DMDControl.initialise.")
@@ -478,51 +483,41 @@ class DMDControl:
             end_pos=end_pos,
             width=line_width,
         )
-        pygame.display.update()
+        if update_display:
+            pygame.display.update()
 
-    def display_line_horiz(self, at_height: int, line_width: Optional[Union[int, None]] = None):
+    def display_line_horiz(
+            self,
+            at_pos: int,
+            line_width: Optional[Union[int, None]] = None,
+            update_display: Optional[bool] = True,
+    ):
         self.display_line(
-            start_pos=(0, at_height),
-            end_pos=(self.width_height_DMD[0], at_height),
+            start_pos=(0, at_pos),
+            end_pos=(self.width_height_DMD[0], at_pos),
             line_width=line_width,
+            update_display=update_display,
         )
 
-    def display_line_vert(self, at_width: int, line_width: Optional[Union[int, None]] = None):
+    def display_line_vert(
+            self,
+            at_pos: int,
+            line_width: Optional[Union[int, None]] = None,
+            update_display: Optional[bool] = True,
+    ):
         self.display_line(
-            start_pos=(at_width, 0),
-            end_pos=(at_width, self.width_height_DMD[1]),
+            start_pos=(at_pos, 0),
+            end_pos=(at_pos, self.width_height_DMD[1]),
             line_width=line_width,
+            update_display=update_display,
         )
 
-
-    def display_full_depreciated(self):
-        self.display_image(img=np.ones((*self.width_height_DMD, 3), dtype=int) * 255)
-
-    def display_none_depreciated(self):
-        self.display_image(img=np.zeros((*self.width_height_DMD, 3), dtype=int))
-
-    def display_crosshair(self, line_width: int = 1):
+    def display_crosshair(self, line_width: int = 1, update_display: Optional[bool] = True):
         img = np.zeros((*self.width_height_DMD, 3), dtype=int)
         center = (np.floor_divide(self.width_height_DMD[0], 2), np.floor_divide(self.width_height_DMD[1], 2))
         img[center[0] - int(np.floor(line_width / 2)): center[0] + int(np.ceil(line_width / 2)), :, :] = 255
         img[:, center[1] - int(np.floor(line_width / 2)): center[1] + int(np.ceil(line_width / 2)), :] = 255
-        self.display_image(img=img)
-
-    def display_line_horiz_depreciated(self, at_vert_pos: int, line_width: int = 1):
-        if not ((at_vert_pos <= self.width_height_DMD[1]) and (at_vert_pos >= 0)):
-            logger.error(f"DMDControl.display_line_horizontal: at_vert_pos={at_vert_pos} is "
-                         f"beyond [0, {self.width_height_DMD[1]}].")
-        img = np.zeros((*self.width_height_DMD, 3), dtype=int)
-        img[:, at_vert_pos - int(np.floor(line_width / 2)): at_vert_pos + int(np.ceil(line_width / 2)), :] = 255
-        self.display_image(img=img)
-
-    def display_line_vert_depreciated(self, at_horiz_pos: int, line_width: int = 1):
-        if not ((at_horiz_pos <= self.width_height_DMD[0]) and (at_horiz_pos >= 0)):
-            logger.error(f"DMDControl.display_line_horizontal: at_horiz_pos={at_horiz_pos} is "
-                         f"beyond [0, {self.width_height_DMD[0]}].")
-        img = np.zeros((*self.width_height_DMD, 3), dtype=int)
-        img[at_horiz_pos - int(np.floor(line_width / 2)): at_horiz_pos + int(np.ceil(line_width / 2)), :, :] = 255
-        self.display_image(img=img)
+        self.display_image(img=img, update_display=update_display)
 
     def display_text(
             self,
