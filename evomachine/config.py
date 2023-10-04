@@ -63,26 +63,6 @@ class ConfigDevice:
                     ErrorCode.ERROR_DEVICE_CONFIG.value)
 
 
-@dataclass
-class ConfigImage:
-    pxl_horiz: int
-    "Number of pixels in horizontal direction."
-    pxl_vert: int
-    "Number of pixels in vertical direction."
-    pxl_dtype: np.dtype
-    "Datatype of images"
-    tile_image: Optional[Tuple[int, int]] = (1, 1)
-    "Tile images returned from camera."
-    crop_out_ROI: Optional[bool] = True
-    "Apply ROI segmentation to overlapping image portions with size of ROI segmentation model."
-    use_track_RT: Optional[bool] = False
-
-    def check_config(self):
-        if self.pxl_x <= 0 or self.pxl_y <= 0:
-            raise ConfigError("Number of pixels must be strictly positive.",
-                              ErrorCode.ERROR_IMAGE_CONFIG.value)
-
-
 DEVICE_CONFIG_DELTA_SIM = ConfigDevice(
     num_pos=2,
     coord_pos=[(0, 0) for _ in range(2)],
@@ -107,6 +87,26 @@ DEVICE_CONFIG_EVO_TEST = ConfigDevice(
 )
 
 
+@dataclass
+class ConfigImage:
+    pxl_horiz: int
+    "Number of pixels in horizontal direction."
+    pxl_vert: int
+    "Number of pixels in vertical direction."
+    pxl_dtype: np.dtype
+    "Datatype of images"
+    tile_image: Optional[Tuple[int, int]] = (1, 1)
+    "Tile images returned from camera."
+    crop_out_ROI: Optional[bool] = True
+    "Apply ROI segmentation to overlapping image portions with size of ROI segmentation model."
+    use_track_RT: Optional[bool] = False
+
+    def check_config(self):
+        if self.pxl_x <= 0 or self.pxl_y <= 0:
+            raise ConfigError("Number of pixels must be strictly positive.",
+                              ErrorCode.ERROR_IMAGE_CONFIG.value)
+
+
 IMAGE_CONFIG_DELTA_SIM = ConfigImage(
     pxl_horiz=696,
     pxl_vert=520,
@@ -119,6 +119,76 @@ IMAGE_CONFIG_DELTA_BENCH = ConfigImage(
     pxl_dtype=np.dtype("float32"),
     tile_image=(1, 5),
     crop_out_ROI=True,
+)
+
+
+@dataclass
+class ConfigCRISP:
+    averaging: int
+    "Number of samples to average."
+    led_intensity: int
+    "LED intensity of the CRISP device."
+    lock_range: float
+    "Prevent the axis from moving too far out of focus lock. Value in mm."
+    loop_gain: int
+    "Adjust to change the responsiveness of CRISP."
+    objective_na: float
+    "Objective numerical aperture."
+    update_rate: int
+    "The time in milliseconds to wait between updates to the CRISP trajectory."
+
+    user_input: Optional[bool] = True
+    "Ask for user input before configuring and locking CRISP autofocus."
+    min_snr: Optional[int] = 2
+    "Minimum acceptable signal to noise ratio measured during calibration."
+    min_error: Optional[int] = 100
+    "Minimum acceptable absolute error measured during calibration."
+    pause_long: Optional[int] = 5
+    "Value of long pause in seconds between CRISP configuration steps."
+    pause_short: Optional[int] = 1
+    "Value of short pause in seconds between CRISP configuration steps."
+
+    def check_config(self):
+        if (not isinstance(self.led_intensity, int)) or self.led_intensity <= 0 or self.led_intensity > 100:
+            raise ConfigError(f"led_intensity must be an integer in the range (0,100]. Provided {self.led_intensity}.",
+                              ErrorCode.ERROR_CRISP_CONFIG.value)
+        if not isinstance(self.objective_na, float):
+            raise ConfigError(f"objective_na must be a floating point number. Provided {self.objective_na}.",
+                              ErrorCode.ERROR_CRISP_CONFIG.value)
+        if (not isinstance(self.loop_gain, int)) or self.loop_gain > 10 or self.loop_gain < 1:
+            raise ConfigError(f"loop_gain must be an integer in the range [1,10]. Provided {self.loop_gain}.",
+                              ErrorCode.ERROR_CRISP_CONFIG.value)
+        if (not isinstance(self.averaging, int)) or self.averaging < 0:
+            raise ConfigError(f"averaging must be an integer in the range [0,Inf). Provided {self.averaging}.",
+                              ErrorCode.ERROR_CRISP_CONFIG.value)
+        if (not isinstance(self.update_rate, int)) or self.update_rate < 0:
+            raise ConfigError(f"update_rate must be an integer in the range [0,Inf). Provided {self.update_rate}.",
+                              ErrorCode.ERROR_CRISP_CONFIG.value)
+        if (not isinstance(self.lock_range, float)) or self.lock_range > 0.1:
+            raise ConfigError(f"lock_range may lead to objective crashing into the sample. Provided {self.lock_range}.",
+                              ErrorCode.ERROR_CRISP_CONFIG.value)
+
+    def __str__(self):
+        attributes = [
+            f"- led_intensity={self.led_intensity}",
+            f"- objective_na={self.objective_na:.3f}",
+            f"- loop_gain={self.loop_gain}",
+            f"- averaging={self.averaging}",
+            f"- update_rate={self.update_rate}",
+            f"- lock_range={self.lock_range:.3f}",
+            f"- min_snr={self.min_snr}",
+            f"- min_error={self.min_error}",
+        ]
+        return "\n".join(attributes)
+
+
+CRISP_CONFIG_DEFAULT = ConfigCRISP(
+    led_intensity=80,
+    objective_na=0.95,
+    loop_gain=5,
+    averaging=0,
+    update_rate=100,
+    lock_range=0.05,
 )
 
 

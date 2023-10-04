@@ -13,6 +13,7 @@ class ErrorCode(Enum):
     # Configuration errors
     ERROR_DEVICE_CONFIG = auto()
     ERROR_IMAGE_CONFIG = auto()
+    ERROR_CRISP_CONFIG = auto()
 
     # Camera errors
     ERROR_MMC_NOT_ALIVE = auto()

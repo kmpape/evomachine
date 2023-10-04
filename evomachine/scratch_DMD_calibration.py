@@ -1,8 +1,9 @@
 import sys
 sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/asitiger")
 sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo")
+from asitiger.command import CRISPState, Command
 from evomachine.acquisition import EvoCamera, DMDControl
-from evomachine.config import DEVICE_CONFIG_EVO_TEST
+from evomachine.config import DEVICE_CONFIG_EVO_TEST, CRISP_CONFIG_DEFAULT
 from evomachine.utils import Timer
 import pygame
 import sys
@@ -18,7 +19,8 @@ cam = EvoCamera(DEVICE_CONFIG_EVO_TEST)
 dmd = DMDControl()
 tig = cam.tiger
 cam.initialise()
-cam._set_channel(-1)
+cam._set_channel(2)
+dmd.display_full()
 
 
 def get_full(this_delay: float):
@@ -116,6 +118,32 @@ with open('results_calib_horiz.pkl', 'wb') as file:
     pickle.dump(results, file)
 
 
+vert_1 = get_vert(this_at_pos=1000, this_delay=delay, this_line_width=line_width)
+vert_2 = get_vert(this_at_pos=1500, this_delay=delay, this_line_width=line_width)
+ref_full = get_full(this_delay=delay)
+ref_none = get_none(this_delay=delay)
+diff_none = np.abs(ref_none.astype(float)-vert_1.astype(float))
+diff_full = np.abs(ref_full.astype(float)-vert_1.astype(float))
+
+
+vmin = ref_full.min()
+vmax = 0.6*ref_full.max()
+fig, axs = plt.subplots(2, 4)
+axs[0, 0].imshow(ref_full, vmin=vmin, vmax=vmax)
+axs[0, 0].set_title("FULL")
+axs[0, 1].imshow(ref_none, vmin=vmin, vmax=vmax)
+axs[0, 1].set_title("NONE")
+axs[0, 2].imshow(vert_1, vmin=vmin, vmax=vmax)
+axs[0, 2].set_title(f"LINE_VERT at pxl 1000")
+axs[0, 3].imshow(vert_2, vmin=vmin, vmax=vmax)
+axs[0, 3].set_title("LINE_VERT at pxl 1500")
+axs[1, 2].plot(vert_1.max(axis=1))
+axs[1, 2].set_title(f"Column-wise max")
+axs[1, 3].plot(vert_2.max(axis=1))
+axs[1, 3].set_title(f"Column-wise max")
+plt.show()
+
+step = 1
 ref_full = get_full(this_delay=delay)
 ref_none = get_none(this_delay=delay)
 vert_range = range(0, dmd.width_height_DMD[0], step)
@@ -137,6 +165,15 @@ for i, at_pos in enumerate(vert_range):
     results_vert[i, 6] = vert_img.max()
 
 
+with open('results_calib_vert.pkl', 'wb') as file:
+    pickle.dump(results_vert, file)
+
+fig, axs = plt.subplots(1, 1)
+axs.plot(results_vert[:, 0], results_vert[:, 2])
+axs.set_title('Vertical map DMD-CAM')
+axs.set_xlabel('DMD loc')
+axs.set_ylabel('CAM loc')
+plt.show()
 
 
 # Benchmark functions

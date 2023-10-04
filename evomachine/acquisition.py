@@ -4,6 +4,7 @@ import numpy as np
 import os
 from PIL import Image, ImageFont, ImageDraw
 import sys
+import time
 from typing import Dict, List, Optional, Union, Tuple
 
 import cv2
@@ -14,10 +15,11 @@ import pygame.locals
 import screeninfo
 
 import asitiger.tigercontroller
+from asitiger.command import CRISPState
 import delta
 
-from evomachine.config import ConfigDevice, ConfigImage
-from evomachine.exceptions import CameraError, ErrorCode, ErrorContainer, StageError, TigerError, DMDError
+from evomachine.config import ConfigCRISP, CRISP_CONFIG_DEFAULT, ConfigDevice, ConfigImage
+from evomachine.exceptions import CameraError, ConfigError, DMDError, ErrorCode, ErrorContainer, StageError, TigerError
 
 formatter = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s - %(message)s\n<---')
 logger = logging.getLogger(__name__)
@@ -185,7 +187,7 @@ class EvoCamera(AbstractCamera):
     """
     EvoMachine acquisition class.
     """
-    def __init__(self, cfg_device: ConfigDevice):
+    def __init__(self, cfg_device: ConfigDevice, cfg_crisp: Optional[ConfigCRISP] = CRISP_CONFIG_DEFAULT):
         super().__init__(cfg_device=cfg_device)
 
         self.tiger: Union[asitiger.tigercontroller.TigerController, None] = None
@@ -208,6 +210,10 @@ class EvoCamera(AbstractCamera):
         "Filter wheel card address on ASI tiger."
         self.filter_wheel_settings: Dict[int, str] = {0: "TBD", 1: "TBD", 2: "TBD"}
         "Available filter wheels."
+        self.card_address_crisp: int = 2
+        "CRISP card address on ASI tiger."
+        self.cfg_crisp: ConfigCRISP = cfg_crisp
+        "Settings for CRISP autofocus."
 
         self.mmc: Union[Core, None] = None
         "Micromanager Core object for taking images."
@@ -322,6 +328,106 @@ class EvoCamera(AbstractCamera):
         )
         self._set_channel(i_chan=curr_channel)
         return pixels
+
+    def crisp_autofocus(self, this_cfg_crisp: Optional[ConfigCRISP] = None):
+        if not self._tiger_is_alive:
+            logger.error(f"EvoCamera.crisp_autofocus: Device not alive.")
+            return
+
+        cfg_crisp = this_cfg_crisp if this_cfg_crisp else self.cfg_crisp
+
+        if cfg_crisp.user_input:
+            user_input = input("Starting CRISP autofocus. Do you want to proceed? (yes/no): ")
+            if user_input.lower() == "yes":
+                logger.info("CRISP: Proceeding with configuring and setting up CRISP autofocus.")
+            else:
+                logger.info("CRISP: Aborting CRISP configuration.")
+                return
+        self.crisp_configure(this_cfg_crisp=cfg_crisp)
+
+        logger.info("CRISP: Setting IDLE status.")
+        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.IDLE)
+        time.sleep(cfg_crisp.pause_short)
+        logger.info("CRISP: Setting LOG_CAL status.")
+        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.LOG_CAL)
+        time.sleep(cfg_crisp.pause_long)
+        val = self.tiger.crisp_get_snr(card_address=self.card_address_crisp)
+        if val < cfg_crisp.min_snr:
+            logger.warning(f"EvoCamera.autofocus: Low SNR = {val:.2d}. Increase CRISP LED intensity and repeat.")
+        logger.info("CRISP: Setting DITHER status.")
+        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.DITHER)
+        time.sleep(cfg_crisp.pause_long)
+        val = self.tiger.crisp_get_err(card_address=self.card_address_crisp)
+        if np.abs(val) < cfg_crisp.min_error:
+            logger.warning(f"EvoCamera.autofocus: Low error = {val}. Check ASI guide.")
+        logger.info("CRISP: Setting SET_GAIN status.")
+        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.SET_GAIN)
+        time.sleep(cfg_crisp.pause_short)
+
+        do_lock = True
+        if cfg_crisp.user_input:
+            user_input = input("Do you want to lock CRISP autofocus? (yes/no): ")
+            do_lock = True if user_input.lower() == "yes" else False
+        if do_lock:
+            logger.info("CRISP: Setting LOCK status.")
+            self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.LOCK)
+        else:
+            logger.info("CRISP: Setting UNLOCK status.")
+            self.crisp_unlock()
+        time.sleep(cfg_crisp.pause_short)
+        curr_state = self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=None)
+        logger.info(f"CRISP: Finalising autofocus. Current state is {curr_state}.")
+
+    def crisp_disable(self):
+        if not self._tiger_is_alive:
+            logger.error(f"EvoCamera.crisp_disable: Device not alive. Trying to disable anyway.")
+        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.IDLE)
+
+    def crisp_is_locked(self):
+        if not self._tiger_is_alive:
+            logger.error(f"EvoCamera.crisp_is_locked: Device not alive.")
+            return
+        return self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=None) == 'F'
+
+    def crisp_configure(self, this_cfg_crisp: Optional[ConfigCRISP] = None):
+        if not self._tiger_is_alive:
+            logger.error(f"EvoCamera.crisp_set_parameters: Device not alive.")
+            return
+        cfg_crisp = this_cfg_crisp if this_cfg_crisp else self.cfg_crisp
+        try:
+            cfg_crisp.check_config()
+            logger.info(f"CRISP: Configuring CRISP with following parameters:\n{cfg_crisp}")
+        except ConfigError as e:
+            logger.error(f"CRISP: Bad configuration:\n{e}\nCannot use CRISP.")
+            return
+        self.crisp_unlock()
+        time.sleep(cfg_crisp.pause_short)
+        self.tiger.crisp_get_set_objective_na(card_address=self.card_address_crisp, value=cfg_crisp.objective_na)
+        time.sleep(cfg_crisp.pause_short)
+        self.tiger.crisp_get_set_led_intensity(card_address=self.card_address_crisp, value=cfg_crisp.led_intensity)
+        time.sleep(cfg_crisp.pause_short)
+        self.tiger.crisp_get_set_loop_gain(card_address=self.card_address_crisp, value=cfg_crisp.loop_gain)
+        time.sleep(cfg_crisp.pause_short)
+        self.tiger.crisp_get_set_num_avg(card_address=self.card_address_crisp, value=cfg_crisp.averaging)
+        time.sleep(cfg_crisp.pause_short)
+        self.tiger.crisp_get_set_update_rate(card_address=self.card_address_crisp, value=cfg_crisp.update_rate)
+        time.sleep(cfg_crisp.pause_short)
+        self.tiger.crisp_get_set_lock_range(card_address=self.card_address_crisp, value=cfg_crisp.lock_range)
+        time.sleep(cfg_crisp.pause_short)
+        new_cfg = ConfigCRISP(
+            objective_na=self.tiger.crisp_get_set_objective_na(card_address=self.card_address_crisp, value=None),
+            led_intensity=self.tiger.crisp_get_set_led_intensity(card_address=self.card_address_crisp, value=None),
+            loop_gain=self.tiger.crisp_get_set_loop_gain(card_address=self.card_address_crisp, value=None),
+            averaging=self.tiger.crisp_get_set_num_avg(card_address=self.card_address_crisp, value=None),
+            update_rate=self.tiger.crisp_get_set_update_rate(card_address=self.card_address_crisp, value=None),
+            lock_range=self.tiger.crisp_get_set_lock_range(card_address=self.card_address_crisp, value=None),
+            min_snr=cfg_crisp.min_snr,
+            min_error=cfg_crisp.min_error,
+        )
+        logger.info(f"CRISP: Parameters set to:\n{new_cfg}")
+
+    def crisp_unlock(self):
+        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.UNLOCK)
 
     def autofocus(self, focus_channel: int = 0, focus_exposure: int = 100):
         if not all([self._mmc_is_alive, self._tiger_is_alive]):
