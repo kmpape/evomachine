@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from enum import Enum
 import numpy as np
 from pathlib import Path
 from typing import Any, List, Literal, Optional, Tuple, Union
@@ -9,6 +10,26 @@ from evomachine.exceptions import ConfigError, ErrorCode
 
 # DeLTA lib install directory
 EVOMACHINE_DIR = Path(__file__).parent
+
+
+class ConfigLED(Enum):
+    LED_NO_LED = -1
+    LED_405_NM = 0
+    LED_450_NM = 1
+    LED_505_NM = 2
+    LED_538_NM = 3
+
+    @classmethod
+    def get_all_values(cls) -> List[int]:
+        return [member.value for member in cls]
+
+    @classmethod
+    def get_name(cls, value_to_find) -> str:
+        for member in cls:
+            if member.value == value_to_find:
+                return str(member.name)
+        return ""
+
 
 @dataclass
 class ConfigDevice:
@@ -135,7 +156,7 @@ class ConfigCRISP:
     objective_na: float
     "Objective numerical aperture."
     update_rate: int
-    "The time in milliseconds to wait between updates to the CRISP trajectory."
+    "The time in ms to wait between updates to the CRISP trajectory."
 
     user_input: Optional[bool] = True
     "Ask for user input before configuring and locking CRISP autofocus."
@@ -144,9 +165,9 @@ class ConfigCRISP:
     min_error: Optional[int] = 100
     "Minimum acceptable absolute error measured during calibration."
     pause_long: Optional[int] = 5
-    "Value of long pause in seconds between CRISP configuration steps."
+    "Value of long pause in s between CRISP configuration steps."
     pause_short: Optional[int] = 1
-    "Value of short pause in seconds between CRISP configuration steps."
+    "Value of short pause in s between CRISP configuration steps."
 
     def check_config(self):
         if (not isinstance(self.led_intensity, int)) or self.led_intensity <= 0 or self.led_intensity > 100:
@@ -189,6 +210,54 @@ CRISP_CONFIG_DEFAULT = ConfigCRISP(
     averaging=0,
     update_rate=100,
     lock_range=0.05,
+)
+
+
+@dataclass
+class ConfigFocus:
+    exposure_time: int
+    "Exposure time for focusing in ms."
+    focus_channel: int
+    "LED channel to use while scanning. See ConfigLED for available channels."
+    rel_range: int
+    "Relative range for Z-movement of stage in 1/10 μm, e.g., stage will move current_position+-rel_range."
+    steps_size: int
+    "Step size for Z-movement of stage in 1/10 μm, e.g., steps_size=1 -> stage moves in 0.1 μm."
+
+    user_input: Optional[bool] = True
+    "Ask for user input before configuring and starting software focus."
+
+    def check_config(self):
+        if (not isinstance(self.steps_size, int)) or self.steps_size <= 0:
+            raise ConfigError(f"steps_size must be an integer in the range [1, Inf]. Provided {self.steps_size}.",
+                              ErrorCode.ERROR_FOCUS_CONFIG.value)
+        if (not isinstance(self.rel_range, int)) or self.rel_range <= 0:
+            raise ConfigError(f"rel_range must be an integer in the range [1, Inf]. Provided {self.rel_range}.",
+                              ErrorCode.ERROR_FOCUS_CONFIG.value)
+        if (not isinstance(self.focus_channel, int)) or (self.focus_channel not in ConfigLED.get_all_values()):
+            raise ConfigError(f"focus_channel must be an integer in the range "
+                              f"[{min(ConfigLED.get_all_values())}, {max(ConfigLED.get_all_values())}]. "
+                              f"Provided {self.focus_channel}.",
+                              ErrorCode.ERROR_FOCUS_CONFIG.value)
+        if (not isinstance(self.exposure_time, int)) or self.exposure_time <= 0:
+            raise ConfigError(f"exposure_time must be an integer in the range [1, Inf]. Provided {self.exposure_time}.",
+                              ErrorCode.ERROR_FOCUS_CONFIG.value)
+
+    def __str__(self):
+        attributes = [
+            f"- exposure_time={self.exposure_time} ms",
+            f"- focus_channel={self.focus_channel} ({ConfigLED.get_name(self.focus_channel)})",
+            f"- rel_range={self.rel_range/10} μm",
+            f"- steps_size={self.steps_size/10} μm",
+        ]
+        return "\n".join(attributes)
+
+
+FOCUS_CONFIG_DEFAULT = ConfigFocus(
+    exposure_time=100,
+    focus_channel=ConfigLED.LED_538_NM.value,
+    rel_range=100,
+    steps_size=1,
 )
 
 

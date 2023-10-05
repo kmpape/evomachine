@@ -18,7 +18,8 @@ import asitiger.tigercontroller
 from asitiger.command import CRISPState
 import delta
 
-from evomachine.config import ConfigCRISP, CRISP_CONFIG_DEFAULT, ConfigDevice, ConfigImage
+from evomachine.config import ConfigCRISP, CRISP_CONFIG_DEFAULT, ConfigDevice, ConfigFocus, ConfigImage, ConfigLED, \
+    FOCUS_CONFIG_DEFAULT
 from evomachine.exceptions import CameraError, ConfigError, DMDError, ErrorCode, ErrorContainer, StageError, TigerError
 
 formatter = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s - %(message)s\n<---')
@@ -187,7 +188,12 @@ class EvoCamera(AbstractCamera):
     """
     EvoMachine acquisition class.
     """
-    def __init__(self, cfg_device: ConfigDevice, cfg_crisp: Optional[ConfigCRISP] = CRISP_CONFIG_DEFAULT):
+    def __init__(
+            self,
+            cfg_device: ConfigDevice,
+            cfg_crisp: Optional[ConfigCRISP] = CRISP_CONFIG_DEFAULT,
+            cfg_focus: Optional[ConfigFocus] = FOCUS_CONFIG_DEFAULT,
+    ):
         super().__init__(cfg_device=cfg_device)
 
         self.tiger: Union[asitiger.tigercontroller.TigerController, None] = None
@@ -197,11 +203,11 @@ class EvoCamera(AbstractCamera):
         self.current_channel: int = -1
         "Current LED channel set"
         self.channel_settings: Dict[int, Dict] = {
-            0: {"X": 100, "Y": 0, "Z": 0, "F": 0},
-            1: {"X": 0, "Y": 100, "Z": 0, "F": 0},
-            2: {"X": 0, "Y": 0, "Z": 100, "F": 0},
-            3: {"X": 0, "Y": 0, "Z": 0, "F": 100},
-            -1: {"X": 0, "Y": 0, "Z": 0, "F": 0},
+            ConfigLED.LED_405_NM.value: {"X": 100, "Y": 0, "Z": 0, "F": 0},
+            ConfigLED.LED_450_NM.value: {"X": 0, "Y": 100, "Z": 0, "F": 0},
+            ConfigLED.LED_505_NM.value: {"X": 0, "Y": 0, "Z": 100, "F": 0},
+            ConfigLED.LED_538_NM.value: {"X": 0, "Y": 0, "Z": 0, "F": 100},
+            ConfigLED.LED_NO_LED.value: {"X": 0, "Y": 0, "Z": 0, "F": 0},
         }
         "LED intensity for i_chan=0,...,3."
         self.card_address_led: int = 7
@@ -214,6 +220,8 @@ class EvoCamera(AbstractCamera):
         "CRISP card address on ASI tiger."
         self.cfg_crisp: ConfigCRISP = cfg_crisp
         "Settings for CRISP autofocus."
+        self.cfg_focus: ConfigFocus = cfg_focus
+        "Settings for initial software focus."
 
         self.mmc: Union[Core, None] = None
         "Micromanager Core object for taking images."
@@ -429,41 +437,41 @@ class EvoCamera(AbstractCamera):
     def crisp_unlock(self):
         self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.UNLOCK)
 
-    def autofocus(self, focus_channel: int = 0, focus_exposure: int = 100):
+    def software_focus(self, this_cfg_focus: Optional[ConfigFocus] = None):
         if not all([self._mmc_is_alive, self._tiger_is_alive]):
-            logger.error(f"EvoCamera.autofocus: Device(s) not alive. "
+            logger.error(f"EvoCamera.software_focus: Device(s) not alive. "
                          f"Tiger={self._tiger_is_alive}, MMC={self._mmc_is_alive}.")
             return
-
-        # Settings
-        FOCUS_MIN = -76000
-        FOCUS_MAX = -73000
-        FOCUS_STEP = 50
-        FOCUS_SMALL_STEP = 1
-        FOCUS_SMALL_DIFF = 50
-
-        # Prepare
+        cfg_focus = this_cfg_focus if this_cfg_focus else self.cfg_focus
+        curr_pos = self.tiger.where(['Z'])['Z']
+        coords = range(curr_pos-cfg_focus.rel_range, curr_pos+cfg_focus.rel_range, cfg_focus.steps_size)
+        user_input = input(f"EvoCamera.software_focus: Starting software autofocus configured as\n"
+                           f"{cfg_focus.__str__()}\nThis will move the stage up and down in the range "
+                           f"[{(curr_pos-cfg_focus.rel_range)/10},{(curr_pos+cfg_focus.rel_range)/10}] μm. "
+                           f"If there are objects blocking the stage movement, this will crash the "
+                           f"objective and break it. Do you want to proceed? (yes/no): ")
+        if user_input.lower() == "yes":
+            logger.info("EvoCamera.software_focus: Proceeding with software focus.")
+        else:
+            logger.info("EvoCamera.software_focus: Aborting software focus.")
+            return
         old_channel = self.current_channel
-        self.mmc.set_exposure(focus_exposure)
+        self.mmc.set_exposure(cfg_focus.exposure_time)
         self.studio.live().set_live_mode(False)
-
-        # Focus
-        coordinates = range(FOCUS_MIN, FOCUS_MAX, FOCUS_STEP)
-        best_coordinate: int = 0
-        for raw_fine in range(2):
-            best_focus_score = 0
-            best_focus_position = 0
-            for ipos, zcoord in enumerate(coordinates):
-                self._move_stage_to_coord({'Z': zcoord})
-                image_raw = self._take_frame(i_chan=focus_channel, i_period=None)
-                laplacian = cv2.Laplacian(image_raw, cv2.CV_64F)
-                focus_score = laplacian.var()
-                # print(f"{ipos}/{len(coordinates)}: Z={zcoord}, Score={focus_score}\n")
-                if focus_score > best_focus_score:
-                    best_focus_position = ipos
-                    best_focus_score = focus_score
-            best_coordinate = coordinates[best_focus_position]
-            coordinates = range(best_coordinate - FOCUS_SMALL_DIFF, best_coordinate + FOCUS_SMALL_DIFF, FOCUS_SMALL_STEP)
+        best_focus_score = 0
+        best_focus_position = 0
+        for ipos, z_coord in enumerate(coords):
+            self._move_stage_to_coord({'Z': z_coord})
+            image_raw = self._take_frame(i_chan=cfg_focus.focus_channel, i_period=None)
+            laplacian = cv2.Laplacian(image_raw, cv2.CV_64F)
+            focus_score = laplacian.var()
+            # print(f"{ipos}/{len(coordinates)}: Z={zcoord}, Score={focus_score}\n")
+            if focus_score > best_focus_score:
+                best_focus_position = ipos
+                best_focus_score = focus_score
+        best_coordinate = coords[best_focus_position]
+        logger.info(f"EvoCamera.software_focus: Finished scanning. Coordinate before focus={curr_pos / 10} μm,"
+                    f"coordinate after focus={best_coordinate / 10} μm. Finalising software_focus.")
         self._move_stage_to_coord({'Z': best_coordinate})
         self._set_channel(i_chan=old_channel)
 
