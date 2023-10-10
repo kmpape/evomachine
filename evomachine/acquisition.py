@@ -2,6 +2,7 @@ from datetime import datetime
 import logging
 import numpy as np
 import os
+from pathlib import Path
 from PIL import Image, ImageFont, ImageDraw
 import sys
 import time
@@ -12,14 +13,16 @@ import matplotlib.pyplot as plt
 from pycromanager import Core, Studio
 import pygame
 import pygame.locals
+from pynput import keyboard
 import screeninfo
+import skimage
 
 import asitiger.tigercontroller
 from asitiger.command import CRISPState
 import delta
 
 from evomachine.config import ConfigCRISP, CRISP_CONFIG_DEFAULT, ConfigDevice, ConfigFocus, ConfigImage, ConfigLED, \
-    FOCUS_CONFIG_DEFAULT
+    ConfigObjective, FOCUS_CONFIG_DEFAULT, IMAGE_CONFIG_DEFAULT, OBJECTIVE_CONFIG_DEFAULT
 from evomachine.exceptions import CameraError, ConfigError, DMDError, ErrorCode, ErrorContainer, StageError, TigerError
 
 formatter = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s - %(message)s\n<---')
@@ -34,11 +37,17 @@ logger.propagate = False
 
 
 class AbstractCamera:
-    def __init__(self, cfg_device: ConfigDevice):
+    def __init__(
+            self,
+            cfg_device: ConfigDevice,
+            cfg_image: Optional[ConfigImage] = IMAGE_CONFIG_DEFAULT,
+    ):
         self.error_container: ErrorContainer = ErrorContainer()
         "Deque to store all errors."
         self.cfg_device: ConfigDevice = cfg_device
         "Device configuration object."
+        self.cfg_image: ConfigImage = cfg_image
+        "Image configuration object."
         self._step: int = -1
         "Increments each time an image is taken."
         self._curr_pos: int = 0
@@ -70,66 +79,66 @@ class AbstractCamera:
             self,
             i_chan: int,
             i_period: Union[int, None] = None,
-    ) -> np.ndarray[(int, int), 'ConfigImage.pxl_dtype']:  # TODO: check frame data type
+            normalise: Optional[bool] = False,
+    ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
         self._step += 1
-        return self._take_frame(i_chan=i_chan, i_period=i_period)
+        frame = self._take_frame(i_chan=i_chan, i_period=i_period)
+        return self.normalise_frame(frame=frame) if (normalise and (frame is not None)) else frame
 
     def display_save_frame(
             self,
             i_chan: int,
             i_period: Optional[Union[int, None]] = None,
-            path_to_save: Optional[Union[str, None]] = None,
+            path_to_save: Optional[Union[Path, str, None, bool]] = None,
             filename: Optional[Union[str, None]] = None,
             display_frame: Optional[bool] = True,
-    ) -> np.ndarray[(int, int), 'ConfigImage.pxl_dtype']:
+    ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
         frame = self.get_frame(i_chan=i_chan, i_period=i_period)
-
+        if frame is None:
+            logger.warning(f"AbstractCamera.display_save_frame: self.get_frame returned None. Aborting...")
+            return None
         if display_frame:
             self.plot_normalised_frame(frame=frame)
-
-        if path_to_save:
-            self.save_frame(path_to_save=path_to_save, frame=frame, filename=filename)
-
+        if path_to_save is not None:
+            self.save_frame(frame=frame, path_to_save=path_to_save, filename=filename)
         return frame
 
-    def normalise_frame(self, frame: np.ndarray[(int, int), 'ConfigImage.pxl_dtype']):
+    @staticmethod
+    def normalise_frame(frame: np.ndarray[(int, int), 'ConfigImage.pxl_dtype']):
         cmap = plt.cm.jet
         norm = plt.Normalize(vmin=frame.min(), vmax=frame.max())
         return cmap(norm(frame))
 
     def plot_normalised_frame(self, frame: np.ndarray[(int, int), 'ConfigImage.pxl_dtype']):
-        cmap = plt.cm.jet
-        norm = plt.Normalize(vmin=frame.min(), vmax=frame.max())
-        image = cmap(norm(frame))
+        image = self.normalise_frame(frame=frame)
         plt.imshow(image)
         plt.show()
 
     def save_frame(
             self,
-            path_to_save: str,
             frame: np.ndarray[(int, int), 'ConfigImage.pxl_dtype'],
+            path_to_save: Optional[Union[Path, str, bool]] = True,
             filename: Optional[Union[str, None]] = None,
-            normalise: Optional[bool] = False,
     ):
         if not filename:
-            filename = "evom_pos{:02d}_{}.png".format(
-                self._curr_pos,
-                datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f")
-            )
+            filename = self.get_filename()
 
-        if normalise:
-            image = self.normalise_frame(frame)
-        else:
-            image = frame
-
-        # TODO: save differently
-        plt.imsave(path_to_save + filename, image)
+        if isinstance(path_to_save, str):
+            path_to_save = Path(path_to_save)
+        elif isinstance(path_to_save, bool) and path_to_save is True:
+            path_to_save = self.cfg_device.path_to_save
+        if not path_to_save.exists():
+            logger.warning(f"AbstractCamera.save_frame: Path {path_to_save} does not exist. "
+                           f"Returning image without saving...")
+            return
+        logger.info(f"Saving image {path_to_save / filename}.")
+        skimage.io.imsave(path_to_save / filename, frame, plugin="tifffile", check_contrast=False)
 
     def get_pos(self) -> int:
         return self._curr_pos
 
-    def autofocus(self):
-        raise NotImplementedError()
+    def get_filename(self) -> str:
+        return "evom_pos{:02d}_{}".format(self._curr_pos, datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f"))
 
     def _initialise(self) -> None:
         raise NotImplementedError()
@@ -144,7 +153,7 @@ class AbstractCamera:
             self,
             i_chan: int,
             i_period: Union[int, None],
-    ) -> np.ndarray[(int, int), 'ConfigImage.pxl_dtype']:
+    ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
         raise NotImplementedError()
 
 
@@ -152,8 +161,12 @@ class DeltaCamera(AbstractCamera):
     """
     A class to mock the acquisition of frames.
     """
-    def __init__(self, cfg_device: ConfigDevice):
-        super().__init__(cfg_device=cfg_device)
+    def __init__(
+            self,
+            cfg_device: ConfigDevice,
+            cfg_image: Optional[ConfigImage] = IMAGE_CONFIG_DEFAULT,
+    ):
+        super().__init__(cfg_device=cfg_device, cfg_image=cfg_image)
 
         self.all_frames: List[np.ndarray[(int, int, int, int), np.float32]] = [
             np.empty((1, 1, 1, 1)) for _ in range(cfg_device.num_periods)
@@ -180,7 +193,7 @@ class DeltaCamera(AbstractCamera):
             self,
             i_chan: int,
             i_period: Union[int, None],
-    ) -> np.ndarray[(int, int), 'ConfigImage.pxl_dtype']:
+    ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
         return self.all_frames[self._curr_pos][i_period, i_chan, :, :]
 
 
@@ -191,17 +204,21 @@ class EvoCamera(AbstractCamera):
     def __init__(
             self,
             cfg_device: ConfigDevice,
+            cfg_image: Optional[ConfigImage] = IMAGE_CONFIG_DEFAULT,
             cfg_crisp: Optional[ConfigCRISP] = CRISP_CONFIG_DEFAULT,
             cfg_focus: Optional[ConfigFocus] = FOCUS_CONFIG_DEFAULT,
+            cfg_objective: Optional[ConfigObjective] = OBJECTIVE_CONFIG_DEFAULT,
     ):
-        super().__init__(cfg_device=cfg_device)
+        super().__init__(cfg_device=cfg_device, cfg_image=cfg_image)
 
         self.tiger: Union[asitiger.tigercontroller.TigerController, None] = None
         "Object for serial communication with ASI tiger."
         self._tiger_is_alive: bool = False
         "Flag set in _initialise."
         self.current_channel: int = -1
-        "Current LED channel set"
+        "Current LED channel set."
+        self._last_frame_channel: int = -1
+        "Channel used to take last frame."
         self.channel_settings: Dict[int, Dict] = {
             ConfigLED.LED_405_NM.value: {"X": 100, "Y": 0, "Z": 0, "F": 0},
             ConfigLED.LED_450_NM.value: {"X": 0, "Y": 100, "Z": 0, "F": 0},
@@ -222,6 +239,8 @@ class EvoCamera(AbstractCamera):
         "Settings for CRISP autofocus."
         self.cfg_focus: ConfigFocus = cfg_focus
         "Settings for initial software focus."
+        self.cfg_objective: ConfigObjective = cfg_objective
+        "Parameters of objective."
 
         self.mmc: Union[Core, None] = None
         "Micromanager Core object for taking images."
@@ -325,9 +344,14 @@ class EvoCamera(AbstractCamera):
         if not self._mmc_is_alive:
             logger.error(msg=f"EvoCamera._take_frame: MMC is not alive. Check Camera and Micro-Manager.")
             return None
+        self._last_frame_channel = i_chan
         curr_channel = self.current_channel
         self._set_channel(i_chan=i_chan)
-        self.mmc.snap_image()
+        try:
+            self.mmc.snap_image()
+        except Exception as e:
+            logger.warning(f"EvoCamera._take_frame: Received exception:\n{e}\nHave you disabled MM live mode?")
+            return None
         self._disable_channels()
         tagged_image = self.mmc.get_tagged_image()
         pixels = np.reshape(
@@ -336,6 +360,15 @@ class EvoCamera(AbstractCamera):
         )
         self._set_channel(i_chan=curr_channel)
         return pixels
+
+    def get_filename(self) -> str:
+        pos = self.tiger.where(['X', 'Y'])
+        return "{}_X{}_Y{}_{}.tiff".format(
+            ConfigLED.get_name(value_to_find=self._last_frame_channel).replace("_", ""),
+            pos['X'],
+            pos['Y'],
+            datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f")
+        )
 
     def crisp_autofocus(self, this_cfg_crisp: Optional[ConfigCRISP] = None):
         if not self._tiger_is_alive:
@@ -437,21 +470,37 @@ class EvoCamera(AbstractCamera):
     def crisp_unlock(self):
         self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.UNLOCK)
 
-    def software_focus(self, this_cfg_focus: Optional[ConfigFocus] = None):
+    def software_focus(
+            self,
+            cfg_focus: Optional[ConfigFocus] = None,
+            focus_channel_override: Optional[int] = None,
+            rel_range_override: Optional[int] = None,
+
+    ):
         if not all([self._mmc_is_alive, self._tiger_is_alive]):
             logger.error(f"EvoCamera.software_focus: Device(s) not alive. "
                          f"Tiger={self._tiger_is_alive}, MMC={self._mmc_is_alive}.")
             return
-        cfg_focus = this_cfg_focus if this_cfg_focus else self.cfg_focus
+        cfg_focus = cfg_focus if cfg_focus else self.cfg_focus
+        if focus_channel_override is not None:
+            cfg_focus.focus_channel = focus_channel_override
+        if rel_range_override is not None:
+            cfg_focus.rel_range = rel_range_override
+        try:
+            cfg_focus.check_config()
+        except ConfigError as e:
+            logger.warning(f"EvoCamera.software_focus: Invalid focus configuration:\n{e.message}\nAborting...")
+            return
         curr_pos = self.tiger.where(['Z'])['Z']
         coords = range(curr_pos-cfg_focus.rel_range, curr_pos+cfg_focus.rel_range, cfg_focus.steps_size)
         user_input = input(f"EvoCamera.software_focus: Starting software autofocus configured as\n"
                            f"{cfg_focus.__str__()}\nThis will move the stage up and down in the range "
-                           f"[{(curr_pos-cfg_focus.rel_range)/10},{(curr_pos+cfg_focus.rel_range)/10}] μm. "
+                           f"[{(curr_pos-cfg_focus.rel_range)/10},{(curr_pos+cfg_focus.rel_range)/10}] μm"
+                           f" (current position = {curr_pos/10} μm). "
                            f"If there are objects blocking the stage movement, this will crash the "
                            f"objective and break it. Do you want to proceed? (yes/no): ")
         if user_input.lower() == "yes":
-            logger.info("EvoCamera.software_focus: Proceeding with software focus.")
+            logger.info("EvoCamera.software_focus: Proceeding with software focus. Disabling MM live mode.")
         else:
             logger.info("EvoCamera.software_focus: Aborting software focus.")
             return
@@ -463,9 +512,11 @@ class EvoCamera(AbstractCamera):
         for ipos, z_coord in enumerate(coords):
             self._move_stage_to_coord({'Z': z_coord})
             image_raw = self._take_frame(i_chan=cfg_focus.focus_channel, i_period=None)
+            if image_raw is None:
+                logger.warning("EvoCamera.software_focus: self._take_frame returned None. Aborting...")
+                return
             laplacian = cv2.Laplacian(image_raw, cv2.CV_64F)
             focus_score = laplacian.var()
-            # print(f"{ipos}/{len(coordinates)}: Z={zcoord}, Score={focus_score}\n")
             if focus_score > best_focus_score:
                 best_focus_position = ipos
                 best_focus_score = focus_score
@@ -474,6 +525,52 @@ class EvoCamera(AbstractCamera):
                     f"coordinate after focus={best_coordinate / 10} μm. Finalising software_focus.")
         self._move_stage_to_coord({'Z': best_coordinate})
         self._set_channel(i_chan=old_channel)
+
+    def move_fov_up(self, multiplier: Optional[float] = 1.0):
+        self._move_fov(x_or_y='Y', sign=-1, multiplier=multiplier)
+
+    def move_fov_down(self, multiplier: Optional[float] = 1.0):
+        self._move_fov(x_or_y='Y', sign=+1, multiplier=multiplier)
+
+    def move_fov_left(self, multiplier: Optional[float] = 1.0):
+        self._move_fov(x_or_y='X', sign=-1, multiplier=multiplier)
+
+    def move_fov_right(self, multiplier: Optional[float] = 1.0):
+        self._move_fov(x_or_y='X', sign=+1, multiplier=multiplier)
+
+    def _move_fov(self, x_or_y: str, sign: int, multiplier: Optional[float] = 1.0):
+        pos = self.tiger.where([x_or_y.upper()])
+        pos[x_or_y.upper()] += int(sign * self.cfg_objective.fov_size * 10 * multiplier)
+        self.tiger.move(coordinates=pos)
+
+    def keyboard_control(self):
+        def on_key_release(key):
+            try:
+                delta_pos = 100
+                do_move = True
+                pos = self.tiger.where(['X', 'Y'])
+                print(f"X = {pos['X'] / 10:06.1f} μm, Y = {pos['Y'] / 10:06.1f} μm", end='\r')
+                if key == keyboard.KeyCode.from_char('w'):
+                    pos['Y'] -= delta_pos
+                elif key == keyboard.KeyCode.from_char('s'):
+                    pos['Y'] += delta_pos
+                elif key == keyboard.KeyCode.from_char('a'):
+                    pos['X'] -= delta_pos
+                elif key == keyboard.KeyCode.from_char('d'):
+                    pos['X'] += delta_pos
+                elif (key == keyboard.Key.esc) or (key == keyboard.KeyCode.from_char('q')):
+                    return False
+                else:
+                    do_move = False
+                if do_move:
+                    self.tiger.move(coordinates=pos)
+                    time.sleep(0.1)
+            except Exception as e:
+                logger.debug(f"Exception: {e}\n")
+                return False
+
+        with keyboard.Listener(on_release=on_key_release, suppress=True) as listener:
+            listener.join()
 
 
 class DMDControl:
@@ -525,7 +622,6 @@ class DMDControl:
                     os.environ['SDL_VIDEO_WINDOW_POS'] = f"{self.offset_DMD[0]}, {self.offset_DMD[1]}"
                     self.surface = pygame.display.set_mode(size=self.width_height_DMD, flags=pygame.NOFRAME)
                     self.rect_full = pygame.locals.Rect(0, 0, *self.width_height_DMD)
-                    self.line_horiz = pygame.locals.Rect(0, 0, *self.width_height_DMD)
                     self._dmd_is_alive = True
                     self.display_none()
                     logging.info(f"DMD: initialised at pos={self.offset_DMD} with size={self.width_height_DMD}.")
@@ -550,7 +646,7 @@ class DMDControl:
     def close_window():
         pygame.quit()
 
-    def display_image(self, img: np.ndarray[(int, int), int], update_display: Optional[bool]=True):
+    def display_image(self, img: np.ndarray[(int, int), int], update_display: Optional[bool] = True):
         if not self._dmd_is_alive:
             logger.error(f"DMDControl.display_image: DMD not initialised. Try running DMDControl.initialise.")
             return

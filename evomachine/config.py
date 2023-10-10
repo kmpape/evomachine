@@ -51,6 +51,9 @@ class ConfigDevice:
     path_to_images: Union[Path, None]
     "Path to folder containing images. File names follow Delta's naming convention."
 
+    path_to_save: Union[Path, None]
+    "Path to save images. If triggered manually, path can be specified when calling the function."
+
     image_processing_verbosity: int
     "Path to folder containing images. File names follow Delta's naming convention."
 
@@ -83,6 +86,11 @@ class ConfigDevice:
                     len(delta_reader.channels), self.num_chan),
                     ErrorCode.ERROR_DEVICE_CONFIG.value)
 
+        if self.path_to_save is None or not self.path_to_save.exists():
+            raise ConfigError("Must provide a valid path_to_save or None."
+                              "Received {}".format(self.path_to_save),
+                              ErrorCode.ERROR_DEVICE_CONFIG.value)
+
 
 DEVICE_CONFIG_DELTA_SIM = ConfigDevice(
     num_pos=2,
@@ -91,6 +99,7 @@ DEVICE_CONFIG_DELTA_SIM = ConfigDevice(
     num_periods=10,
     read_from_disk=True,
     path_to_images=EVOMACHINE_DIR.parent / "tests/data/movie_mothermachine_tif",
+    path_to_save=None,
     image_processing_verbosity=1,
     tiger_port=None,
 )
@@ -103,6 +112,7 @@ DEVICE_CONFIG_EVO_TEST = ConfigDevice(
     num_periods=None,
     read_from_disk=False,
     path_to_images=None,
+    path_to_save=EVOMACHINE_DIR.parent / "images/DEFAULT",
     image_processing_verbosity=1,
     tiger_port="/dev/ttyUSB0",
 )
@@ -123,7 +133,7 @@ class ConfigImage:
     use_track_RT: Optional[bool] = False
 
     def check_config(self):
-        if self.pxl_x <= 0 or self.pxl_y <= 0:
+        if self.pxl_horiz <= 0 or self.pxl_vert <= 0:
             raise ConfigError("Number of pixels must be strictly positive.",
                               ErrorCode.ERROR_IMAGE_CONFIG.value)
 
@@ -141,6 +151,14 @@ IMAGE_CONFIG_DELTA_BENCH = ConfigImage(
     tile_image=(1, 5),
     crop_out_ROI=True,
 )
+
+IMAGE_CONFIG_EVO_CAM = ConfigImage(
+    pxl_horiz=3200,
+    pxl_vert=3200,
+    pxl_dtype=np.dtype("uint16"),
+)
+
+IMAGE_CONFIG_DEFAULT = IMAGE_CONFIG_EVO_CAM
 
 
 @dataclass
@@ -260,6 +278,64 @@ FOCUS_CONFIG_DEFAULT = ConfigFocus(
     steps_size=1,
 )
 
+
+@dataclass
+class ConfigObjective:
+    numerical_aperture: float
+    "Numerical aperture NA=n*sin(theta)."
+    is_oil: bool
+    "Yes if oil objective otherwise air."
+    magnification: int
+    "Magnification of objective."
+
+    cam_pxl_size: Optional[float] = 6.5
+    "Pixel size of camera in μm."
+    cam_img_size: Optional[float] = 3200
+    "Number of pixels that camera returns (assuming a square FoV)."
+
+    @property
+    def pxl_size(self):
+        return self.cam_pxl_size / self.magnification  # in μm
+
+    @property
+    def fov_size(self):
+        return self.cam_pxl_size / self.magnification * self.cam_img_size  # in μm
+
+    def check_config(self):
+        if (not isinstance(self.numerical_aperture, float)) or self.numerical_aperture <= 0:
+            raise ConfigError(f"numerical_aperture must be an integer in the range [0, Inf]. "
+                              f"Provided {self.numerical_aperture}.",
+                              ErrorCode.ERROR_FOCUS_CONFIG.value)
+        if not isinstance(self.is_oil, bool):
+            raise ConfigError(f"is_oil must be a boolean. Provided {self.is_oil}.",
+                              ErrorCode.ERROR_FOCUS_CONFIG.value)
+        if (not isinstance(self.magnification, int)) or self.magnification <= 1:
+            raise ConfigError(f"magnification must be an integer in the range (1, Inf]. "
+                              f"Provided {self.magnification}.",
+                              ErrorCode.ERROR_FOCUS_CONFIG.value)
+
+    def __str__(self):
+        attributes = [
+            f"- numerical_aperture={self.numerical_aperture}",
+            f"- is_oil={self.is_oil}",
+            f"- magnification={self.magnification}x",
+        ]
+        return "\n".join(attributes)
+
+
+OBJECTIVE_CONFIG_OIL = ConfigObjective(
+    numerical_aperture=1.4,
+    is_oil=True,
+    magnification=60,
+)
+
+OBJECTIVE_CONFIG_AIR = ConfigObjective(
+    numerical_aperture=0.95,
+    is_oil=False,
+    magnification=40,
+)
+
+OBJECTIVE_CONFIG_DEFAULT = OBJECTIVE_CONFIG_AIR
 
 # Evomachine configuration
 DEBUG_MODE: bool = True
