@@ -17,8 +17,9 @@ from pynput import keyboard
 import screeninfo
 import skimage
 
-import asitiger.tigercontroller
 from asitiger.command import CRISPState
+from asitiger.status import Status
+import asitiger.tigercontroller
 import delta
 
 from evomachine.config import ConfigCRISP, CRISP_CONFIG_DEFAULT, ConfigDevice, ConfigFocus, ConfigImage, ConfigLED, \
@@ -125,7 +126,9 @@ class AbstractCamera:
 
         if isinstance(path_to_save, str):
             path_to_save = Path(path_to_save)
-        elif isinstance(path_to_save, bool) and path_to_save is True:
+        elif isinstance(path_to_save, bool):
+            if not path_to_save:
+                return
             path_to_save = self.cfg_device.path_to_save
         if not path_to_save.exists():
             logger.warning(f"AbstractCamera.save_frame: Path {path_to_save} does not exist. "
@@ -280,6 +283,7 @@ class EvoCamera(AbstractCamera):
                 new_error=CameraError(message=str(e), error_code=ErrorCode.ERROR_MMC_NOT_ALIVE)
             )
         self._disable_channels()
+        self.mmc.set_exposure(self.cfg_focus.exposure_time)
 
     def _get_tiger_is_alive(self) -> bool:
         if not self.tiger:
@@ -526,22 +530,26 @@ class EvoCamera(AbstractCamera):
         self._move_stage_to_coord({'Z': best_coordinate})
         self._set_channel(i_chan=old_channel)
 
-    def move_fov_up(self, multiplier: Optional[float] = 1.0):
-        self._move_fov(x_or_y='Y', sign=-1, multiplier=multiplier)
+    def move_fov_up(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        self._move_fov(x_or_y='Y', sign=-1, multiplier=multiplier, block=block)
 
-    def move_fov_down(self, multiplier: Optional[float] = 1.0):
-        self._move_fov(x_or_y='Y', sign=+1, multiplier=multiplier)
+    def move_fov_down(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        self._move_fov(x_or_y='Y', sign=+1, multiplier=multiplier, block=block)
 
-    def move_fov_left(self, multiplier: Optional[float] = 1.0):
-        self._move_fov(x_or_y='X', sign=-1, multiplier=multiplier)
+    def move_fov_left(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        self._move_fov(x_or_y='X', sign=-1, multiplier=multiplier, block=block)
 
-    def move_fov_right(self, multiplier: Optional[float] = 1.0):
-        self._move_fov(x_or_y='X', sign=+1, multiplier=multiplier)
+    def move_fov_right(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        self._move_fov(x_or_y='X', sign=+1, multiplier=multiplier, block=block)
 
-    def _move_fov(self, x_or_y: str, sign: int, multiplier: Optional[float] = 1.0):
+    def _move_fov(self, x_or_y: str, sign: int, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
         pos = self.tiger.where([x_or_y.upper()])
         pos[x_or_y.upper()] += int(sign * self.cfg_objective.fov_size * 10 * multiplier)
         self.tiger.move(coordinates=pos)
+        if block:
+            status = self.tiger.status()
+            while status == Status.BUSY:
+                status = self.tiger.status()
 
     def keyboard_control(self):
         def on_key_release(key):

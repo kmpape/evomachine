@@ -233,7 +233,7 @@ CRISP_CONFIG_DEFAULT = ConfigCRISP(
 
 @dataclass
 class ConfigFocus:
-    exposure_time: int
+    exposure_time: float
     "Exposure time for focusing in ms."
     focus_channel: int
     "LED channel to use while scanning. See ConfigLED for available channels."
@@ -257,8 +257,8 @@ class ConfigFocus:
                               f"[{min(ConfigLED.get_all_values())}, {max(ConfigLED.get_all_values())}]. "
                               f"Provided {self.focus_channel}.",
                               ErrorCode.ERROR_FOCUS_CONFIG.value)
-        if (not isinstance(self.exposure_time, int)) or self.exposure_time <= 0:
-            raise ConfigError(f"exposure_time must be an integer in the range [1, Inf]. Provided {self.exposure_time}.",
+        if (not isinstance(self.exposure_time, float)) or self.exposure_time < 0.01:
+            raise ConfigError(f"exposure_time must be an integer in the range [0.01, Inf]. Provided {self.exposure_time}.",
                               ErrorCode.ERROR_FOCUS_CONFIG.value)
 
     def __str__(self):
@@ -275,7 +275,7 @@ FOCUS_CONFIG_DEFAULT = ConfigFocus(
     exposure_time=100,
     focus_channel=ConfigLED.LED_538_NM.value,
     rel_range=100,
-    steps_size=1,
+    steps_size=10,
 )
 
 
