@@ -4,6 +4,7 @@ import numpy as np
 import os
 from pathlib import Path
 from PIL import Image, ImageFont, ImageDraw
+import subprocess
 import sys
 import time
 from typing import Dict, List, Optional, Union, Tuple
@@ -608,8 +609,6 @@ class DMDControl:
         "Size of DMD. Double-checked in initialise."
         self.surface: Union[None, pygame.surface] = None
         "PyGame object to display images. Initialised in initialise."
-        self.rect_full: Union[None, pygame.Rect] = None
-        "PyGame rectangle object. Initialised in initialise."
         self.default_line_width: int = 5
         "Line width used for calibration and displaying lines. Use odd values."
 
@@ -629,8 +628,12 @@ class DMDControl:
                 if is_correct_size:
                     pygame.init()
                     os.environ['SDL_VIDEO_WINDOW_POS'] = f"{self.offset_DMD[0]}, {self.offset_DMD[1]}"
-                    self.surface = pygame.display.set_mode(size=self.width_height_DMD, flags=pygame.NOFRAME)
-                    self.rect_full = pygame.locals.Rect(0, 0, *self.width_height_DMD)
+                    self.surface = pygame.display.set_mode(
+                        size=self.width_height_DMD,
+                        flags=pygame.NOFRAME | pygame.FULLSCREEN,
+                    )
+                    window_id = pygame.display.get_wm_info()["window"]
+                    subprocess.Popen(["wmctrl", "-i", "-r", str(window_id), "-b", "add,above"])
                     self._dmd_is_alive = True
                     self.display_none()
                     logging.info(f"DMD: initialised at pos={self.offset_DMD} with size={self.width_height_DMD}.")
