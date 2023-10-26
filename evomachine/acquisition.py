@@ -23,7 +23,7 @@ import asitiger.tigercontroller
 import delta
 
 from evomachine.config import ConfigCRISP, CRISP_CONFIG_DEFAULT, ConfigDevice, ConfigFocus, ConfigImage, ConfigLED, \
-    ConfigObjective, FOCUS_CONFIG_DEFAULT, IMAGE_CONFIG_DEFAULT, OBJECTIVE_CONFIG_DEFAULT
+    ConfigObjective, FOCUS_CONFIG_DEFAULT, IMAGE_CONFIG_DEFAULT, OBJECTIVE_CONFIG_DEFAULT, DMDColor
 from evomachine.exceptions import CameraError, ConfigError, DMDError, ErrorCode, ErrorContainer, StageError, TigerError
 
 formatter = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s - %(message)s\n<---')
@@ -667,21 +667,20 @@ class DMDControl:
             logger.error(f"DMDControl.display_image: provided image of shape={img.shape}, "
                          f"but DMD shape={(*self.width_height_DMD, 3)}.")
 
-    def display_full(self, update_display: Optional[bool] = True):
+    def display_full(
+            self,
+            update_display: Optional[bool] = True,
+            color: Optional[DMDColor] = DMDColor.WHITE,
+    ):
         if not self._dmd_is_alive:
             logger.error(f"DMDControl.display_full: DMD not initialised. Try running DMDControl.initialise.")
             return
-        self.surface.fill((255, 255, 255))
+        self.surface.fill(color.value)
         if update_display:
             pygame.display.update()
 
     def display_none(self, update_display: Optional[bool] = True):
-        if not self._dmd_is_alive:
-            logger.error(f"DMDControl.display_none: DMD not initialised. Try running DMDControl.initialise.")
-            return
-        self.surface.fill((0, 0, 0))
-        if update_display:
-            pygame.display.update()
+        self.display_full(update_display=update_display, color=DMDColor.BLACK)
 
     def display_line(
             self,
@@ -689,6 +688,7 @@ class DMDControl:
             end_pos: Tuple[int, int],
             line_width: Optional[Union[int, None]] = None,
             update_display: Optional[bool] = True,
+            color: Optional[DMDColor] = DMDColor.WHITE,
     ):
         if not self._dmd_is_alive:
             logger.error(f"DMDControl.display_line: DMD not initialised. Try running DMDControl.initialise.")
@@ -697,7 +697,7 @@ class DMDControl:
             line_width = DMDControl.DEFAULT_LINE_WIDTH
         pygame.draw.line(
             surface=self.surface,
-            color=(255, 255, 255),
+            color=color.value,
             start_pos=start_pos,
             end_pos=end_pos,
             width=line_width,
@@ -710,12 +710,14 @@ class DMDControl:
             at_pos: int,
             line_width: Optional[Union[int, None]] = None,
             update_display: Optional[bool] = True,
+            color: Optional[DMDColor] = DMDColor.WHITE,
     ):
         self.display_line(
             start_pos=(0, at_pos),
             end_pos=(self.width_height_DMD[0], at_pos),
             line_width=line_width,
             update_display=update_display,
+            color=color,
         )
 
     def display_line_vert(
@@ -723,12 +725,14 @@ class DMDControl:
             at_pos: int,
             line_width: Optional[Union[int, None]] = None,
             update_display: Optional[bool] = True,
+            color: Optional[DMDColor] = DMDColor.WHITE,
     ):
         self.display_line(
             start_pos=(at_pos, 0),
             end_pos=(at_pos, self.width_height_DMD[1]),
             line_width=line_width,
             update_display=update_display,
+            color=color,
         )
 
     def display_crosshair(self, line_width: int = 1, update_display: Optional[bool] = True):

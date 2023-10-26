@@ -31,6 +31,26 @@ class ConfigLED(Enum):
         return ""
 
 
+class DMDColor(Enum):
+    BLACK = (0, 0, 0)
+    WHITE = (255, 255, 255)
+    RED = (255, 0, 0)
+    GREEN = (0, 255, 0)
+    BLUE = (0, 0, 255)
+
+
+    @classmethod
+    def get_all_values(cls) -> List[int]:
+        return [member.value for member in cls]
+
+    @classmethod
+    def get_name(cls, value_to_find) -> str:
+        for member in cls:
+            if member.value == value_to_find:
+                return str(member.name)
+        return ""
+
+
 @dataclass
 class ConfigDevice:
     """Configuration class for the device geometry and scanning paths"""
