@@ -283,7 +283,8 @@ class EvoCamera(AbstractCamera):
                 new_error=CameraError(message=str(e), error_code=ErrorCode.ERROR_MMC_NOT_ALIVE)
             )
         self._disable_channels()
-        self.mmc.set_exposure(self.cfg_focus.exposure_time)
+        if self._mmc_is_alive:
+            self.mmc.set_exposure(self.cfg_focus.exposure_time)
 
     def _get_tiger_is_alive(self) -> bool:
         if not self.tiger:
