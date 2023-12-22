@@ -132,10 +132,6 @@ axs[2, 1].imshow(pos1_exp.rois[i_roi].seg_stack[i_period], cmap='gray', vmin=0, 
 axs[2, 1].set_title(f"POS={i_pos}, ROI={i_roi}, t={i_period}")
 
 
-
-
-
-
 asdf
 this_cfg_device = DEVICE_CONFIG_DELTA_SIM
 this_cfg_device.image_processing_verbosity = 0

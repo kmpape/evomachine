@@ -15,6 +15,7 @@ class ErrorCode(Enum):
     ERROR_DEVICE_CONFIG = auto()
     ERROR_FOCUS_CONFIG = auto()
     ERROR_IMAGE_CONFIG = auto()
+    ERROR_TEST_CAMERA_CONFIG = auto()
 
     # Camera errors
     ERROR_MMC_NOT_ALIVE = auto()
@@ -25,6 +26,7 @@ class ErrorCode(Enum):
     # Tiger errors
     ERROR_TIGER_SERIAL_CONNECTION = auto()
     ERROR_TIGER_NOT_ALIVE = auto()
+    ERROR_TIGER_NO_DATA = auto()
     ERROR_STAGE_MOVEMENT = auto()
     ERROR_STAGE_COORDINATES = auto()
 
@@ -43,7 +45,7 @@ class EvoMachineError(Exception):
 
     def __str__(self):
         t_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(self.time))
-        return f"{t_str} (code {self.error_code.value}): {self.message}"
+        return f"{t_str} (code {self.error_code}): {self.message}"
 
     def __reduce__(self):
         return self.__class__, (self.message, self.error_code)

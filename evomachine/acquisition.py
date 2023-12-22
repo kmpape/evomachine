@@ -1,21 +1,15 @@
 from datetime import datetime
+import itertools
 import logging
 import numpy as np
-import os
 from pathlib import Path
-from PIL import Image, ImageFont, ImageDraw
-import subprocess
-import sys
 import time
-from typing import Dict, List, Optional, Union, Tuple
+from typing import Dict, Iterator, List, Optional, Union, Tuple
 
 import cv2
 import matplotlib.pyplot as plt
 from pycromanager import Core, Studio
-import pygame
-import pygame.locals
 from pynput import keyboard
-import screeninfo
 import skimage
 
 from asitiger.command import CRISPState
@@ -24,16 +18,18 @@ import asitiger.tigercontroller
 import delta
 
 from evomachine.config import ConfigCRISP, CRISP_CONFIG_DEFAULT, ConfigDevice, ConfigFocus, ConfigImage, ConfigLED, \
-    ConfigObjective, FOCUS_CONFIG_DEFAULT, IMAGE_CONFIG_DEFAULT, OBJECTIVE_CONFIG_DEFAULT, DMDColor
-from evomachine.exceptions import CameraError, ConfigError, DMDError, ErrorCode, ErrorContainer, StageError, TigerError
+    ConfigObjective, FOCUS_CONFIG_DEFAULT, IMAGE_CONFIG_DEFAULT, OBJECTIVE_CONFIG_DEFAULT, EVO_FORMATTER
+from evomachine.dmd import DMDColor
+from evomachine.exceptions import CameraError, ConfigError, DMDError, ErrorCode, ErrorContainer, \
+    EvoMachineError, StageError, TigerError
 
-formatter = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s - %(message)s\n<---')
+
 logger = logging.getLogger(__name__)
 for handler in logger.handlers:
     logger.removeHandler(handler)
 logger.setLevel(logging.INFO)
 handler = logging.StreamHandler()
-handler.setFormatter(formatter)
+handler.setFormatter(EVO_FORMATTER)
 logger.addHandler(handler)
 logger.propagate = False
 
@@ -79,7 +75,7 @@ class AbstractCamera:
 
     def get_frame(
             self,
-            i_chan: int,
+            i_chan: Union[int, None],
             i_period: Union[int, None] = None,
             normalise: Optional[bool] = False,
     ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
@@ -87,9 +83,18 @@ class AbstractCamera:
         frame = self._take_frame(i_chan=i_chan, i_period=i_period)
         return self.normalise_frame(frame=frame) if (normalise and (frame is not None)) else frame
 
+    def get_coordinates(self, axes: List[str]) -> Dict[str, float]:
+        raise NotImplementedError()
+
+    def halt_stage(self):
+        raise NotImplementedError()
+
+    def coordinate_is_out_of_bounds(self, coordinate: Dict[str, float]) -> bool:
+        raise NotImplementedError()
+
     def display_save_frame(
             self,
-            i_chan: int,
+            i_chan: Union[int, None],
             i_period: Optional[Union[int, None]] = None,
             path_to_save: Optional[Union[Path, str, None, bool]] = None,
             filename: Optional[Union[str, None]] = None,
@@ -153,11 +158,68 @@ class AbstractCamera:
     ) -> bool:
         raise NotImplementedError()
 
+    def _set_filter_wheel(self, i_pos: int):
+        raise NotImplementedError()
+
     def _take_frame(
             self,
-            i_chan: int,
+            i_chan: Union[int, None],
             i_period: Union[int, None],
     ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
+        raise NotImplementedError()
+
+    def crisp_autofocus(self, this_cfg_crisp: Optional[ConfigCRISP] = None, user_input: Optional[bool] = True):
+        raise NotImplementedError()
+
+    def crisp_disable(self):
+        raise NotImplementedError()
+
+    def crisp_is_locked(self):
+        raise NotImplementedError()
+
+    def crisp_configure(self, this_cfg_crisp: Optional[ConfigCRISP] = None) -> bool:
+        raise NotImplementedError()
+
+    def crisp_unlock(self):
+        raise NotImplementedError()
+
+    def software_focus(
+            self,
+            cfg_focus: Optional[ConfigFocus] = None,
+            focus_channel_override: Optional[int] = None,
+            rel_range_override: Optional[int] = None,
+
+    ):
+        raise NotImplementedError()
+
+    def move_home(self, block: Optional[bool] = False):
+        raise NotImplementedError()
+
+    def move_fov_up(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        raise NotImplementedError()
+
+    def move_fov_down(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        raise NotImplementedError()
+
+    def move_fov_left(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        raise NotImplementedError()
+
+    def move_fov_right(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        raise NotImplementedError()
+
+    def move_to(self, coordinates: Dict[str, int], block: Optional[bool] = False):
+        raise NotImplementedError()
+
+    def get_delta_fov(self):
+        raise NotImplementedError()
+
+    def keyboard_control(self):
+        raise NotImplementedError()
+
+    def set_exposure(self, exposure_time: Union[int, None] = None):
+        raise NotImplementedError()
+
+    def zero_coordinates(self):
         raise NotImplementedError()
 
 
@@ -169,9 +231,11 @@ class DeltaCamera(AbstractCamera):
             self,
             cfg_device: ConfigDevice,
             cfg_image: Optional[ConfigImage] = IMAGE_CONFIG_DEFAULT,
+            cfg_objective: Optional[ConfigObjective] = OBJECTIVE_CONFIG_DEFAULT,
     ):
         super().__init__(cfg_device=cfg_device, cfg_image=cfg_image)
-
+        self.cfg_objective: ConfigObjective = cfg_objective
+        "Objective configuration for mock images."
         self.all_frames: List[np.ndarray[(int, int, int, int), np.float32]] = [
             np.empty((1, 1, 1, 1)) for _ in range(cfg_device.num_periods)
         ]
@@ -193,12 +257,213 @@ class DeltaCamera(AbstractCamera):
     def _initialise(self) -> None:
         self._curr_period = -1
 
+    def _set_filter_wheel(self, i_pos: int):
+        return
+
     def _take_frame(
             self,
             i_chan: int,
             i_period: Union[int, None],
     ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
         return self.all_frames[self._curr_pos][i_period, i_chan, :, :]
+
+    def get_filename(self) -> str:
+        return ""
+
+    def crisp_autofocus(self, this_cfg_crisp: Optional[ConfigCRISP] = None, user_input: Optional[bool] = True):
+        self._crisp_is_locked = True
+
+    def crisp_disable(self):
+        self._crisp_is_locked = False
+
+    def crisp_is_locked(self):
+        return self._crisp_is_locked
+
+    def crisp_configure(self, this_cfg_crisp: Optional[ConfigCRISP] = None) -> bool:
+        return True
+
+    def crisp_unlock(self):
+        self._crisp_is_locked = False
+
+    def software_focus(
+            self,
+            cfg_focus: Optional[ConfigFocus] = None,
+            focus_channel_override: Optional[int] = None,
+            rel_range_override: Optional[int] = None,
+
+    ):
+        return
+
+    def move_home(self, block: Optional[bool] = False):
+        return
+
+    def move_fov_up(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        return
+
+    def move_fov_down(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        return
+
+    def move_fov_left(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        return
+
+    def move_fov_right(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        return
+
+    def move_to(self, coordinates: Dict[str, int], block: Optional[bool] = False):
+        return
+
+    def get_delta_fov(self):
+        return self.cfg_objective.fov_size * 10
+    def keyboard_control(self):
+        return
+
+    def set_exposure(self, exposure_time: Union[int, None] = None):
+        return
+
+
+class TestCamera(AbstractCamera):
+    """
+    A class to mock the acquisition of frames.
+    """
+    def __init__(
+            self,
+            cfg_device: ConfigDevice,
+            filenames: List[Union[str, Path]],
+            cfg_crisp: Optional[ConfigCRISP] = CRISP_CONFIG_DEFAULT,
+            cfg_image: Optional[ConfigImage] = IMAGE_CONFIG_DEFAULT,
+            cfg_objective: Optional[ConfigObjective] = OBJECTIVE_CONFIG_DEFAULT,
+            pos_to_filename: Optional[Union[Dict[int, Union[Path, str]], None]] = None,
+            cfg_focus: Optional[ConfigFocus] = FOCUS_CONFIG_DEFAULT,
+    ):
+        super().__init__(cfg_device=cfg_device, cfg_image=cfg_image)
+        if len(np.unique(filenames)) != len(filenames):
+            raise ConfigError("TestCamera.__init__: must provide list with unique filenames.",
+                              ErrorCode.ERROR_TEST_CAMERA_CONFIG)
+        self.filenames: List[Union[str, Path]] = filenames
+        "List of filenames for mock images."
+        self.indices: Iterator[int] = itertools.cycle(range(len(filenames)))
+        "Cyclic indices."
+        self.cfg_crisp: ConfigCRISP = cfg_crisp
+        "Settings for CRISP autofocus. Required for GUI interaction."
+        self.cfg_focus: ConfigFocus = cfg_focus
+        "Settings for initial software focus. Required for GUI interaction."
+        self.cfg_objective: ConfigObjective = cfg_objective
+        "Parameters of objective. Required for GUI interaction."
+        self.pos_to_filename: Union[Dict[int, Union[Path, str]], None] = pos_to_filename
+        "Optional dictionary mapping from unqique position numbers (0,1,2,...) to filename."
+        self.channel_settings: Dict[int, Dict] = {
+            ConfigLED.LED_405_NM.value: {"X": 100, "Y": 0, "Z": 0, "F": 0},
+            ConfigLED.LED_450_NM.value: {"X": 0, "Y": 100, "Z": 0, "F": 0},
+            ConfigLED.LED_505_NM.value: {"X": 0, "Y": 0, "Z": 100, "F": 0},
+            ConfigLED.LED_538_NM.value: {"X": 0, "Y": 0, "Z": 0, "F": 100},
+            ConfigLED.LED_NO_LED.value: {"X": 0, "Y": 0, "Z": 0, "F": 0},
+        }
+        "Although this has no functionality for TestCamera, it is needed for tests together with the GUI."
+
+        self._next_filename_index: int = next(self.indices)
+
+        if self.pos_to_filename is not None:
+            if len(pos_to_filename) != len(filenames):
+                self.pos_to_filename = None
+                raise ConfigError("TestCamera.__init__: if providing pos_to_filename, "
+                                  "then it must have the same length as filenames.",
+                                  ErrorCode.ERROR_TEST_CAMERA_CONFIG)
+            self.pos_to_filename = dict(sorted(self.pos_to_filename.items()))  # warning in pycharm is a bug
+            self.filenames = self.pos_to_filename.values()
+
+    def increment_filename_index(self):
+        self._next_filename_index = next(self.indices)
+
+    def _move_stage_to_pos(
+            self,
+            i_pos: int,
+    ) -> bool:
+        if self.pos_to_filename is not None:
+            if i_pos not in self.pos_to_filename:
+                raise EvoMachineError("TestCamera._move_stage_to_pos: i_pos not in pos_to_filename.")
+            self._next_filename_index = i_pos
+        else:
+            self.increment_filename_index()
+        return True
+
+    def _initialise(self) -> None:
+        return
+
+    def _set_filter_wheel(self, i_pos: int):
+        return
+
+    def _take_frame(
+            self,
+            i_chan: int,
+            i_period: Union[int, None],
+    ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
+        return skimage.io.imread(self.filenames[self._next_filename_index])
+
+    def get_filename(self) -> str:
+        return str(self.filenames[self._next_filename_index]).split("/")[-1]
+
+    def get_coordinates(self, axes: List[str]) -> Dict[str, float]:
+        return {ax.upper(): 0.0 for ax in axes}
+
+    def halt_stage(self):
+        return
+
+    def coordinate_is_out_of_bounds(self, coordinate: Dict[str, float]) -> bool:
+        return False
+
+    def crisp_autofocus(self, this_cfg_crisp: Optional[ConfigCRISP] = None, user_input: Optional[bool] = True):
+        self._crisp_is_locked = True
+
+    def crisp_disable(self):
+        self._crisp_is_locked = False
+
+    def crisp_is_locked(self):
+        return self._crisp_is_locked
+
+    def crisp_configure(self, this_cfg_crisp: Optional[ConfigCRISP] = None) -> bool:
+        return True
+
+    def crisp_unlock(self):
+        self._crisp_is_locked = False
+
+    def software_focus(
+            self,
+            cfg_focus: Optional[ConfigFocus] = None,
+            focus_channel_override: Optional[int] = None,
+            rel_range_override: Optional[int] = None,
+
+    ):
+        return
+
+    def move_home(self, block: Optional[bool] = False):
+        self.increment_filename_index()
+
+    def move_fov_up(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        self.increment_filename_index()
+
+    def move_fov_down(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        self.increment_filename_index()
+
+    def move_fov_left(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        self.increment_filename_index()
+
+    def move_fov_right(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        self.increment_filename_index()
+
+    def move_to(self, coordinates: Dict[str, int], block: Optional[bool] = False):
+        self.increment_filename_index()
+
+    def get_delta_fov(self):
+        return self.cfg_objective.fov_size * 10
+
+    def keyboard_control(self):
+        return
+
+    def set_exposure(self, exposure_time: Union[int, None] = None):
+        return
+
+    def zero_coordinates(self):
+        return
 
 
 class EvoCamera(AbstractCamera):
@@ -235,7 +500,7 @@ class EvoCamera(AbstractCamera):
         "LED card address on ASI tiger."
         self.card_address_fw: int = 8
         "Filter wheel card address on ASI tiger."
-        self.filter_wheel_settings: Dict[int, str] = {0: "TBD", 1: "TBD", 2: "TBD"}
+        self.filter_wheel_settings: Dict[int, str] = {0: "Filter", 1: "Blocking", 2: "Nothing"}
         "Available filter wheels."
         self.card_address_crisp: int = 2
         "CRISP card address on ASI tiger."
@@ -245,6 +510,8 @@ class EvoCamera(AbstractCamera):
         "Settings for initial software focus."
         self.cfg_objective: ConfigObjective = cfg_objective
         "Parameters of objective."
+        self.current_exposure_time: int = 0
+        "Exposure time. Set in _initialise and provided in cfg_focus."
 
         self.mmc: Union[Core, None] = None
         "Micromanager Core object for taking images."
@@ -253,7 +520,7 @@ class EvoCamera(AbstractCamera):
         self._mmc_is_alive: bool = False
         "Flag set in _initialise."
 
-        self._initialise()  # Must be called before using EvoCamera
+        self.initialise()  # Must be called before using EvoCamera
 
     def _initialise(self) -> None:
         try:
@@ -284,8 +551,7 @@ class EvoCamera(AbstractCamera):
                 new_error=CameraError(message=str(e), error_code=ErrorCode.ERROR_MMC_NOT_ALIVE)
             )
         self._disable_channels()
-        if self._mmc_is_alive:
-            self.mmc.set_exposure(self.cfg_focus.exposure_time)
+        self.set_exposure()
 
     def _get_tiger_is_alive(self) -> bool:
         if not self.tiger:
@@ -344,15 +610,16 @@ class EvoCamera(AbstractCamera):
 
     def _take_frame(
             self,
-            i_chan: int,
+            i_chan: Union[int, None],
             i_period: Union[int, None],
     ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
         if not self._mmc_is_alive:
             logger.error(msg=f"EvoCamera._take_frame: MMC is not alive. Check Camera and Micro-Manager.")
             return None
-        self._last_frame_channel = i_chan
-        curr_channel = self.current_channel
-        self._set_channel(i_chan=i_chan)
+        if i_chan is not None:
+            self._last_frame_channel = i_chan
+            curr_channel = self.current_channel
+            self._set_channel(i_chan=i_chan)
         try:
             self.mmc.snap_image()
         except Exception as e:
@@ -364,7 +631,8 @@ class EvoCamera(AbstractCamera):
             tagged_image.pix,
             newshape=[tagged_image.tags['Height'], tagged_image.tags['Width']]
         )
-        self._set_channel(i_chan=curr_channel)
+        if i_chan is not None:
+            self._set_channel(i_chan=curr_channel)
         return pixels
 
     def get_filename(self) -> str:
@@ -376,21 +644,33 @@ class EvoCamera(AbstractCamera):
             datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f")
         )
 
-    def crisp_autofocus(self, this_cfg_crisp: Optional[ConfigCRISP] = None):
+    def get_coordinates(self, axes: List[str]) -> Dict[str, float]:
+        return self.tiger.where(axes)
+
+    def halt_stage(self):
+        self.tiger.halt()
+
+    def coordinate_is_out_of_bounds(self, coordinate: Dict[str, float]) -> bool:
+        return self.tiger.coordinate_is_out_of_bounds(coordinate)
+
+    def crisp_autofocus(self, this_cfg_crisp: Optional[ConfigCRISP] = None, user_input: Optional[bool] = True):
         if not self._tiger_is_alive:
             logger.error(f"EvoCamera.crisp_autofocus: Device not alive.")
             return
 
         cfg_crisp = this_cfg_crisp if this_cfg_crisp else self.cfg_crisp
+        ask_user = cfg_crisp.user_input and user_input
 
-        if cfg_crisp.user_input:
-            user_input = input("Starting CRISP autofocus. Do you want to proceed? (yes/no): ")
-            if user_input.lower() == "yes":
+        if ask_user:
+            user_input_str = input("Starting CRISP autofocus. Do you want to proceed? (yes/no): ")
+            if user_input_str.lower() == "yes":
                 logger.info("CRISP: Proceeding with configuring and setting up CRISP autofocus.")
             else:
                 logger.info("CRISP: Aborting CRISP configuration.")
                 return
-        self.crisp_configure(this_cfg_crisp=cfg_crisp)
+        is_configured = self.crisp_configure(this_cfg_crisp=cfg_crisp)
+        if not is_configured:
+            return
 
         logger.info("CRISP: Setting IDLE status.")
         self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.IDLE)
@@ -412,9 +692,9 @@ class EvoCamera(AbstractCamera):
         time.sleep(cfg_crisp.pause_short)
 
         do_lock = True
-        if cfg_crisp.user_input:
-            user_input = input("Do you want to lock CRISP autofocus? (yes/no): ")
-            do_lock = True if user_input.lower() == "yes" else False
+        if ask_user:
+            user_input_str = input("Do you want to lock CRISP autofocus? (yes/no): ")
+            do_lock = True if user_input_str.lower() == "yes" else False
         if do_lock:
             logger.info("CRISP: Setting LOCK status.")
             self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.LOCK)
@@ -436,17 +716,17 @@ class EvoCamera(AbstractCamera):
             return
         return self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=None) == 'F'
 
-    def crisp_configure(self, this_cfg_crisp: Optional[ConfigCRISP] = None):
+    def crisp_configure(self, this_cfg_crisp: Optional[ConfigCRISP] = None) -> bool:
         if not self._tiger_is_alive:
             logger.error(f"EvoCamera.crisp_set_parameters: Device not alive.")
-            return
+            return False
         cfg_crisp = this_cfg_crisp if this_cfg_crisp else self.cfg_crisp
         try:
             cfg_crisp.check_config()
             logger.info(f"CRISP: Configuring CRISP with following parameters:\n{cfg_crisp}")
         except ConfigError as e:
             logger.error(f"CRISP: Bad configuration:\n{e}\nCannot use CRISP.")
-            return
+            return False
         self.crisp_unlock()
         time.sleep(cfg_crisp.pause_short)
         self.tiger.crisp_get_set_objective_na(card_address=self.card_address_crisp, value=cfg_crisp.objective_na)
@@ -472,6 +752,7 @@ class EvoCamera(AbstractCamera):
             min_error=cfg_crisp.min_error,
         )
         logger.info(f"CRISP: Parameters set to:\n{new_cfg}")
+        return True
 
     def crisp_unlock(self):
         self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.UNLOCK)
@@ -511,13 +792,19 @@ class EvoCamera(AbstractCamera):
             logger.info("EvoCamera.software_focus: Aborting software focus.")
             return
         old_channel = self.current_channel
-        self.mmc.set_exposure(cfg_focus.exposure_time)
+        self.set_exposure(exposure_time=int(cfg_focus.exposure_time))
         self.studio.live().set_live_mode(False)
         best_focus_score = 0
         best_focus_position = 0
         for ipos, z_coord in enumerate(coords):
             self._move_stage_to_coord({'Z': z_coord})
-            image_raw = self._take_frame(i_chan=cfg_focus.focus_channel, i_period=None)
+            image_raw = self.display_save_frame(
+                i_chan=cfg_focus.focus_channel,
+                i_period=None,
+                path_to_save=False,
+                filename=None,
+                display_frame=False,
+            )
             if image_raw is None:
                 logger.warning("EvoCamera.software_focus: self._take_frame returned None. Aborting...")
                 return
@@ -532,6 +819,11 @@ class EvoCamera(AbstractCamera):
         self._move_stage_to_coord({'Z': best_coordinate})
         self._set_channel(i_chan=old_channel)
 
+    def move_home(self, block: Optional[bool] = False):
+        _ = self.tiger.home()
+        if block:
+            self.tiger.wait_until_idle()
+
     def move_fov_up(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
         self._move_fov(x_or_y='Y', sign=-1, multiplier=multiplier, block=block)
 
@@ -544,14 +836,21 @@ class EvoCamera(AbstractCamera):
     def move_fov_right(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
         self._move_fov(x_or_y='X', sign=+1, multiplier=multiplier, block=block)
 
+    def move_to(self, coordinates: Dict[str, int], block: Optional[bool] = False):
+        self.tiger.move(coordinates=coordinates)
+        if block:
+            self.tiger.wait_until_idle()
+
+    def get_delta_fov(self):
+        return self.cfg_objective.fov_size * 10
+
     def _move_fov(self, x_or_y: str, sign: int, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
         pos = self.tiger.where([x_or_y.upper()])
+        if x_or_y.upper() not in pos:
+            raise TigerError(f"EvoCamera._move_fov: queried coordinate {x_or_y.upper()} not in response: {pos}.",
+                             ErrorCode.ERROR_TIGER_NO_DATA)
         pos[x_or_y.upper()] += int(sign * self.cfg_objective.fov_size * 10 * multiplier)
-        self.tiger.move(coordinates=pos)
-        if block:
-            status = self.tiger.status()
-            while status == Status.BUSY:
-                status = self.tiger.status()
+        self.move_to(coordinates=pos, block=block)
 
     def keyboard_control(self):
         def on_key_release(key):
@@ -582,217 +881,14 @@ class EvoCamera(AbstractCamera):
         with keyboard.Listener(on_release=on_key_release, suppress=True) as listener:
             listener.join()
 
+    def set_exposure(self, exposure_time: Union[int, None] = None):
+        if self._mmc_is_alive:
+            new_exposure_time = self.cfg_focus.exposure_time if exposure_time is None else exposure_time
+            self.mmc.set_exposure(new_exposure_time)
+            self.current_exposure_time = new_exposure_time
 
-class DMDControl:
-    DEFAULT_LINE_WIDTH: int = 5
-    "Line width used for calibration and displaying lines. Use odd values."
-
-    def __init__(self):
-        """
-
-        _____________________________________________________
-        | (width,0)                                   (0,0) |
-        |                                                   |
-        | SCREEN AS SEEN ON A SURFACE BEFORE THE MICROSCOPE |
-        |                                                   |
-        | (width,height)                         (0,height) |
-        |___________________________________________________|
-
-        """
-        self.error_container: ErrorContainer = ErrorContainer()
-        "Deque to store all errors."
-        self._dmd_is_alive: bool = False
-        "Flag set in initialise."
-        self.offset_DMD: Tuple[int, int] = (0, 0)
-        "Offset to display PyGame window. Set in initialise."
-        self.width_height_DMD: Tuple[int, int] = (2716, 1600)
-        "Size of DMD. Double-checked in initialise."
-        self.surface: Union[None, pygame.surface] = None
-        "PyGame object to display images. Initialised in initialise."
-        self.default_line_width: int = 5
-        "Line width used for calibration and displaying lines. Use odd values."
-
-        self.initialise()
-
-    def initialise(self):
-        monitors = screeninfo.get_monitors()
-        mon_info = "\n".join(m.__str__() for m in monitors)
-        has_two_monitors = len(monitors) == 2
-        if has_two_monitors:
-            has_one_primary = any(m.is_primary for m in monitors) and any(not m.is_primary for m in monitors)
-            if has_one_primary:
-                mon_dmd = [m for m in monitors if (not m.is_primary)][0]
-                self.offset_DMD = (mon_dmd.x, mon_dmd.y)
-                is_correct_size = all(x1 == x2
-                                      for (x1, x2) in zip(self.width_height_DMD, (mon_dmd.width, mon_dmd.height)))
-                if is_correct_size:
-                    pygame.init()
-                    os.environ['SDL_VIDEO_WINDOW_POS'] = f"{self.offset_DMD[0]}, {self.offset_DMD[1]}"
-                    self.surface = pygame.display.set_mode(
-                        size=self.width_height_DMD,
-                        flags=pygame.NOFRAME | pygame.FULLSCREEN,
-                    )
-                    window_id = pygame.display.get_wm_info()["window"]
-                    subprocess.Popen(["wmctrl", "-i", "-r", str(window_id), "-b", "add,above"])
-                    self._dmd_is_alive = True
-                    self.display_none()
-                    logging.info(f"DMD: initialised at pos={self.offset_DMD} with size={self.width_height_DMD}.")
-                else:  # Wrong DMD size (or wrong monitor selected)
-                    msg = f"DMDControl.initialise: incorrect DMD size: {mon_dmd}."
-                    logger.warning(msg)
-                    self.error_container.add_error(new_error=DMDError(message=msg, error_code=ErrorCode.ERROR_MONITORS))
-            else:  # No primary monitor found
-                msg = f"DMDControl.initialise: No primary monitor found: {mon_info}."
-                logger.warning(msg)
-                self.error_container.add_error(new_error=DMDError(message=msg, error_code=ErrorCode.ERROR_MONITORS))
-        else:  # Wrong number of monitors
-            msg = f"DMDControl.initialise: found {len(monitors)}  monitor(s) (instead of 2). {mon_info}."
-            logger.warning(msg)
-            self.error_container.add_error(new_error=DMDError(message=msg, error_code=ErrorCode.ERROR_MONITORS))
-
-    def finalise(self):
-        self.display_none()
-        DMDControl.close_window()
-
-    @staticmethod
-    def close_window():
-        pygame.quit()
-
-    def display_image(self, img: np.ndarray[(int, int), int], update_display: Optional[bool] = True):
-        if not self._dmd_is_alive:
-            logger.error(f"DMDControl.display_image: DMD not initialised. Try running DMDControl.initialise.")
-            return
-        if img.shape == (*self.width_height_DMD, 3):
-            self.surface.blit(pygame.surfarray.make_surface(img), (0, 0))
-            if update_display:
-                pygame.display.update()
-        else:
-            logger.error(f"DMDControl.display_image: provided image of shape={img.shape}, "
-                         f"but DMD shape={(*self.width_height_DMD, 3)}.")
-
-    def display_full(
-            self,
-            update_display: Optional[bool] = True,
-            color: Optional[DMDColor] = DMDColor.WHITE,
-    ):
-        if not self._dmd_is_alive:
-            logger.error(f"DMDControl.display_full: DMD not initialised. Try running DMDControl.initialise.")
-            return
-        self.surface.fill(color.value)
-        if update_display:
-            pygame.display.update()
-
-    def display_none(self, update_display: Optional[bool] = True):
-        self.display_full(update_display=update_display, color=DMDColor.BLACK)
-
-    def display_line(
-            self,
-            start_pos: Tuple[int, int],
-            end_pos: Tuple[int, int],
-            line_width: Optional[Union[int, None]] = None,
-            update_display: Optional[bool] = True,
-            color: Optional[DMDColor] = DMDColor.WHITE,
-    ):
-        if not self._dmd_is_alive:
-            logger.error(f"DMDControl.display_line: DMD not initialised. Try running DMDControl.initialise.")
-            return
-        if not line_width:
-            line_width = DMDControl.DEFAULT_LINE_WIDTH
-        pygame.draw.line(
-            surface=self.surface,
-            color=color.value,
-            start_pos=start_pos,
-            end_pos=end_pos,
-            width=line_width,
-        )
-        if update_display:
-            pygame.display.update()
-
-    def display_line_horiz(
-            self,
-            at_pos: int,
-            line_width: Optional[Union[int, None]] = None,
-            update_display: Optional[bool] = True,
-            color: Optional[DMDColor] = DMDColor.WHITE,
-    ):
-        self.display_line(
-            start_pos=(0, at_pos),
-            end_pos=(self.width_height_DMD[0], at_pos),
-            line_width=line_width,
-            update_display=update_display,
-            color=color,
-        )
-
-    def display_line_vert(
-            self,
-            at_pos: int,
-            line_width: Optional[Union[int, None]] = None,
-            update_display: Optional[bool] = True,
-            color: Optional[DMDColor] = DMDColor.WHITE,
-    ):
-        self.display_line(
-            start_pos=(at_pos, 0),
-            end_pos=(at_pos, self.width_height_DMD[1]),
-            line_width=line_width,
-            update_display=update_display,
-            color=color,
-        )
-
-    def display_crosshair(self, line_width: int = 1, update_display: Optional[bool] = True):
-        img = np.zeros((*self.width_height_DMD, 3), dtype=int)
-        center = (np.floor_divide(self.width_height_DMD[0], 2), np.floor_divide(self.width_height_DMD[1], 2))
-        img[center[0] - int(np.floor(line_width / 2)): center[0] + int(np.ceil(line_width / 2)), :, :] = 255
-        img[:, center[1] - int(np.floor(line_width / 2)): center[1] + int(np.ceil(line_width / 2)), :] = 255
-        self.display_image(img=img, update_display=update_display)
-
-    def display_text(
-            self,
-            text: Optional[str] = "Hello, World!",
-            img_fraction: Optional[float] = 0.5,
-            path_to_font: Optional[str] = "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
-    ):
-        image_pil = Image.fromarray(np.transpose(np.zeros(self.width_height_DMD, dtype=np.uint8)))
-        img_height, img_width = self.width_height_DMD
-        font_size = 2
-        font = ImageFont.truetype(path_to_font, font_size)
-        while font.getlength(text) < img_fraction * image_pil.size[0]:
-            font_size += 1
-            font = ImageFont.truetype(path_to_font, font_size)
-        draw = ImageDraw.Draw(image_pil)
-        font = ImageFont.truetype(path_to_font, font_size)
-        draw.text((int(img_width / 2), int(img_height / 2)), text, fill=255, font=font, anchor='mm')
-        img = np.transpose(np.array(image_pil))
-        img = np.repeat(img[:, :, np.newaxis], 3, axis=2)
-        self.display_image(img=img)
-
-    def moving_rectangles(self):  # TODO
-        clock = pygame.time.Clock()
-        rect1 = pygame.locals.Rect(0, 0, 200, self.width_height_DMD[1])
-        rect2 = pygame.locals.Rect(self.width_height_DMD[0] - 200, 0, 200, self.width_height_DMD[1])
-
-        v = 10
-
-        try:
-            while True:
-                for event in pygame.event.get():
-                    if event.type == pygame.locals.QUIT:
-                        pygame.quit()
-                        sys.exit()
-                self.surface.fill((0, 0, 0))
-
-                if rect1.left < 0 or rect1.left > self.width_height_DMD[0] - 200:
-                    v *= -1
-
-                rect1.move_ip(v, 0)
-                rect2.move_ip(-v, 0)
-
-                pygame.draw.rect(self.surface, (255, 255, 255), rect1)
-                pygame.draw.rect(self.surface, (255, 255, 255), rect2)
-
-                pygame.display.update()
-                clock.tick(50)  # Framerate: 50 Hz
-        except KeyboardInterrupt:
-            pass
+    def zero_coordinates(self):
+        self.tiger.zero()
 
 
 

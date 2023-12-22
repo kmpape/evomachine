@@ -1,16 +1,16 @@
 import copy
-from collections.abc import Sequence
-import concurrent.futures
+# from collections.abc import Sequence
+# import concurrent.futures
 import logging
-import multiprocessing
-from pathlib import Path
+# import multiprocessing
+# from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Union, cast, Tuple
 
 import cv2
 import dask
-from joblib import Parallel, delayed
+# from joblib import Parallel, delayed
 import numpy as np
-import tqdm
+# import tqdm
 
 import delta
 from delta.config import Config  # TODO: ask about putting config into init
@@ -363,8 +363,8 @@ class PositionRT(delta.pipeline.Position):
         """
         Track cells in all ROIs in position. Uses the faster tracking algorithm for mother-machine devices.
         """
-        # for i_roi, roi in enumerate(self.rois):
-        #     roi.track_rt(frame=1)
+        for i_roi, roi in enumerate(self.rois):
+            roi.track_rt(frame=1)
         # with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         #     futures = [executor.submit(this_track_rt_roi, roi) for roi in self.rois]
         #     concurrent.futures.wait(futures)
@@ -374,8 +374,8 @@ class PositionRT(delta.pipeline.Position):
         # def this_track_rt_roi(roi: ROIRT):
         #     roi.track_rt(frame=1)
         # Parallel(n_jobs=2)(delayed(this_track_rt_roi)(roi) for roi in self.rois)
-        delayed_calls = [dask.delayed(this_track_rt_roi)(roi) for roi in self.rois]
-        dask.compute(*delayed_calls)
+        # delayed_calls = [dask.delayed(this_track_rt_roi)(roi) for roi in self.rois]
+        # dask.compute(*delayed_calls)
 
     def find_roi_boxes(self, reference: delta.utils.Image, config: Config) -> list[delta.utils.CroppingBox]:
         """

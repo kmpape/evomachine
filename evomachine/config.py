@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
+import logging
 import numpy as np
 from pathlib import Path
 from typing import Any, List, Literal, Optional, Tuple, Union
@@ -11,6 +12,7 @@ from evomachine.exceptions import ConfigError, ErrorCode
 # DeLTA lib install directory
 EVOMACHINE_DIR = Path(__file__).parent
 
+EVO_FORMATTER = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s - %(message)s\n<---')
 
 class ConfigLED(Enum):
     LED_NO_LED = -1
@@ -30,14 +32,9 @@ class ConfigLED(Enum):
                 return str(member.name)
         return ""
 
-
-class DMDColor(Enum):
-    BLACK = (0, 0, 0)
-    WHITE = (255, 255, 255)
-    RED = (255, 0, 0)
-    GREEN = (0, 255, 0)
-    BLUE = (0, 0, 255)
-
+class ConfigFocusAlgorithm(Enum):
+    LAPLACIAN_VAR = 0
+    SQUARED_THRESHOLDED = 1
 
     @classmethod
     def get_all_values(cls) -> List[int]:
@@ -49,7 +46,6 @@ class DMDColor(Enum):
             if member.value == value_to_find:
                 return str(member.name)
         return ""
-
 
 @dataclass
 class ConfigDevice:
@@ -207,23 +203,47 @@ class ConfigCRISP:
     pause_short: Optional[int] = 1
     "Value of short pause in s between CRISP configuration steps."
 
+    @staticmethod
+    def get_attr_from_str(attr_name: str, attr_value_str: str) -> Union[int, float, bool, None]:
+        if attr_name == 'lock_range' or attr_name == 'objective_na':
+            return float(attr_value_str)
+        else:
+            return int(attr_value_str)
+
+    @staticmethod
+    def attr_is_valid(attr_name: str, attr_value) -> bool:
+        if attr_name == 'averaging':
+            return isinstance(attr_value, int) and (attr_value >= 0) and (attr_value < 100)
+        elif attr_name == 'led_intensity':
+            return isinstance(attr_value, int) and (attr_value > 1) and (attr_value <= 100)
+        elif attr_name == 'loop_gain':
+            return isinstance(attr_value, int) and (attr_value >= 1) and (attr_value <= 100)
+        elif attr_name == 'lock_range':
+            return isinstance(attr_value, float) and (attr_value > 0) and (attr_value < 0.5)
+        elif attr_name == 'objective_na':
+            return isinstance(attr_value, float) and (attr_value > 0) and (attr_value < 10.0)
+        elif attr_name == 'update_rate':
+            return isinstance(attr_value, int)
+        else:
+            return False
+
     def check_config(self):
-        if (not isinstance(self.led_intensity, int)) or self.led_intensity <= 0 or self.led_intensity > 100:
+        if not self.attr_is_valid('led_intensity', self.led_intensity):
             raise ConfigError(f"led_intensity must be an integer in the range (0,100]. Provided {self.led_intensity}.",
                               ErrorCode.ERROR_CRISP_CONFIG.value)
-        if not isinstance(self.objective_na, float):
+        if not self.attr_is_valid('objective_na', self.objective_na):
             raise ConfigError(f"objective_na must be a floating point number. Provided {self.objective_na}.",
                               ErrorCode.ERROR_CRISP_CONFIG.value)
-        if (not isinstance(self.loop_gain, int)) or self.loop_gain > 10 or self.loop_gain < 1:
+        if not self.attr_is_valid('loop_gain', self.loop_gain):
             raise ConfigError(f"loop_gain must be an integer in the range [1,10]. Provided {self.loop_gain}.",
                               ErrorCode.ERROR_CRISP_CONFIG.value)
-        if (not isinstance(self.averaging, int)) or self.averaging < 0:
+        if not self.attr_is_valid('averaging', self.averaging):
             raise ConfigError(f"averaging must be an integer in the range [0,Inf). Provided {self.averaging}.",
                               ErrorCode.ERROR_CRISP_CONFIG.value)
-        if (not isinstance(self.update_rate, int)) or self.update_rate < 0:
+        if not self.attr_is_valid('update_rate', self.update_rate):
             raise ConfigError(f"update_rate must be an integer in the range [0,Inf). Provided {self.update_rate}.",
                               ErrorCode.ERROR_CRISP_CONFIG.value)
-        if (not isinstance(self.lock_range, float)) or self.lock_range > 0.1:
+        if not self.attr_is_valid('lock_range', self.lock_range):
             raise ConfigError(f"lock_range may lead to objective crashing into the sample. Provided {self.lock_range}.",
                               ErrorCode.ERROR_CRISP_CONFIG.value)
 
@@ -242,18 +262,27 @@ class ConfigCRISP:
 
 
 CRISP_CONFIG_DEFAULT = ConfigCRISP(
-    led_intensity=80,
+    led_intensity=95,
     objective_na=0.95,
     loop_gain=5,
     averaging=0,
     update_rate=100,
-    lock_range=0.05,
+    lock_range=0.025,
+)
+
+CRISP_CONFIG_OIL = ConfigCRISP(
+    led_intensity=95,
+    objective_na=1.4,
+    loop_gain=5,
+    averaging=0,
+    update_rate=100,
+    lock_range=0.025,
 )
 
 
 @dataclass
 class ConfigFocus:
-    exposure_time: float
+    exposure_time: Union[float, int]
     "Exposure time for focusing in ms."
     focus_channel: int
     "LED channel to use while scanning. See ConfigLED for available channels."
@@ -262,22 +291,58 @@ class ConfigFocus:
     steps_size: int
     "Step size for Z-movement of stage in 1/10 μm, e.g., steps_size=1 -> stage moves in 0.1 μm."
 
+    algorithm: Optional[int] = 0
+    "Algorithm used to focus. See ConfigFocusAlgorithm for available algorithms."
     user_input: Optional[bool] = True
     "Ask for user input before configuring and starting software focus."
 
+    desc_exposure_time: str = "Exposure [ms]"
+    desc_focus_channel: str = "Channel number [0,...,3]"
+    desc_rel_range: str = "Relative range [um/10]"
+    desc_steps_size: str = "Step Size [um/10]"
+    desc_user_input: str = "Query user before start [bool]"
+
+    def get_attr_description(self, attr_name: str) -> str:
+        return getattr(self, 'desc_'+attr_name)
+
+    @staticmethod
+    def get_attr_from_str(attr_name: str, attr_value_str: str) -> Union[int, float, bool, None]:
+        if attr_name == 'exposure_time':
+            return float(attr_value_str)
+        elif attr_name == 'user_input':
+            return bool(attr_value_str)
+        else:
+            return int(attr_value_str)
+
+    def attr_is_valid(self, attr_name: str, attr_value) -> bool:
+        if attr_name == 'exposure_time':
+            return (isinstance(attr_value, int) or isinstance(attr_value, float)) and attr_value >= 0.01
+        elif attr_name == 'focus_channel':
+            return isinstance(attr_value, int) and attr_value in ConfigLED.get_all_values()
+        elif attr_name == 'rel_range':
+            return isinstance(attr_value, int) and (attr_value > 0) and (attr_value < 2000)
+        elif attr_name == 'steps_size':
+            return isinstance(attr_value, int) and (attr_value > 0) and (attr_value < self.rel_range)
+        elif attr_name == 'algorithm':
+            return isinstance(attr_value, int) and attr_value in ConfigFocusAlgorithm.get_all_values()
+        elif attr_name == 'user_input':
+            return isinstance(attr_value, bool)
+        else:
+            return False
+
     def check_config(self):
-        if (not isinstance(self.steps_size, int)) or self.steps_size <= 0:
-            raise ConfigError(f"steps_size must be an integer in the range [1, Inf]. Provided {self.steps_size}.",
+        if not self.attr_is_valid('steps_size', self.steps_size):
+            raise ConfigError(f"steps_size must be an integer in the range [1, rel_range]. Provided {self.steps_size}.",
                               ErrorCode.ERROR_FOCUS_CONFIG.value)
-        if (not isinstance(self.rel_range, int)) or self.rel_range <= 0:
+        if not self.attr_is_valid('rel_range', self.rel_range):
             raise ConfigError(f"rel_range must be an integer in the range [1, Inf]. Provided {self.rel_range}.",
                               ErrorCode.ERROR_FOCUS_CONFIG.value)
-        if (not isinstance(self.focus_channel, int)) or (self.focus_channel not in ConfigLED.get_all_values()):
+        if not self.attr_is_valid('focus_channel', self.focus_channel):
             raise ConfigError(f"focus_channel must be an integer in the range "
                               f"[{min(ConfigLED.get_all_values())}, {max(ConfigLED.get_all_values())}]. "
                               f"Provided {self.focus_channel}.",
                               ErrorCode.ERROR_FOCUS_CONFIG.value)
-        if (not isinstance(self.exposure_time, float)) or self.exposure_time < 0.01:
+        if not self.attr_is_valid('focus_channel', self.focus_channel):
             raise ConfigError(f"exposure_time must be an integer in the range [0.01, Inf]. Provided {self.exposure_time}.",
                               ErrorCode.ERROR_FOCUS_CONFIG.value)
 
@@ -292,9 +357,9 @@ class ConfigFocus:
 
 
 FOCUS_CONFIG_DEFAULT = ConfigFocus(
-    exposure_time=100,
-    focus_channel=ConfigLED.LED_538_NM.value,
-    rel_range=100,
+    exposure_time=1000,
+    focus_channel=ConfigLED.LED_450_NM.value,
+    rel_range=80,
     steps_size=10,
 )
 
