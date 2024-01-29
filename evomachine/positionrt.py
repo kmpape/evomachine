@@ -59,6 +59,9 @@ class PositionRT(delta.pipeline.Position):
         self.cfg_image = cfg_image
         "Image configuration."
 
+        self.reference: Union[None, np.ndarray[(int, int, int), 'ConfigImage.pxl_dtype']] = None
+        "Reference image used to identify RoIs. Assigned in initialise()."
+
         self.verbose = verbose
 
     def initialise(
@@ -67,6 +70,7 @@ class PositionRT(delta.pipeline.Position):
     ) -> None:
         self._msg("Starting initialisation")
         TIMER_POSITION.start("initialise", 0)
+        self.reference = reference
 
         # Rotation correction
         if self.config.rotation_correction:
@@ -80,6 +84,7 @@ class PositionRT(delta.pipeline.Position):
 
         # Find ROIs
         if "rois" in self.config.models:
+            self._msg("Identifying ROIs.")
             self.roi_boxes = self.find_roi_boxes(reference[0, :, :], self.config)
         else:
             self.roi_boxes = [delta.utils.CroppingBox.full(reference[0, :, :])]
@@ -396,6 +401,7 @@ class PositionRT(delta.pipeline.Position):
         """
         # Rescale pixel values between 0 and 1 for the old model
         reference = (reference - reference.min()) / reference.ptp()  # noqa
+        self.tmp_reference_orig = copy.copy(reference)
 
         if self.cfg_image.crop_out_ROI:
             reference_shape = reference.shape
@@ -436,8 +442,14 @@ class PositionRT(delta.pipeline.Position):
         # Implementation note: cv2.findContours (even including
         # cv2.boundingRect) is about twice as fast as
         # cv2.connectedComponentsWithStats here.
+        print(f"Found ROIs masks with shape {rois_mask.shape}.")
+        self.tmp_rois_pred = copy.copy(rois_pred)
+        self.tmp_rois_mask = copy.copy(rois_mask)
+        self.tmp_reference = copy.copy(reference)
         roi_boxes = []
         contours = delta.utils.find_contours(rois_mask)
+        print(f"Found {len(contours)} ROIs contours.")
+        self.tmp_contours = copy.copy(contours)
         for chamber in contours:
             xtl, ytl, boxwidth, boxheight = cv2.boundingRect(chamber)
             roi_boxes.append(

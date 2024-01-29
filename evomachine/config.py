@@ -102,7 +102,7 @@ class ConfigDevice:
                     len(delta_reader.channels), self.num_chan),
                     ErrorCode.ERROR_DEVICE_CONFIG.value)
 
-        if self.path_to_save is None or not self.path_to_save.exists():
+        if (self.path_to_save is not None) and not self.path_to_save.exists():
             raise ConfigError("Must provide a valid path_to_save or None."
                               "Received {}".format(self.path_to_save),
                               ErrorCode.ERROR_DEVICE_CONFIG.value)

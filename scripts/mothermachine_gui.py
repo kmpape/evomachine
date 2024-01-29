@@ -1553,7 +1553,7 @@ class ThreadExperiment(QThread):
 
 
 if __name__ == '__main__':
-    is_testmode = True
+    is_testmode = False
     is_oil_objective = False
 
     if is_testmode:

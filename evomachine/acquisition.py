@@ -334,6 +334,7 @@ class TestCamera(AbstractCamera):
             cfg_objective: Optional[ConfigObjective] = OBJECTIVE_CONFIG_DEFAULT,
             pos_to_filename: Optional[Union[Dict[int, Union[Path, str]], None]] = None,
             cfg_focus: Optional[ConfigFocus] = FOCUS_CONFIG_DEFAULT,
+            cropping_indices: Optional[Union[None, Tuple[Tuple[int, int], Tuple[int, int]]]] = None,
     ):
         super().__init__(cfg_device=cfg_device, cfg_image=cfg_image)
         if len(np.unique(filenames)) != len(filenames):
@@ -350,7 +351,7 @@ class TestCamera(AbstractCamera):
         self.cfg_objective: ConfigObjective = cfg_objective
         "Parameters of objective. Required for GUI interaction."
         self.pos_to_filename: Union[Dict[int, Union[Path, str]], None] = pos_to_filename
-        "Optional dictionary mapping from unqique position numbers (0,1,2,...) to filename."
+        "Optional dictionary mapping from unique position numbers (0,1,2,...) to filename."
         self.channel_settings: Dict[int, Dict] = {
             ConfigLED.LED_405_NM.value: {"X": 100, "Y": 0, "Z": 0, "F": 0},
             ConfigLED.LED_450_NM.value: {"X": 0, "Y": 100, "Z": 0, "F": 0},
@@ -359,6 +360,9 @@ class TestCamera(AbstractCamera):
             ConfigLED.LED_NO_LED.value: {"X": 0, "Y": 0, "Z": 0, "F": 0},
         }
         "Although this has no functionality for TestCamera, it is needed for tests together with the GUI."
+        self._crop_inds: Optional[Union[None, Tuple[Tuple[int, int], Tuple[int, int]]]] = \
+            cropping_indices if cropping_indices else None
+        "Optional cropping indices applied to all images. If provided, must be of the form ((xmin, xmax), (ymin, ymax))"
 
         self._next_filename_index: int = next(self.indices)
 
@@ -369,7 +373,7 @@ class TestCamera(AbstractCamera):
                                   "then it must have the same length as filenames.",
                                   ErrorCode.ERROR_TEST_CAMERA_CONFIG)
             self.pos_to_filename = dict(sorted(self.pos_to_filename.items()))  # warning in pycharm is a bug
-            self.filenames = self.pos_to_filename.values()
+            self.filenames = list(self.pos_to_filename.values())
 
     def increment_filename_index(self):
         self._next_filename_index = next(self.indices)
@@ -397,7 +401,11 @@ class TestCamera(AbstractCamera):
             i_chan: int,
             i_period: Union[int, None],
     ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
-        return skimage.io.imread(self.filenames[self._next_filename_index])
+        image = skimage.io.imread(self.filenames[self._next_filename_index])
+        if self._crop_inds:
+            return image[self._crop_inds[0][0]:self._crop_inds[0][1], self._crop_inds[1][0]:self._crop_inds[1][1]]
+        else:
+            return image
 
     def get_filename(self) -> str:
         return str(self.filenames[self._next_filename_index]).split("/")[-1]
