@@ -89,7 +89,7 @@ class Automaton:
     def process(self):
         self._take_image()
         self._process_position()
-        # TODO: controller, DMD actuation etc.
+        # TODO: strategy.callback()
         self.increment_pos()
 
     def _take_image(self):
