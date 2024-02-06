@@ -14,7 +14,7 @@ cam = EvoCamera(DEVICE_CONFIG_EVO_TEST)
 dmd = DMDControl()
 tig = cam.tiger
 cam.initialise()
-cam._set_channel(-1)
+cam._set_led(-1)
 
 
 cmap = plt.cm.jet
@@ -101,7 +101,7 @@ def display_text(
     self.display_image(img=img)
 
 def set_chan(i):
-    cam._set_channel(i)
+    cam._set_led(i)
 
 
 def set_fw(i):

@@ -4,16 +4,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 import unittest
 import sys
+import os
 
-sys.path.append('/home/lady5906/workspace_python/conda_evomachine3.9/evomachine_repo')
-sys.path.append('/home/lady5906/workspace_python/conda_evomachine3.9/de-lta-rt')
-sys.path.append('/home/lady5906/workspace_python/conda_evomachine3.9/asitiger')
+sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
+sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/de-lta-rt')
+sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger')
 
 import delta
 from delta import utils
 from delta.config import DEFAULT_CONFIG_MOTHERMACHINE
 from delta.pipeline import TIMER_ROI
 
+from evomachine.strategy import NoStrategy
 from evomachine.acquisition import DeltaCamera
 from evomachine.automaton import Automaton
 from evomachine.config import IMAGE_CONFIG_DELTA_BENCH, DEVICE_CONFIG_DELTA_SIM, EVOMACHINE_DIR
@@ -26,6 +28,7 @@ automaton: Automaton = Automaton(
             cfg_image=IMAGE_CONFIG_DELTA_BENCH,
             cfg_delta=DEFAULT_CONFIG_MOTHERMACHINE,
             camera=DeltaCamera(cfg_device=DEVICE_CONFIG_DELTA_SIM),
+            strategy=NoStrategy(),
         )
 automaton.initialise()
 automaton.process()

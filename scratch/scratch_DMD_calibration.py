@@ -19,7 +19,7 @@ cam = EvoCamera(DEVICE_CONFIG_EVO_TEST)
 dmd = DMDControl()
 tig = cam.tiger
 cam.initialise()
-cam._set_channel(-1)
+cam._set_led(-1)
 dmd.display_none()
 
 

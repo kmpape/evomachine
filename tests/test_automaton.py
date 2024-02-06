@@ -5,11 +5,19 @@ import numpy as np
 from pathlib import Path
 import unittest
 
+import sys
+import os
+
+sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
+sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/de-lta-rt')
+sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger')
+
 import delta
 from delta import utils
 from delta.config import DEFAULT_CONFIG_MOTHERMACHINE
 from delta.pipeline import TIMER_ROI
 
+from evomachine.strategy import NoStrategy
 from evomachine.acquisition import DeltaCamera
 from evomachine.automaton import Automaton
 from evomachine.config import IMAGE_CONFIG_DELTA_SIM, IMAGE_CONFIG_DELTA_BENCH, DEVICE_CONFIG_DELTA_SIM, EVOMACHINE_DIR
@@ -112,6 +120,7 @@ class TestAutomaton(unittest.TestCase):
             cfg_image=IMAGE_CONFIG_DELTA_SIM,
             cfg_delta=DEFAULT_CONFIG_MOTHERMACHINE,
             camera=DeltaCamera(cfg_device=DEVICE_CONFIG_DELTA_SIM),
+            strategy=NoStrategy()
         )
         automaton.initialise()
         self.assertTrue(automaton._curr_period == 1)
@@ -152,7 +161,8 @@ class TestAutomaton(unittest.TestCase):
             cfg_device=DEVICE_CONFIG_DELTA_SIM,
             cfg_image=IMAGE_CONFIG_DELTA_SIM,
             cfg_delta=DEFAULT_CONFIG_MOTHERMACHINE,
-            camera=delta_camera
+            camera=delta_camera,
+            strategy=NoStrategy()
         )
         automaton.initialise()
         self.assertTrue(automaton._curr_period == 1)
@@ -184,6 +194,7 @@ class TestAutomaton(unittest.TestCase):
             cfg_image=this_cfg_image,
             cfg_delta=DEFAULT_CONFIG_MOTHERMACHINE,
             camera=DeltaCamera(cfg_device=DEVICE_CONFIG_DELTA_SIM),
+            strategy=NoStrategy()
         )
         automaton_crop.initialise()
 
@@ -193,6 +204,7 @@ class TestAutomaton(unittest.TestCase):
             cfg_image=this_cfg_image,
             cfg_delta=DEFAULT_CONFIG_MOTHERMACHINE,
             camera=DeltaCamera(cfg_device=DEVICE_CONFIG_DELTA_SIM),
+            strategy=NoStrategy()
         )
         automaton_no_crop.initialise()
 
@@ -223,6 +235,7 @@ class TestAutomaton(unittest.TestCase):
             cfg_image=this_cfg_image,
             cfg_delta=DEFAULT_CONFIG_MOTHERMACHINE,
             camera=DeltaCamera(cfg_device=DEVICE_CONFIG_DELTA_SIM),
+            strategy=NoStrategy()
         )
         automaton.initialise()
         self.assertTrue(automaton._curr_period == 1)
@@ -329,6 +342,7 @@ class TestAutomaton(unittest.TestCase):
             cfg_image=this_cfg_image,
             cfg_delta=DEFAULT_CONFIG_MOTHERMACHINE,
             camera=DeltaCamera(cfg_device=DEVICE_CONFIG_DELTA_SIM),
+            strategy=NoStrategy()
         )
         automaton.initialise()
 

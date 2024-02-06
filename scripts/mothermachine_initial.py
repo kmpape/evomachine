@@ -1,8 +1,9 @@
-import sys
 import time
 
-sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/asitiger")
-sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo")
+import sys, os
+sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger')
+sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
+
 from asitiger.command import CRISPState, Command
 from evomachine.acquisition import EvoCamera
 from evomachine.config import DEVICE_CONFIG_EVO_TEST, CRISP_CONFIG_DEFAULT, OBJECTIVE_CONFIG_OIL, \
@@ -45,7 +46,7 @@ cam = EvoCamera(cfg_device=DEVICE_CONFIG_MOTHERMACHINE, cfg_objective=OBJECTIVE_
 dmd = DMDControl()
 tig = cam.tiger
 cam.initialise()
-cam._set_channel(-1)
+cam._set_led(-1)
 dmd.display_none()
 
 tig.move()

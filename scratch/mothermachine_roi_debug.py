@@ -7,16 +7,18 @@ import numpy as np
 import unittest
 from skimage.transform import hough_line, hough_line_peaks
 import sys
+import os
 
-sys.path.append('/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo')
-sys.path.append('/home/hslab/workspace_python/conda_evomachine3.9/de-lta-rt')
-sys.path.append('/home/hslab/workspace_python/conda_evomachine3.9/asitiger')
+sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
+sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/de-lta-rt')
+sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger')
 
 import delta
 from delta import utils
 from delta.config import DEFAULT_CONFIG_MOTHERMACHINE
 from delta.pipeline import TIMER_ROI
 
+from evomachine.strategy import NoStrategy
 from evomachine.acquisition import TestCamera, DeltaCamera
 from evomachine.automaton import Automaton
 from evomachine.config import ConfigCRISP, ConfigFocus, ConfigFocusAlgorithm, DEVICE_CONFIG_EVO_TEST, \
@@ -59,6 +61,7 @@ automaton = Automaton(
     cfg_image=IMAGE_CONFIG_DEFAULT,
     cfg_delta=DEFAULT_CONFIG_MOTHERMACHINE,
     camera=this_cam,
+    strategy=NoStrategy(),
 )
 # automaton.initialise()
 for i_pos in range(automaton._cfg_device.num_pos):

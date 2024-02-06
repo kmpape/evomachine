@@ -10,6 +10,7 @@ from evomachine.config import ConfigDevice, ConfigImage
 from evomachine.exceptions import ErrorContainer
 from evomachine.positionrt import PositionRT
 
+from evomachine.strategy import AbstractStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,7 @@ class Automaton:
             cfg_image: ConfigImage,
             cfg_delta: delta.config.Config,
             camera: AbstractCamera,
+            strategy: AbstractStrategy,
     ):
         self._cfg_device: ConfigDevice = cfg_device
         "Device configuration object defining geometry."
@@ -60,18 +62,27 @@ class Automaton:
         self.error_container: ErrorContainer = ErrorContainer()
         "Container for errors."
 
+        self._strategy: AbstractStrategy = strategy
+
     def initialise(self):
+        
+        # FIXME: should this called twice? Also called below
         self._camera.initialise()
+        
         for i_pos in range(self._cfg_device.num_pos):
             self._camera.move_to_pos(i_pos=i_pos)
             for i_chan in range(self._cfg_device.num_chan):
                 self._ref_frames[i_pos][i_chan, :, :] = self._camera.get_frame(i_chan=i_chan, i_period=0)
             self._pos_processor[i_pos].initialise(self._ref_frames[i_pos])
             self.increment_pos()
+        
+        # FIXME: should this called twice? Also called above
         self._camera.initialise()
+
         assert self._curr_pos == 0
-        assert self._curr_period == 1
-        # Note that each ROI keeps track of _curr_period as well
+        assert self._curr_period == 1 # Note that each ROI keeps track of _curr_period as well
+
+        self._strategy.initialise()
 
     def check_status(self):
         if len(self.error_container) > 0:
@@ -89,7 +100,11 @@ class Automaton:
     def process(self):
         self._take_image()
         self._process_position()
-        # TODO: strategy.callback()
+        self._strategy.callback(
+            fov_id=self._curr_pos, 
+            t=self._curr_period, 
+            data=self._pos_processor[self._curr_pos].get_data()
+        )
         self.increment_pos()
 
     def _take_image(self):

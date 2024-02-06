@@ -24,9 +24,9 @@ from PyQt5.QtWidgets import (
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
 
-import sys
-sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/asitiger")
-sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo")
+import sys, os
+sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger')
+sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
 
 from asitiger.errors import Errors as ASIErrors
 from asitiger.tigercontroller import SAFE_STAGE_LIMITS
@@ -380,12 +380,22 @@ class EvoGUI(QMainWindow):
             param=i,
             stylesheet=stylesheet_led,
         ) for i in self.cam.channel_settings.keys()}
+        self.led_textinputs = {i: self.make_lineedit(
+            text="100",
+            func=self.set_led,
+            param=i,
+        ) for i in self.cam.channel_settings.keys()}
+        self.led_textinputs[ConfigLED.LED_NO_LED.value].setText("0")
+        self.led_textinputs[ConfigLED.LED_NO_LED.value].setReadOnly(True)
+        self.led_textinputs[ConfigLED.LED_NO_LED.value].setStyleSheet("background-color: LightGray;")
         self.led_buttons[ConfigLED.LED_NO_LED.value].setStyleSheet("background-color: green;")
         self.led_buttons[ConfigLED.LED_NO_LED.value].setText("ON")
         self.led_layout = QGridLayout()
         self.led_layout.addWidget(EvoGUI.make_label(text="LED Control", font=NORMAL), 0, 0, 1, 2, LEFT)
         _ = [self.led_layout.addWidget(label, i, 0, CENTER) for i, label in enumerate(self.led_labels, start=1)]
         _ = [self.led_layout.addWidget(button, i, 1, CENTER) for i, button in enumerate(self.led_buttons.values(), start=1)]
+        _ = [self.led_layout.addWidget(textinput, i, 2, CENTER) for i, textinput in
+             enumerate(self.led_textinputs.values(), start=1)]
         led_widget = QWidget()
         led_widget.setLayout(self.led_layout)
         self.led_thread: Union[ThreadLED, None] = None
@@ -774,7 +784,14 @@ class EvoGUI(QMainWindow):
         if self.is_testmode:
             logger.info("set_led: no LEDs in testmode.")
             return
-        self.cam._set_channel(i_chan=i_channel)
+
+        try:
+            brightness = int(self.led_textinputs[i_channel].text())
+        except ValueError:
+            logger.warning(f"Could not parse brightness {self.led_textinputs[i_channel]}. Defaulting to 50.")
+            brightness = 50
+
+        self.cam._set_led(i_chan=i_channel, brightness=brightness)
         self.current_led_id = i_channel
         self.led_thread = ThreadLED(buttons=self.led_buttons, i_active=i_channel)
         self.led_thread.start()
@@ -1026,10 +1043,10 @@ class ThreadSWFocus(QThread):
         best_focus_score = 0
         best_focus_position = 0
         focus_curve = []
-        self.cam._set_channel(i_chan=ConfigLED.LED_NO_LED.value)
+        self.cam._set_led(i_chan=ConfigLED.LED_NO_LED.value)
         for ipos, z_coord in enumerate(coords):
             if self.stopped():
-                self.cam._set_channel(i_chan=old_channel)
+                self.cam._set_led(i_chan=old_channel)
                 logger.warning("ThreadSWFocus.run: Aborting.")
                 return
             self.cam.move_to(coordinates={'Z': z_coord}, block=True)
@@ -1057,7 +1074,7 @@ class ThreadSWFocus(QThread):
         logger.info(f"ThreadSWFocus.run: Finished scanning. Coordinate before focus={curr_pos / 10} μm,"
                     f"coordinate after focus={best_coordinate / 10} μm. Finalising software_focus.")
         self.cam.move_to(coordinates={'Z': best_coordinate}, block=True)
-        self.cam._set_channel(i_chan=old_channel)
+        self.cam._set_led(i_chan=old_channel)
 
 
 class ThreadMultiParam(QThread):
@@ -1518,7 +1535,7 @@ class ThreadExperiment(QThread):
         iteration = 1
         while True:
             logger.info(f"At iteration {iteration}")
-            self.cam._set_channel(i_chan=-1)
+            self.cam._set_led(i_chan=-1)
             for coord in self.coordinates:
                 if self.stopped():
                     logger.info("Stopping acquisition.")

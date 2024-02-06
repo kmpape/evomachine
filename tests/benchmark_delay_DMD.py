@@ -18,7 +18,7 @@ if __name__ == '__main__':
     dmd = DMDControl()
     tig = cam.tiger
     cam.initialise()
-    cam._set_channel(-1)
+    cam._set_led(-1)
     i_trials = 30
     delays = np.arange(0.02, 0.12, 0.01)
     path_to_save = "/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo/images/2023-09-28/"

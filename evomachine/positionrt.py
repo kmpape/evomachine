@@ -469,6 +469,9 @@ class PositionRT(delta.pipeline.Position):
 
     def __str__(self):
         return f"POS_{self.position_nb:03}"
+    
+    def get_data(self) -> dict:
+        pass
 
 
 class ROIRT(delta.pipeline.ROI):

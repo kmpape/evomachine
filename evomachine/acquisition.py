@@ -570,11 +570,16 @@ class EvoCamera(AbstractCamera):
         except ValueError:
             return False
 
-    def _set_channel(self, i_chan: int):
+    def _set_led(self, i_chan: int, brightness: int = None):
         if i_chan not in self.channel_settings.keys():
             logger.error(msg=f"EvoCamera._set_channel: i_chan={i_chan} not in channels={self.channel_settings.keys()}.")
             return
         if self._tiger_is_alive:
+            if brightness is not None:
+                if 0 <= brightness <= 100:
+                    self.channel_settings[i_chan]["Y"] = brightness
+                else:
+                    logger.error(msg=f"Cannot set brightness: {brightness} is out of range [0, 100].")
             self.tiger.led(led_brightnesses=self.channel_settings[i_chan], card_address=self.card_address_led)
             self.current_channel = i_chan
         else:
@@ -591,7 +596,7 @@ class EvoCamera(AbstractCamera):
                              f"Check ASI Tiger box and serial connection.")
 
     def _disable_channels(self):
-        self._set_channel(i_chan=-1)
+        self._set_led(i_chan=-1)
 
     def _move_stage_to_pos(
             self,
@@ -627,7 +632,7 @@ class EvoCamera(AbstractCamera):
         if i_chan is not None:
             self._last_frame_channel = i_chan
             curr_channel = self.current_channel
-            self._set_channel(i_chan=i_chan)
+            self._set_led(i_chan=i_chan)
         try:
             self.mmc.snap_image()
         except Exception as e:
@@ -640,7 +645,7 @@ class EvoCamera(AbstractCamera):
             newshape=[tagged_image.tags['Height'], tagged_image.tags['Width']]
         )
         if i_chan is not None:
-            self._set_channel(i_chan=curr_channel)
+            self._set_led(i_chan=curr_channel)
         return pixels
 
     def get_filename(self) -> str:
@@ -825,7 +830,7 @@ class EvoCamera(AbstractCamera):
         logger.info(f"EvoCamera.software_focus: Finished scanning. Coordinate before focus={curr_pos / 10} μm,"
                     f"coordinate after focus={best_coordinate / 10} μm. Finalising software_focus.")
         self._move_stage_to_coord({'Z': best_coordinate})
-        self._set_channel(i_chan=old_channel)
+        self._set_led(i_chan=old_channel)
 
     def move_home(self, block: Optional[bool] = False):
         _ = self.tiger.home()
