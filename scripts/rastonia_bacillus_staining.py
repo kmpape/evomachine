@@ -5,9 +5,10 @@ sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
 
 from asitiger.command import CRISPState, Command
-from evomachine.acquisition import EvoCamera, DMDControl
+from evomachine.acquisition import EvoCamera
 from evomachine.config import DEVICE_CONFIG_EVO_TEST, CRISP_CONFIG_DEFAULT, OBJECTIVE_CONFIG_OIL, \
     OBJECTIVE_CONFIG_AIR, IMAGE_CONFIG_DEFAULT, ConfigDevice, ConfigFocus, ConfigLED, ConfigCRISP
+from evomachine.dmd import DMDControl
 from pathlib import Path
 
 test_pos_list = [(-10000, 0, 0), (0, 0, 0), (0, 10000, 0)]
@@ -47,7 +48,7 @@ cam = EvoCamera(cfg_device=DEVICE_CONFIG_RASTONIA, cfg_objective=OBJECTIVE_CONFI
 dmd = DMDControl()
 tig = cam.tiger
 cam.initialise()
-cam._set_led(-1)
+cam.set_led(-1)
 dmd.display_none()
 
 # _ = cam.display_save_frame(i_chan=2, path_to_save=False, display_frame=True)

@@ -46,7 +46,7 @@ cam = EvoCamera(cfg_device=DEVICE_CONFIG_MOTHERMACHINE, cfg_objective=OBJECTIVE_
 dmd = DMDControl()
 tig = cam.tiger
 cam.initialise()
-cam._set_led(-1)
+cam.set_led(-1)
 dmd.display_none()
 
 tig.move()

@@ -372,19 +372,19 @@ class EvoGUI(QMainWindow):
             text=ConfigLED.get_name(value_to_find=i),
             font=SMALL,
             width_px=100,
-        ) for i in self.cam.channel_settings.keys()]
+        ) for i in self.cam.get_led_channels()]
         self.led_buttons = {i: self.make_button(
             text="OFF",
             func=self.set_led,
             font=SMALL,
             param=i,
             stylesheet=stylesheet_led,
-        ) for i in self.cam.channel_settings.keys()}
+        ) for i in self.cam.get_led_channels()}
         self.led_textinputs = {i: self.make_lineedit(
             text="100",
             func=self.set_led,
             param=i,
-        ) for i in self.cam.channel_settings.keys()}
+        ) for i in self.cam.get_led_channels()}
         self.led_textinputs[ConfigLED.LED_NO_LED.value].setText("0")
         self.led_textinputs[ConfigLED.LED_NO_LED.value].setReadOnly(True)
         self.led_textinputs[ConfigLED.LED_NO_LED.value].setStyleSheet("background-color: LightGray;")
@@ -791,7 +791,7 @@ class EvoGUI(QMainWindow):
             logger.warning(f"Could not parse brightness {self.led_textinputs[i_channel]}. Defaulting to 50.")
             brightness = 50
 
-        self.cam._set_led(i_chan=i_channel, brightness=brightness)
+        self.cam.set_led(i_chan=i_channel, brightness=brightness)
         self.current_led_id = i_channel
         self.led_thread = ThreadLED(buttons=self.led_buttons, i_active=i_channel)
         self.led_thread.start()
@@ -1043,10 +1043,10 @@ class ThreadSWFocus(QThread):
         best_focus_score = 0
         best_focus_position = 0
         focus_curve = []
-        self.cam._set_led(i_chan=ConfigLED.LED_NO_LED.value)
+        self.cam.set_led(i_chan=ConfigLED.LED_NO_LED.value)
         for ipos, z_coord in enumerate(coords):
             if self.stopped():
-                self.cam._set_led(i_chan=old_channel)
+                self.cam.set_led(i_chan=old_channel)
                 logger.warning("ThreadSWFocus.run: Aborting.")
                 return
             self.cam.move_to(coordinates={'Z': z_coord}, block=True)
@@ -1074,7 +1074,7 @@ class ThreadSWFocus(QThread):
         logger.info(f"ThreadSWFocus.run: Finished scanning. Coordinate before focus={curr_pos / 10} μm,"
                     f"coordinate after focus={best_coordinate / 10} μm. Finalising software_focus.")
         self.cam.move_to(coordinates={'Z': best_coordinate}, block=True)
-        self.cam._set_led(i_chan=old_channel)
+        self.cam.set_led(i_chan=old_channel)
 
 
 class ThreadMultiParam(QThread):
@@ -1535,7 +1535,7 @@ class ThreadExperiment(QThread):
         iteration = 1
         while True:
             logger.info(f"At iteration {iteration}")
-            self.cam._set_led(i_chan=-1)
+            self.cam.set_led(i_chan=-1)
             for coord in self.coordinates:
                 if self.stopped():
                     logger.info("Stopping acquisition.")

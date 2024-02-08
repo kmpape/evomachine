@@ -352,14 +352,13 @@ class TestCamera(AbstractCamera):
         "Parameters of objective. Required for GUI interaction."
         self.pos_to_filename: Union[Dict[int, Union[Path, str]], None] = pos_to_filename
         "Optional dictionary mapping from unique position numbers (0,1,2,...) to filename."
-        self.channel_settings: Dict[int, Dict] = {
-            ConfigLED.LED_405_NM.value: {"X": 100, "Y": 0, "Z": 0, "F": 0},
-            ConfigLED.LED_450_NM.value: {"X": 0, "Y": 100, "Z": 0, "F": 0},
-            ConfigLED.LED_505_NM.value: {"X": 0, "Y": 0, "Z": 100, "F": 0},
-            ConfigLED.LED_538_NM.value: {"X": 0, "Y": 0, "Z": 0, "F": 100},
-            ConfigLED.LED_NO_LED.value: {"X": 0, "Y": 0, "Z": 0, "F": 0},
+        self._led_channel_keys: Dict[int, str] = {
+            ConfigLED.LED_405_NM.value: "X",
+            ConfigLED.LED_450_NM.value: "Y",
+            ConfigLED.LED_505_NM.value: "Z",
+            ConfigLED.LED_538_NM.value: "F",
         }
-        "Although this has no functionality for TestCamera, it is needed for tests together with the GUI."
+        "LED keys i_chan=0,...,3 for communication with Tiger."
         self._crop_inds: Optional[Union[None, Tuple[Tuple[int, int], Tuple[int, int]]]] = \
             cropping_indices if cropping_indices else None
         "Optional cropping indices applied to all images. If provided, must be of the form ((xmin, xmax), (ymin, ymax))"
@@ -412,6 +411,9 @@ class TestCamera(AbstractCamera):
 
     def get_coordinates(self, axes: List[str]) -> Dict[str, float]:
         return {ax.upper(): 0.0 for ax in axes}
+
+    def get_led_channels(self) -> Tuple[int]:
+        return tuple(self._led_channel_keys.keys())
 
     def halt_stage(self):
         return
@@ -496,14 +498,16 @@ class EvoCamera(AbstractCamera):
         "Current LED channel set."
         self._last_frame_channel: int = -1
         "Channel used to take last frame."
-        self.channel_settings: Dict[int, Dict] = {
-            ConfigLED.LED_405_NM.value: {"X": 100, "Y": 0, "Z": 0, "F": 0},
-            ConfigLED.LED_450_NM.value: {"X": 0, "Y": 100, "Z": 0, "F": 0},
-            ConfigLED.LED_505_NM.value: {"X": 0, "Y": 0, "Z": 100, "F": 0},
-            ConfigLED.LED_538_NM.value: {"X": 0, "Y": 0, "Z": 0, "F": 100},
-            ConfigLED.LED_NO_LED.value: {"X": 0, "Y": 0, "Z": 0, "F": 0},
+        self._led_channel_keys: Dict[int, Union[str, None]] = {
+            ConfigLED.LED_405_NM.value: "X",
+            ConfigLED.LED_450_NM.value: "Y",
+            ConfigLED.LED_505_NM.value: "Z",
+            ConfigLED.LED_538_NM.value: "F",
+            ConfigLED.LED_NO_LED.value: None,
         }
-        "LED intensity for i_chan=0,...,3."
+        "LED keys i_chan=0,...,3 for communication with Tiger."
+        self._current_led_brightness: int = 0
+        "Last set LED brightness"
         self.card_address_led: int = 7
         "LED card address on ASI tiger."
         self.card_address_fw: int = 8
@@ -570,18 +574,26 @@ class EvoCamera(AbstractCamera):
         except ValueError:
             return False
 
-    def _set_led(self, i_chan: int, brightness: int = None):
-        if i_chan not in self.channel_settings.keys():
-            logger.error(msg=f"EvoCamera._set_channel: i_chan={i_chan} not in channels={self.channel_settings.keys()}.")
+    def get_led_channels(self) -> Tuple[int]:
+        return tuple(self._led_channel_keys.keys())
+
+    def set_led(self, i_chan: int, brightness: int = 100):
+        if i_chan not in self._led_channel_keys.keys():
+            logger.error(msg=f"EvoCamera._set_channel: i_chan={i_chan} not in channels={self._led_channel_keys.keys()}.")
             return
         if self._tiger_is_alive:
-            if brightness is not None:
-                if 0 <= brightness <= 100:
-                    self.channel_settings[i_chan]["Y"] = brightness
-                else:
-                    logger.error(msg=f"Cannot set brightness: {brightness} is out of range [0, 100].")
-            self.tiger.led(led_brightnesses=self.channel_settings[i_chan], card_address=self.card_address_led)
-            self.current_channel = i_chan
+            led_settings = {val: (brightness if ((key == i_chan) and (i_chan != ConfigLED.LED_NO_LED.key)) else 0)
+                            for key, val in self._led_channel_keys.items()}
+            if (0 <= brightness <= 100) or (i_chan != ConfigLED.LED_NO_LED.key):
+                is_good_brightness_value = True
+            else:
+                is_good_brightness_value = False
+            if is_good_brightness_value:
+                self.tiger.led(led_brightnesses=led_settings, card_address=self.card_address_led)
+                self.current_channel = i_chan
+                self._current_led_brightness = 0 if i_chan == ConfigLED.LED_NO_LED.key else brightness
+            else:
+                logger.error(msg=f"Cannot set brightness: {brightness} is out of range [0, 100]. LED not set.")
         else:
             logger.error(msg=f"EvoCamera._set_channel: Tiger is not alive. Check ASI Tiger box and serial connection.")
 
@@ -596,7 +608,7 @@ class EvoCamera(AbstractCamera):
                              f"Check ASI Tiger box and serial connection.")
 
     def _disable_channels(self):
-        self._set_led(i_chan=-1)
+        self.set_led(i_chan=-1)
 
     def _move_stage_to_pos(
             self,
@@ -625,6 +637,7 @@ class EvoCamera(AbstractCamera):
             self,
             i_chan: Union[int, None],
             i_period: Union[int, None],
+            brightness: int = 100,
     ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
         if not self._mmc_is_alive:
             logger.error(msg=f"EvoCamera._take_frame: MMC is not alive. Check Camera and Micro-Manager.")
@@ -632,7 +645,7 @@ class EvoCamera(AbstractCamera):
         if i_chan is not None:
             self._last_frame_channel = i_chan
             curr_channel = self.current_channel
-            self._set_led(i_chan=i_chan)
+            self.set_led(i_chan=i_chan, brightness=brightness)
         try:
             self.mmc.snap_image()
         except Exception as e:
@@ -645,7 +658,7 @@ class EvoCamera(AbstractCamera):
             newshape=[tagged_image.tags['Height'], tagged_image.tags['Width']]
         )
         if i_chan is not None:
-            self._set_led(i_chan=curr_channel)
+            self.set_led(i_chan=curr_channel)
         return pixels
 
     def get_filename(self) -> str:
@@ -830,7 +843,7 @@ class EvoCamera(AbstractCamera):
         logger.info(f"EvoCamera.software_focus: Finished scanning. Coordinate before focus={curr_pos / 10} μm,"
                     f"coordinate after focus={best_coordinate / 10} μm. Finalising software_focus.")
         self._move_stage_to_coord({'Z': best_coordinate})
-        self._set_led(i_chan=old_channel)
+        self.set_led(i_chan=old_channel)
 
     def move_home(self, block: Optional[bool] = False):
         _ = self.tiger.home()
