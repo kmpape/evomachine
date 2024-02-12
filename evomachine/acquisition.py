@@ -557,16 +557,30 @@ class EvoCamera(AbstractCamera):
         "Settings for CRISP autofocus."
         self.cfg_focus: ConfigFocus = cfg_focus
         "Settings for initial software focus."
+        self._cfg_focus: ConfigFocus = cfg_focus.copy()
+        "Internal focus configuration used for overrides."
         self.cfg_objective: ConfigObjective = cfg_objective
         "Parameters of objective."
         self.current_exposure_time: int = 0
         "Exposure time. Set in _initialise and provided in cfg_focus."
-        self.focus_positions: Union[None, np.array] = None
-        "Initialised in software_focus. Contains Z coordinates of focus stack."
+
+        self.focus_cols: Optional[Tuple[int]] = None
+        "Initialised in software_focus. Contains min/max indices of image to apply focus routine to."
+        self.focus_curr_pos: Optional[Dict[str, int]] = None
+        "Initialised in software_focus. X/Y/Z coordinates of stage before last start of focus routine."
+        self.focus_old_channel: Optional[int] = None
+        "Initialised in software_focus. LED channel before last start of focus routine."
+        self.focus_prev_image: Union[None, np.array] = None
+        "Initialised in software_focus. Contains the image from before starting focus."
+        self.focus_rows: Optional[Tuple[int]] = None
+        "Initialised in software_focus. Contains min/max indices of image to apply focus routine to."
         self.focus_scores: Union[None, np.array] = None
         "Initialised in software_focus. Contains the focus score of each image. Larger score = sharper image."
         self.focus_stack: Union[None, np.array] = None
         "Initialised in software_focus. Contains images of focus stack."
+        self.focus_Z_coords: Union[None, np.array] = None
+        "Initialised in software_focus. Contains Z coordinates of focus stack. Use focus_curr_pos for X/Y coordinates."
+        self._focus_is_initialised: bool = False
 
         self.mmc: Union[Core, None] = None
         "Micromanager Core object for taking images."
@@ -917,73 +931,150 @@ class EvoCamera(AbstractCamera):
             cropping_indices: Optional[Union[None, Tuple[Tuple[int, int], Tuple[int, int]]]] = None, # ((xmin,xmax), (ymin,ymax))
             algorithm_override: Optional[ConfigFocusAlgorithm] = None,
     ):
+        self.software_focus_initialise(
+            cfg_focus=cfg_focus,
+            focus_channel_override=focus_channel_override,
+            rel_range_override=rel_range_override,
+            cropping_indices=cropping_indices,
+            algorithm_override=algorithm_override,
+        )
+        if not self._focus_is_initialised:
+            logger.error(
+                f"software_focus: Focus not initialised or initialisation failed. Check log. Aborting focus."
+            )
+        for ipos in range(len(self.focus_Z_coords)):
+            self.software_focus_step(ipos=ipos)
+        self.software_focus_finalise()
+
+    def software_focus_is_valid_range(self) -> bool:
+        if self.focus_Z_coords is None:
+            return False
+        else:
+            for z_coord in [self.focus_Z_coords[0], self.focus_Z_coords[-1]]:
+                is_out_of_bounds = self.tiger.coordinate_is_out_of_bounds({'Z': z_coord})
+                if is_out_of_bounds:
+                    logger.warning(
+                        f"EvoCamera.software_focus_check_range: Coordinates are out of bounds. "
+                        f"Received min, max = {[self.focus_Z_coords[0], self.focus_Z_coords[-1]]}. "
+                        f"Stage limits = {self.tiger.get_stage_limits()}). Reset stage limits."
+                    )
+                    return False
+        return True
+
+    def software_focus_finalise(self):
+        self._focus_is_initialised = False
+        focus_best_position = np.argmax(self.focus_scores)
+        focus_best_coordinate = self.focus_Z_coords[focus_best_position]
+        logger.info(f"EvoCamera.software_focus: Finished scanning. Coordinate before focus="
+                    f"{self.focus_curr_pos['Z'] / 10} μm,"
+                    f"coordinate after focus={focus_best_coordinate / 10} μm. Finalising software_focus.")
+        self._move_stage_to_coord({'Z': focus_best_coordinate})
+        self.set_led(i_chan=self.focus_old_channel)
+
+    def software_focus_initialise(
+            self,
+            cfg_focus: Optional[ConfigFocus] = None,
+            focus_channel_override: Optional[int] = None,
+            rel_range_override: Optional[int] = None,
+            cropping_indices: Optional[Union[None, Tuple[Tuple[int, int], Tuple[int, int]]]] = None, # ((xmin,xmax), (ymin,ymax))
+            algorithm_override: Optional[ConfigFocusAlgorithm] = None,
+            user_input_override: bool = False,
+    ):
         if not all([self._mmc_is_alive, self._tiger_is_alive]):
             logger.error(f"EvoCamera.software_focus: Device(s) not alive. "
                          f"Tiger={self._tiger_is_alive}, MMC={self._mmc_is_alive}.")
             return
         # Assign optional arguments
         if cropping_indices is None:
-            row_min, row_max, col_min, col_max = 0, self.cfg_image.pxl_vert, 0, self.cfg_image.pxl_horiz
+            self.focus_rows = (0, self.cfg_image.pxl_vert)
+            self.focus_cols = 0, self.cfg_image.pxl_horiz
         else:
-            row_min, row_max = cropping_indices[1][0], cropping_indices[1][1]
-            col_min, col_max = cropping_indices[0][0], cropping_indices[0][1]
-        cfg_focus = cfg_focus if cfg_focus else self.cfg_focus
+            self.focus_rows = (cropping_indices[1][0], cropping_indices[1][1])
+            self.focus_cols = (cropping_indices[0][0], cropping_indices[0][1])
+        self._cfg_focus = cfg_focus.copy() if cfg_focus else self.cfg_focus.copy()
         if focus_channel_override is not None:
-            cfg_focus.focus_channel = focus_channel_override
+            self._cfg_focus.focus_channel = focus_channel_override
         if algorithm_override is not None:
-            cfg_focus.algorithm = algorithm_override
+            self._cfg_focus.algorithm = algorithm_override
         if rel_range_override is not None:
-            cfg_focus.rel_range = rel_range_override
+            self._cfg_focus.rel_range = rel_range_override
         try:
-            cfg_focus.check_config()
+            self._cfg_focus.check_config()
         except ConfigError as e:
             logger.warning(f"EvoCamera.software_focus: Invalid focus configuration:\n{e.message}\nAborting...")
             return
         # Initialise Z stack
-        curr_pos = self.tiger.where(['Z'])['Z']
-        coords = range(curr_pos-cfg_focus.rel_range, curr_pos+cfg_focus.rel_range, cfg_focus.steps_size)
-        user_input = input(f"EvoCamera.software_focus: Starting software autofocus configured as\n"
-                           f"{cfg_focus.__str__()}\nThis will move the stage up and down in the range "
-                           f"[{(curr_pos-cfg_focus.rel_range)/10},{(curr_pos+cfg_focus.rel_range)/10}] μm"
-                           f" (current position = {curr_pos/10} μm). "
-                           f"If there are objects blocking the stage movement, this will crash the "
-                           f"objective and break it. Do you want to proceed? (yes/no): ")
-        if user_input.lower() == "yes":
-            logger.info("EvoCamera.software_focus: Proceeding with software focus. Disabling MM live mode.")
-        else:
-            logger.info("EvoCamera.software_focus: Aborting software focus.")
+        self.focus_curr_pos = self.tiger.where()
+        self.focus_Z_coords = range(
+            self.focus_curr_pos['Z']-self._cfg_focus.rel_range,
+            self.focus_curr_pos['Z']+self._cfg_focus.rel_range,
+            self._cfg_focus.steps_size,
+        )
+        if not self.software_focus_is_valid_range():
+            self._focus_is_initialised = False
             return
-        old_channel = self.current_channel
-        self.set_exposure(exposure_time=int(cfg_focus.exposure_time))
-        self.studio.live().set_live_mode(False)
-        # Take images and compute scores
-        self.focus_scores = np.zeros(len(coords))
-        self.focus_stack = np.zeros((self.cfg_image.pxl_vert, self.cfg_image.pxl_horiz, len(coords)))
-        self.focus_positions = list(coords)
-        for ipos, z_coord in enumerate(coords):
-            self._move_stage_to_coord({'Z': z_coord})
-            image_raw = self.display_save_frame(
-                i_chan=cfg_focus.focus_channel,
-                i_period=None,
-                path_to_save=False,
-                filename=None,
-                display_frame=False,
-            )
-            if image_raw is None:
-                logger.warning("EvoCamera.software_focus: self._take_frame returned None. Aborting...")
-                return
+        if user_input_override:
+            sleep_time = 5
+            logger.warning(f"ThreadSWFocus.run: Starting software autofocus configured as\n"
+                           f"{self._cfg_focus.__str__()}\nThis will move the stage up and down in the range "
+                           f"[{(self.focus_curr_pos['Z'] - self._cfg_focus.rel_range) / 10},"
+                           f"{(self.focus_curr_pos['Z'] + self._cfg_focus.rel_range) / 10}] μm"
+                           f" (current position = {self.focus_curr_pos['Z'] / 10} μm). "
+                           f"If there are objects blocking the stage movement, this will crash the "
+                           f"objective and break it. You have {sleep_time} seconds to press STOP. ")
+            for i in range(sleep_time, 0, -1):
+                logger.warning(f"ThreadSWFocus.run: Starting software focus in {i} s.")
+                time.sleep(1)
+        else:
+            user_input = input(f"EvoCamera.software_focus: Starting software autofocus configured as\n"
+                               f"{self._cfg_focus.__str__()}\nThis will move the stage up and down in the range "
+                               f"[{(self.focus_curr_pos['Z']-self._cfg_focus.rel_range)/10},"
+                               f"{(self.focus_curr_pos['Z']+self._cfg_focus.rel_range)/10}] μm"
+                               f" (current position = {self.focus_curr_pos['Z']/10} μm). "
+                               f"If there are objects blocking the stage movement, this will crash the "
+                               f"objective and break it. Do you want to proceed? (yes/no): ")
+            if user_input.lower() == "yes":
+                logger.info("EvoCamera.software_focus: Proceeding with software focus. Disabling MM live mode.")
             else:
-                self.focus_stack[:, :, ipos] = image_raw
-            self.focus_scores[ipos] = get_focus_score(
-                img=image_raw[row_min:row_max, col_min:col_max],
-                algorithm=cfg_focus.algorithm,
-            )
-        best_focus_position = np.argmax(self.focus_scores)
-        best_coordinate = coords[best_focus_position]
-        logger.info(f"EvoCamera.software_focus: Finished scanning. Coordinate before focus={curr_pos / 10} μm,"
-                    f"coordinate after focus={best_coordinate / 10} μm. Finalising software_focus.")
-        self._move_stage_to_coord({'Z': best_coordinate})
-        self.set_led(i_chan=old_channel)
+                logger.info("EvoCamera.software_focus: Aborting software focus.")
+                return
+        self.focus_old_channel = self.current_channel
+        self.set_exposure(exposure_time=int(self._cfg_focus.exposure_time))
+        self.studio.live().set_live_mode(False)
+        self.focus_scores = np.zeros(len(self.focus_Z_coords))
+        self.focus_stack = np.zeros((self.cfg_image.pxl_vert, self.cfg_image.pxl_horiz, len(self.focus_Z_coords)))
+        self.set_led(i_chan=ConfigLED.LED_NO_LED.value)
+        self.focus_prev_image = self.display_save_frame(
+            i_chan=self._cfg_focus.focus_channel,
+            i_period=None,
+            path_to_save=False,
+            filename=None,
+            display_frame=False,
+        )
+        self._focus_is_initialised = True
+
+    def software_focus_is_initialised(self) -> bool:
+        return self._focus_is_initialised
+
+    def software_focus_step(self, ipos: int):
+        z_coord = self.focus_Z_coords[ipos]
+        self.move_to(coordinates={'Z': z_coord}, block=True)
+        image_raw = self.display_save_frame(
+            i_chan=self._cfg_focus.focus_channel,
+            i_period=None,
+            path_to_save=False,
+            filename=None,
+            display_frame=False,
+        )
+        if image_raw is None:
+            logger.warning("EvoCamera.software_focus: self._take_frame returned None. Aborting...")
+            return
+        else:
+            self.focus_stack[:, :, ipos] = image_raw
+        self.focus_scores[ipos] = get_focus_score(
+            img=image_raw[self.focus_rows[0]:self.focus_rows[1], self.focus_cols[0]:self.focus_cols[1]],
+            algorithm=self._cfg_focus.algorithm,
+        )
 
     def zero_coordinates(self):
         self.tiger.zero()

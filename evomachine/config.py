@@ -1,3 +1,4 @@
+import copy
 from dataclasses import dataclass
 from enum import Enum, auto
 import logging
@@ -18,9 +19,21 @@ EVO_FORMATTER = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s 
 class ConfigEnumTemplate(Enum):
     """ Convenience class for Enumerate classes."""
     @classmethod
+    def from_string(cls, s: str) -> Union['ConfigEnumTemplate.member', None]:
+        for member in cls:
+            if str(member.name) == s:
+                return member
+        return None
+
+    @classmethod
     def get_all_values(cls) -> List[int]:
         """ Returns all member values defined in Enum class."""
         return [member.value for member in cls]
+
+    @classmethod
+    def get_all_names(cls) -> List[str]:
+        """ Returns all member names for members defined in Enum class."""
+        return [cls.get_name(member.value) for member in cls]
 
     @classmethod
     def get_name(cls, value_to_find) -> str:
@@ -314,11 +327,13 @@ class ConfigFocus:
         return getattr(self, 'desc_'+attr_name)
 
     @staticmethod
-    def get_attr_from_str(attr_name: str, attr_value_str: str) -> Union[int, float, bool, None]:
+    def get_attr_from_str(attr_name: str, attr_value_str: str) -> Union[int, float, bool, ConfigFocusAlgorithm, None]:
         if attr_name == 'exposure_time':
             return float(attr_value_str)
         elif attr_name == 'user_input':
             return bool(attr_value_str)
+        elif attr_name == 'algorithm':
+            return ConfigFocusAlgorithm.from_string(attr_value_str)
         else:
             return int(attr_value_str)
 
@@ -357,13 +372,16 @@ class ConfigFocus:
             raise ConfigError(f"algorithm must be an instance of ConfigFocusAlgorithm. Provided {self.algorithm}.",
                               ErrorCode.ERROR_FOCUS_CONFIG.value)
 
+    def copy(self):
+        return copy.deepcopy(self)
+
     def __str__(self):
         attributes = [
             f"- exposure_time={self.exposure_time} ms",
             f"- focus_channel={self.focus_channel} ({ConfigLED.get_name(self.focus_channel)})",
             f"- rel_range={self.rel_range/10} μm",
             f"- steps_size={self.steps_size/10} μm",
-            f"- algorithm={self.algorithm.value} ({ConfigFocusAlgorithm.get_name(self.algorithm)})",
+            f"- algorithm={self.algorithm.value} ({ConfigFocusAlgorithm.get_name(self.algorithm.value)})",
         ]
         return "\n".join(attributes)
 

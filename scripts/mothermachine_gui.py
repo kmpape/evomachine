@@ -6,6 +6,7 @@ import logging
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.patches as patches
+import matplotlib.pyplot as plt
 import numpy as np
 import os
 import PIL
@@ -31,8 +32,8 @@ sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9
 from asitiger.errors import Errors as ASIErrors
 from asitiger.tigercontroller import SAFE_STAGE_LIMITS
 from evomachine.acquisition import EvoCamera, TestCamera
-from evomachine.config import ConfigCRISP, ConfigFocus, ConfigFocusAlgorithm, DEVICE_CONFIG_EVO_TEST, \
-    CRISP_CONFIG_DEFAULT, FOCUS_CONFIG_DEFAULT, IMAGE_CONFIG_DEFAULT, \
+from evomachine.config import ConfigCRISP, ConfigFocus, ConfigFocusAlgorithm, \
+    CRISP_CONFIG_DEFAULT, FOCUS_CONFIG_DEFAULT, IMAGE_CONFIG_DEFAULT, DEVICE_CONFIG_EVO_TEST,\
     OBJECTIVE_CONFIG_AIR, ConfigLED, EVO_FORMATTER, OBJECTIVE_CONFIG_OIL, CRISP_CONFIG_OIL
 from evomachine.dmd import DMDControl
 from evomachine.exceptions import ConfigError, TigerError
@@ -502,6 +503,11 @@ class EvoGUI(QMainWindow):
             width_px=80,
             align=RIGHT,
         ) for _ in AXES]
+        curr_limits = self.cam.tiger.get_stage_limits()
+        self.pos_limits = [EvoGUI.make_label(
+            text=f"[{EvoGUI.make_pos_str(curr_limits[ax][0])}, {EvoGUI.make_pos_str(curr_limits[ax][1])}]",
+            font=SMALL,
+        ) for ax in AXES]
         self.pos_update_button = self.make_button(text="Update", func=self.update_position, font=SMALL)
         self.pos_halt_button = self.make_button(text="Halt", func=self.halt_position, font=SMALL)
         self.pos_home_button = self.make_button(
@@ -522,7 +528,7 @@ class EvoGUI(QMainWindow):
             param=Direction.MOVETO.value,
         )
         self.pos_layout = QGridLayout()
-        self.pos_layout.addWidget(EvoGUI.make_label(text="Stage Control", font=NORMAL), 0, 0, 1, 4, LEFT)
+        self.pos_layout.addWidget(EvoGUI.make_label(text="Stage Control", font=NORMAL), 0, 0, 1, 5, LEFT)
         _ = [self.pos_layout.addWidget(pos_label, i, 0, CENTER) for i, pos_label in enumerate(self.pos_labels, start=1)]
         _ = [self.pos_layout.addWidget(pos_value, i, 1, CENTER) for i, pos_value in enumerate(self.pos_values, start=1)]
         self.pos_layout.addWidget(self.pos_update_button, 4, 0, 1, 1)
@@ -531,6 +537,7 @@ class EvoGUI(QMainWindow):
         self.pos_layout.addWidget(self.pos_zero_button, 4, 3, 1, 1)
         _ = [self.pos_layout.addWidget(self.pos_lrud_buttons[i], int(i/2) + 1, (i % 2) + 2) for i in LRUD]
         _ = [self.pos_layout.addWidget(self.pos_move_lineedits[key], i + 1, 4) for i, key in enumerate(['X', 'Y'])]
+        _ = [self.pos_layout.addWidget(pos_lim, i, 5, CENTER) for i, pos_lim in enumerate(self.pos_limits, start=1)]
         self.pos_layout.addWidget(self.pos_move_button, 4, 4, 1, 1)
         _ = [self.pos_layout.setColumnMinimumWidth(i, 0) for i in range(self.pos_layout.columnCount())]
         _ = [self.pos_layout.setColumnStretch(i, 0) for i in range(self.pos_layout.columnCount())]
@@ -582,7 +589,17 @@ class EvoGUI(QMainWindow):
 
     def make_software_focus_panel(self) -> QWidget:
         self.cfg_focus = self.cam.cfg_focus
-        self.cfg_focus_default = copy.copy(self.cam.cfg_focus)
+        self.cfg_focus_default = self.cam.cfg_focus.copy()
+
+        self.swfocus_algorithm_dropdown_options = ConfigFocusAlgorithm.get_all_names()
+        curr_algorithm_name = ConfigFocusAlgorithm.get_name(self.cfg_focus.algorithm.value)
+        self.swfocus_algorithm_dropdown_options.remove(curr_algorithm_name)
+        self.swfocus_algorithm_dropdown_options.insert(0, curr_algorithm_name)
+        self.swfocus_algorithm_current_option = ConfigFocusAlgorithm.from_string(
+            self.swfocus_algorithm_dropdown_options[0]
+        )
+        self.swfocus_algorithm_dropdown = self.make_dropdown(items=self.swfocus_algorithm_dropdown_options,
+                                                             func=self.swfocus_update_algorithm_option)
         self.swfocus_labels_values = {
             'exposure_time': [EvoGUI.make_label(text="Exposure [ms]", font=SMALL),
                               EvoGUI.make_lineedit(text=str(int(self.cfg_focus.exposure_time)),
@@ -596,18 +613,21 @@ class EvoGUI(QMainWindow):
             'steps_size': [EvoGUI.make_label(text="Step Size [um/10]", font=SMALL),
                            EvoGUI.make_lineedit(text=str(int(self.cfg_focus.steps_size)),
                                                 func=self.swfocus_update, param='steps_size')],
+            'algorithm': [EvoGUI.make_label(text="Algorithm", font=SMALL), self.swfocus_algorithm_dropdown],
         }
         self.swfocus_start_button = self.make_button(text="Start", font=SMALL, func=self.swfocus_start)
         self.swfocus_stop_button = self.make_button(text="Stop", font=SMALL, func=self.swfocus_stop)
         self.swfocus_reset_button = self.make_button(text="Reset", font=SMALL, func=self.swfocus_reset)
+        self.swfocus_curve_button = self.make_button(text="Focus Curve", font=SMALL, func=self.swfocus_show_curve)
         self.swfocus_layout = QGridLayout()
-        self.swfocus_layout.addWidget(EvoGUI.make_label(text="Software Focus", font=NORMAL), 0, 0, 1, 3, LEFT)
+        self.swfocus_layout.addWidget(EvoGUI.make_label(text="Software Focus", font=NORMAL), 0, 0, 1, 4, LEFT)
         for i, lab_val in enumerate(self.swfocus_labels_values.values(), start=1):
             self.swfocus_layout.addWidget(lab_val[0], i, 0, CENTER)
             self.swfocus_layout.addWidget(lab_val[1], i, 1, CENTER)
         self.swfocus_layout.addWidget(self.swfocus_start_button, len(self.swfocus_labels_values)+2, 0, CENTER)
         self.swfocus_layout.addWidget(self.swfocus_stop_button, len(self.swfocus_labels_values)+2, 1, CENTER)
         self.swfocus_layout.addWidget(self.swfocus_reset_button, len(self.swfocus_labels_values)+2, 2, CENTER)
+        self.swfocus_layout.addWidget(self.swfocus_curve_button, len(self.swfocus_labels_values)+2, 3, CENTER)
         swfocus_widget = QWidget()
         swfocus_widget.setLayout(self.swfocus_layout)
         self.swfocus_start_thread: Union[None, ThreadSWFocus] = None
@@ -907,13 +927,22 @@ class EvoGUI(QMainWindow):
         self.exp_start_button.setStyleSheet("background-color: white;")
 
     def swfocus_get_param(self, param_name: str):
-        val = ConfigFocus.get_attr_from_str(
-            attr_name=param_name,
-            attr_value_str=self.swfocus_labels_values[param_name][1].text()
-        )
+        if param_name == 'algorithm':
+            val = self.swfocus_algorithm_current_option
+        else:
+            val = ConfigFocus.get_attr_from_str(
+                attr_name=param_name,
+                attr_value_str=self.swfocus_labels_values[param_name][1].text(),
+            )
         if not self.cfg_focus.attr_is_valid(attr_name=param_name, attr_value=val):
             raise ValueError("Check parameter range and type in evomachine.config.")
         return val
+
+    def swfocus_update_algorithm_option(self):
+        self.swfocus_algorithm_current_option = ConfigFocusAlgorithm.from_string(
+            self.swfocus_algorithm_dropdown.currentText()
+        )
+        setattr(self.cfg_focus, 'algorithm', self.swfocus_algorithm_current_option)
 
     def crisp_get_param(self, param_name: str):
         val = ConfigCRISP.get_attr_from_str(
@@ -947,6 +976,34 @@ class EvoGUI(QMainWindow):
         )
         self.cfg_focus = copy.copy(self.cfg_focus_default)
         self.swfocus_reset_thread.start()
+
+    def swfocus_show_curve(self):
+        if self.cam.focus_Z_coords is None:
+            logger.error("swfocus_show_curve: Focus is None. Run software focus first. Returning.")
+            return
+        fig = plt.figure()
+        gs = fig.add_gridspec(2, 2, width_ratios=[1, 1])
+        ax1 = fig.add_subplot(gs[0, :])
+        z_coords = np.array(list(self.cam.focus_Z_coords)) / 10
+        ax1.plot(z_coords, self.cam.focus_scores, marker='x')
+        ax1.set_xticks(z_coords.tolist())
+        ax1.set_xticklabels([f'{x:.1f}' for x in z_coords.tolist()])
+        ax1.set_xlabel("Z position [um]")
+        ax1.set_ylabel("Sharpness Scores")
+        ax1.set_title("Focus Curve")
+        best_index = np.argmax(self.cam.focus_scores)
+        best_image = self.cam.normalise_frame(self.cam.focus_stack[:, :, best_index])
+        prev_image = self.cam.normalise_frame(self.cam.focus_prev_image)
+        ax2 = fig.add_subplot(gs[1, 0])
+        ax2.imshow(prev_image)
+        ax2.set_title(f"Before Focus\n Z={self.cam.focus_curr_pos['Z']/10:.1f}")
+        ax3 = fig.add_subplot(gs[1, 1])
+        ax3.imshow(best_image)
+        ax3.set_title(f"After Focus\n Z={z_coords[best_index]:.1f}")
+        fig.tight_layout()
+        self.focus_curve_window = FigureWindow(fig, title="mothermachine_gui: Focus curve.")
+        self.focus_curve_window.move(self.geometry().x() + self.geometry().width() + 10, self.geometry().y())
+        self.focus_curve_window.show()
 
     def crisp_reset(self):
         self.crisp_reset_thread = ThreadConfigReset(
@@ -986,6 +1043,7 @@ class EvoGUI(QMainWindow):
 
     def show_swfocus_done(self):
         self.swfocus_start_button.setStyleSheet("background-color: white;")
+        self.swfocus_start_thread.stop()
 
 
 class ThreadConfigReset(QThread):
@@ -1000,7 +1058,12 @@ class ThreadConfigReset(QThread):
 
     def run(self):
         for param_name in self.labels_values.keys():
-            self.labels_values[param_name][1].setText(str(getattr(self.this_cfg, param_name)))
+            if param_name == 'algorithm':
+                dropdown = self.labels_values[param_name][1]
+                index = dropdown.findText(ConfigFocusAlgorithm.get_name(self.this_cfg.algorithm.value))
+                self.labels_values[param_name][1].setCurrentIndex(index)
+            else:
+                self.labels_values[param_name][1].setText(str(getattr(self.this_cfg, param_name)))
             time.sleep(0.1)  # need this otherwise it tries to join the thread while GUI updating -> crash
 
 
@@ -1022,59 +1085,65 @@ class ThreadSWFocus(QThread):
         return self._stop_event.is_set()
 
     def run(self):
-        cfg_focus = self.cfg_focus
-        try:
-            cfg_focus.check_config()
-        except ConfigError as e:
-            logger.warning(f"ThreadSWFocus.run: Invalid focus configuration:\n{e.message}\nAborting...")
+        self.cam.software_focus_initialise(cfg_focus=self.cfg_focus, user_input_override=True)
+        if not self.cam.software_focus_is_initialised():
             return
-        curr_pos = int(self.cam.get_coordinates(['Z'])['Z'])
-        coords = range(curr_pos - cfg_focus.rel_range, curr_pos + cfg_focus.rel_range, cfg_focus.steps_size)
-        logger.warning(f"ThreadSWFocus.run: Starting software autofocus configured as\n"
-                       f"{cfg_focus.__str__()}\nThis will move the stage up and down in the range "
-                       f"[{(curr_pos - cfg_focus.rel_range) / 10},{(curr_pos + cfg_focus.rel_range) / 10}] μm"
-                       f" (current position = {curr_pos / 10} μm). "
-                       f"If there are objects blocking the stage movement, this will crash the "
-                       f"objective and break it. You have 5 seconds to press stop. ")
-        time.sleep(5)
         old_channel = self.cam.current_channel
-        self.cam.set_exposure(exposure_time=int(self.cfg_focus.exposure_time))
-        self.cam.studio.live().set_live_mode(False)
-        best_focus_score = 0
-        best_focus_position = 0
-        focus_curve = []
-        self.cam.set_led(i_chan=ConfigLED.LED_NO_LED.value)
-        for ipos, z_coord in enumerate(coords):
+        # cfg_focus = self.cfg_focus
+        # try:
+        #     cfg_focus.check_config()
+        # except ConfigError as e:
+        #     logger.warning(f"ThreadSWFocus.run: Invalid focus configuration:\n{e.message}\nAborting...")
+        #     return
+        # curr_pos = int(self.cam.get_coordinates(['Z'])['Z'])
+        # coords = range(curr_pos - cfg_focus.rel_range, curr_pos + cfg_focus.rel_range, cfg_focus.steps_size)
+        # logger.warning(f"ThreadSWFocus.run: Starting software autofocus configured as\n"
+        #                f"{cfg_focus.__str__()}\nThis will move the stage up and down in the range "
+        #                f"[{(curr_pos - cfg_focus.rel_range) / 10},{(curr_pos + cfg_focus.rel_range) / 10}] μm"
+        #                f" (current position = {curr_pos / 10} μm). "
+        #                f"If there are objects blocking the stage movement, this will crash the "
+        #                f"objective and break it. You have 5 seconds to press stop. ")
+        # time.sleep(5)
+        # old_channel = self.cam.current_channel
+        # self.cam.set_exposure(exposure_time=int(self.cfg_focus.exposure_time))
+        # self.cam.studio.live().set_live_mode(False)
+        # best_focus_score = 0
+        # best_focus_position = 0
+        # focus_curve = []
+        # self.cam.set_led(i_chan=ConfigLED.LED_NO_LED.value)
+        for ipos, z_coord in enumerate(self.cam.focus_Z_coords):
             if self.stopped():
                 self.cam.set_led(i_chan=old_channel)
                 logger.warning("ThreadSWFocus.run: Aborting.")
                 return
-            self.cam.move_to(coordinates={'Z': z_coord}, block=True)
-            image_raw = self.cam.display_save_frame(
-                i_chan=cfg_focus.focus_channel,
-                i_period=None,
-                path_to_save=False,
-                filename=None,
-                display_frame=False,
-            )
-            if image_raw is None:
-                logger.warning("ThreadSWFocus.run: self._take_frame returned None. Aborting...")
-                return
-            if self.cfg_focus.algorithm == ConfigFocusAlgorithm.LAPLACIAN_VAR.value:
-                laplacian = cv2.Laplacian(image_raw, cv2.CV_64F)
-                focus_score = laplacian.var()
-            elif self.cfg_focus.algorithm == ConfigFocusAlgorithm.SQUARED_THRESHOLDED.value:
-                laplacian = cv2.Laplacian(image_raw, cv2.CV_64F)
-                focus_score = laplacian.var()
-            focus_curve.append(focus_score)
-            if focus_score > best_focus_score:
-                best_focus_position = ipos
-                best_focus_score = focus_score
-        best_coordinate = coords[best_focus_position]
-        logger.info(f"ThreadSWFocus.run: Finished scanning. Coordinate before focus={curr_pos / 10} μm,"
-                    f"coordinate after focus={best_coordinate / 10} μm. Finalising software_focus.")
-        self.cam.move_to(coordinates={'Z': best_coordinate}, block=True)
-        self.cam.set_led(i_chan=old_channel)
+            self.cam.software_focus_step(ipos=ipos)
+            # self.cam.move_to(coordinates={'Z': z_coord}, block=True)
+            # image_raw = self.cam.display_save_frame(
+            #     i_chan=cfg_focus.focus_channel,
+            #     i_period=None,
+            #     path_to_save=False,
+            #     filename=None,
+            #     display_frame=False,
+            # )
+            # if image_raw is None:
+            #     logger.warning("ThreadSWFocus.run: self._take_frame returned None. Aborting...")
+            #     return
+            # if self.cfg_focus.algorithm == ConfigFocusAlgorithm.LAPLACIAN_VAR.value:
+            #     laplacian = cv2.Laplacian(image_raw, cv2.CV_64F)
+            #     focus_score = laplacian.var()
+            # elif self.cfg_focus.algorithm == ConfigFocusAlgorithm.SQUARED_THRESHOLDED.value:
+            #     laplacian = cv2.Laplacian(image_raw, cv2.CV_64F)
+            #     focus_score = laplacian.var()
+            # focus_curve.append(focus_score)
+            # if focus_score > best_focus_score:
+            #     best_focus_position = ipos
+            #     best_focus_score = focus_score
+        self.cam.software_focus_finalise()
+        # best_coordinate = coords[best_focus_position]
+        # logger.info(f"ThreadSWFocus.run: Finished scanning. Coordinate before focus={curr_pos / 10} μm,"
+        #             f"coordinate after focus={best_coordinate / 10} μm. Finalising software_focus.")
+        # self.cam.move_to(coordinates={'Z': best_coordinate}, block=True)
+        # self.cam.set_led(i_chan=old_channel)
 
 
 class ThreadMultiParam(QThread):
@@ -1240,6 +1309,15 @@ class ThreadStartCRISP(QThread):
     def run(self):
         self.cam.crisp_autofocus(this_cfg_crisp=self.cfg_crisp, user_input=False)
 
+
+class FigureWindow(QWidget):
+    def __init__(self, fig, title):
+        super().__init__()
+        self.setWindowTitle(title)
+        layout = QVBoxLayout()
+        canvas = FigureCanvas(fig)
+        layout.addWidget(canvas)
+        self.setLayout(layout)
 
 class FigureWidget(FigureCanvas):
     def __init__(self, parent=None, width=10, height=10, dpi=300):
