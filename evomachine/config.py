@@ -1,9 +1,9 @@
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, auto
 import logging
 import numpy as np
 from pathlib import Path
-from typing import Any, List, Literal, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
 from delta import utils
 
@@ -14,38 +14,45 @@ EVOMACHINE_DIR = Path(__file__).parent
 
 EVO_FORMATTER = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s - %(message)s\n<---')
 
-class ConfigLED(Enum):
+
+class ConfigEnumTemplate(Enum):
+    """ Convenience class for Enumerate classes."""
+    @classmethod
+    def get_all_values(cls) -> List[int]:
+        """ Returns all member values defined in Enum class."""
+        return [member.value for member in cls]
+
+    @classmethod
+    def get_name(cls, value_to_find) -> str:
+        """ Returns the variable name for a particular enum value. Returns an empty string if not defined."""
+        for member in cls:
+            if member.value == value_to_find:
+                return str(member.name)
+        return ""
+
+    @classmethod
+    def get_dict(cls) -> Dict[int, str]:
+        """ Returns a value-variable_name dictionary. """
+        return {v: cls.get_name(value_to_find=v) for v in cls.get_all_values()}
+
+
+class ConfigFocusAlgorithm(ConfigEnumTemplate):
+    LAPLACIAN_VAR = auto()
+    SQUARED_GRAD_AVG = auto()
+
+
+class ConfigLED(ConfigEnumTemplate):
     LED_NO_LED = -1
     LED_405_NM = 0
     LED_450_NM = 1
     LED_505_NM = 2
     LED_538_NM = 3
 
-    @classmethod
-    def get_all_values(cls) -> List[int]:
-        return [member.value for member in cls]
 
-    @classmethod
-    def get_name(cls, value_to_find) -> str:
-        for member in cls:
-            if member.value == value_to_find:
-                return str(member.name)
-        return ""
+class ConfigObjectiveType(ConfigEnumTemplate):
+    OIL_60x = auto()
+    AIR_40x = auto()
 
-class ConfigFocusAlgorithm(Enum):
-    LAPLACIAN_VAR = 0
-    SQUARED_THRESHOLDED = 1
-
-    @classmethod
-    def get_all_values(cls) -> List[int]:
-        return [member.value for member in cls]
-
-    @classmethod
-    def get_name(cls, value_to_find) -> str:
-        for member in cls:
-            if member.value == value_to_find:
-                return str(member.name)
-        return ""
 
 @dataclass
 class ConfigDevice:
@@ -291,7 +298,7 @@ class ConfigFocus:
     steps_size: int
     "Step size for Z-movement of stage in 1/10 μm, e.g., steps_size=1 -> stage moves in 0.1 μm."
 
-    algorithm: Optional[int] = 0
+    algorithm: ConfigFocusAlgorithm = ConfigFocusAlgorithm.SQUARED_GRAD_AVG
     "Algorithm used to focus. See ConfigFocusAlgorithm for available algorithms."
     user_input: Optional[bool] = True
     "Ask for user input before configuring and starting software focus."
@@ -300,6 +307,7 @@ class ConfigFocus:
     desc_focus_channel: str = "Channel number [0,...,3]"
     desc_rel_range: str = "Relative range [um/10]"
     desc_steps_size: str = "Step Size [um/10]"
+    desc_algorithm: str = f"Algorithm enum from ConfigFocusAlgorithm."
     desc_user_input: str = "Query user before start [bool]"
 
     def get_attr_description(self, attr_name: str) -> str:
@@ -324,7 +332,7 @@ class ConfigFocus:
         elif attr_name == 'steps_size':
             return isinstance(attr_value, int) and (attr_value > 0) and (attr_value < self.rel_range)
         elif attr_name == 'algorithm':
-            return isinstance(attr_value, int) and attr_value in ConfigFocusAlgorithm.get_all_values()
+            return isinstance(attr_value, ConfigFocusAlgorithm)
         elif attr_name == 'user_input':
             return isinstance(attr_value, bool)
         else:
@@ -342,8 +350,11 @@ class ConfigFocus:
                               f"[{min(ConfigLED.get_all_values())}, {max(ConfigLED.get_all_values())}]. "
                               f"Provided {self.focus_channel}.",
                               ErrorCode.ERROR_FOCUS_CONFIG.value)
-        if not self.attr_is_valid('focus_channel', self.focus_channel):
+        if not self.attr_is_valid('exposure_time', self.focus_channel):
             raise ConfigError(f"exposure_time must be an integer in the range [0.01, Inf]. Provided {self.exposure_time}.",
+                              ErrorCode.ERROR_FOCUS_CONFIG.value)
+        if not self.attr_is_valid('algorithm', self.algorithm):
+            raise ConfigError(f"algorithm must be an instance of ConfigFocusAlgorithm. Provided {self.algorithm}.",
                               ErrorCode.ERROR_FOCUS_CONFIG.value)
 
     def __str__(self):
@@ -352,6 +363,7 @@ class ConfigFocus:
             f"- focus_channel={self.focus_channel} ({ConfigLED.get_name(self.focus_channel)})",
             f"- rel_range={self.rel_range/10} μm",
             f"- steps_size={self.steps_size/10} μm",
+            f"- algorithm={self.algorithm.value} ({ConfigFocusAlgorithm.get_name(self.algorithm)})",
         ]
         return "\n".join(attributes)
 
@@ -368,8 +380,8 @@ FOCUS_CONFIG_DEFAULT = ConfigFocus(
 class ConfigObjective:
     numerical_aperture: float
     "Numerical aperture NA=n*sin(theta)."
-    is_oil: bool
-    "Yes if oil objective otherwise air."
+    objective: ConfigObjectiveType
+    "Objective type. See ConfigObjectiveType."
     magnification: int
     "Magnification of objective."
 
@@ -391,8 +403,8 @@ class ConfigObjective:
             raise ConfigError(f"numerical_aperture must be an integer in the range [0, Inf]. "
                               f"Provided {self.numerical_aperture}.",
                               ErrorCode.ERROR_FOCUS_CONFIG.value)
-        if not isinstance(self.is_oil, bool):
-            raise ConfigError(f"is_oil must be a boolean. Provided {self.is_oil}.",
+        if not isinstance(self.objective, ConfigObjectiveType):
+            raise ConfigError(f"objective must be a ConfigObjectiveType object. Provided {self.objective}.",
                               ErrorCode.ERROR_FOCUS_CONFIG.value)
         if (not isinstance(self.magnification, int)) or self.magnification <= 1:
             raise ConfigError(f"magnification must be an integer in the range (1, Inf]. "
@@ -402,7 +414,7 @@ class ConfigObjective:
     def __str__(self):
         attributes = [
             f"- numerical_aperture={self.numerical_aperture}",
-            f"- is_oil={self.is_oil}",
+            f"- objective={self.objective} ({ConfigObjectiveType.get_name(self.objective)})",
             f"- magnification={self.magnification}x",
         ]
         return "\n".join(attributes)
@@ -410,13 +422,13 @@ class ConfigObjective:
 
 OBJECTIVE_CONFIG_OIL = ConfigObjective(
     numerical_aperture=1.4,
-    is_oil=True,
+    objective=ConfigObjectiveType.OIL_60x,
     magnification=60,
 )
 
 OBJECTIVE_CONFIG_AIR = ConfigObjective(
     numerical_aperture=0.95,
-    is_oil=False,
+    objective=ConfigObjectiveType.AIR_40x,
     magnification=40,
 )
 

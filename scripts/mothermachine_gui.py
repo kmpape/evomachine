@@ -1362,8 +1362,8 @@ class FigureWidget(FigureCanvas):
                 if image_array is None:
                     a.imshow(FigureWidget.create_image_with_text(text="no image", size=(xmax-xmin+1, ymax-ymin+1)))
                 else:
-                    a.imshow(image_array[xmin:xmax, ymin:ymax])
-                a.set_xticks(a.get_xticks());
+                    a.imshow(image_array[ymin:ymax, xmin:xmax])
+                a.set_xticks(a.get_xticks())
                 a.set_yticks(a.get_yticks())
                 a.set_xticklabels([int(tick + ymin) for tick in a.get_xticks()])
                 a.set_yticklabels([int(tick + xmin) for tick in a.get_yticks()])
@@ -1384,11 +1384,16 @@ class FigureWidget(FigureCanvas):
                 if image_array is None:
                     self.ax.imshow(FigureWidget.create_image_with_text(text="no image", size=(xmax-xmin+1, ymax-ymin+1)))
                 else:
-                    self.ax.imshow(image_array[xmin:xmax, ymin:ymax])
-                self.ax.set_xticks(self.ax.get_xticks());
+                    # self.ax.imshow(image_array[xmin:xmax, ymin:ymax])
+                    self.ax.imshow(image_array[ymin:ymax, xmin:xmax])
+                self.ax.set_xlim(left=0, right=xmax-xmin)
+                self.ax.set_ylim(bottom=ymax-ymin, top=0)
+                self.ax.set_xticks(self.ax.get_xticks())
                 self.ax.set_yticks(self.ax.get_yticks())
-                self.ax.set_xticklabels([int(tick + ymin) for tick in self.ax.get_xticks()])
-                self.ax.set_yticklabels([int(tick + xmin) for tick in self.ax.get_yticks()])
+                # self.ax.set_xticklabels([int(tick + ymin) for tick in self.ax.get_xticks()])
+                # self.ax.set_yticklabels([int(tick + xmin) for tick in self.ax.get_yticks()])
+                self.ax.set_xticklabels([int(tick + xmin) for tick in self.ax.get_xticks()])
+                self.ax.set_yticklabels([int(tick + ymin) for tick in self.ax.get_yticks()])
             else:
                 if image_array is None:
                     self.ax.imshow(FigureWidget.create_image_with_text(text="no image", size=(3200, 3200)))

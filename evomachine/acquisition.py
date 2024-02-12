@@ -17,11 +17,13 @@ from asitiger.status import Status
 import asitiger.tigercontroller
 import delta
 
-from evomachine.config import ConfigCRISP, CRISP_CONFIG_DEFAULT, ConfigDevice, ConfigFocus, ConfigImage, ConfigLED, \
-    ConfigObjective, FOCUS_CONFIG_DEFAULT, IMAGE_CONFIG_DEFAULT, OBJECTIVE_CONFIG_DEFAULT, EVO_FORMATTER
+from evomachine.config import ConfigCRISP, ConfigDevice, ConfigFocus, ConfigFocusAlgorithm, ConfigImage, ConfigLED, \
+    ConfigObjective, CRISP_CONFIG_DEFAULT, FOCUS_CONFIG_DEFAULT, IMAGE_CONFIG_DEFAULT, OBJECTIVE_CONFIG_DEFAULT, \
+    EVO_FORMATTER
 from evomachine.dmd import DMDColor
 from evomachine.exceptions import CameraError, ConfigError, DMDError, ErrorCode, ErrorContainer, \
     EvoMachineError, StageError, TigerError
+from evomachine.software_focus import get_focus_score
 
 
 logger = logging.getLogger(__name__)
@@ -111,10 +113,29 @@ class AbstractCamera:
         return frame
 
     @staticmethod
-    def normalise_frame(frame: np.ndarray[(int, int), 'ConfigImage.pxl_dtype']):
-        cmap = plt.cm.jet
+    def normalise_frame(
+            frame: np.ndarray[(int, int), 'ConfigImage.pxl_dtype'],
+            colormap: Union['plt.cm', bool, None] = True,
+    ) -> np.ndarray[(int, int), 'ConfigImage.pxl_dtype']:
+        """
+        Convenience function to normalise frames.
+
+        Parameters
+        ----------
+        frame       Numpy 2D array.
+        colormap    If bool and True or plt.cm, returns a coloured 3D array. If False or None, only normalises.
+
+        Returns
+        -------
+        Either a 2D or a 3D numpy array depending on colormap argument.
+        """
         norm = plt.Normalize(vmin=frame.min(), vmax=frame.max())
-        return cmap(norm(frame))
+        if (colormap is None) or (isinstance(colormap, bool) and not colormap):
+            return norm(frame)
+        elif isinstance(colormap, bool) and colormap:
+            return plt.cm.jet(norm(frame))
+        else:
+            return colormap(norm(frame))
 
     def plot_normalised_frame(self, frame: np.ndarray[(int, int), 'ConfigImage.pxl_dtype']):
         image = self.normalise_frame(frame=frame)
@@ -126,7 +147,21 @@ class AbstractCamera:
             frame: np.ndarray[(int, int), 'ConfigImage.pxl_dtype'],
             path_to_save: Optional[Union[Path, str, bool]] = True,
             filename: Optional[Union[str, None]] = None,
-    ):
+    ) -> None:
+        """
+        Image is saved under path_to_save / filename. See arguments for different options. If provided, checks whether
+        path_to_save exists.
+
+        Parameters
+        ----------
+        frame           Image to save (numpy array)
+        path_to_save    Can be Path/str or bool. If Path/str, path is used. If True, path taken from cfg_device.
+        filename        Can be str or None. If None, default filename used from get_filename().
+
+        Returns
+        -------
+
+        """
         if not filename:
             filename = self.get_filename()
 
@@ -441,7 +476,7 @@ class TestCamera(AbstractCamera):
             cfg_focus: Optional[ConfigFocus] = None,
             focus_channel_override: Optional[int] = None,
             rel_range_override: Optional[int] = None,
-
+            cropping_indices: Optional[Union[None, Tuple[Tuple[int, int], Tuple[int, int]]]] = None,  #((xmin,xmax), (ymin,ymax))
     ):
         return
 
@@ -490,10 +525,12 @@ class EvoCamera(AbstractCamera):
     ):
         super().__init__(cfg_device=cfg_device, cfg_image=cfg_image)
 
-        self.tiger: Union[asitiger.tigercontroller.TigerController, None] = None
+        self.tiger: Optional[asitiger.tigercontroller.TigerController, asitiger.tigerthread.TigerThread] = None
         "Object for serial communication with ASI tiger."
         self._tiger_is_alive: bool = False
         "Flag set in _initialise."
+        self._is_multi_threaded: bool = False
+        "If true, will use Threading wrappers for objects like self.tiger."
         self.current_channel: int = -1
         "Current LED channel set."
         self._last_frame_channel: int = -1
@@ -524,6 +561,12 @@ class EvoCamera(AbstractCamera):
         "Parameters of objective."
         self.current_exposure_time: int = 0
         "Exposure time. Set in _initialise and provided in cfg_focus."
+        self.focus_positions: Union[None, np.array] = None
+        "Initialised in software_focus. Contains Z coordinates of focus stack."
+        self.focus_scores: Union[None, np.array] = None
+        "Initialised in software_focus. Contains the focus score of each image. Larger score = sharper image."
+        self.focus_stack: Union[None, np.array] = None
+        "Initialised in software_focus. Contains images of focus stack."
 
         self.mmc: Union[Core, None] = None
         "Micromanager Core object for taking images."
@@ -535,9 +578,15 @@ class EvoCamera(AbstractCamera):
         self.initialise()  # Must be called before using EvoCamera
 
     def _initialise(self) -> None:
+        """ Initialises EvoCamera objects with peripherals. Tests connections and sets is_alive flags. """
+        # Tiger box communication
         try:
-            self.tiger: asitiger.tigercontroller.TigerController = \
-                asitiger.tigercontroller.TigerController.from_serial_port(port=self.cfg_device.tiger_port)
+            if self._is_multi_threaded:
+                self.tiger: asitiger.tigerthread.TigerThread = \
+                    asitiger.tigerthread.TigerThread.from_serial_port(port=self.cfg_device.tiger_port)
+            else:
+                self.tiger: asitiger.tigercontroller.TigerController = \
+                    asitiger.tigercontroller.TigerController.from_serial_port(port=self.cfg_device.tiger_port)
         except Exception as e:
             self._tiger_is_alive = False
             logger.warning(f"EvoCamera._initialise: Error connecting to Tiger: {e}.")
@@ -552,6 +601,7 @@ class EvoCamera(AbstractCamera):
             )
         else:
             self._tiger_is_alive = True
+        # Camera communication
         try:
             self.mmc = Core()
             self.studio = Studio()
@@ -574,29 +624,6 @@ class EvoCamera(AbstractCamera):
         except ValueError:
             return False
 
-    def get_led_channels(self) -> Tuple[int]:
-        return tuple(self._led_channel_keys.keys())
-
-    def set_led(self, i_chan: int, brightness: int = 100):
-        if i_chan not in self._led_channel_keys.keys():
-            logger.error(msg=f"EvoCamera._set_channel: i_chan={i_chan} not in channels={self._led_channel_keys.keys()}.")
-            return
-        if self._tiger_is_alive:
-            led_settings = {val: (brightness if ((key == i_chan) and (i_chan != ConfigLED.LED_NO_LED.key)) else 0)
-                            for key, val in self._led_channel_keys.items()}
-            if (0 <= brightness <= 100) or (i_chan != ConfigLED.LED_NO_LED.key):
-                is_good_brightness_value = True
-            else:
-                is_good_brightness_value = False
-            if is_good_brightness_value:
-                self.tiger.led(led_brightnesses=led_settings, card_address=self.card_address_led)
-                self.current_channel = i_chan
-                self._current_led_brightness = 0 if i_chan == ConfigLED.LED_NO_LED.key else brightness
-            else:
-                logger.error(msg=f"Cannot set brightness: {brightness} is out of range [0, 100]. LED not set.")
-        else:
-            logger.error(msg=f"EvoCamera._set_channel: Tiger is not alive. Check ASI Tiger box and serial connection.")
-
     def _set_filter_wheel(self, i_pos: int):
         if i_pos not in self.filter_wheel_settings.keys():
             logger.error(msg=f"EvoCamera._set_filter_wheel: i_pos={i_pos} not in wheels={self.filter_wheel_settings}.")
@@ -609,6 +636,14 @@ class EvoCamera(AbstractCamera):
 
     def _disable_channels(self):
         self.set_led(i_chan=-1)
+
+    def _move_fov(self, x_or_y: str, sign: int, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        pos = self.tiger.where([x_or_y.upper()])
+        if x_or_y.upper() not in pos:
+            raise TigerError(f"EvoCamera._move_fov: queried coordinate {x_or_y.upper()} not in response: {pos}.",
+                             ErrorCode.ERROR_TIGER_NO_DATA)
+        pos[x_or_y.upper()] += int(sign * self.cfg_objective.fov_size * 10 * multiplier)
+        self.move_to(coordinates=pos, block=block)
 
     def _move_stage_to_pos(
             self,
@@ -660,21 +695,6 @@ class EvoCamera(AbstractCamera):
         if i_chan is not None:
             self.set_led(i_chan=curr_channel)
         return pixels
-
-    def get_filename(self) -> str:
-        pos = self.tiger.where(['X', 'Y'])
-        return "{}_X{}_Y{}_{}.tiff".format(
-            ConfigLED.get_name(value_to_find=self._last_frame_channel).replace("_", ""),
-            pos['X'],
-            pos['Y'],
-            datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f")
-        )
-
-    def get_coordinates(self, axes: List[str]) -> Dict[str, float]:
-        return self.tiger.where(axes)
-
-    def halt_stage(self):
-        self.tiger.halt()
 
     def coordinate_is_out_of_bounds(self, coordinate: Dict[str, float]) -> bool:
         return self.tiger.coordinate_is_out_of_bounds(coordinate)
@@ -780,103 +800,34 @@ class EvoCamera(AbstractCamera):
         logger.info(f"CRISP: Parameters set to:\n{new_cfg}")
         return True
 
+    def finalise(self):
+        if self._is_multi_threaded:
+            self.tiger.stop()
+            self.tiger.join()
+
     def crisp_unlock(self):
         self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.UNLOCK)
 
-    def software_focus(
-            self,
-            cfg_focus: Optional[ConfigFocus] = None,
-            focus_channel_override: Optional[int] = None,
-            rel_range_override: Optional[int] = None,
-
-    ):
-        if not all([self._mmc_is_alive, self._tiger_is_alive]):
-            logger.error(f"EvoCamera.software_focus: Device(s) not alive. "
-                         f"Tiger={self._tiger_is_alive}, MMC={self._mmc_is_alive}.")
-            return
-        cfg_focus = cfg_focus if cfg_focus else self.cfg_focus
-        if focus_channel_override is not None:
-            cfg_focus.focus_channel = focus_channel_override
-        if rel_range_override is not None:
-            cfg_focus.rel_range = rel_range_override
-        try:
-            cfg_focus.check_config()
-        except ConfigError as e:
-            logger.warning(f"EvoCamera.software_focus: Invalid focus configuration:\n{e.message}\nAborting...")
-            return
-        curr_pos = self.tiger.where(['Z'])['Z']
-        coords = range(curr_pos-cfg_focus.rel_range, curr_pos+cfg_focus.rel_range, cfg_focus.steps_size)
-        user_input = input(f"EvoCamera.software_focus: Starting software autofocus configured as\n"
-                           f"{cfg_focus.__str__()}\nThis will move the stage up and down in the range "
-                           f"[{(curr_pos-cfg_focus.rel_range)/10},{(curr_pos+cfg_focus.rel_range)/10}] μm"
-                           f" (current position = {curr_pos/10} μm). "
-                           f"If there are objects blocking the stage movement, this will crash the "
-                           f"objective and break it. Do you want to proceed? (yes/no): ")
-        if user_input.lower() == "yes":
-            logger.info("EvoCamera.software_focus: Proceeding with software focus. Disabling MM live mode.")
-        else:
-            logger.info("EvoCamera.software_focus: Aborting software focus.")
-            return
-        old_channel = self.current_channel
-        self.set_exposure(exposure_time=int(cfg_focus.exposure_time))
-        self.studio.live().set_live_mode(False)
-        best_focus_score = 0
-        best_focus_position = 0
-        for ipos, z_coord in enumerate(coords):
-            self._move_stage_to_coord({'Z': z_coord})
-            image_raw = self.display_save_frame(
-                i_chan=cfg_focus.focus_channel,
-                i_period=None,
-                path_to_save=False,
-                filename=None,
-                display_frame=False,
-            )
-            if image_raw is None:
-                logger.warning("EvoCamera.software_focus: self._take_frame returned None. Aborting...")
-                return
-            laplacian = cv2.Laplacian(image_raw, cv2.CV_64F)
-            focus_score = laplacian.var()
-            if focus_score > best_focus_score:
-                best_focus_position = ipos
-                best_focus_score = focus_score
-        best_coordinate = coords[best_focus_position]
-        logger.info(f"EvoCamera.software_focus: Finished scanning. Coordinate before focus={curr_pos / 10} μm,"
-                    f"coordinate after focus={best_coordinate / 10} μm. Finalising software_focus.")
-        self._move_stage_to_coord({'Z': best_coordinate})
-        self.set_led(i_chan=old_channel)
-
-    def move_home(self, block: Optional[bool] = False):
-        _ = self.tiger.home()
-        if block:
-            self.tiger.wait_until_idle()
-
-    def move_fov_up(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
-        self._move_fov(x_or_y='Y', sign=-1, multiplier=multiplier, block=block)
-
-    def move_fov_down(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
-        self._move_fov(x_or_y='Y', sign=+1, multiplier=multiplier, block=block)
-
-    def move_fov_left(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
-        self._move_fov(x_or_y='X', sign=-1, multiplier=multiplier, block=block)
-
-    def move_fov_right(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
-        self._move_fov(x_or_y='X', sign=+1, multiplier=multiplier, block=block)
-
-    def move_to(self, coordinates: Dict[str, int], block: Optional[bool] = False):
-        self.tiger.move(coordinates=coordinates)
-        if block:
-            self.tiger.wait_until_idle()
+    def get_coordinates(self, axes: List[str]) -> Dict[str, float]:
+        return self.tiger.where(axes)
 
     def get_delta_fov(self):
         return self.cfg_objective.fov_size * 10
 
-    def _move_fov(self, x_or_y: str, sign: int, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
-        pos = self.tiger.where([x_or_y.upper()])
-        if x_or_y.upper() not in pos:
-            raise TigerError(f"EvoCamera._move_fov: queried coordinate {x_or_y.upper()} not in response: {pos}.",
-                             ErrorCode.ERROR_TIGER_NO_DATA)
-        pos[x_or_y.upper()] += int(sign * self.cfg_objective.fov_size * 10 * multiplier)
-        self.move_to(coordinates=pos, block=block)
+    def get_filename(self) -> str:
+        pos = self.tiger.where(['X', 'Y'])
+        return "{}_X{}_Y{}_{}.tiff".format(
+            ConfigLED.get_name(value_to_find=self._last_frame_channel).replace("_", ""),
+            pos['X'],
+            pos['Y'],
+            datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f")
+        )
+
+    def get_led_channels(self) -> Tuple[int]:
+        return tuple(self._led_channel_keys.keys())
+
+    def halt_stage(self):
+        self.tiger.halt()
 
     def keyboard_control(self):
         def on_key_release(key):
@@ -907,11 +858,132 @@ class EvoCamera(AbstractCamera):
         with keyboard.Listener(on_release=on_key_release, suppress=True) as listener:
             listener.join()
 
+    def move_home(self, block: Optional[bool] = False):
+        _ = self.tiger.home()
+        if block:
+            self.tiger.wait_until_idle()
+
+    def move_fov_up(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        self._move_fov(x_or_y='Y', sign=-1, multiplier=multiplier, block=block)
+
+    def move_fov_down(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        self._move_fov(x_or_y='Y', sign=+1, multiplier=multiplier, block=block)
+
+    def move_fov_left(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        self._move_fov(x_or_y='X', sign=-1, multiplier=multiplier, block=block)
+
+    def move_fov_right(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        self._move_fov(x_or_y='X', sign=+1, multiplier=multiplier, block=block)
+
+    def move_to(self, coordinates: Dict[str, int], block: Optional[bool] = False):
+        if not isinstance(coordinates, Dict) or not all(k in ['X', 'Y', 'Z'] for k in coordinates.keys()):
+            raise TigerError(f"EvoCamera.move_to: Badly formatted coordinates: {coordinates}.",
+                             ErrorCode.ERROR_WRONG_FORMAT)
+        self.tiger.move(coordinates=coordinates)
+        if block:
+            self.tiger.wait_until_idle()
+
     def set_exposure(self, exposure_time: Union[int, None] = None):
         if self._mmc_is_alive:
             new_exposure_time = self.cfg_focus.exposure_time if exposure_time is None else exposure_time
             self.mmc.set_exposure(new_exposure_time)
             self.current_exposure_time = new_exposure_time
+
+    def set_led(self, i_chan: int, brightness: int = 100):
+        if i_chan not in self._led_channel_keys.keys():
+            logger.error(msg=f"EvoCamera._set_channel: i_chan={i_chan} not in channels={self._led_channel_keys.keys()}.")
+            return
+        if self._tiger_is_alive:
+            led_settings = {val: (brightness if ((key == i_chan) and (i_chan != ConfigLED.LED_NO_LED.value)) else 0)
+                            for key, val in self._led_channel_keys.items()}
+            if (0 <= brightness <= 100) or (i_chan != ConfigLED.LED_NO_LED.value):
+                is_good_brightness_value = True
+            else:
+                is_good_brightness_value = False
+            if is_good_brightness_value:
+                self.tiger.led(led_brightnesses=led_settings, card_address=self.card_address_led)
+                self.current_channel = i_chan
+                self._current_led_brightness = 0 if i_chan == ConfigLED.LED_NO_LED.value else brightness
+            else:
+                logger.error(msg=f"Cannot set brightness: {brightness} is out of range [0, 100]. LED not set.")
+        else:
+            logger.error(msg=f"EvoCamera._set_channel: Tiger is not alive. Check ASI Tiger box and serial connection.")
+
+    def software_focus(
+            self,
+            cfg_focus: Optional[ConfigFocus] = None,
+            focus_channel_override: Optional[int] = None,
+            rel_range_override: Optional[int] = None,
+            cropping_indices: Optional[Union[None, Tuple[Tuple[int, int], Tuple[int, int]]]] = None, # ((xmin,xmax), (ymin,ymax))
+            algorithm_override: Optional[ConfigFocusAlgorithm] = None,
+    ):
+        if not all([self._mmc_is_alive, self._tiger_is_alive]):
+            logger.error(f"EvoCamera.software_focus: Device(s) not alive. "
+                         f"Tiger={self._tiger_is_alive}, MMC={self._mmc_is_alive}.")
+            return
+        # Assign optional arguments
+        if cropping_indices is None:
+            row_min, row_max, col_min, col_max = 0, self.cfg_image.pxl_vert, 0, self.cfg_image.pxl_horiz
+        else:
+            row_min, row_max = cropping_indices[1][0], cropping_indices[1][1]
+            col_min, col_max = cropping_indices[0][0], cropping_indices[0][1]
+        cfg_focus = cfg_focus if cfg_focus else self.cfg_focus
+        if focus_channel_override is not None:
+            cfg_focus.focus_channel = focus_channel_override
+        if algorithm_override is not None:
+            cfg_focus.algorithm = algorithm_override
+        if rel_range_override is not None:
+            cfg_focus.rel_range = rel_range_override
+        try:
+            cfg_focus.check_config()
+        except ConfigError as e:
+            logger.warning(f"EvoCamera.software_focus: Invalid focus configuration:\n{e.message}\nAborting...")
+            return
+        # Initialise Z stack
+        curr_pos = self.tiger.where(['Z'])['Z']
+        coords = range(curr_pos-cfg_focus.rel_range, curr_pos+cfg_focus.rel_range, cfg_focus.steps_size)
+        user_input = input(f"EvoCamera.software_focus: Starting software autofocus configured as\n"
+                           f"{cfg_focus.__str__()}\nThis will move the stage up and down in the range "
+                           f"[{(curr_pos-cfg_focus.rel_range)/10},{(curr_pos+cfg_focus.rel_range)/10}] μm"
+                           f" (current position = {curr_pos/10} μm). "
+                           f"If there are objects blocking the stage movement, this will crash the "
+                           f"objective and break it. Do you want to proceed? (yes/no): ")
+        if user_input.lower() == "yes":
+            logger.info("EvoCamera.software_focus: Proceeding with software focus. Disabling MM live mode.")
+        else:
+            logger.info("EvoCamera.software_focus: Aborting software focus.")
+            return
+        old_channel = self.current_channel
+        self.set_exposure(exposure_time=int(cfg_focus.exposure_time))
+        self.studio.live().set_live_mode(False)
+        # Take images and compute scores
+        self.focus_scores = np.zeros(len(coords))
+        self.focus_stack = np.zeros((self.cfg_image.pxl_vert, self.cfg_image.pxl_horiz, len(coords)))
+        self.focus_positions = list(coords)
+        for ipos, z_coord in enumerate(coords):
+            self._move_stage_to_coord({'Z': z_coord})
+            image_raw = self.display_save_frame(
+                i_chan=cfg_focus.focus_channel,
+                i_period=None,
+                path_to_save=False,
+                filename=None,
+                display_frame=False,
+            )
+            if image_raw is None:
+                logger.warning("EvoCamera.software_focus: self._take_frame returned None. Aborting...")
+                return
+            else:
+                self.focus_stack[:, :, ipos] = image_raw
+            self.focus_scores[ipos] = get_focus_score(
+                img=image_raw[row_min:row_max, col_min:col_max],
+                algorithm=cfg_focus.algorithm,
+            )
+        best_focus_position = np.argmax(self.focus_scores)
+        best_coordinate = coords[best_focus_position]
+        logger.info(f"EvoCamera.software_focus: Finished scanning. Coordinate before focus={curr_pos / 10} μm,"
+                    f"coordinate after focus={best_coordinate / 10} μm. Finalising software_focus.")
+        self._move_stage_to_coord({'Z': best_coordinate})
+        self.set_led(i_chan=old_channel)
 
     def zero_coordinates(self):
         self.tiger.zero()

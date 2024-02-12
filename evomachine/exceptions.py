@@ -1,6 +1,8 @@
 from collections import deque
 from enum import Enum, auto
 import time
+from typing import Dict, List
+
 
 MAX_ERROR_LEN = 1000
 
@@ -9,6 +11,7 @@ class ErrorCode(Enum):
     NO_ERROR = 0
     ERROR = 1
     ERROR_NOT_INITIALISED = auto()
+    ERROR_WRONG_FORMAT = auto()
 
     # Configuration errors
     ERROR_CRISP_CONFIG = auto()
@@ -34,6 +37,24 @@ class ErrorCode(Enum):
     ERROR_TRACK_DIV_NOT_DETECTED = auto()
     ERROR_TRACK_NO_INPUTS = auto()
     ERROR_TRACK_NO_PREV_STATE = auto()
+
+    @classmethod
+    def get_all_values(cls) -> List[int]:
+        """ Returns all member values defined in Enum class."""
+        return [member.value for member in cls]
+
+    @classmethod
+    def get_name(cls, value_to_find) -> str:
+        """ Returns the variable name for a particular enum value. Returns an empty string if not defined."""
+        for member in cls:
+            if member.value == value_to_find:
+                return str(member.name)
+        return ""
+
+    @classmethod
+    def get_dict(cls) -> Dict[int, str]:
+        """ Returns a value-variable_name dictionary. """
+        return {v: cls.get_name(value_to_find=v) for v in cls.get_all_values()}
 
 
 class EvoMachineError(Exception):
