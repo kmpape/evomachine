@@ -3,6 +3,11 @@ import pandas as pd
 import time
 from typing import Dict, List
 
+from evomachine.config import get_logger
+
+
+logger = get_logger(name=__name__)
+
 pd.set_option('display.max_columns', None)
 pd.set_option('display.expand_frame_repr', False)
 
@@ -49,14 +54,13 @@ class Timer:
         if not self.enabled:
             return
         if scaling != 1:
-            print(f"\nTimings {self.name} (timer_level {self.timer_level}) (scaling {scaling}):\n")
+            logger.info(f"\nTimings {self.name} (timer_level {self.timer_level}) (scaling {scaling}):\n")
         else:
-            print(f"\nTimings {self.name} (timer_level {self.timer_level}):\n")
-
+            logger.info(f"\nTimings {self.name} (timer_level {self.timer_level}):\n")
         data = [[func_name, _data['n_calls'], _data['avg']*scaling, _data['median']*scaling,
                  _data['min']*scaling, _data['max']*scaling]
                 for func_name, _data in self.get_timings().items()]
         headers = ["name", "n_calls", "avg", "median", "min", "max"]
         df = pd.DataFrame(data, columns=headers)
-        print(df)
-        print("---\n")
+        logger.info(f"{df}")
+        logger.info("---\n")

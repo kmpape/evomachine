@@ -14,6 +14,19 @@ from evomachine.exceptions import ConfigError, ErrorCode
 EVOMACHINE_DIR = Path(__file__).parent
 
 EVO_FORMATTER = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s - %(message)s\n<---')
+EVO_LOGGING_LEVEL = logging.INFO
+
+
+def get_logger(name: str) -> logging.Logger:
+    logger = logging.getLogger(name)
+    for handler in logger.handlers:
+        logger.removeHandler(handler)
+    logger.setLevel(EVO_LOGGING_LEVEL)
+    handler = logging.StreamHandler()
+    handler.setFormatter(EVO_FORMATTER)
+    logger.addHandler(handler)
+    logger.propagate = False
+    return logger
 
 
 class ConfigEnumTemplate(Enum):
@@ -167,6 +180,7 @@ class ConfigImage:
     crop_out_ROI: Optional[bool] = True
     "Apply ROI segmentation to overlapping image portions with size of ROI segmentation model."
     use_track_RT: Optional[bool] = False
+    "Use special tracking function for tracking in trenches."
 
     def check_config(self):
         if self.pxl_horiz <= 0 or self.pxl_vert <= 0:

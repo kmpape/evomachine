@@ -38,6 +38,9 @@ class ErrorCode(Enum):
     ERROR_TRACK_NO_INPUTS = auto()
     ERROR_TRACK_NO_PREV_STATE = auto()
 
+    # Strategy errors
+    ERROR_STRATEGY = auto()
+
     @classmethod
     def get_all_values(cls) -> List[int]:
         """ Returns all member values defined in Enum class."""
@@ -113,6 +116,14 @@ class DMDError(EvoMachineError):
 
 
 class CameraError(EvoMachineError):
+    def __init__(self, message: str, error_code: ErrorCode):
+        super().__init__(message=message, error_code=error_code)
+
+    def __reduce__(self):
+        return super().__reduce__()
+
+
+class StrategyError(EvoMachineError):
     def __init__(self, message: str, error_code: ErrorCode):
         super().__init__(message=message, error_code=error_code)
 

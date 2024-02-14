@@ -681,7 +681,6 @@ class EvoGUI(QMainWindow):
     def take_frame(self):
         frame = self.cam.display_save_frame(
             i_chan=self.current_led_id,
-            i_period=None,
             path_to_save=self._get_savepath(),
             filename=None,
             display_frame=None,
@@ -858,7 +857,7 @@ class EvoGUI(QMainWindow):
         self.crisp_enable_crisp_button.setText("Enable")
         self.crisp_enable_crisp_button.setStyleSheet("background-color: white;")
         time.sleep(1)
-        if self.cam.crisp_is_locked():
+        if self.cam.autofocus_is_locked():
             self.crisp_locked_value.setText("Yes")
             self.crisp_locked_value.setStyleSheet("background-color: green;")
         else:
@@ -866,9 +865,9 @@ class EvoGUI(QMainWindow):
             self.crisp_locked_value.setText("No")
 
     def end_crisp(self):
-        self.cam.crisp_unlock()
+        self.cam.autofocus_unlock()
         time.sleep(1)
-        if self.cam.crisp_is_locked():
+        if self.cam.autofocus_is_locked():
             self.crisp_locked_value.setText("Yes")
             self.crisp_locked_value.setStyleSheet("background-color: green;")
         else:
@@ -1023,10 +1022,10 @@ class EvoGUI(QMainWindow):
         except ValueError as e:
             logging.warning(f"swfocus_start: invalid parameter provided. Aborting. {e}")
             return
-        if self.cam.crisp_is_locked():
+        if self.cam.autofocus_is_locked():
             logger.info("swfocus_start: unlocking CRISP autofocus before software focus.")
             self.end_crisp()
-            if self.cam.crisp_is_locked():
+            if self.cam.autofocus_is_locked():
                 logger.warning("swfocus_start: unable to unlock CRISP. Aborting.")
                 return
         self.swfocus_start_thread = ThreadSWFocus(cam=self.cam, cfg_focus=self.cfg_focus)
@@ -1089,61 +1088,13 @@ class ThreadSWFocus(QThread):
         if not self.cam.software_focus_is_initialised():
             return
         old_channel = self.cam.current_channel
-        # cfg_focus = self.cfg_focus
-        # try:
-        #     cfg_focus.check_config()
-        # except ConfigError as e:
-        #     logger.warning(f"ThreadSWFocus.run: Invalid focus configuration:\n{e.message}\nAborting...")
-        #     return
-        # curr_pos = int(self.cam.get_coordinates(['Z'])['Z'])
-        # coords = range(curr_pos - cfg_focus.rel_range, curr_pos + cfg_focus.rel_range, cfg_focus.steps_size)
-        # logger.warning(f"ThreadSWFocus.run: Starting software autofocus configured as\n"
-        #                f"{cfg_focus.__str__()}\nThis will move the stage up and down in the range "
-        #                f"[{(curr_pos - cfg_focus.rel_range) / 10},{(curr_pos + cfg_focus.rel_range) / 10}] μm"
-        #                f" (current position = {curr_pos / 10} μm). "
-        #                f"If there are objects blocking the stage movement, this will crash the "
-        #                f"objective and break it. You have 5 seconds to press stop. ")
-        # time.sleep(5)
-        # old_channel = self.cam.current_channel
-        # self.cam.set_exposure(exposure_time=int(self.cfg_focus.exposure_time))
-        # self.cam.studio.live().set_live_mode(False)
-        # best_focus_score = 0
-        # best_focus_position = 0
-        # focus_curve = []
-        # self.cam.set_led(i_chan=ConfigLED.LED_NO_LED.value)
         for ipos, z_coord in enumerate(self.cam.focus_Z_coords):
             if self.stopped():
                 self.cam.set_led(i_chan=old_channel)
                 logger.warning("ThreadSWFocus.run: Aborting.")
                 return
             self.cam.software_focus_step(ipos=ipos)
-            # self.cam.move_to(coordinates={'Z': z_coord}, block=True)
-            # image_raw = self.cam.display_save_frame(
-            #     i_chan=cfg_focus.focus_channel,
-            #     i_period=None,
-            #     path_to_save=False,
-            #     filename=None,
-            #     display_frame=False,
-            # )
-            # if image_raw is None:
-            #     logger.warning("ThreadSWFocus.run: self._take_frame returned None. Aborting...")
-            #     return
-            # if self.cfg_focus.algorithm == ConfigFocusAlgorithm.LAPLACIAN_VAR.value:
-            #     laplacian = cv2.Laplacian(image_raw, cv2.CV_64F)
-            #     focus_score = laplacian.var()
-            # elif self.cfg_focus.algorithm == ConfigFocusAlgorithm.SQUARED_THRESHOLDED.value:
-            #     laplacian = cv2.Laplacian(image_raw, cv2.CV_64F)
-            #     focus_score = laplacian.var()
-            # focus_curve.append(focus_score)
-            # if focus_score > best_focus_score:
-            #     best_focus_position = ipos
-            #     best_focus_score = focus_score
         self.cam.software_focus_finalise()
-        # best_coordinate = coords[best_focus_position]
-        # logger.info(f"ThreadSWFocus.run: Finished scanning. Coordinate before focus={curr_pos / 10} μm,"
-        #             f"coordinate after focus={best_coordinate / 10} μm. Finalising software_focus.")
-        # self.cam.move_to(coordinates={'Z': best_coordinate}, block=True)
-        # self.cam.set_led(i_chan=old_channel)
 
 
 class ThreadMultiParam(QThread):
@@ -1205,7 +1156,7 @@ class ThreadMultiParam(QThread):
                     func_horiz_2(block=True)
             func_vert(block=True)
         try:
-            self.cam.move_to(coordinates=current_pos, block=True)
+            self.cam.move_to(coordinate=current_pos, block=True)
         except (SerialException, ValueError) as e:
             logger.warning(f"ThreadMultiParam.run: {e}")
 
@@ -1237,7 +1188,7 @@ class ThreadPos(QThread):
             elif self.i_direction == Direction.HOME.value:
                 self.cam.move_home(block=True)
             elif self.i_direction == Direction.MOVETO.value:
-                self.cam.move_to(coordinates=self.get_lineedit_coords(), block=True)
+                self.cam.move_to(coordinate=self.get_lineedit_coords(), block=True)
         except (SerialException, ValueError, ASIErrors.ParameterOutOfRangeError, TigerError) as e:
             if isinstance(e, ASIErrors.ParameterOutOfRangeError):
                 logger.warning(f"ThreadPos.run: Move is outside stage limits {SAFE_STAGE_LIMITS}. "
@@ -1307,7 +1258,7 @@ class ThreadStartCRISP(QThread):
         self.cfg_crisp = cfg_crisp
 
     def run(self):
-        self.cam.crisp_autofocus(this_cfg_crisp=self.cfg_crisp, user_input=False)
+        self.cam.autofocus_enable(this_cfg_crisp=self.cfg_crisp, user_input=False)
 
 
 class FigureWindow(QWidget):
@@ -1623,7 +1574,7 @@ class ThreadExperiment(QThread):
                 if self.stopped():
                     logger.info("Stopping acquisition.")
                     return
-                self.cam.move_to(coordinates=coord, block=True)
+                self.cam.move_to(coordinate=coord, block=True)
                 time.sleep(2)
                 for img_channel in self.img_channels:
                     frame = self.cam.display_save_frame(
@@ -1640,7 +1591,7 @@ class ThreadExperiment(QThread):
     def test_positions(self):
         logger.info("Testing positions before starting run.")
         for coord in self.coordinates:
-            self.cam.move_to(coordinates=coord, block=True)
+            self.cam.move_to(coordinate=coord, block=True)
             frame = self.cam.display_save_frame(
                 i_chan=1,
                 path_to_save=False,
@@ -1650,34 +1601,3 @@ class ThreadExperiment(QThread):
             self.mpl_canvas.plot_image(image_array=frame)
             time.sleep(2)
         logger.info("Positions tested.")
-
-
-if __name__ == '__main__':
-    is_testmode = False
-    is_oil_objective = False
-
-    if is_testmode:
-        filenames = sorted(glob.glob("/mnt/ImageData/Scott/2023-12-08/*.tiff"))
-        cam = TestCamera(
-            cfg_device=DEVICE_CONFIG_EVO_TEST,
-            cfg_objective=OBJECTIVE_CONFIG_OIL if is_oil_objective else OBJECTIVE_CONFIG_AIR,
-            cfg_image=IMAGE_CONFIG_DEFAULT,
-            cfg_crisp=CRISP_CONFIG_DEFAULT,
-            cfg_focus=FOCUS_CONFIG_DEFAULT,
-            filenames=filenames,
-            pos_to_filename=None,
-        )
-    else:
-        cam = EvoCamera(
-            cfg_device=DEVICE_CONFIG_EVO_TEST,
-            cfg_image=IMAGE_CONFIG_DEFAULT,
-            cfg_objective=OBJECTIVE_CONFIG_OIL if is_oil_objective else OBJECTIVE_CONFIG_AIR,
-            cfg_focus=FOCUS_CONFIG_DEFAULT,
-            cfg_crisp=CRISP_CONFIG_DEFAULT,
-        )
-    dmd = DMDControl()
-
-    app = QApplication(sys.argv)
-    w = EvoGUI(cam, dmd)
-    w.show()
-    sys.exit(app.exec_())

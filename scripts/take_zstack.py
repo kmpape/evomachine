@@ -118,7 +118,6 @@ for ipos, z_coord in enumerate(coords):
         # Save images without displaying
         images[:, :, ipos] = cam.display_save_frame(
             i_chan=focus_channel,
-            i_period=None,
             path_to_save=path_to_save,
             filename=f"z_{z_coord:02d}.tif",
             display_frame=False,

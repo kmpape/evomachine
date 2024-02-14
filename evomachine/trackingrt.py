@@ -7,9 +7,10 @@ import numpy as np
 
 import delta
 
+from evomachine.config import get_logger
 from evomachine.exceptions import ErrorCode, ImageProcessingError
 
-logger = logging.getLogger(__name__)
+logger = get_logger(name=__name__)
 
 
 def is_division(

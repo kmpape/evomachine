@@ -16,7 +16,7 @@ import delta
 from delta.config import Config  # TODO: ask about putting config into init
 from delta.pipeline import TIMER_ROI
 
-from evomachine.config import ConfigImage
+from evomachine.config import ConfigImage, get_logger
 from evomachine.exceptions import ImageProcessingError, ErrorCode, ErrorContainer
 # import evomachine.trackingrt as trackingrt
 import evomachine.trackingrt_jit as trackingrt
@@ -24,7 +24,7 @@ from evomachine.utils import Timer
 
 TIMER_POSITION = Timer(timer_level=0, name="PositionRT", enabled=True)
 
-logger = logging.getLogger(__name__)
+logger = get_logger(name=__name__)
 
 num_workers = 2
 dask.config.set(scheduler='threads', num_workers=num_workers)
@@ -67,6 +67,7 @@ class PositionRT(delta.pipeline.Position):
     def initialise(
         self,
         reference: np.ndarray[(int, int, int), 'ConfigImage.pxl_dtype'],
+        ref_channel: int = 0,
     ) -> None:
         self._msg("Starting initialisation")
         TIMER_POSITION.start("initialise", 0)
@@ -74,7 +75,7 @@ class PositionRT(delta.pipeline.Position):
 
         # Rotation correction
         if self.config.rotation_correction:
-            self.rotate = delta.utils.deskew(reference[0, :, :])
+            self.rotate = delta.utils.deskew(reference[ref_channel, :, :])
             self._msg(f"Rotation correction: {self.rotate} degrees")
             for i_chan in range(reference.shape[0]):
                 reference[i_chan, :, :] = delta.utils.imrotate(reference[i_chan, :, :], self.rotate)
@@ -85,25 +86,25 @@ class PositionRT(delta.pipeline.Position):
         # Find ROIs
         if "rois" in self.config.models:
             self._msg("Identifying ROIs.")
-            self.roi_boxes = self.find_roi_boxes(reference[0, :, :], self.config)
+            self.roi_boxes = self.find_roi_boxes(reference[ref_channel, :, :], self.config)
         else:
-            self.roi_boxes = [delta.utils.CroppingBox.full(reference[0, :, :])]
+            self.roi_boxes = [delta.utils.CroppingBox.full(reference[ref_channel, :, :])]
 
         # Get drift correction template and box
         if self.config.drift_correction:
             self.drifttemplate = delta.utils.to_integer_values(
                 delta.utils.getDriftTemplate(
                     self.roi_boxes,
-                    reference[0, :, :],
+                    reference[ref_channel, :, :],
                     whole_frame=self.config.whole_frame_drift,
                 ),
                 np.uint8
             )
-            self.driftcorbox = delta.utils.CroppingBox.full(reference[0, :, :])
+            self.driftcorbox = delta.utils.CroppingBox.full(reference[ref_channel, :, :])
             if not self.config.whole_frame_drift:
                 self.driftcorbox.ybr = max(box.ytl for box in self.roi_boxes)
             # Need to apply drift correction to match the output of DeLTA
-            int_frame = delta.utils.to_integer_values(reference[0, :, :], np.uint8)
+            int_frame = delta.utils.to_integer_values(reference[ref_channel, :, :], np.uint8)
             drift_corr_frame = self.driftcorbox.crop(int_frame)
             res = cv2.matchTemplate(drift_corr_frame, self.drifttemplate, cv2.TM_CCOEFF_NORMED)
             _, _, _, max_loc = cv2.minMaxLoc(res)
@@ -120,7 +121,7 @@ class PositionRT(delta.pipeline.Position):
         # Instantiate ROIs with 2x reference
         self.rois = [
             ROIRT(
-                img_stack=[box.crop(reference[0, :, :]), box.crop(reference[0, :, :])],
+                img_stack=[box.crop(reference[ref_channel, :, :]), box.crop(reference[ref_channel, :, :])],
                 fluo_stack=[[box.crop(img) for img in reference[1:, :, :]],
                             [box.crop(img) for img in reference[1:, :, :]]],
                 roi_nb=i_roi,

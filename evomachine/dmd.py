@@ -11,18 +11,13 @@ import pygame
 import pygame.locals
 import screeninfo
 
+from evomachine.config import get_logger
 from evomachine.exceptions import DMDError, ErrorCode, ErrorContainer
 
-formatter = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s - %(message)s\n<---')
-logger = logging.getLogger(__name__)
-for handler in logger.handlers:
-    logger.removeHandler(handler)
-logger.setLevel(logging.INFO)
-handler = logging.StreamHandler()
-handler.setFormatter(formatter)
-logger.addHandler(handler)
-logger.propagate = False
+logger = get_logger(name=__name__)
 
+
+DMD_WIDTH_HEIGHT = (2716, 1600)  # Provide images with img.shape == DMD_WIDTH_HEIGHT
 
 class DMDColor(Enum):
     BLACK = (0, 0, 0)
@@ -65,7 +60,7 @@ class DMDControl:
         "Flag set in initialise."
         self.offset_DMD: Tuple[int, int] = (0, 0)
         "Offset to display PyGame window. Set in initialise."
-        self.width_height_DMD: Tuple[int, int] = (2716, 1600)
+        self.width_height_DMD: Tuple[int, int] = DMD_WIDTH_HEIGHT
         "Size of DMD. Double-checked in initialise."
         self.surface: Union[None, pygame.surface] = None
         "PyGame object to display images. Initialised in initialise."
