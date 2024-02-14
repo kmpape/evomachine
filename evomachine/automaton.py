@@ -1,24 +1,32 @@
+import copy
+from enum import auto, Enum
 import logging
 import numpy as np
+import queue
 import threading
 import time
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import delta
 from delta.config import Config
 
 from evomachine.acquisition import AbstractCamera
 from evomachine.commands import AutomatonCommand, AutomatonCommandType
-from evomachine.config import ConfigDevice, ConfigFocus, ConfigImage, get_logger
+from evomachine.config import ConfigDevice, ConfigFocus, ConfigImage, EVO_GUI_LOGGING_LEVEL, get_logger
 from evomachine.coordinates import Coordinate, CoordinateFactory
 from evomachine.dmd import DMDControl
 from evomachine.exceptions import ErrorCode, ErrorContainer, ConfigError
 from evomachine.positionrt import PositionRT
-
 from evomachine.strategy import AbstractStrategy
 
 
 logger = get_logger(name=__name__)
+
+
+class AutomatonQueueDataType(Enum):
+    FOCUS_DATA = auto()
+    INFO_TEXT = auto()
+    PROCESS_DATA = auto()
 
 
 class Automaton(threading.Thread):
@@ -31,6 +39,7 @@ class Automaton(threading.Thread):
             camera: AbstractCamera,
             dmd: DMDControl,
             strategy: AbstractStrategy,
+            data_queue: Optional[queue.Queue] = None,
             use_segmentation: bool = False,
     ):
         super().__init__(name="Automaton")
@@ -65,6 +74,8 @@ class Automaton(threading.Thread):
         "List indexed by i_pos w. reference image array: channels x pxl_vert x pxl_horiz."
         self._is_initialised: bool = False
         "Set to true after initialisation."
+        self._data_queue: Union[queue.Queue, None] = data_queue
+        "Queue for communication with the GUI."
 
         self.positions: Dict[int, Coordinate] = {}
         "Dictionary position coordinates (after focus) initialised in initialise_position_list()."
@@ -83,6 +94,23 @@ class Automaton(threading.Thread):
 
         self._strategy: AbstractStrategy = strategy
         "Strategy object defining actions taken at each timestep."
+
+    def check_status(self):
+        if len(self.error_container) > 0:
+            msg = "\n".join([str(e) for e in self.error_container.error_list])
+            logging.warning(msg=msg)
+        else:
+            logging.warning("No errors for automaton found.")
+        self._camera.check_status()
+
+    def fill_queue(
+            self,
+            queue_data_type: AutomatonQueueDataType,
+            queue_data: Any,
+            logging_level: int = logging.INFO,
+    ):
+        if (self._data_queue is not None) and (logging_level >= EVO_GUI_LOGGING_LEVEL):
+            self._data_queue.put((queue_data_type, copy.copy(queue_data)))
 
     def initialise(self, positions: Union[Dict[int, Coordinate], List[Coordinate]]):
         
@@ -130,18 +158,15 @@ class Automaton(threading.Thread):
         assert self._curr_period == 1  # Note that each ROI keeps track of _curr_period as well
 
         # Initialise strategy
-        self.next_commands = self._strategy.initialise(
-            field_of_views=self.positions,
-            region_of_interests={i_pos: [i_roi for i_roi in range(len(self._pos_processor[i_pos].rois))]
-                                 for i_pos in self.positions.keys()}
+        self._initialise_strategy()
+
+        self.fill_queue(
+            queue_data_type=AutomatonQueueDataType.FOCUS_DATA,
+            queue_data=self.focus_curves,
+            logging_level=logging.INFO,
         )
 
-        # Grab configuration object overrides TODO
-        if self._strategy.path_to_save is not None:
-            if not self._strategy.path_to_save.exists():
-                raise ConfigError(f"Automaton.initialise: path_to_save provided by strategy is invalid "
-                                  f"({self._strategy.path_to_save}).", ErrorCode.ERROR_DEVICE_CONFIG)
-            self._cfg_device.path_to_save = self._strategy.path_to_save
+        self._is_initialised = True
 
     def initialise_position_list(
             self,
@@ -177,15 +202,19 @@ class Automaton(threading.Thread):
             coord.z = self._camera.get_software_focus_z_coord()
             self.positions[i_pos] = coord
 
-        self._is_initialised = True
+    def _initialise_strategy(self):
+        self.next_commands = self._strategy.initialise(
+            field_of_views=self.positions,
+            region_of_interests={i_pos: [i_roi for i_roi in range(len(self._pos_processor[i_pos].rois))]
+                                 for i_pos in self.positions.keys()}
+        )
 
-    def check_status(self):
-        if len(self.error_container) > 0:
-            msg = "\n".join([str(e) for e in self.error_container.error_list])
-            logging.warning(msg=msg)
-        else:
-            logging.warning("No errors for automaton found.")
-        self._camera.check_status()
+        # Grab configuration object overrides TODO
+        if self._strategy.path_to_save is not None:
+            if not self._strategy.path_to_save.exists():
+                raise ConfigError(f"Automaton.initialise: path_to_save provided by strategy is invalid "
+                                  f"({self._strategy.path_to_save}).", ErrorCode.ERROR_DEVICE_CONFIG)
+            self._cfg_device.path_to_save = self._strategy.path_to_save
 
     def increment_pos(self) -> None:
         self._curr_period = ((self._curr_period + 1) if (self._curr_pos_id + 1 == len(self.positions))
@@ -193,6 +222,12 @@ class Automaton(threading.Thread):
         self._curr_pos_id = (self._curr_pos_id + 1) % len(self.positions)
 
     def process(self):
+        self.fill_queue(
+            queue_data_type=AutomatonQueueDataType.INFO_TEXT,
+            queue_data=f"At period {self._curr_period}.",
+            logging_level=logging.DEBUG,
+        )
+
         # Execute requested commands in the given order
         for cmd in self.next_commands:
             cmd.command_data = None  # Overwritten by AutomatonCommandType.IMAGE
@@ -235,6 +270,12 @@ class Automaton(threading.Thread):
 
             cmd.command_execution_time = time.time()
 
+        self.fill_queue(
+            queue_data_type=AutomatonQueueDataType.PROCESS_DATA,
+            queue_data=self.next_commands,
+            logging_level=logging.INFO,
+        )
+
         new_errors = list(self.error_container.error_list)  # TODO extract new errors
         self.last_commands = self.next_commands
         self.next_commands = self._strategy.callback(
@@ -249,6 +290,10 @@ class Automaton(threading.Thread):
 
         while not self.stopped():
             self.process()
+
+    def set_strategy(self, strategy: AbstractStrategy):
+        self._strategy = strategy
+        self._initialise_strategy()
 
     def _move_to_pos(self, pos_id: Union[int, None] = -1):
         if pos_id is None:

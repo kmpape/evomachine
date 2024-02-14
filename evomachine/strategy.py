@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
-import logging
+import inspect
 from pathlib import Path
-from typing import Dict, List, Tuple, Union
+import sys
+from typing import Dict, List, Tuple, Type, Union
 
 from evomachine.commands import AutomatonCommand, AutomatonCommandType, CommandFactory
 from evomachine.config import ConfigLED, EVOMACHINE_DIR, get_logger
@@ -54,7 +55,6 @@ class AbstractStrategy(ABC):
             raise StrategyError(message=f"AbstractStrategy.callback: invalid command list ({new_command_list}).",
                                 error_code=ErrorCode.ERROR_STRATEGY)
         return new_command_list
-
 
     @abstractmethod
     def _callback(
@@ -128,8 +128,8 @@ class NoStrategy(AbstractStrategy):
         return []
 
 
-class DummyStrategy(AbstractStrategy):
-    """Dummy strategy for testing purposes.
+class BasicStrategy(AbstractStrategy):
+    """Basic strategy for testing purposes.
     """
     def __init__(self):
         super().__init__()
@@ -192,3 +192,11 @@ class DummyStrategy(AbstractStrategy):
         ]
         return self.last_commands
 
+
+def get_all_strategies() -> List[Tuple[Type[AbstractStrategy], str]]:
+    subclasses = []
+    current_module = sys.modules[__name__]
+    for name, obj in inspect.getmembers(current_module):
+        if inspect.isclass(obj) and issubclass(obj, AbstractStrategy) and obj != AbstractStrategy and obj != NoStrategy:
+            subclasses.append((obj, name))
+    return subclasses

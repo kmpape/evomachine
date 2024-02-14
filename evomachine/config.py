@@ -15,7 +15,7 @@ EVOMACHINE_DIR = Path(__file__).parent
 
 EVO_FORMATTER = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s - %(message)s\n<---')
 EVO_LOGGING_LEVEL = logging.INFO
-
+EVO_GUI_LOGGING_LEVEL = logging.DEBUG
 
 def get_logger(name: str) -> logging.Logger:
     logger = logging.getLogger(name)

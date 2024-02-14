@@ -6,7 +6,7 @@ from typing import Any, List, Union
 
 import numpy as np
 
-from evomachine.config import EVO_FORMATTER, ConfigLED
+from evomachine.config import EVO_FORMATTER, ConfigLED, get_logger
 from evomachine.dmd import DMD_WIDTH_HEIGHT
 
 
@@ -26,20 +26,21 @@ class AutomatonCommandType(Enum):
     PROJECT = auto()
     WAIT = auto()
     STOP = auto()
+    # FOCUS = ()  # TODO
 
 
 @dataclass
 class AutomatonCommand:
+    command_id: int
+    "Unique command ID."
     command_type: AutomatonCommandType
     "A command type defined in AutomatonCommandType."
     command_args: Any
     "Necessary command arguments. Use AutomatonCommandFactory to provide the correct arguments."
-    command_data: Any
-    "Data collected after executing the command."
-    command_id: int
-    "Unique command ID."
     command_creation_time: float
     "Time at which the command was created. Produced via time.time()."
+    command_data: Any = None
+    "Data collected after executing the command."
     command_execution_time: Union[float, None] = None
     "Time at which the command was created. Produced via time.time()."
 

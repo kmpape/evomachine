@@ -10,8 +10,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 import PIL
+import queue
 import re
 from serial import SerialException
+import sys
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -25,28 +27,19 @@ from PyQt5.QtWidgets import (
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
 
-import sys, os
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger')
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
 
 from asitiger.errors import Errors as ASIErrors
 from asitiger.tigercontroller import SAFE_STAGE_LIMITS
-from evomachine.acquisition import EvoCamera, TestCamera
-from evomachine.config import ConfigCRISP, ConfigFocus, ConfigFocusAlgorithm, \
-    CRISP_CONFIG_DEFAULT, FOCUS_CONFIG_DEFAULT, IMAGE_CONFIG_DEFAULT, DEVICE_CONFIG_EVO_TEST,\
-    OBJECTIVE_CONFIG_AIR, ConfigLED, EVO_FORMATTER, OBJECTIVE_CONFIG_OIL, CRISP_CONFIG_OIL
+from evomachine.acquisition import EvoCamera
+from evomachine.automaton import Automaton
+from evomachine.config import ConfigCRISP, ConfigFocus, ConfigFocusAlgorithm, ConfigLED, get_logger
 from evomachine.dmd import DMDControl
 from evomachine.exceptions import ConfigError, TigerError
 
 
-logger = logging.getLogger(__name__)
-for handler in logger.handlers:
-    logger.removeHandler(handler)
-logger.setLevel(logging.INFO)
-handler = logging.StreamHandler()
-handler.setFormatter(EVO_FORMATTER)
-logger.addHandler(handler)
-logger.propagate = False
+logger = get_logger(name=__name__)
 
 AXES = ['X', 'Y', 'Z']
 SMALL = QFont("Arial", 10)
@@ -107,7 +100,6 @@ class DisplayMode(Enum):
         return cls.UNKNOWN
 
 
-
 LRUD = [Direction.LEFT.value, Direction.RIGHT.value, Direction.UP.value, Direction.DOWN.value]
 ARROWS = [ARROW_LEFT, ARROW_RIGHT, ARROW_LEFT, ARROW_RIGHT]
 
@@ -119,12 +111,23 @@ class EvoGUI(QMainWindow):
     update_signal_pic_clear_readin = pyqtSignal(str)
     update_signal_pic_show_boxes = pyqtSignal()
 
-    def __init__(self, cam: EvoCamera, dmd: DMDControl, is_testmode: bool = False, *args, **kwargs):
+    def __init__(
+            self,
+            cam: EvoCamera,
+            dmd: DMDControl,
+            data_queue: queue.Queue,
+            automaton: Automaton,
+            is_testmode: bool = False,
+            *args,
+            **kwargs
+    ):
         super(EvoGUI, self).__init__(*args, **kwargs)
 
         # Evomachine Objects
         self.cam = cam
         self.dmd = dmd
+        self.data_queue = data_queue
+        self.automaton = automaton
 
         self.is_testmode = is_testmode
 
