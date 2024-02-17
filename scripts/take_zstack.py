@@ -9,6 +9,7 @@ from evomachine.acquisition import EvoCamera
 from evomachine.config import DEVICE_CONFIG_EVO_TEST, CRISP_CONFIG_DEFAULT, OBJECTIVE_CONFIG_OIL, \
     OBJECTIVE_CONFIG_AIR, IMAGE_CONFIG_DEFAULT, ConfigDevice, ConfigFocus, ConfigLED, ConfigCRISP, EVOMACHINE_DIR
 from evomachine.dmd import DMDControl, DMDColor
+from evomachine.software_focus import get_focus_score_steel
 
 import numpy as np
 import cv2
@@ -50,24 +51,35 @@ cam = EvoCamera(cfg_device=DEVICE_CONFIG_MOTHERMACHINE, cfg_objective=OBJECTIVE_
                 cfg_focus=FOCUS_CONFIG_MOTHERMACHINE, cfg_crisp=CRISP_CONFIG_MOTHERMACHINE)
 dmd = DMDControl()
 cam.initialise()
+cam.disable_led()
+
+dmd.display_full()
 
 # Settings
-load_images = True
+load_images = False
 shape = cam.cfg_image.pxl_vert
-path_to_save = EVOMACHINE_DIR.parent / "images/software_focus"
-rel_range = 80  # in 1/10 microns
+path_to_save = Path("/mnt/ImageData/Idris/2024-02-17-zstack/pos1")
+rel_range = 100  # in 1/10 microns
 step_size = 10
 exposure_time = 1000  # in ms
-focus_channel = ConfigLED.LED_450_NM.value
+focus_channel = ConfigLED.LED_450_NM
 row_min, row_max, col_min, col_max = 0, cam.cfg_image.pxl_vert, 0, cam.cfg_image.pxl_horiz
+cam.set_led(i_chan=focus_channel.value)
 
 # Camera settings
 cam.set_exposure(exposure_time=int(exposure_time))
 cam.studio.live().set_live_mode(False)
 
+time.sleep(1)
+
 # Get current position and reset stage limits
 if load_images:
-    filenames = [file.name for file in path_to_save.glob("z_*.tif")]
+    filenames = [file.name for file in path_to_save.glob("z_*.tif") if "prev" not in file.name]
+    prev_filename = [file.name for file in path_to_save.glob("z_*.tif") if "prev" in file.name]
+    if prev_filename:
+        prev_filename = prev_filename[0]
+    else:
+        prev_filename = None
     coords = [int(file.stem.split("_")[1]) for file in path_to_save.glob("z_*.tif")]
     tmp = list(zip(coords, filenames))
     tmp.sort(key=lambda x: x[0])
@@ -75,12 +87,14 @@ if load_images:
     filenames = [item[1] for item in tmp]
     num_coords = len(filenames)
 else:
+    filenames = []
     curr_pos = cam.tiger.where(['Z'])['Z']
     stage_limits = cam.tiger.get_stage_limits()
     stage_limits['Z'] = (curr_pos-2*rel_range, curr_pos+2*rel_range)
     cam.tiger.set_stage_limits(stage_limits=stage_limits)
     coords = range(curr_pos - rel_range, curr_pos + rel_range, step_size)
     num_coords = len(coords)
+
 
 def get_laplacian_var_focus_score(img) -> float:
     lap = cv2.Laplacian(img, cv2.CV_64F)
@@ -91,21 +105,38 @@ def laplacian(img):
     lap = np.int64(lap)
     return (lap[1:-1, 1:-1]**2).mean()
 
+
 def sq_grad(img, thres=0.1):
     p = np.int64(img)
     tmp = abs(p[:, 1:] - p[:, :-1])
     tmp[tmp < thres] = 0
     return (tmp**2).mean()
 
+
 def sq_grad_float(img, thres=0.1):
     tmp = abs(img[:, 1:] - img[:, :-1])
     tmp[tmp < thres] = 0
     return (tmp**2).mean()
 
-focus_algs = [get_laplacian_var_focus_score, laplacian, sq_grad, sq_grad_float]
-focus_algs_str = ["Lvar", "Lavg", "SQavg", "SQavgfloat"]
+
+focus_algs = [get_laplacian_var_focus_score, laplacian, sq_grad, sq_grad_float, get_focus_score_steel]
+focus_algs_str = ["Lvar", "Lavg", "SQavg", "SQavgfloat", "Steel"]
 
 num_algs = len(focus_algs)
+curr_z = cam.tiger.where(['Z'])['Z']
+if load_images:
+    if prev_filename:
+        prev_image = skimage.io.imread(path_to_save / prev_filename)
+    else:
+        prev_image = None
+else:
+    prev_image = cam.display_save_frame(
+        i_chan=focus_channel.value,
+        path_to_save=path_to_save,
+        filename=f"z_{curr_z:04d}_{str(focus_channel)}_prev_.tif",
+        display_frame=False,
+        block=True,
+    )
 images = np.zeros((cam.cfg_image.pxl_vert, cam.cfg_image.pxl_horiz, num_coords))
 images_norm = np.zeros((cam.cfg_image.pxl_vert, cam.cfg_image.pxl_horiz, num_coords))
 focus_scores = np.zeros((num_coords, num_algs))
@@ -114,17 +145,22 @@ for ipos, z_coord in enumerate(coords):
     if load_images:
         images[:, :, ipos] = skimage.io.imread(path_to_save / filenames[ipos])
     else:
-        cam.move_to({'Z': z_coord})
+        cam.move_to({'Z': z_coord}, block=True)
+        time.sleep(0.1)
         # Save images without displaying
         images[:, :, ipos] = cam.display_save_frame(
-            i_chan=focus_channel,
+            i_chan=focus_channel.value,
             path_to_save=path_to_save,
-            filename=f"z_{z_coord:02d}.tif",
+            filename=f"z_{z_coord:04d}_{str(focus_channel)}_.tif",
             display_frame=False,
+            block=True,
         )
     images_norm[:, :, ipos] = cam.normalise_frame(frame=images[:, :, ipos], colormap=None)
     for ialg, alg in enumerate(focus_algs):
         focus_scores[ipos, ialg] = alg(images[row_min:row_max, col_min:col_max, ipos])
+
+cam.move_to({'Z': curr_z}, block=True)
+cam.disable_led()
 
 best_focus_positions = np.argmax(focus_scores, axis=0)
 
@@ -133,33 +169,40 @@ for ialg in range(num_algs):
     axs[ialg].plot(focus_scores[:, ialg])
     axs[ialg].set_title(focus_algs_str[ialg])
 
+fig, axs = plt.subplots(1, num_algs+1)
+if prev_image is not None:
+    _ = axs[0].imshow(prev_image, vmin=prev_image.min(), vmax=prev_image.max())
+_ = axs[0].set_title("Previous")
+for ialg in range(num_algs):
+    b = best_focus_positions[ialg]
+    _ = axs[ialg+1].imshow(images[:, :, b], vmin=images[:, :, b].min(), vmax=images[:, :, b].max())
+    _ = axs[ialg+1].set_title(focus_algs_str[ialg])
 
-irows = int(np.sqrt(num_coords))
-icols = int(np.ceil(num_coords/irows))
-# vmin = images[:, :, 0].min()
-# vmax = 0.8*images[:, :, 0].max()
-fig, axs = plt.subplots(irows, icols)
-for ipos, z_coord in enumerate(coords):
-    _ = axs[int(ipos/irows), np.mod(ipos, icols)].imshow(images[:, :, ipos], vmin=images[:, :, ipos].min(), vmax=images[:, :, ipos].max())
-    if ipos in best_focus_positions:
-        msg = ",".join([focus_algs_str[i] for i in range(num_algs) if ipos == best_focus_positions[i]])
-        _ = axs[int(ipos/irows), np.mod(ipos, icols)].set_title(f"{z_coord} [{ipos}] ({msg})")
-    else:
-        _ = axs[int(ipos/irows), np.mod(ipos, icols)].set_title(f"{z_coord} [{ipos}]")
 
-irows = int(np.sqrt(num_coords))
-icols = int(np.ceil(num_coords/irows))
-indmin, indmax = 2000, 3000
-# vmin = images[:, :, 0].min()
-# vmax = 0.8*images[:, :, 0].max()
-fig, axs = plt.subplots(irows, icols)
-for ipos, z_coord in enumerate(coords):
-    _ = axs[int(ipos/irows), np.mod(ipos, icols)].imshow(images[indmin:indmax, indmin:indmax, ipos], vmin=images[:, :, ipos].min(), vmax=images[:, :, ipos].max())
-    if ipos in best_focus_positions:
-        msg = ",".join([focus_algs_str[i] for i in range(num_algs) if ipos == best_focus_positions[i]])
-        _ = axs[int(ipos/irows), np.mod(ipos, icols)].set_title(f"{z_coord} [{ipos}] ({msg})")
-    else:
-        _ = axs[int(ipos/irows), np.mod(ipos, icols)].set_title(f"{z_coord} [{ipos}]")
+if False:
+    irows = int(np.sqrt(num_coords))
+    icols = int(np.ceil(num_coords/irows))
+    # vmin = images[:, :, 0].min()
+    # vmax = 0.8*images[:, :, 0].max()
+    fig, axs = plt.subplots(irows, icols)
+    for ipos, z_coord in enumerate(coords):
+        _ = axs[int(ipos/icols), np.mod(ipos, icols)].imshow(images[:, :, ipos], vmin=images[:, :, ipos].min(), vmax=images[:, :, ipos].max())
+        if ipos in best_focus_positions:
+            msg = ",".join([focus_algs_str[i] for i in range(num_algs) if ipos == best_focus_positions[i]])
+            _ = axs[int(ipos/icols), np.mod(ipos, icols)].set_title(f"{z_coord} [{ipos}] ({msg})")
+        else:
+            _ = axs[int(ipos/icols), np.mod(ipos, icols)].set_title(f"{z_coord} [{ipos}]")
 
+    plt.tight_layout()
+
+    indmin, indmax = 2000, 3000
+    fig, axs = plt.subplots(irows, icols)
+    for ipos, z_coord in enumerate(coords):
+        _ = axs[int(ipos/icols), np.mod(ipos, icols)].imshow(images[indmin:indmax, indmin:indmax, ipos], vmin=images[:, :, ipos].min(), vmax=images[:, :, ipos].max())
+        if ipos in best_focus_positions:
+            msg = ",".join([focus_algs_str[i] for i in range(num_algs) if ipos == best_focus_positions[i]])
+            _ = axs[int(ipos/icols), np.mod(ipos, icols)].set_title(f"{z_coord} [{ipos}] ({msg})")
+        else:
+            _ = axs[int(ipos/icols), np.mod(ipos, icols)].set_title(f"{z_coord} [{ipos}]")
 
 plt.show()

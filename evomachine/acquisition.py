@@ -63,6 +63,8 @@ class AbstractCamera:
         "Initialised in software_focus. Contains the focus score of each image. Larger score = sharper image."
         self.focus_stack: Union[None, np.array] = None
         "Initialised in software_focus. Contains images of focus stack."
+        self.focus_prev_image: Union[None, np.array] = None
+        "Initialised in software_focus. Contains the image from before starting focus."
         self.focus_Z_coords: Union[None, np.array] = None
         "Initialised in software_focus. Contains Z coordinates of focus stack. Use focus_curr_pos for X/Y coordinates."
         self._focus_is_initialised: bool = False
@@ -111,7 +113,17 @@ class AbstractCamera:
         focus_best_position = np.argmax(self.focus_scores)
         return self.focus_Z_coords[focus_best_position]
 
-    def get_filename(self) -> str:
+    def get_software_focus_z_frame(self) -> Union[np.ndarray, None]:
+        if self.focus_scores is None:
+            return None
+        focus_best_position = np.argmax(self.focus_scores)
+        return self.focus_stack[:, :, focus_best_position]
+
+    def get_filename(
+            self,
+            i_pos: Optional[int] = None,
+            i_channel: Optional[Union[int, ConfigLED]] = None,
+    ) -> str:
         return "evom_pos{:02d}_{}".format(self._curr_pos, datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f"))
 
     def get_frame(
@@ -119,9 +131,11 @@ class AbstractCamera:
             i_chan: Union[int, None],
             normalise: bool = False,
             brightness: int = 100,
+            block: bool = False,
+            reset_led: bool = True,
     ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
         self._step += 1
-        frame = self._take_frame(i_chan=i_chan, brightness=brightness)
+        frame = self._take_frame(i_chan=i_chan, brightness=brightness, block=block, reset_led=reset_led)
         return self.normalise_frame(frame=frame) if (normalise and (frame is not None)) else frame
 
     def get_pos(self) -> int:
@@ -140,26 +154,32 @@ class AbstractCamera:
             filename: Optional[Union[str, None]] = None,
             display_frame: Optional[bool] = True,
             normalise: bool = False,
-    ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
+            block: bool = False,
+            reset_led: bool = True,
+    ) -> Union[None, np.ndarray[(int, int), np.uint16]]:
         """
         Takes a frame (image) and returns it. Additionally, saves the frame if path_to_save is not None. If filename is
         None, it will use a default filename format defined in get_filename(). If display_frame is True, it also shows
         the acquired frame. If normalise is False, it shows the raw frame, if normalise is True, it shows the normalised
         frame. Frames are always saved in raw format.
 
+        CAREFUL: EvoCamera returns image in uint16.
+
         Parameters
         ----------
         i_chan          : LED channel.
         path_to_save    : If not None or (bool and False), saves image. If (bool and true), uses path in cfg_device.
-        filename        : If None, uses filename from self.get_filename() to save.
+        filename        : If None, uses filename from get_filename() to save (overwritten by EvoCam).
         display_frame   : If True, displays image.
         normalise       : If True, normalises displayed (not saved) image.
+        block           : Waits until device is not busy anymore.
+        reset_led       : Reset LED to value before calling this function.
 
         Returns
         -------
 
         """
-        frame = self.get_frame(i_chan=i_chan)
+        frame = self.get_frame(i_chan=i_chan, block=block, reset_led=reset_led)
         if frame is None:
             logger.warning(f"AbstractCamera.display_save_frame: self.get_frame returned None. Aborting...")
             return None
@@ -243,6 +263,8 @@ class AbstractCamera:
             frame: np.ndarray[(int, int), 'ConfigImage.pxl_dtype'],
             path_to_save: Optional[Union[Path, str, bool]] = True,
             filename: Optional[Union[str, None]] = None,
+            i_pos: Optional[int] = None,
+            i_channel: Optional[Union[int, ConfigLED]] = None,
     ) -> None:
         """
         Image is saved under path_to_save / filename. See arguments for different options. If provided, checks whether
@@ -259,7 +281,7 @@ class AbstractCamera:
 
         """
         if not filename:
-            filename = self.get_filename()
+            filename = self.get_filename(i_pos=i_pos, i_channel=i_channel)
 
         if isinstance(path_to_save, str):
             path_to_save = Path(path_to_save)
@@ -297,6 +319,7 @@ class AbstractCamera:
             logger.error(
                 f"software_focus: Focus not initialised or initialisation failed. Check log. Aborting focus."
             )
+            return
         for ipos in range(len(self.focus_Z_coords)):
             self.software_focus_step(ipos=ipos)
         self.software_focus_finalise()
@@ -348,7 +371,7 @@ class AbstractCamera:
     def _set_exposure(self, exposure_time: Union[int, None] = None):
         raise NotImplementedError()
 
-    def set_led(self, i_chan: Union[int, ConfigLED], brightness: int = 100):
+    def set_led(self, i_chan: Union[int, ConfigLED], brightness: int = 100, block: bool = False):
         raise NotImplementedError()
 
     def set_pos_id_to_coordinate(self, pos_id_to_coordinate: Dict[int, Any]) -> bool:
@@ -373,6 +396,8 @@ class AbstractCamera:
             self,
             i_chan: Union[int, None],
             brightness: int = 100,
+            block: bool = False,
+            reset_led: bool = True,
     ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
         raise NotImplementedError()
 
@@ -418,6 +443,8 @@ class DeltaCamera(AbstractCamera):
             self,
             i_chan: int,
             brightness: int = 100,
+            block: bool = False,
+            reset_led: bool = True,
     ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
         return self.all_frames[self._curr_pos][self._curr_period, i_chan, :, :]
 
@@ -445,7 +472,11 @@ class DeltaCamera(AbstractCamera):
     def get_delta_fov(self):
         return self.cfg_objective.fov_size * 10
 
-    def get_filename(self) -> str:
+    def get_filename(
+            self,
+            i_pos: Optional[int] = None,
+            i_channel: Optional[Union[int, ConfigLED]] = None,
+    ) -> str:
         return ""
 
     def get_stage_limits(self) -> Tuple[Coordinate, Coordinate]:
@@ -499,7 +530,7 @@ class DeltaCamera(AbstractCamera):
     def keyboard_control(self):
         return
 
-    def set_led(self, i_chan: Union[int, ConfigLED], brightness: int = 100):
+    def set_led(self, i_chan: Union[int, ConfigLED], brightness: int = 100, block: bool = False):
         return
 
     def _set_exposure(self, exposure_time: Union[int, None] = None):
@@ -581,6 +612,8 @@ class TestCamera(AbstractCamera):
             self,
             i_chan: int,
             brightness: int = 100,
+            block: bool = False,
+            reset_led: bool = True,
     ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
         image = skimage.io.imread(self.filenames[self._next_filename_index])
         if self._crop_inds:
@@ -588,7 +621,11 @@ class TestCamera(AbstractCamera):
         else:
             return image
 
-    def get_filename(self) -> str:
+    def get_filename(
+            self,
+            i_pos: Optional[int] = None,
+            i_channel: Optional[Union[int, ConfigLED]] = None,
+    ) -> str:
         return str(self.filenames[self._next_filename_index]).split("/")[-1]
 
     def get_coordinates(self, axes: List[str]) -> Dict[str, float]:
@@ -732,16 +769,8 @@ class EvoCamera(AbstractCamera):
         "Initialised in software_focus. X/Y/Z coordinates of stage before last start of focus routine."
         self.focus_old_channel: Optional[int] = None
         "Initialised in software_focus. LED channel before last start of focus routine."
-        self.focus_prev_image: Union[None, np.array] = None
-        "Initialised in software_focus. Contains the image from before starting focus."
         self.focus_rows: Optional[Tuple[int]] = None
         "Initialised in software_focus. Contains min/max indices of image to apply focus routine to."
-        self.focus_scores: Union[None, np.array] = None
-        "Initialised in software_focus. Contains the focus score of each image. Larger score = sharper image."
-        self.focus_stack: Union[None, np.array] = None
-        "Initialised in software_focus. Contains images of focus stack."
-        self.focus_Z_coords: Union[None, np.array] = None
-        "Initialised in software_focus. Contains Z coordinates of focus stack. Use focus_curr_pos for X/Y coordinates."
         self._focus_is_initialised: bool = False
         "Changes to True after initialisation and to False after finalisation."
 
@@ -847,6 +876,8 @@ class EvoCamera(AbstractCamera):
             self,
             i_chan: Union[int, None],
             brightness: int = 100,
+            block: bool = False,
+            reset_led: bool = True,
     ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
         if not self._mmc_is_alive:
             logger.error(msg=f"EvoCamera._take_frame: MMC is not alive. Check Camera and Micro-Manager.")
@@ -854,20 +885,19 @@ class EvoCamera(AbstractCamera):
         if i_chan is not None:
             self._last_frame_channel = i_chan
             curr_channel = self.current_channel
-            self.set_led(i_chan=i_chan, brightness=brightness)
+            self.set_led(i_chan=i_chan, brightness=brightness, block=block)
         try:
             self.mmc.snap_image()
         except Exception as e:
             logger.warning(f"EvoCamera._take_frame: Received exception:\n{e}\nHave you disabled MM live mode?")
             return None
-        self.disable_led()
         tagged_image = self.mmc.get_tagged_image()
         pixels = np.reshape(
             tagged_image.pix,
             newshape=[tagged_image.tags['Height'], tagged_image.tags['Width']]
         )
-        if i_chan is not None:
-            self.set_led(i_chan=curr_channel)
+        if i_chan is not None and reset_led:
+            self.set_led(i_chan=curr_channel, block=False)
         return pixels
 
     def coordinate_is_out_of_bounds(self, coordinate: Union[Dict[str, float], Coordinate]) -> bool:
@@ -990,12 +1020,26 @@ class EvoCamera(AbstractCamera):
     def get_delta_fov(self):
         return self.cfg_objective.fov_size * 10
 
-    def get_filename(self) -> str:
-        pos = self.tiger.where(['X', 'Y'])
-        return "{}_X{}_Y{}_{}.tiff".format(
-            ConfigLED.get_name(value_to_find=self._last_frame_channel).replace("_", ""),
+    def get_filename(
+            self,
+            i_pos: Optional[int] = None,
+            i_channel: Optional[Union[int, ConfigLED]] = None,
+    ) -> str:
+        if i_pos is not None:
+            pos = self._pos_id_to_coordinate[i_pos].to_dict()
+        else:
+            pos = self.tiger.where(['X', 'Y', 'Z'])
+        if i_channel is not None:
+            if isinstance(i_channel, ConfigLED):
+                i_channel = i_channel.value
+        else:
+            i_channel = self._last_frame_channel
+        return "{}_P{}_X{}_Y{}_Z{}_{}.tiff".format(
+            ConfigLED.get_name(value_to_find=i_channel).replace("_", ""),
+            i_pos if i_pos is not None else "",
             pos['X'],
             pos['Y'],
+            pos['Z'],
             datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f")
         )
 
@@ -1085,7 +1129,7 @@ class EvoCamera(AbstractCamera):
         self._pos_id_to_coordinate = {key: val for key, val in pos_id_to_coordinate.items()}
         return True
 
-    def set_led(self, i_chan: Union[int, ConfigLED], brightness: int = 100):
+    def set_led(self, i_chan: Union[int, ConfigLED], brightness: int = 100, block: bool = False):
         if isinstance(i_chan, ConfigLED):
             i_chan = i_chan.value
         if i_chan not in self._led_channel_keys.keys():
@@ -1106,6 +1150,8 @@ class EvoCamera(AbstractCamera):
                 logger.error(msg=f"Cannot set brightness: {brightness} is out of range [0, 100]. LED not set.")
         else:
             logger.error(msg=f"EvoCamera._set_channel: Tiger is not alive. Check ASI Tiger box and serial connection.")
+        if block:
+            self.tiger.wait_until_idle()
 
     def software_focus_is_valid_range(self) -> bool:
         if self.focus_Z_coords is None:
@@ -1133,6 +1179,16 @@ class EvoCamera(AbstractCamera):
                     f"coordinate after focus={focus_best_coordinate / 10} μm. Finalising software_focus.")
         self._move_stage_to_coord({'Z': focus_best_coordinate})
         self.set_led(i_chan=self.focus_old_channel)
+
+        # FIXME remove below
+        import pickle
+        with open(str(self.cfg_device.path_to_save / "FOCUS_STACK_GUI/pickled_data.pkl"), 'wb') as f:
+            data = (
+                self.focus_Z_coords,
+                self.focus_stack,
+                self.focus_scores,
+            )
+            pickle.dump(data, f)
 
     def software_focus_initialise(
             self,
@@ -1167,9 +1223,10 @@ class EvoCamera(AbstractCamera):
             return
         # Assign optional arguments
         if cropping_indices is None:
-            self.focus_rows = (0, self.cfg_image.pxl_vert)
+            self.focus_rows = 0, self.cfg_image.pxl_vert
             self.focus_cols = 0, self.cfg_image.pxl_horiz
         else:
+            logger.info("EvoCam.software_focus_initialise: using cropping boxes for focus.")
             self.focus_rows = (cropping_indices[1][0], cropping_indices[1][1])
             self.focus_cols = (cropping_indices[0][0], cropping_indices[0][1])
         self._cfg_focus = cfg_focus.copy() if cfg_focus else self.cfg_focus.copy()
@@ -1224,14 +1281,15 @@ class EvoCamera(AbstractCamera):
         self.set_exposure(exposure_time=int(self._cfg_focus.exposure_time))
         self.studio.live().set_live_mode(False)
         self.focus_scores = np.zeros(len(self.focus_Z_coords))
-        self.focus_stack = np.zeros((self.cfg_image.pxl_vert, self.cfg_image.pxl_horiz, len(self.focus_Z_coords)))
+        self.focus_stack = np.zeros(shape=(self.cfg_image.pxl_vert, self.cfg_image.pxl_horiz, len(self.focus_Z_coords)),
+                                    dtype=np.float64)
         self.set_led(i_chan=ConfigLED.LED_NO_LED.value)
         self.focus_prev_image = self.display_save_frame(
             i_chan=self._cfg_focus.focus_channel,
             path_to_save=False,
             filename=None,
             display_frame=False,
-        )
+        ).astype(np.float64)
         self._focus_is_initialised = True
 
     def software_focus_step(self, ipos: int):
@@ -1249,7 +1307,7 @@ class EvoCamera(AbstractCamera):
         else:
             self.focus_stack[:, :, ipos] = image_raw
         self.focus_scores[ipos] = get_focus_score(
-            img=image_raw[self.focus_rows[0]:self.focus_rows[1], self.focus_cols[0]:self.focus_cols[1]],
+            img=self.focus_stack[self.focus_rows[0]:self.focus_rows[1], self.focus_cols[0]:self.focus_cols[1], ipos],
             algorithm=self._cfg_focus.algorithm,
         )
 

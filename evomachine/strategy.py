@@ -15,9 +15,9 @@ logger = get_logger(name=__name__)
 
 class AbstractStrategy(ABC):
     """
-    TODO
-    - Probably also needs a camera object? Unclear whether new command classes provide all what is needed.
-    - callback should also take a list of EvoMachineError defined in evomachine.exceptions
+    TODO Camera object? Unclear whether new command classes provide all what is needed. 15th of Feb: IK thinks not needed
+    TODO AbstractStrategy needs finalise() and _finalise() methods called upon stop automaton
+    TODO Config jungle: allow strategies to have configs grabbed by automaton after initialise
     """
 
     def __init__(self):
@@ -29,7 +29,7 @@ class AbstractStrategy(ABC):
         "Path to save images. If None, Automaton will use path in ConfigDevice. If Path, extracted after initialise()."
         self.command_factory: CommandFactory = CommandFactory()
         "Factory object to create AutomatonCommands."
-
+        # TODO add configuration objects here as None. Can be overwritten by base strategies, then read by automaton
 
     def callback(
             self,
@@ -59,7 +59,7 @@ class AbstractStrategy(ABC):
     @abstractmethod
     def _callback(
             self,
-            fov_id: int,  # TODO need to consider several move commands passed or allow for one only
+            fov_id: int,
             data: List[AutomatonCommand],
             errors: List[EvoMachineError],
     ) -> List[AutomatonCommand]:
@@ -81,8 +81,12 @@ class AbstractStrategy(ABC):
     @staticmethod
     def is_valid_command_list(command_list: List[AutomatonCommand]):
         # Max one MOVE command
+        # TODO channel NO_LED should give false
+        # TODO should only have one command_type per list (?)
         if len([cmd for cmd in command_list if cmd.command_type == AutomatonCommandType.MOVE]) > 1:
             return False
+        else:
+            return True
 
     def initialise(
             self,
@@ -134,7 +138,7 @@ class BasicStrategy(AbstractStrategy):
     def __init__(self):
         super().__init__()
 
-        self.path_to_save = EVOMACHINE_DIR.parent / "images/dummy_strategy"
+        self.path_to_save = Path("/mnt/ImageData/Idris/2024-02-16")
 
         # Define default commands
         self.default_move_command: AutomatonCommand = self.command_factory.command_move(fov_id=-1)
@@ -145,7 +149,7 @@ class BasicStrategy(AbstractStrategy):
             save=True,
         )
         self.default_wait_command: AutomatonCommand = self.command_factory.command_wait(
-            duration=1,
+            duration=300,
         )
 
         # Reset command IDs
@@ -164,7 +168,7 @@ class BasicStrategy(AbstractStrategy):
 
         # Create commands for first iteration
         self.last_commands = [
-            self.command_factory.command_move(fov_id=0),
+            self.command_factory.command_move(fov_id=-1),
             self.command_factory.command_from_template(self.default_wait_command),
             self.command_factory.command_from_template(self.default_image_command),
         ]
@@ -177,7 +181,11 @@ class BasicStrategy(AbstractStrategy):
             errors: List[EvoMachineError],
     ) -> List[AutomatonCommand]:
 
-        logger.info(f"FOV {fov_id} with data {data} and errors {errors}.")
+        logger.info("FOV {} with data =\n{} \nand errors = {}.".format(
+            fov_id,
+            '    \n'.join(str(d) for d in data),
+            errors,
+        ))
 
         # Check received data
         for data_sent, data_recv in zip(self.last_commands, data):

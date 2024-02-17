@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import QApplication
 
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger')
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
+sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/de-lta-rta')
 
 from delta.config import DEFAULT_CONFIG_MOTHERMACHINE
 
@@ -20,31 +21,17 @@ from evomachine.strategy import BasicStrategy
 
 
 if __name__ == '__main__':
-    is_testmode = False
     is_oil_objective = False
-
-    if is_testmode:
-        filenames = sorted(glob.glob("/mnt/ImageData/Scott/2023-12-08/*.tiff"))
-        cam = TestCamera(
-            cfg_device=DEVICE_CONFIG_EVO_TEST,
-            cfg_objective=OBJECTIVE_CONFIG_OIL if is_oil_objective else OBJECTIVE_CONFIG_AIR,
-            cfg_image=IMAGE_CONFIG_DEFAULT,
-            cfg_crisp=CRISP_CONFIG_DEFAULT,
-            cfg_focus=FOCUS_CONFIG_DEFAULT,
-            filenames=filenames,
-            pos_to_filename=None,
-        )
-    else:
-        cam = EvoCamera(
-            cfg_device=DEVICE_CONFIG_EVO_TEST,
-            cfg_image=IMAGE_CONFIG_DEFAULT,
-            cfg_objective=OBJECTIVE_CONFIG_OIL if is_oil_objective else OBJECTIVE_CONFIG_AIR,
-            cfg_focus=FOCUS_CONFIG_DEFAULT,
-            cfg_crisp=CRISP_CONFIG_DEFAULT,
-        )
+    cam = EvoCamera(
+        cfg_device=DEVICE_CONFIG_EVO_TEST,
+        cfg_image=IMAGE_CONFIG_DEFAULT,
+        cfg_objective=OBJECTIVE_CONFIG_OIL if is_oil_objective else OBJECTIVE_CONFIG_AIR,
+        cfg_focus=FOCUS_CONFIG_DEFAULT,
+        cfg_crisp=CRISP_CONFIG_DEFAULT,
+    )
     dmd = DMDControl()
     data_queue = queue.Queue()
-    strategy = BasicStrategy()
+    strategy = BasicStrategy()  # TODO add dropdown in GUI
     automaton = Automaton(
         cfg_device=DEVICE_CONFIG_EVO_TEST,
         cfg_image=IMAGE_CONFIG_DEFAULT,

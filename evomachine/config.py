@@ -17,6 +17,7 @@ EVO_FORMATTER = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s 
 EVO_LOGGING_LEVEL = logging.INFO
 EVO_GUI_LOGGING_LEVEL = logging.DEBUG
 
+
 def get_logger(name: str) -> logging.Logger:
     logger = logging.getLogger(name)
     for handler in logger.handlers:
@@ -61,10 +62,15 @@ class ConfigEnumTemplate(Enum):
         """ Returns a value-variable_name dictionary. """
         return {v: cls.get_name(value_to_find=v) for v in cls.get_all_values()}
 
+    def __str__(self):
+        return str(self.name)
+
+
 
 class ConfigFocusAlgorithm(ConfigEnumTemplate):
     LAPLACIAN_VAR = auto()
     SQUARED_GRAD_AVG = auto()
+    STEEL = auto()
 
 
 class ConfigLED(ConfigEnumTemplate):
@@ -325,7 +331,7 @@ class ConfigFocus:
     steps_size: int
     "Step size for Z-movement of stage in 1/10 μm, e.g., steps_size=1 -> stage moves in 0.1 μm."
 
-    algorithm: ConfigFocusAlgorithm = ConfigFocusAlgorithm.SQUARED_GRAD_AVG
+    algorithm: ConfigFocusAlgorithm = ConfigFocusAlgorithm.STEEL
     "Algorithm used to focus. See ConfigFocusAlgorithm for available algorithms."
     user_input: Optional[bool] = True
     "Ask for user input before configuring and starting software focus."
@@ -359,7 +365,7 @@ class ConfigFocus:
         elif attr_name == 'rel_range':
             return isinstance(attr_value, int) and (attr_value > 0) and (attr_value < 2000)
         elif attr_name == 'steps_size':
-            return isinstance(attr_value, int) and (attr_value > 0) and (attr_value < self.rel_range)
+            return isinstance(attr_value, int) and (attr_value > 0) and (attr_value <= self.rel_range)
         elif attr_name == 'algorithm':
             return isinstance(attr_value, ConfigFocusAlgorithm)
         elif attr_name == 'user_input':
@@ -369,7 +375,8 @@ class ConfigFocus:
 
     def check_config(self):
         if not self.attr_is_valid('steps_size', self.steps_size):
-            raise ConfigError(f"steps_size must be an integer in the range [1, rel_range]. Provided {self.steps_size}.",
+            raise ConfigError(f"steps_size must be an integer in the range [1, rel_range={self.rel_range}]. "
+                              f"Provided {self.steps_size}.",
                               ErrorCode.ERROR_FOCUS_CONFIG.value)
         if not self.attr_is_valid('rel_range', self.rel_range):
             raise ConfigError(f"rel_range must be an integer in the range [1, Inf]. Provided {self.rel_range}.",
@@ -403,7 +410,7 @@ class ConfigFocus:
 FOCUS_CONFIG_DEFAULT = ConfigFocus(
     exposure_time=1000,
     focus_channel=ConfigLED.LED_450_NM.value,
-    rel_range=80,
+    rel_range=100,
     steps_size=10,
 )
 

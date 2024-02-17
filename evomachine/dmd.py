@@ -39,6 +39,8 @@ class DMDColor(Enum):
 
 
 class DMDControl:
+    # FIXME any DMD call from outside of the main thread yields to a crash
+
     DEFAULT_LINE_WIDTH: int = 5
     "Line width used for calibration and displaying lines. Use odd values."
 

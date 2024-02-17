@@ -27,14 +27,19 @@ from PyQt5.QtWidgets import (
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
 
+import delta.utils
+
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger')
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
 
 from asitiger.errors import Errors as ASIErrors
 from asitiger.tigercontroller import SAFE_STAGE_LIMITS
-from evomachine.acquisition import EvoCamera
-from evomachine.automaton import Automaton
+
+from evomachine.acquisition import AbstractCamera, EvoCamera
+from evomachine.automaton import Automaton, AutomatonQueueDataType
+from evomachine.commands import AutomatonCommand, AutomatonCommandType
 from evomachine.config import ConfigCRISP, ConfigFocus, ConfigFocusAlgorithm, ConfigLED, get_logger
+from evomachine.coordinates import Coordinate, CoordinateFactory
 from evomachine.dmd import DMDControl
 from evomachine.exceptions import ConfigError, TigerError
 
@@ -108,6 +113,7 @@ stylesheet_led = """
 """
 
 class EvoGUI(QMainWindow):
+    # TODO GUI needs a close button that shuts down all threads properly
     update_signal_pic_clear_readin = pyqtSignal(str)
     update_signal_pic_show_boxes = pyqtSignal()
 
@@ -151,7 +157,7 @@ class EvoGUI(QMainWindow):
         self.pic_widget = self.make_picture_panel(central_widget)
 
         # Multi Acquisition
-        self.multi_param_widget = self.make_multi_acquisition_panel()
+        # self.multi_param_widget = self.make_multi_acquisition_panel()
 
         # Experiment panel readin buttons
         self.exp_widget = self.make_experiment_panel()
@@ -170,9 +176,9 @@ class EvoGUI(QMainWindow):
         main_layout.addWidget(self.crisp_widget, 3, 0)
         main_layout.addWidget(self.savecfg_widget, 4, 0)
         main_layout.addWidget(self.pic_widget, 0, 1, 4, 1)
-        main_layout.addWidget(self.multi_param_widget, 4, 1)
+        # main_layout.addWidget(self.multi_param_widget, 4, 1)
         main_layout.addWidget(self.swfocus_widget, 5, 0)
-        main_layout.addWidget(self.exp_widget, 5, 1)
+        main_layout.addWidget(self.exp_widget, 4, 1, 2, 1)
 
         self.mpl_canvas.plot_image()
 
@@ -350,24 +356,32 @@ class EvoGUI(QMainWindow):
         self.exp_readin_positions = {i: {"from": None, "to": None} for i in range(self.exp_num_read_ins)}
         self.exp_readin_label = {i: self.make_label(text=f"Path {i}", font=SMALL)
                                    for i in range(self.exp_num_read_ins)}
+        self.exp_init_positions_button = self.make_button(text="Initialise Positions", func=self.exp_init_positions, font=SMALL)
         self.exp_readin_clear_button = self.make_button(text="Clear all", func=self.exp_clear_param, font=SMALL)
+        self.exp_focus_curves_button = self.make_button(text="Focus Curves", func=self.exp_show_focus_curves, font=SMALL)
         self.exp_clear_thread: Union[ThreadClearReadin, None] = None
         self.exp_start_button = self.make_button(text="Start", func=self.exp_start_acquisition, font=SMALL)
         self.exp_stop_button = self.make_button(text="Stop", func=self.exp_stop_acquisition, font=SMALL)
         self.exp_layout = QGridLayout()
         self.exp_layout.addWidget(EvoGUI.make_label(text="Experiment", font=NORMAL), 0, 0, 1, 3, LEFT)
+        self.exp_layout.addWidget(self.make_label(text=f"Positions", font=SMALL), 1, 0, 1, 1)
+        self.exp_layout.addWidget(self.exp_readin_clear_button, 2, 0, 1, 1)
+        self.exp_layout.addWidget(self.exp_init_positions_button, 3, 0, 1, 1)
+        self.exp_layout.addWidget(self.exp_focus_curves_button, 4, 0, 1, 1)
         for i in range(self.exp_num_read_ins):
-            self.exp_layout.addWidget(self.exp_readin_label[i], 2*i+1, 0, 1, 1)
-            self.exp_layout.addWidget(self.exp_readin_buttons[i]["from"], 2*i+1, 1, 1, 1)
-            self.exp_layout.addWidget(self.exp_readin_buttons[i]["to"], 2*i+1, 2, 1, 1)
-            self.exp_layout.addWidget(self.exp_readin_display[i]["from"], 2*i+2, 1, 1, 1)
-            self.exp_layout.addWidget(self.exp_readin_display[i]["to"], 2*i+2, 2, 1, 1)
+            self.exp_layout.addWidget(self.exp_readin_label[i], 2*i+1, 1, 1, 1)
+            self.exp_layout.addWidget(self.exp_readin_buttons[i]["from"], 2*i+1, 2, 1, 1)
+            self.exp_layout.addWidget(self.exp_readin_buttons[i]["to"], 2*i+1, 3, 1, 1)
+            self.exp_layout.addWidget(self.exp_readin_display[i]["from"], 2*i+2, 2, 1, 1)
+            self.exp_layout.addWidget(self.exp_readin_display[i]["to"], 2*i+2, 3, 1, 1)
         self.exp_layout.addWidget(self.exp_start_button, 1+2*self.exp_num_read_ins, 0, 1, 1)
         self.exp_layout.addWidget(self.exp_stop_button, 1+2*self.exp_num_read_ins, 1, 1, 1)
-        self.exp_layout.addWidget(self.exp_readin_clear_button, 1+2*self.exp_num_read_ins, 2, 1, 1)
         exp_widget = QWidget()
         exp_widget.setLayout(self.exp_layout)
-        self.exp_thread: Union[ThreadExperiment, None] = None
+        self.exp_monitor_thread: Union[ThreadMonitorExperiment, None] = None
+        self.exp_initialise_thread: Union[ThreadInitialiseExperiment, None] = None
+        self.exp_focus_curves: Union[None, np.typing.Array] = None
+        self.exp_focus_prev_curr_stack: Union[None, Tuple[np.typing.Array, np.typing.Array]] = None
         return exp_widget
 
     def make_led_panel(self) -> QWidget:
@@ -610,10 +624,10 @@ class EvoGUI(QMainWindow):
             'focus_channel': [EvoGUI.make_label(text="Channel number [0,...,3]", font=SMALL),
                               EvoGUI.make_lineedit(text=str(int(self.cfg_focus.focus_channel)),
                                                    func=self.swfocus_update, param='focus_channel')],
-            'rel_range': [EvoGUI.make_label(text="Relative range [um/10]", font=SMALL),
+            'rel_range': [EvoGUI.make_label(text="Relative range [um*10]", font=SMALL),
                           EvoGUI.make_lineedit(text=str(int(self.cfg_focus.rel_range)),
                                                func=self.swfocus_update, param='rel_range')],
-            'steps_size': [EvoGUI.make_label(text="Step Size [um/10]", font=SMALL),
+            'steps_size': [EvoGUI.make_label(text="Step Size [um*10]", font=SMALL),
                            EvoGUI.make_lineedit(text=str(int(self.cfg_focus.steps_size)),
                                                 func=self.swfocus_update, param='steps_size')],
             'algorithm': [EvoGUI.make_label(text="Algorithm", font=SMALL), self.swfocus_algorithm_dropdown],
@@ -725,15 +739,16 @@ class EvoGUI(QMainWindow):
         i, from_to = which
         try:
             pos_dict = self.cam.get_coordinates(AXES)
-            pos_str = f"({EvoGUI.make_pos_str(pos_dict['X']), EvoGUI.make_pos_str(pos_dict['Y'])})"
+            pos_str = f"{EvoGUI.make_pos_str(pos_dict['X'])}, " \
+                      f"{EvoGUI.make_pos_str(pos_dict['Y'])}, " \
+                      f"{EvoGUI.make_pos_str(pos_dict['Z'])}"
             self.exp_readin_display[i][from_to].setText(pos_str)
             self.exp_readin_positions[i][from_to] = pos_dict
         except (SerialException, KeyError) as e:
             logger.warning(f"EvoGUI.exp_record_param: {e}")
             self.exp_readin_display[i][from_to].setText("?")
             self.exp_readin_positions[i][from_to] = None
-        self.exp_readin_label = {i: self.make_label(text=f"Path {i}", font=SMALL)
-                                   for i in range(self.exp_num_read_ins)}
+        # self.exp_readin_label = {i: self.make_label(text=f"Path {i}", font=SMALL) for i in range(self.exp_num_read_ins)}
 
     def pic_record_param(self, which: Tuple[int, str]):
         def is_valid_format(txt: str):
@@ -908,25 +923,66 @@ class EvoGUI(QMainWindow):
     def show_multi_param_done(self):
         self.multi_param_button.setStyleSheet("background-color: white;")
 
-    def exp_start_acquisition(self):
-        self.exp_thread = ThreadExperiment(
+    def exp_init_positions(self):
+        tmp = self.pic_get_cropping_boxes()
+        if FigureWidget.cropping_boxes_are_valid(tmp):
+            cropping_indices = FigureWidget.get_cropping_indices(tmp)
+        else:
+            cropping_indices = None
+        self.exp_initialise_thread = ThreadInitialiseExperiment(
             cam=self.cam,
             mpl_canvas=self.mpl_canvas,
+            automaton=self.automaton,
             positions=self.exp_readin_positions,
+            cropping_indices=cropping_indices,
         )
-        self.exp_thread.started.connect(self.show_exp_processing)
-        self.exp_thread.finished.connect(self.show_exp_done)
-        self.exp_thread.start()
+        self.exp_initialise_thread.started.connect(self.show_exp_init_processing)
+        self.exp_initialise_thread.finished.connect(self.show_exp_init_done)
+        self.exp_initialise_thread.start()
+
+    def exp_start_acquisition(self):
+        self.exp_monitor_thread = ThreadMonitorExperiment(
+            mpl_canvas=self.mpl_canvas,
+            data_queue=self.data_queue,
+        )
+        self.exp_monitor_thread.started.connect(self.show_live_mode_processing)
+        self.exp_monitor_thread.finished.connect(self.show_live_mode_done)
+        self.exp_monitor_thread.start()
+
+        self.exp_start_button.setStyleSheet("background-color: orange;")
+        if not self.automaton.is_initialised():
+            self.automaton.initialise()
+        if not self.automaton.is_alive():
+            self.automaton.start()
+        else:
+            self.automaton.restart()
+        self.exp_start_button.setStyleSheet("background-color: green;")
 
     def exp_stop_acquisition(self):
-        if self.exp_thread is not None:
-            self.exp_thread.stop()
+        if not self.automaton.stopped():
+            self.automaton.stop()
+        if self.exp_monitor_thread is not None:
+            self.exp_monitor_thread.stop()
+        self.exp_start_button.setStyleSheet("background-color: white;")
 
     def show_exp_processing(self):
         self.exp_start_button.setStyleSheet("background-color: orange;")
 
+    def show_exp_init_processing(self):
+        self.exp_init_positions_button.setStyleSheet("background-color: orange;")
+
     def show_exp_done(self):
         self.exp_start_button.setStyleSheet("background-color: white;")
+
+    def show_exp_init_done(self):
+        self.exp_init_positions_button.setStyleSheet("background-color: green;")
+        # TODO
+        try:
+            tmp_data = self.data_queue.get(block=True, timeout=10)
+            if tmp_data[0] == AutomatonQueueDataType.FOCUS_CURVES:
+                self.exp_focus_data = tmp_data[1]
+        except queue.Empty:
+            logger.error("Data queue did not contain focus data.")
 
     def swfocus_get_param(self, param_name: str):
         if param_name == 'algorithm':
@@ -980,7 +1036,7 @@ class EvoGUI(QMainWindow):
         self.swfocus_reset_thread.start()
 
     def swfocus_show_curve(self):
-        if self.cam.focus_Z_coords is None:
+        if self.cam.focus_Z_coords is None or self.cam.focus_scores is None:
             logger.error("swfocus_show_curve: Focus is None. Run software focus first. Returning.")
             return
         fig = plt.figure()
@@ -1007,6 +1063,40 @@ class EvoGUI(QMainWindow):
         self.focus_curve_window.move(self.geometry().x() + self.geometry().width() + 10, self.geometry().y())
         self.focus_curve_window.show()
 
+    def exp_show_focus_curves(self):
+        if self.exp_focus_data is None:
+            logger.error("exp_show_curve: missing data. Returning.")
+            return
+        focus_curves, focus_prev_stack, focus_stack, focus_prev_z_coords = self.exp_focus_data
+
+        all_figs = {i: None for i in focus_curves.keys()}
+        for i in all_figs.keys():
+            fig = plt.figure()
+            gs = fig.add_gridspec(2, 2, width_ratios=[1, 1])
+            ax1 = fig.add_subplot(gs[0, :])
+            z_coords = np.array(list(focus_curves[i][0])) / 10
+            ax1.plot(z_coords, focus_curves[i][1], marker='x')
+            ax1.set_xticks(z_coords.tolist())
+            ax1.set_xticklabels([f'{x:.1f}' for x in z_coords.tolist()])
+            ax1.set_xlabel("Z position [um]")
+            ax1.set_ylabel("Sharpness Scores")
+            ax1.set_title(f"Focus Curve at pos_id = {i}")
+            best_index = np.argmax(focus_curves[i][1])
+            ax1.plot(z_coords[best_index], focus_curves[i][1][best_index], marker='o')
+            ax1.grid(True)
+            best_image = self.cam.normalise_frame(focus_stack[:, :, i])
+            prev_image = self.cam.normalise_frame(focus_prev_stack[:, :, i])
+            ax2 = fig.add_subplot(gs[1, 0])
+            ax2.imshow(prev_image)
+            ax2.set_title(f"Before Focus\n Z={focus_prev_z_coords[i]/10:.1f}")
+            ax3 = fig.add_subplot(gs[1, 1])
+            ax3.imshow(best_image)
+            ax3.set_title(f"After Focus\n Z={z_coords[best_index]:.1f}")
+            fig.tight_layout()
+            all_figs[i] = fig
+        self.exp_focus_curves_window = FigureMultiWindow(all_figs)
+        self.exp_focus_curves_window.show()
+
     def crisp_reset(self):
         self.crisp_reset_thread = ThreadConfigReset(
             this_cfg=self.cfg_crisp_default,
@@ -1025,13 +1115,22 @@ class EvoGUI(QMainWindow):
         except ValueError as e:
             logging.warning(f"swfocus_start: invalid parameter provided. Aborting. {e}")
             return
+        tmp = self.pic_get_cropping_boxes()
+        if FigureWidget.cropping_boxes_are_valid(tmp):
+            cropping_indices = FigureWidget.get_cropping_indices(tmp)[0]
+        else:
+            cropping_indices = None
         if self.cam.autofocus_is_locked():
             logger.info("swfocus_start: unlocking CRISP autofocus before software focus.")
             self.end_crisp()
             if self.cam.autofocus_is_locked():
                 logger.warning("swfocus_start: unable to unlock CRISP. Aborting.")
                 return
-        self.swfocus_start_thread = ThreadSWFocus(cam=self.cam, cfg_focus=self.cfg_focus)
+        self.swfocus_start_thread = ThreadSWFocus(
+            cam=self.cam,
+            cfg_focus=self.cfg_focus,
+            cropping_indices=cropping_indices,
+        )
         self.swfocus_start_thread.started.connect(self.show_swfocus_processing)
         self.swfocus_start_thread.finished.connect(self.show_swfocus_done)
         self.swfocus_start_thread.start()
@@ -1074,10 +1173,12 @@ class ThreadSWFocus(QThread):
             self,
             cam: EvoCamera,
             cfg_focus: ConfigFocus,
+            cropping_indices: Optional[Tuple[Tuple[int, int], Tuple[int, int]]] = None,
     ):
         super(QThread, self).__init__()
         self.cam = cam
         self.cfg_focus = cfg_focus
+        self.cropping_indices = cropping_indices
         self._stop_event = threading.Event()
 
     def stop(self):
@@ -1087,7 +1188,11 @@ class ThreadSWFocus(QThread):
         return self._stop_event.is_set()
 
     def run(self):
-        self.cam.software_focus_initialise(cfg_focus=self.cfg_focus, user_input_override=True)
+        self.cam.software_focus_initialise(
+            cfg_focus=self.cfg_focus,
+            user_input_override=True,
+            cropping_indices=self.cropping_indices,
+        )
         if not self.cam.software_focus_is_initialised():
             return
         old_channel = self.cam.current_channel
@@ -1273,6 +1378,32 @@ class FigureWindow(QWidget):
         layout.addWidget(canvas)
         self.setLayout(layout)
 
+
+class FigureMultiWindow(QWidget):
+    def __init__(self, fig_dict):
+        super().__init__()
+        self.fig_dict = fig_dict
+        self.current_index = 0
+
+        self.setWindowTitle("Focus Curves")
+        layout = QVBoxLayout()
+        self.canvas = FigureCanvas(self.fig_dict[self.current_index])
+        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layout.addWidget(self.canvas)
+        self.setLayout(layout)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Left:
+            self.current_index = (self.current_index - 1) % len(self.fig_dict)
+        elif event.key() == Qt.Key_Right:
+            self.current_index = (self.current_index + 1) % len(self.fig_dict)
+        self.update_figure()
+
+    def update_figure(self):
+        fig = self.fig_dict[self.current_index]
+        self.canvas.figure = fig
+        self.canvas.draw()
+
 class FigureWidget(FigureCanvas):
     def __init__(self, parent=None, width=10, height=10, dpi=300):
         self.parent = parent
@@ -1387,7 +1518,7 @@ class FigureWidget(FigureCanvas):
         draw.text((int(img_width / 2), int(img_height / 2)), text, fill=255, font=font, anchor='mm')
         return np.array(image_pil)
 
-    def plot_image(self, image_array=None):
+    def plot_image(self, image_array=None, title=None):
         if self._use_subplots():
             for (a, ((xmin, xmax), (ymin, ymax))) in zip(self.ax, self._cropping_indices):
                 a.clear()
@@ -1431,6 +1562,8 @@ class FigureWidget(FigureCanvas):
                     self.ax.imshow(FigureWidget.create_image_with_text(text="no image", size=(3200, 3200)))
                 else:
                     self.ax.imshow(image_array)
+            if title is not None:
+                self.ax.set_title(title)
         self.update_figure()
 
     def update_figure(self):
@@ -1604,3 +1737,118 @@ class ThreadExperiment(QThread):
             self.mpl_canvas.plot_image(image_array=frame)
             time.sleep(2)
         logger.info("Positions tested.")
+
+
+class ThreadInitialiseExperiment(QThread):
+    def __init__(
+            self,
+            cam: EvoCamera,
+            automaton: Automaton,
+            mpl_canvas: FigureWidget,
+            positions: Dict[int, Dict[str, Union[None, Dict[str, Union[float, int]]]]],
+            cropping_indices: Optional[Tuple[Tuple[int, int], Tuple[int, int]]] = None,
+    ):
+        super(QThread, self).__init__()
+        self.cam = cam
+        self.automaton = automaton
+        self.mpl_canvas = mpl_canvas
+        self.valid_coordinates = False
+        # self.coordinates = [{'X': 185501.2, 'Y': -62229.3}]
+        self.factory: CoordinateFactory = CoordinateFactory(dfov=self.cam.get_delta_fov())
+        self.coordinates: Union[None, List[Coordinate]] = self.get_positions_from_dict(positions)
+        self._cropping_boxes = ThreadInitialiseExperiment.make_delta_cropping_boxes(cropping_indices)
+        self.pause_time = 1
+        self.savepath = "/mnt/ImageData/Scott/2023-12-12"
+        self._stop_event = threading.Event()
+
+    @staticmethod
+    def make_delta_cropping_boxes(
+            cropping_inds: Union[None, List[Tuple[Tuple[int, int], Tuple[int, int]]]],
+    ) -> Union[None, List[delta.utils.CroppingBox]]:
+        if cropping_inds is None or not cropping_inds:
+            return None
+        # cropping_indices = ((box0.xtl, box0.xbr), (box0.ytl, box0.ybr))
+        return [
+            delta.utils.CroppingBox(xtl=c[0][0], xbr=c[0][1], ytl=c[1][0], ybr=c[1][1])
+            for c in cropping_inds
+        ]
+
+    def get_positions_from_dict(self, positions: Dict[int, Dict[str, Union[None, Dict[str, Union[float, int]]]]]):
+        valid_all = [v for key, val in positions.items() for v in val.values()
+                     if all([val1 is not None for val1 in val.values()])]
+        valid_dict = [val for key, val in positions.items() if all([val1 is not None for val1 in val.values()])]
+        if any(self.cam.coordinate_is_out_of_bounds(v) for v in valid_all):
+            out = [v for v in valid_all if self.cam.coordinate_is_out_of_bounds(v)]
+            self.valid_coordinates = False
+            logger.warning(f"ThreadExperiment: Following coordinates are out of bounds: {out}")
+            return None
+        elif (not valid_all) or (len(valid_all) % 2 != 0):
+            self.valid_coordinates = False
+            logger.warning(f"ThreadExperiment: No valid coordinates: {valid_all}")
+            return None
+        else:
+            self.valid_coordinates = True
+            logger.info(f"Provided points: {valid_all}")
+        coordinates = []
+        for from_to in valid_dict:
+            grid = self.factory.make_grid(
+                start=Coordinate.from_dict(from_to["from"]),
+                stop=Coordinate.from_dict(from_to["to"]),
+            )
+            coordinates.extend(grid)
+        logger.info(f"Extracted {len(coordinates)} coordinates: {coordinates}")
+        return coordinates
+
+    def stop(self):
+        self.automaton.stop()
+        self._stop_event.set()
+
+    def stopped(self):
+        return self._stop_event.is_set()
+
+    def run(self):
+        if not self.valid_coordinates or self.coordinates is None:
+            logger.warning("No valid coordinates provided. Aborting.")
+            return
+        logger.info(f"{self.coordinates}")
+        self.automaton.initialise_position_list(positions=self.coordinates, cropping_boxes=self._cropping_boxes)
+
+
+class ThreadMonitorExperiment(QThread):
+    def __init__(
+            self,
+            mpl_canvas: FigureWidget,
+            data_queue: queue.Queue,
+            pause_time: float = 1,
+    ):
+        super(QThread, self).__init__()
+        self.mpl_canvas = mpl_canvas
+        self.data_queue = data_queue
+        self.pause_time = 1
+        self._stop_event = threading.Event()
+
+    def stop(self):
+        self._stop_event.set()
+
+    def stopped(self):
+        return self._stop_event.is_set()
+
+    def run(self):
+        while True:
+            if self.stopped():
+                logger.info("Stopping ThreadMonitorExperiment.")
+                return
+            try:
+                tmp_data = self.data_queue.get(block=True, timeout=5)
+                if tmp_data[0] == AutomatonQueueDataType.PROCESS_DATA:
+                    pos_id: int = tmp_data[1][0]
+                    commands: List[AutomatonCommand] = tmp_data[1][1]
+                    image_command = next((command for command in commands if command.command_type == AutomatonCommandType.IMAGE), None)
+                    # TODO display correct channel if it exists and consider segment=True
+                    frame = AbstractCamera.normalise_frame(image_command.command_data[0, :, :])
+                    self.mpl_canvas.plot_image(image_array=frame, title=f"pos_id={pos_id}")
+                if self.data_queue.empty():
+                    time.sleep(self.pause_time)
+            except queue.Empty:
+                pass
+

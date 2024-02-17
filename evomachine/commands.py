@@ -45,9 +45,13 @@ class AutomatonCommand:
     "Time at which the command was created. Produced via time.time()."
 
     def __str__(self):
-        return f"Command(Type={self.command_type}, ID={self.command_id}, " \
-               f"Creation Time={strftime('%Y-%m-%d %H:%M:%S', gmtime(self.command_creation_time))}" \
-               f"Exec Time={strftime('%Y-%m-%d %H:%M:%S', gmtime(self.command_execution_time))})"
+        creation_time = "None" if self.command_creation_time is None else \
+            strftime('%Y-%m-%d %H:%M:%S', gmtime(self.command_creation_time))
+        exec_time = "None" if self.command_execution_time is None else \
+            strftime('%Y-%m-%d %H:%M:%S', gmtime(self.command_execution_time))
+        has_data = "True" if self.command_data is not None else "False"
+        return f"Command(Type={self.command_type}, ID={self.command_id}, has_data={has_data}, " \
+               f"Creation Time={creation_time}, Exec Time={exec_time})"
 
 
 class CommandFactory:
@@ -145,7 +149,7 @@ class CommandFactory:
 
         Returns in AbstractStrategy.callback
         ------------------------------------
-        command_data : Always returns None.
+        command_data : Always returns True.
         """
         if not (isinstance(fov_id, int) or fov_id is None):
             raise TypeError(f"AutomatonCommandFactory.move: Wrong type provided ({type(fov_id)}).")
@@ -174,7 +178,7 @@ class CommandFactory:
 
         Returns in AbstractStrategy.callback
         ------------------------------------
-        command_data : Always returns None.
+        command_data : Always returns True.
         -------
 
         """
@@ -195,6 +199,8 @@ class CommandFactory:
 
     def command_stop(self) -> AutomatonCommand:
         """
+        Stop automaton. Note that AbstractStrategy.callback is not called anymore after this.
+
         Returns in AbstractStrategy.callback
         ------------------------------------
         command_data (bool)  : Always returns True.

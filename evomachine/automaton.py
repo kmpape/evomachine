@@ -12,7 +12,7 @@ from delta.config import Config
 
 from evomachine.acquisition import AbstractCamera
 from evomachine.commands import AutomatonCommand, AutomatonCommandType
-from evomachine.config import ConfigDevice, ConfigFocus, ConfigImage, EVO_GUI_LOGGING_LEVEL, get_logger
+from evomachine.config import ConfigDevice, ConfigFocus, ConfigImage, ConfigLED, EVO_GUI_LOGGING_LEVEL, get_logger
 from evomachine.coordinates import Coordinate, CoordinateFactory
 from evomachine.dmd import DMDControl
 from evomachine.exceptions import ErrorCode, ErrorContainer, ConfigError
@@ -24,7 +24,8 @@ logger = get_logger(name=__name__)
 
 
 class AutomatonQueueDataType(Enum):
-    FOCUS_DATA = auto()
+    FOCUS_CURVES = auto()
+    FOCUS_FRAMES = auto()
     INFO_TEXT = auto()
     PROCESS_DATA = auto()
 
@@ -32,7 +33,7 @@ class AutomatonQueueDataType(Enum):
 class Automaton(threading.Thread):
     def __init__(
             self,
-            cfg_device: ConfigDevice,
+            cfg_device: ConfigDevice,  # TODO add reference channel to config
             cfg_image: ConfigImage,
             cfg_delta: delta.config.Config,
             cfg_focus: ConfigFocus,
@@ -74,13 +75,23 @@ class Automaton(threading.Thread):
         "List indexed by i_pos w. reference image array: channels x pxl_vert x pxl_horiz."
         self._is_initialised: bool = False
         "Set to true after initialisation."
+        self._position_list_is_initialised: bool = False
+        "Set to true after initialise_position_list."
         self._data_queue: Union[queue.Queue, None] = data_queue
         "Queue for communication with the GUI."
+        self._cropping_boxes: Union[None, List[delta.utils.CroppingBox]] = None
+        "List of cropping boxes applied to each FoV. Current: first box used for focus routine."
 
         self.positions: Dict[int, Coordinate] = {}
         "Dictionary position coordinates (after focus) initialised in initialise_position_list()."
         self.focus_curves: Dict[int, Tuple[np.typing.Array, np.typing.Array]] = {}
         "Dictionary containing (Z coordinates for focus, focus scores) at each position."
+        self.focus_stack: Union[None, np.typing.Array] = None
+        "3D array with focus frame of each position (3rd dimension)."
+        self.focus_prev_stack: Union[None, np.typing.Array] = None
+        "3D array with frame before focus for each position (3rd dimension)."
+        self.focus_prev_z_coords: Union[None, np.typing.Array] = None
+        "1D array with z coordinate before focus for each position."
 
         self.next_commands: List[AutomatonCommand] = []
         "List of commands to be executed at the next timestep."
@@ -112,15 +123,30 @@ class Automaton(threading.Thread):
         if (self._data_queue is not None) and (logging_level >= EVO_GUI_LOGGING_LEVEL):
             self._data_queue.put((queue_data_type, copy.copy(queue_data)))
 
-    def initialise(self, positions: Union[Dict[int, Coordinate], List[Coordinate]]):
+    def initialise(
+            self,
+            positions: Optional[Union[Dict[int, Coordinate], List[Coordinate]]] = None,
+            cropping_boxes: Optional[List[delta.utils.CroppingBox]] = None,
+    ):
+        logger.info("Automaton.initialise: starting...")
+        self._is_initialised = False
         
         # Initialise devices
         self._camera.initialise()
+        self._camera.studio.live().set_live_mode(False)
 
         # Validate position list, get focus coordinates, and broadcast position list to camera
-        self.initialise_position_list(positions=positions)
+        if positions is not None:
+            logger.info(f"Automaton.initialise: initialising {len(positions)} positions...")
+            self.initialise_position_list(positions=positions, cropping_boxes=cropping_boxes)
+        elif not self._position_list_is_initialised:
+            raise ConfigError(message="Automaton.initialise: position list is not initialised.",
+                              error_code=ErrorCode.ERROR_DEVICE_CONFIG)
+        else:
+            logger.info(f"Automaton.initialise: found {len(self.positions)} initialised positions...")
+
         if not self._camera.set_pos_id_to_coordinate(pos_id_to_coordinate=self.positions):
-            raise ConfigError(message="Automaton.initialise: failed to set position list.",
+            raise ConfigError(message="Automaton.initialise: failed to pass position list to camera.",
                               error_code=ErrorCode.ERROR_DEVICE_CONFIG)
 
         # Allocate variables
@@ -145,6 +171,7 @@ class Automaton(threading.Thread):
         ]
 
         # Take reference frames on each channel
+        logger.info(f"Automaton.initialise: taking reference frames on all channels and all positions...")
         for i_pos in self.positions.keys():
             self._camera.move_to_pos(i_pos=i_pos)
             for i_chan in range(self._cfg_device.num_chan):
@@ -158,21 +185,36 @@ class Automaton(threading.Thread):
         assert self._curr_period == 1  # Note that each ROI keeps track of _curr_period as well
 
         # Initialise strategy
+        logger.info(f"Automaton.initialise: initialising strategy...")
         self._initialise_strategy()
 
-        self.fill_queue(
-            queue_data_type=AutomatonQueueDataType.FOCUS_DATA,
-            queue_data=self.focus_curves,
-            logging_level=logging.INFO,
-        )
-
         self._is_initialised = True
+
+        logger.info(f"Automaton.initialise: initialisation done.")
 
     def initialise_position_list(
             self,
             positions: Union[Dict[int, Coordinate], List[Coordinate]],
             cfg_focus: Optional[ConfigFocus] = None,
+            cropping_boxes: Optional[List[delta.utils.CroppingBox]] = None,
     ):
+        self._position_list_is_initialised = False
+
+        cropping_indices = None
+        if cropping_boxes is not None:
+            if (not cropping_boxes) or (not all(isinstance(c, delta.utils.CroppingBox) for c in cropping_boxes)):
+                raise ConfigError(f"Automaton.initialise_position_list: invalid cropping boxes {cropping_boxes}",
+                                  ErrorCode.ERROR_NOT_INITIALISED)
+            self._cropping_boxes = cropping_boxes
+            box0 = self._cropping_boxes[0]
+            cropping_indices = ((box0.xtl, box0.xbr), (box0.ytl, box0.ybr))
+
+        self._camera.disable_led()
+        self._camera.studio.live().set_live_mode(False)
+
+        # FIXME any DMD call from this thread crashes pygame
+        # self._dmd.display_full()
+
         cfg_focus = self._cfg_focus if cfg_focus is None else cfg_focus
         if isinstance(positions, list):
             positions = {i_pos: coord.copy() for i_pos, coord in enumerate(positions)}
@@ -184,6 +226,7 @@ class Automaton(threading.Thread):
 
         # Check positions
         z_coord = self._camera.get_coordinates(['Z'])['Z']
+        self.focus_prev_z_coords = np.zeros(len(positions))
         for i_pos, coord in positions.items():
             if not coord.has_z():
                 coord.z = z_coord
@@ -191,16 +234,41 @@ class Automaton(threading.Thread):
                 msg = f"Automaton.initialise_position_list: {Coordinate} for position {i_pos} is out of bounds " \
                       f"({self._camera.get_stage_limits()})."
                 raise ConfigError(message=msg, error_code=ErrorCode.ERROR_DEVICE_CONFIG)
+            self.focus_prev_z_coords[i_pos] = coord.z
 
         # Run software focus on each position
         self.focus_curves = {i_pos: None for i_pos in positions.keys()}
         self.positions = {i_pos: None for i_pos in positions.keys()}
+        self.focus_prev_stack = np.zeros((self._cfg_image.pxl_vert, self._cfg_image.pxl_horiz, len(positions)))
+        self.focus_stack = np.zeros((self._cfg_image.pxl_vert, self._cfg_image.pxl_horiz, len(positions)))
         for i_pos, coord in positions.items():
+            logger.info(f"Automaton.initialise_position_list: initialising position {i_pos+1} of {len(positions)}.")
+            if self.stopped():
+                logger.warning("Automaton.initialise_position_list: stopping initialisation.")
+                return
             self._camera.move_to(coordinate=coord, block=True)
-            self._camera.software_focus(cfg_focus=cfg_focus, user_input_override=True, countdown_override=True)
+            self._camera.software_focus(
+                cfg_focus=cfg_focus,
+                user_input_override=True,
+                countdown_override=True,
+                cropping_indices=cropping_indices,
+            )
             self.focus_curves[i_pos] = (self._camera.focus_Z_coords, self._camera.focus_scores)
+            self.focus_prev_stack[:, :, i_pos] = self._camera.focus_prev_image
+            self.focus_stack[:, :, i_pos] = self._camera.get_software_focus_z_frame()
             coord.z = self._camera.get_software_focus_z_coord()
             self.positions[i_pos] = coord
+
+        self.fill_queue(
+            queue_data_type=AutomatonQueueDataType.FOCUS_CURVES,
+            queue_data=(self.focus_curves, self.focus_prev_stack, self.focus_stack, self.focus_prev_z_coords),
+            logging_level=logging.INFO,
+        )
+
+        self._camera.disable_led()
+        # TODO any DMD call from this thread crashes pygame
+        # self._dmd.display_none()
+        self._position_list_is_initialised = True
 
     def _initialise_strategy(self):
         self.next_commands = self._strategy.initialise(
@@ -230,13 +298,16 @@ class Automaton(threading.Thread):
 
         # Execute requested commands in the given order
         for cmd in self.next_commands:
+            if self.stopped():
+                logger.warning(f"Automaton.process: stopping process at {str(cmd)}.")
+                return
             cmd.command_data = None  # Overwritten by AutomatonCommandType.IMAGE
 
             if cmd.command_type == AutomatonCommandType.MOVE:
                 self._move_to_pos(pos_id=cmd.command_args)
 
             elif cmd.command_type == AutomatonCommandType.WAIT:
-                time.sleep(cmd.command_args)
+                time.sleep(cmd.command_args)  # TODO implement our own function that reacts to stop event
 
             elif cmd.command_type == AutomatonCommandType.STOP:
                 logger.warning("Automaton.process: Received STOP command. Shutting down.")
@@ -250,7 +321,8 @@ class Automaton(threading.Thread):
                 # TODO actuate DMD
                 self._take_image(channels=cmd.command_args['channels'], brightness=cmd.command_args['brightness'])
                 if not cmd.command_args['segment']:
-                    cmd.command_data = self._all_frames[self._curr_pos_id][1, cmd.command_args['channels'], :, :]
+                    channels_int = [c.value for c in cmd.command_args['channels']]
+                    cmd.command_data = self._all_frames[self._curr_pos_id][1, channels_int, :, :]
                 else:
                     self._process_position()
                     # TODO fill with segmentation data
@@ -258,11 +330,16 @@ class Automaton(threading.Thread):
                                         for roi_id in range(len(self._pos_processor[self._curr_pos_id].rois))}
                 if cmd.command_args['save']:
                     for i_chan in cmd.command_args['channels']:
-                        self._camera.save_frame(frame=self._all_frames[self._curr_pos_id][1, i_chan, :, :])
+                        self._camera.save_frame(
+                            frame=self._all_frames[self._curr_pos_id][1, i_chan.value, :, :],
+                            i_channel=i_chan,
+                            i_pos=self._curr_pos_id,
+                        )
 
             elif cmd.command_type == AutomatonCommandType.PROJECT:
                 # TODO need assert whether DMD image is being displayed
-                self._dmd.display_image(img=cmd.command_args['image'])
+                # TODO any DMD call from this thread crashes pygame
+                # self._dmd.display_image(img=cmd.command_args['image'])
                 self._camera.set_led(i_chan=cmd.command_args['channel'], brightness=cmd.command_args['brightness'])
                 # TODO need to block movement and implement the sleep statement as countdown w. callback
                 self.sleep(duration=cmd.command_args['duration'])
@@ -272,7 +349,7 @@ class Automaton(threading.Thread):
 
         self.fill_queue(
             queue_data_type=AutomatonQueueDataType.PROCESS_DATA,
-            queue_data=self.next_commands,
+            queue_data=(self._curr_pos_id, self.next_commands),
             logging_level=logging.INFO,
         )
 
@@ -285,11 +362,16 @@ class Automaton(threading.Thread):
         )
 
     def run(self):
+        has_stopped = True
         if not self.is_initialised():
             raise ConfigError(message="Automaton.run: not initialised.", error_code=ErrorCode.ERROR_NOT_INITIALISED)
-
-        while not self.stopped():
-            self.process()
+        while True:
+            while not self.stopped():
+                self.process()
+            if has_stopped:
+                logger.warning("Automaton.run: halting execution.")
+                has_stopped = False
+            time.sleep(1)
 
     def set_strategy(self, strategy: AbstractStrategy):
         self._strategy = strategy
@@ -305,16 +387,17 @@ class Automaton(threading.Thread):
             self._camera.move_to_pos(i_pos=pos_id)
             self._curr_pos_id = pos_id
 
-    def _take_image(self, channels: Optional[List[int]] = None, brightness: Union[int, List[int]] = 100):
+    def _take_image(self, channels: Optional[List[Union[int, ConfigLED]]] = None, brightness: Union[int, List[int]] = 100):
         if (channels is None) or not channels:
             channels = list(range(self._cfg_device.num_chan))
+        channels = [c.value if isinstance(c, ConfigLED) else c for c in channels]
         if isinstance(brightness, int):
             brightness = [brightness for _ in channels]
-        for i_chan in channels:
+        for i, i_chan in enumerate(channels):
             self._all_frames[self._curr_pos_id][0, i_chan, :, :] = self._all_frames[self._curr_pos_id][1, i_chan, :, :]
             self._all_frames[self._curr_pos_id][1, i_chan, :, :] = self._camera.get_frame(
                 i_chan=i_chan,
-                brightness=brightness[i_chan],
+                brightness=brightness[i],
             )
 
     def _process_position(self):
@@ -334,11 +417,19 @@ class Automaton(threading.Thread):
     def is_initialised(self):
         return self._is_initialised
 
+    def reset(self):
+        self._position_list_is_initialised = False
+        self._is_initialised = False
+        self.positions = {}
+
     def sleep(self, duration: float):
         now = time.perf_counter()
         end = now + duration
         while (now < end) and not self.stopped():
             now = time.perf_counter()
+
+    def restart(self):
+        self._stop_event.clear()
 
     def stop(self):
         self._stop_event.set()

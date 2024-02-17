@@ -131,31 +131,46 @@ class Coordinate:
 class CoordinateFactory:
     def __init__(
             self,
-            dfov_x: float,
-            dfov_y: Optional[float] = None,
+            dfov: float,
     ):
-        self.dfov_x: float = float(dfov_x)
-        "Length of field of view in x direction. Must be positive."
-        self.dfov_y: float = float(dfov_y) if dfov_y is not None else dfov_x
-        "Length of field of view in y direction."
+        self.dfov: float = float(dfov)
+        "Size of (square) field of view > 0."
 
-        assert dfov_x > 0
-        assert dfov_y is None or dfov_y > 0
+        assert dfov > 0
 
-    def make_grid_xy(
+    def make_grid(
             self,
             start: Coordinate,
             stop: Coordinate,
     ) -> List[Coordinate]:
-        tmp_start = Coordinate(start.x, start.y)
-        tmp_stop = Coordinate(stop.x, stop.y)
-        tmp_delta = tmp_stop - tmp_start
-        num_pos_x = ceil(abs(tmp_delta).x / self.dfov_x) + 1
-        num_pos_y = ceil(abs(tmp_delta).y / self.dfov_y) + 1
+        """
+        Creates a grid of field of views from start to stop coordinate. Moves in steps of dfov in either x or y
+        direction, and linearly in the other and the z direction (if not None).
+
+        Parameters
+        ----------
+        start
+        stop
+
+        Returns
+        -------
+
+        """
+        diff = stop - start
+        num_pos_x = ceil(abs(diff.x) / self.dfov) + 1
+        num_pos_y = ceil(abs(diff.y) / self.dfov) + 1
         if (num_pos_x == 1) and (num_pos_y == 1):
-            return [Coordinate.from_coordinate(tmp_start)]
+            return [Coordinate.from_coordinate(start)]
         elif num_pos_x > num_pos_y:
-            delta = Coordinate(tmp_delta.sign().x * self.dfov_x, tmp_delta.y / (float(num_pos_x) - 1), 0.0)
+            delta = Coordinate(
+                x=diff.sign().x * self.dfov,
+                y=diff.y / (float(num_pos_x) - 1),
+                z=diff.z / (float(num_pos_x) - 1),
+            )
         else:
-            delta = Coordinate(tmp_delta.x / (float(num_pos_y) - 1), tmp_delta.sign().y * self.dfov_y, 0.0)
-        return [tmp_start + (delta * i) for i in range(max(num_pos_x, num_pos_y))]
+            delta = Coordinate(
+                x=diff.x / (float(num_pos_y) - 1),
+                y=diff.sign().y * self.dfov,
+                z=diff.z / (float(num_pos_y) - 1),
+            )
+        return [start + (delta * i) for i in range(max(num_pos_x, num_pos_y))]
