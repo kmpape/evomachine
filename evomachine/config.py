@@ -6,9 +6,12 @@ import numpy as np
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
-from delta import utils
+# from delta import utils
+import delta
 
 from evomachine.exceptions import ConfigError, ErrorCode
+from evomachine.evotypes import FilterWheelType, FocusAlgorithmType, LEDType, ImageConfigType, ObjectiveConfigType, \
+    ImageConfigTypeFactory, ObjectiveConfigTypeFactory
 
 # DeLTA lib install directory
 EVOMACHINE_DIR = Path(__file__).parent
@@ -30,191 +33,55 @@ def get_logger(name: str) -> logging.Logger:
     return logger
 
 
-class ConfigEnumTemplate(Enum):
-    """ Convenience class for Enumerate classes."""
-    @classmethod
-    def from_string(cls, s: str) -> Union['ConfigEnumTemplate.member', None]:
-        for member in cls:
-            if str(member.name) == s:
-                return member
-        return None
-
-    @classmethod
-    def get_all_values(cls) -> List[int]:
-        """ Returns all member values defined in Enum class."""
-        return [member.value for member in cls]
-
-    @classmethod
-    def get_all_names(cls) -> List[str]:
-        """ Returns all member names for members defined in Enum class."""
-        return [cls.get_name(member.value) for member in cls]
-
-    @classmethod
-    def get_name(cls, value_to_find) -> str:
-        """ Returns the variable name for a particular enum value. Returns an empty string if not defined."""
-        for member in cls:
-            if member.value == value_to_find:
-                return str(member.name)
-        return ""
-
-    @classmethod
-    def get_dict(cls) -> Dict[int, str]:
-        """ Returns a value-variable_name dictionary. """
-        return {v: cls.get_name(value_to_find=v) for v in cls.get_all_values()}
-
-    def __str__(self):
-        return str(self.name)
-
-
-
-class ConfigFocusAlgorithm(ConfigEnumTemplate):
-    LAPLACIAN_VAR = auto()
-    SQUARED_GRAD_AVG = auto()
-    STEEL = auto()
-
-
-class ConfigLED(ConfigEnumTemplate):
-    LED_NO_LED = -1
-    LED_405_NM = 0
-    LED_450_NM = 1
-    LED_505_NM = 2
-    LED_538_NM = 3
-
-
-class ConfigObjectiveType(ConfigEnumTemplate):
-    OIL_60x = auto()
-    AIR_40x = auto()
-
-
 @dataclass
-class ConfigDevice:
-    """Configuration class for the device geometry and scanning paths"""
-
-    num_pos: int
-    "Number of camera/stage positions to scan the entire device."
-    coord_pos: List[Tuple[int, int]]
-    "X and Y coordinates for each position. Must have length num_position."
-
-    num_chan: int
-    "Number of channels (wavelengths) used in imaging."
-
-    num_periods: Union[int, None]  # TODO: this should go somewhere else
-    "Number of times the device is scanned. Use None for unlimited."
-
-    read_from_disk: bool
-    "Specify if images must be read from disk. If yes, provide a path."
-    path_to_images: Union[Path, None]
-    "Path to folder containing images. File names follow Delta's naming convention."
-
-    path_to_save: Union[Path, None]
-    "Path to save images. If triggered manually, path can be specified when calling the function."
-
-    image_processing_verbosity: int
-    "Path to folder containing images. File names follow Delta's naming convention."
-
-    tiger_port: Union[str, None]
-    "Serial port for asitiger connection."
-    def check_config(self):
-        if self.num_pos != len(self.coord_pos):
-            raise ConfigError("num_pos must match number of X/Y coordinates.",
-                              ErrorCode.ERROR_DEVICE_CONFIG.value)
-        if self.read_from_disk:
-            if self.path_to_images is None or not self.path_to_images.exists():
-                raise ConfigError("Must provide a valid path if read_from_disk is True."
-                                  "Received {}".format(self.path_to_images),
-                                  ErrorCode.ERROR_DEVICE_CONFIG.value)
-            delta_reader: utils.XPReader = \
-                utils.XPReader(self.path_to_images / "Position{p}Channel{c}Frames{t}.tif")
-
-            if self.num_pos > len(delta_reader.positions):
-                raise ConfigError("Found {} positions, but require {}.".format(
-                    len(delta_reader.positions), self.num_pos),
-                    ErrorCode.ERROR_DEVICE_CONFIG.value)
-
-            if self.num_periods > len(delta_reader.frames):
-                raise ConfigError("Found {} periods, but require {}.".format(
-                    len(delta_reader.frames), self.num_periods),
-                    ErrorCode.ERROR_DEVICE_CONFIG.value)
-
-            if self.num_chan > len(delta_reader.channels):
-                raise ConfigError("Found {} channels, but require {}.".format(
-                    len(delta_reader.channels), self.num_chan),
-                    ErrorCode.ERROR_DEVICE_CONFIG.value)
-
-        if (self.path_to_save is not None) and not self.path_to_save.exists():
-            raise ConfigError("Must provide a valid path_to_save or None."
-                              "Received {}".format(self.path_to_save),
-                              ErrorCode.ERROR_DEVICE_CONFIG.value)
-
-
-DEVICE_CONFIG_DELTA_SIM = ConfigDevice(
-    num_pos=2,
-    coord_pos=[(0, 0) for _ in range(2)],
-    num_chan=2,
-    num_periods=10,
-    read_from_disk=True,
-    path_to_images=EVOMACHINE_DIR.parent / "tests/data/movie_mothermachine_tif",
-    path_to_save=None,
-    image_processing_verbosity=1,
-    tiger_port=None,
-)
-
-test_pos_list = [(-10000, 0, 0), (0, 0, 0), (0, 10000, 0)]
-DEVICE_CONFIG_EVO_TEST = ConfigDevice(
-    num_pos=len(test_pos_list),
-    coord_pos=test_pos_list,
-    num_chan=4,
-    num_periods=None,
-    read_from_disk=False,
-    path_to_images=None,
-    path_to_save=EVOMACHINE_DIR.parent / "images/DEFAULT",
-    image_processing_verbosity=1,
-    tiger_port="/dev/ttyUSB0",
-)
-
-
-@dataclass
-class ConfigImage:
-    pxl_horiz: int
-    "Number of pixels in horizontal direction."
-    pxl_vert: int
-    "Number of pixels in vertical direction."
-    pxl_dtype: np.dtype
-    "Datatype of images"
-    tile_image: Optional[Tuple[int, int]] = (1, 1)
-    "Tile images returned from camera."
-    crop_out_ROI: Optional[bool] = True
+class ConfigImageProcessor:
+    cfg_delta: delta.config.Config
+    "Delta configuration object."
+    channels: List[LEDType]
+    "List of channels to be imaged. Used for taking reference frames."
+    channel_seg: LEDType
+    "Channel used for segmentation."
+    channel_rot: LEDType
+    "Channel used for rotation identification."
+    channel_roi: LEDType
+    "Channel used for region-of-interest identification."
+    crop_out_ROI: bool = True
     "Apply ROI segmentation to overlapping image portions with size of ROI segmentation model."
-    use_track_RT: Optional[bool] = False
+    use_track_RT: bool = False
     "Use special tracking function for tracking in trenches."
+    image_processing_verbosity: int = 0
+    "Lowest verbosity is 0."
 
-    def check_config(self):
-        if self.pxl_horiz <= 0 or self.pxl_vert <= 0:
-            raise ConfigError("Number of pixels must be strictly positive.",
-                              ErrorCode.ERROR_IMAGE_CONFIG.value)
+    def __post_init__(self):
+        if not isinstance(self.cfg_delta, delta.config.Config):
+            raise TypeError("cfg_delta must be a delta.config.Config object.")
+        if not (isinstance(self.channels, list) and all(isinstance(channel, LEDType) for channel in self.channels))\
+                or len(self.channels) == 0 or LEDType.NO_LED in self.channels:
+            raise ConfigError("Invalid channel list.", ErrorCode.ERROR_CONFIG)
+        if not isinstance(self.channel_seg, LEDType) or self.channel_seg not in self.channels:
+            raise TypeError("channel_seg must be a LEDType object in channels.")
+        if not isinstance(self.channel_rot, LEDType) or self.channel_rot not in self.channels:
+            raise TypeError("channel_rot must be a LEDType object in channels.")
+        if not isinstance(self.channel_roi, LEDType) or self.channel_roi not in self.channels:
+            raise TypeError("channel_roi must be a LEDType object in channels.")
+        if not isinstance(self.crop_out_ROI, bool):
+            raise TypeError("crop_out_ROI must be a boolean.")
+        if not isinstance(self.use_track_RT, bool):
+            raise TypeError("use_track_RT must be a boolean.")
+        if not isinstance(self.image_processing_verbosity, int) or self.image_processing_verbosity < 0:
+            raise TypeError("image_processing_verbosity must be an integer >= 0.")
 
 
-IMAGE_CONFIG_DELTA_SIM = ConfigImage(
-    pxl_horiz=696,
-    pxl_vert=520,
-    pxl_dtype=np.dtype("float32"),
-)
-
-IMAGE_CONFIG_DELTA_BENCH = ConfigImage(
-    pxl_horiz=696,
-    pxl_vert=520,
-    pxl_dtype=np.dtype("float32"),
-    tile_image=(1, 5),
-    crop_out_ROI=True,
-)
-
-IMAGE_CONFIG_EVO_CAM = ConfigImage(
-    pxl_horiz=3200,
-    pxl_vert=3200,
-    pxl_dtype=np.dtype("uint16"),
-)
-
-IMAGE_CONFIG_DEFAULT = IMAGE_CONFIG_EVO_CAM
+class ConfigImageProcessorFactory:
+    @staticmethod
+    def default_config() -> ConfigImageProcessor:
+        return ConfigImageProcessor(
+            cfg_delta=delta.config.DEFAULT_CONFIG_MOTHERMACHINE,
+            channels=[LEDType.LED_450_NM, LEDType.LED_505_NM],
+            channel_seg=LEDType.LED_450_NM,
+            channel_rot=LEDType.LED_450_NM,
+            channel_roi=LEDType.LED_450_NM,
+        )
 
 
 @dataclass
@@ -227,8 +94,6 @@ class ConfigCRISP:
     "Prevent the axis from moving too far out of focus lock. Value in mm."
     loop_gain: int
     "Adjust to change the responsiveness of CRISP."
-    objective_na: float
-    "Objective numerical aperture."
     update_rate: int
     "The time in ms to wait between updates to the CRISP trajectory."
 
@@ -267,30 +132,21 @@ class ConfigCRISP:
         else:
             return False
 
-    def check_config(self):
+    def __post_init__(self):
         if not self.attr_is_valid('led_intensity', self.led_intensity):
-            raise ConfigError(f"led_intensity must be an integer in the range (0,100]. Provided {self.led_intensity}.",
-                              ErrorCode.ERROR_CRISP_CONFIG.value)
-        if not self.attr_is_valid('objective_na', self.objective_na):
-            raise ConfigError(f"objective_na must be a floating point number. Provided {self.objective_na}.",
-                              ErrorCode.ERROR_CRISP_CONFIG.value)
+            raise TypeError(f"led_intensity must be an integer in the range (0,100]. Provided {self.led_intensity}.")
         if not self.attr_is_valid('loop_gain', self.loop_gain):
-            raise ConfigError(f"loop_gain must be an integer in the range [1,10]. Provided {self.loop_gain}.",
-                              ErrorCode.ERROR_CRISP_CONFIG.value)
+            raise TypeError(f"loop_gain must be an integer in the range [1,10]. Provided {self.loop_gain}.")
         if not self.attr_is_valid('averaging', self.averaging):
-            raise ConfigError(f"averaging must be an integer in the range [0,Inf). Provided {self.averaging}.",
-                              ErrorCode.ERROR_CRISP_CONFIG.value)
+            raise TypeError(f"averaging must be an integer in the range [0,Inf). Provided {self.averaging}.")
         if not self.attr_is_valid('update_rate', self.update_rate):
-            raise ConfigError(f"update_rate must be an integer in the range [0,Inf). Provided {self.update_rate}.",
-                              ErrorCode.ERROR_CRISP_CONFIG.value)
+            raise TypeError(f"update_rate must be an integer in the range [0,Inf). Provided {self.update_rate}.")
         if not self.attr_is_valid('lock_range', self.lock_range):
-            raise ConfigError(f"lock_range may lead to objective crashing into the sample. Provided {self.lock_range}.",
-                              ErrorCode.ERROR_CRISP_CONFIG.value)
+            raise TypeError(f"lock_range may lead to objective crashing into the sample. Provided {self.lock_range}.")
 
     def __str__(self):
         attributes = [
             f"- led_intensity={self.led_intensity}",
-            f"- objective_na={self.objective_na:.3f}",
             f"- loop_gain={self.loop_gain}",
             f"- averaging={self.averaging}",
             f"- update_rate={self.update_rate}",
@@ -301,59 +157,42 @@ class ConfigCRISP:
         return "\n".join(attributes)
 
 
-CRISP_CONFIG_DEFAULT = ConfigCRISP(
-    led_intensity=95,
-    objective_na=0.95,
-    loop_gain=5,
-    averaging=0,
-    update_rate=100,
-    lock_range=0.025,
-)
-
-CRISP_CONFIG_OIL = ConfigCRISP(
-    led_intensity=95,
-    objective_na=1.4,
-    loop_gain=5,
-    averaging=0,
-    update_rate=100,
-    lock_range=0.025,
-)
+class ConfigCRISPFactory:
+    @staticmethod
+    def default_config() -> ConfigCRISP:
+        return ConfigCRISP(
+            led_intensity=95,
+            loop_gain=5,
+            averaging=0,
+            update_rate=100,
+            lock_range=0.025,
+        )
 
 
 @dataclass
 class ConfigFocus:
     exposure_time: Union[float, int]
     "Exposure time for focusing in ms."
-    focus_channel: int
-    "LED channel to use while scanning. See ConfigLED for available channels."
+    focus_channel: LEDType
+    "LED channel to use while scanning. See LEDType for available channels."
     rel_range: int
     "Relative range for Z-movement of stage in 1/10 μm, e.g., stage will move current_position+-rel_range."
-    steps_size: int
-    "Step size for Z-movement of stage in 1/10 μm, e.g., steps_size=1 -> stage moves in 0.1 μm."
+    step_size: int
+    "Step size for Z-movement of stage in 1/10 μm, e.g., step_size=1 -> stage moves in 0.1 μm."
 
-    algorithm: ConfigFocusAlgorithm = ConfigFocusAlgorithm.STEEL
-    "Algorithm used to focus. See ConfigFocusAlgorithm for available algorithms."
+    algorithm: FocusAlgorithmType = FocusAlgorithmType.STEEL
+    "Algorithm used to focus. See FocusAlgorithmType for available algorithms."
     user_input: Optional[bool] = True
     "Ask for user input before configuring and starting software focus."
 
-    desc_exposure_time: str = "Exposure [ms]"
-    desc_focus_channel: str = "Channel number [0,...,3]"
-    desc_rel_range: str = "Relative range [um/10]"
-    desc_steps_size: str = "Step Size [um/10]"
-    desc_algorithm: str = f"Algorithm enum from ConfigFocusAlgorithm."
-    desc_user_input: str = "Query user before start [bool]"
-
-    def get_attr_description(self, attr_name: str) -> str:
-        return getattr(self, 'desc_'+attr_name)
-
     @staticmethod
-    def get_attr_from_str(attr_name: str, attr_value_str: str) -> Union[int, float, bool, ConfigFocusAlgorithm, None]:
+    def get_attr_from_str(attr_name: str, attr_value_str: str) -> Union[int, float, bool, FocusAlgorithmType, None]:
         if attr_name == 'exposure_time':
             return float(attr_value_str)
         elif attr_name == 'user_input':
             return bool(attr_value_str)
         elif attr_name == 'algorithm':
-            return ConfigFocusAlgorithm.from_string(attr_value_str)
+            return FocusAlgorithmType.from_string(attr_value_str)
         else:
             return int(attr_value_str)
 
@@ -361,37 +200,29 @@ class ConfigFocus:
         if attr_name == 'exposure_time':
             return (isinstance(attr_value, int) or isinstance(attr_value, float)) and attr_value >= 0.01
         elif attr_name == 'focus_channel':
-            return isinstance(attr_value, int) and attr_value in ConfigLED.get_all_values()
+            return isinstance(attr_value, LEDType)
         elif attr_name == 'rel_range':
             return isinstance(attr_value, int) and (attr_value > 0) and (attr_value < 2000)
-        elif attr_name == 'steps_size':
+        elif attr_name == 'step_size':
             return isinstance(attr_value, int) and (attr_value > 0) and (attr_value <= self.rel_range)
         elif attr_name == 'algorithm':
-            return isinstance(attr_value, ConfigFocusAlgorithm)
+            return isinstance(attr_value, FocusAlgorithmType)
         elif attr_name == 'user_input':
             return isinstance(attr_value, bool)
         else:
             return False
 
-    def check_config(self):
-        if not self.attr_is_valid('steps_size', self.steps_size):
-            raise ConfigError(f"steps_size must be an integer in the range [1, rel_range={self.rel_range}]. "
-                              f"Provided {self.steps_size}.",
-                              ErrorCode.ERROR_FOCUS_CONFIG.value)
+    def __post_init__(self):
+        if not self.attr_is_valid('step_size', self.step_size):
+            raise TypeError(f"step_size must be an int in [1, rel_range={self.rel_range}]. Provided {self.step_size}.")
         if not self.attr_is_valid('rel_range', self.rel_range):
-            raise ConfigError(f"rel_range must be an integer in the range [1, Inf]. Provided {self.rel_range}.",
-                              ErrorCode.ERROR_FOCUS_CONFIG.value)
+            raise TypeError(f"rel_range must be an integer in the range [1, Inf]. Provided {self.rel_range}.")
         if not self.attr_is_valid('focus_channel', self.focus_channel):
-            raise ConfigError(f"focus_channel must be an integer in the range "
-                              f"[{min(ConfigLED.get_all_values())}, {max(ConfigLED.get_all_values())}]. "
-                              f"Provided {self.focus_channel}.",
-                              ErrorCode.ERROR_FOCUS_CONFIG.value)
-        if not self.attr_is_valid('exposure_time', self.focus_channel):
-            raise ConfigError(f"exposure_time must be an integer in the range [0.01, Inf]. Provided {self.exposure_time}.",
-                              ErrorCode.ERROR_FOCUS_CONFIG.value)
+            raise TypeError(f"focus_channel must be a led type.")
+        if not self.attr_is_valid('exposure_time', self.exposure_time):
+            raise TypeError(f"exposure_time must be an int in [0.01, Inf]. Provided {self.exposure_time}.")
         if not self.attr_is_valid('algorithm', self.algorithm):
-            raise ConfigError(f"algorithm must be an instance of ConfigFocusAlgorithm. Provided {self.algorithm}.",
-                              ErrorCode.ERROR_FOCUS_CONFIG.value)
+            raise TypeError(f"algorithm must be an instance of FocusAlgorithmType. Provided {self.algorithm}.")
 
     def copy(self):
         return copy.deepcopy(self)
@@ -399,80 +230,103 @@ class ConfigFocus:
     def __str__(self):
         attributes = [
             f"- exposure_time={self.exposure_time} ms",
-            f"- focus_channel={self.focus_channel} ({ConfigLED.get_name(self.focus_channel)})",
-            f"- rel_range={self.rel_range/10} μm",
-            f"- steps_size={self.steps_size/10} μm",
-            f"- algorithm={self.algorithm.value} ({ConfigFocusAlgorithm.get_name(self.algorithm.value)})",
+            f"- focus_channel={self.focus_channel} ({LEDType.get_name(self.focus_channel)})",
+            f"- rel_range={self.rel_range / 10} μm",
+            f"- step_size={self.step_size / 10} μm",
+            f"- algorithm={self.algorithm.value} ({FocusAlgorithmType.get_name(self.algorithm.value)})",
         ]
         return "\n".join(attributes)
 
 
-FOCUS_CONFIG_DEFAULT = ConfigFocus(
-    exposure_time=1000,
-    focus_channel=ConfigLED.LED_450_NM.value,
-    rel_range=100,
-    steps_size=10,
-)
+class ConfigFocusFactory:
+    @staticmethod
+    def default_config() -> ConfigFocus:
+        return ConfigFocus(
+            exposure_time=1000,
+            focus_channel=LEDType.LED_450_NM,
+            rel_range=100,
+            step_size=10,
+        )
 
 
 @dataclass
-class ConfigObjective:
-    numerical_aperture: float
-    "Numerical aperture NA=n*sin(theta)."
-    objective: ConfigObjectiveType
-    "Objective type. See ConfigObjectiveType."
-    magnification: int
-    "Magnification of objective."
-
-    cam_pxl_size: Optional[float] = 6.5
+class ConfigCamera:
+    objective: ObjectiveConfigType
+    "Objective type. See ObjectiveType."
+    image: ImageConfigType
+    "Image configuration. See ImageConfig."
+    focus: ConfigFocus
+    "Focus configuration. See ConfigFocus."
+    autofocus: ConfigCRISP
+    "Autofocus configuration. See ConfigCRISP."
+    leds: List[LEDType]
+    "Available LED channels. See LEDType."
+    filters: List[FilterWheelType]
+    "Available filter wheels. See FilterWheelType."
+    path_to_save: Path
+    "Path to save images."
+    default_exposure_time: Union[float, int] = 100
+    "Default exposure time in ms."
+    default_focus_channel_id: int = 0
+    "Default LED channel index in self.leds."
+    cam_pxl_size: float = 6.5
     "Pixel size of camera in μm."
-    cam_img_size: Optional[float] = 3200
-    "Number of pixels that camera returns (assuming a square FoV)."
 
     @property
     def pxl_size(self):
-        return self.cam_pxl_size / self.magnification  # in μm
+        return self.cam_pxl_size / self.objective.mag  # in μm
 
     @property
     def fov_size(self):
-        return self.cam_pxl_size / self.magnification * self.cam_img_size  # in μm
+        return self.cam_pxl_size / self.objective.mag * self.image.pxl_vert  # in μm
 
-    def check_config(self):
-        if (not isinstance(self.numerical_aperture, float)) or self.numerical_aperture <= 0:
-            raise ConfigError(f"numerical_aperture must be an integer in the range [0, Inf]. "
-                              f"Provided {self.numerical_aperture}.",
-                              ErrorCode.ERROR_FOCUS_CONFIG.value)
-        if not isinstance(self.objective, ConfigObjectiveType):
-            raise ConfigError(f"objective must be a ConfigObjectiveType object. Provided {self.objective}.",
-                              ErrorCode.ERROR_FOCUS_CONFIG.value)
-        if (not isinstance(self.magnification, int)) or self.magnification <= 1:
-            raise ConfigError(f"magnification must be an integer in the range (1, Inf]. "
-                              f"Provided {self.magnification}.",
-                              ErrorCode.ERROR_FOCUS_CONFIG.value)
+    def __post_init__(self):
+        if not isinstance(self.objective, ObjectiveConfigType):
+            raise TypeError(f"objective must be a ObjectiveType object. Provided {self.objective}.")
+        if not isinstance(self.image, ImageConfigType):
+            raise TypeError(f"image must be a ImageConfigType object. Provided {self.image}.")
+        if not isinstance(self.focus, ConfigFocus):
+            raise TypeError(f"focus must be a ConfigFocus object. Provided {self.focus}.")
+        if not isinstance(self.autofocus, ConfigCRISP):
+            raise TypeError(f"autofocus must be a ConfigCRISP object. Provided {self.autofocus}.")
+        if not (isinstance(self.leds, list) and all(isinstance(led, LEDType) for led in self.leds))\
+                or len(self.leds) == 0 or LEDType.NO_LED not in self.leds:
+            raise ConfigError("Invalid LED list.", ErrorCode.ERROR_CONFIG)
+        if not (isinstance(self.filters, list) and all(isinstance(f, FilterWheelType) for f in self.filters))\
+                or len(self.filters) == 0:
+            raise ConfigError("Invalid filter list.", ErrorCode.ERROR_CONFIG)
+        if not isinstance(self.path_to_save, Path) and self.path_to_save.exists():
+            raise ConfigError("Invalid path_to_save.", ErrorCode.ERROR_CONFIG)
+        if not self.image.pxl_vert == self.image.pxl_horiz:
+            raise ConfigError(f"Currently limited to square images.", ErrorCode.ERROR_FOCUS_CONFIG)
+        if ((not (isinstance(self.default_exposure_time, int) or isinstance(self.default_exposure_time, float))) or
+                self.default_exposure_time <= 0):
+            raise TypeError(f"Invalid default_exposure_time {self.default_exposure_time}.")
+        if not (isinstance(self.default_focus_channel_id, int) and 0 <= self.default_focus_channel_id < len(self.leds)):
+            raise TypeError(f"Invalid default_focus_channel_id {self.default_focus_channel_id}.")
 
-    def __str__(self):
-        attributes = [
-            f"- numerical_aperture={self.numerical_aperture}",
-            f"- objective={self.objective} ({ConfigObjectiveType.get_name(self.objective)})",
-            f"- magnification={self.magnification}x",
-        ]
-        return "\n".join(attributes)
 
+class ConfigCameraFactory:
+    @staticmethod
+    def default_oil_config(path_to_save: Optional[Path] = None) -> ConfigCamera:
+        return ConfigCamera(
+            objective=ObjectiveConfigTypeFactory.default_oil(),
+            image=ImageConfigTypeFactory.pv_cam(),
+            focus=ConfigFocusFactory.default_config(),
+            autofocus=ConfigCRISPFactory.default_config(),
+            leds=[LEDType.NO_LED, LEDType.LED_405_NM, LEDType.LED_450_NM, LEDType.LED_505_NM, LEDType.LED_538_NM],
+            filters=[FilterWheelType.FILTER, FilterWheelType.BLOCKING, FilterWheelType.NO_FILTER],
+            path_to_save=EVOMACHINE_DIR.parent / "images/DEFAULT" if path_to_save is None else path_to_save,
+        )
 
-OBJECTIVE_CONFIG_OIL = ConfigObjective(
-    numerical_aperture=1.4,
-    objective=ConfigObjectiveType.OIL_60x,
-    magnification=60,
-)
-
-OBJECTIVE_CONFIG_AIR = ConfigObjective(
-    numerical_aperture=0.95,
-    objective=ConfigObjectiveType.AIR_40x,
-    magnification=40,
-)
-
-OBJECTIVE_CONFIG_DEFAULT = OBJECTIVE_CONFIG_AIR
-
-# Evomachine configuration
-DEBUG_MODE: bool = True
-USE_GPU: bool = True
+    @staticmethod
+    def default_air_config(path_to_save: Optional[Path] = None) -> ConfigCamera:
+        return ConfigCamera(
+            objective=ObjectiveConfigTypeFactory.default_air(),
+            image=ImageConfigTypeFactory.pv_cam(),
+            focus=ConfigFocusFactory.default_config(),
+            autofocus=ConfigCRISPFactory.default_config(),
+            leds=[LEDType.NO_LED, LEDType.LED_405_NM, LEDType.LED_450_NM, LEDType.LED_505_NM, LEDType.LED_538_NM],
+            filters=[FilterWheelType.FILTER, FilterWheelType.BLOCKING, FilterWheelType.NO_FILTER],
+            path_to_save=EVOMACHINE_DIR.parent / "images/DEFAULT" if path_to_save is None else path_to_save,
+        )

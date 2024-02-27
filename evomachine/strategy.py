@@ -4,10 +4,11 @@ from pathlib import Path
 import sys
 from typing import Dict, List, Tuple, Type, Union
 
-from evomachine.commands import AutomatonCommand, AutomatonCommandType, CommandFactory
-from evomachine.config import ConfigLED, EVOMACHINE_DIR, get_logger
+from evomachine.commands import AutomatonCommand, CommandFactory
+from evomachine.config import EVOMACHINE_DIR, get_logger
 from evomachine.coordinates import Coordinate
 from evomachine.exceptions import ErrorCode, EvoMachineError, StrategyError
+from evomachine.evotypes import AutomatonCommandType, LEDType
 
 
 logger = get_logger(name=__name__)
@@ -23,8 +24,10 @@ class AbstractStrategy(ABC):
     def __init__(self):
         self.field_of_views: Dict[int, Coordinate] = {}
         "Dictionary indexed by fov_id with FoV coordinates."
+        self.positions: Dict[int, List[int]] = {}
+        "Dictionary indexed by fov_id with pos IDs."
         self.region_of_interests: Dict[int, List[int]] = {}
-        "Dictionary indexed by fov_id with RoI IDs."
+        "Dictionary indexed by pos_id with RoI IDs."
         self.path_to_save: Union[Path, None] = None
         "Path to save images. If None, Automaton will use path in ConfigDevice. If Path, extracted after initialise()."
         self.command_factory: CommandFactory = CommandFactory()
@@ -91,24 +94,37 @@ class AbstractStrategy(ABC):
     def initialise(
             self,
             field_of_views: Dict[int, Coordinate],
+            positions: Dict[int, List[int]],
             region_of_interests: Dict[int, List[int]],
     ) -> List[AutomatonCommand]:
-        """Initialise the strategy.
         """
-        new_command_list = self._initialise(field_of_views=field_of_views, region_of_interests=region_of_interests)
+        Initialise the strategy.
+
+        Parameters
+        ----------
+        field_of_views : Dict[int, Coordinate]
+            Dictionary with fov_id as key and Coordinate as value.
+        positions: Dict[int, List[int]]
+            Dictionary with fov_id as key and list of pos_id as value.
+        region_of_interests: Dict[int, List[int]]
+            Dictionary with pos_id as key and list of roi_id as value.
+
+        Returns
+        -------
+        List[AutomatonCommand]
+            List of commands to be executed by the automaton.
+        """
+        self.field_of_views = field_of_views
+        self.positions = positions
+        self.region_of_interests = region_of_interests
+        new_command_list = self._initialise()
         if not self.is_valid_command_list(new_command_list):
             raise StrategyError(message=f"AbstractStrategy.callback: invalid command list ({new_command_list}).",
                                 error_code=ErrorCode.ERROR_STRATEGY)
         return new_command_list
 
     @abstractmethod
-    def _initialise(
-            self,
-            field_of_views: Dict[int, Coordinate],
-            region_of_interests: Dict[int, List[int]],
-    ) -> List[AutomatonCommand]:
-        """Initialise the strategy.
-        """
+    def _initialise(self) -> List[AutomatonCommand]:
         pass
 
 
@@ -124,11 +140,7 @@ class NoStrategy(AbstractStrategy):
     ) -> List[AutomatonCommand]:
         return []
 
-    def _initialise(
-            self,
-            field_of_views: Dict[int, Coordinate],
-            region_of_interests: Dict[int, List[int]],
-    ) -> List[AutomatonCommand]:
+    def _initialise(self) -> List[AutomatonCommand]:
         return []
 
 
@@ -143,7 +155,7 @@ class BasicStrategy(AbstractStrategy):
         # Define default commands
         self.default_move_command: AutomatonCommand = self.command_factory.command_move(fov_id=-1)
         self.default_image_command: AutomatonCommand = self.command_factory.command_image(
-            channels=[ConfigLED.LED_450_NM, ConfigLED.LED_505_NM],
+            channels=[LEDType.LED_450_NM, LEDType.LED_505_NM],
             exposure_time=1000,
             segment=False,
             save=True,
@@ -158,14 +170,7 @@ class BasicStrategy(AbstractStrategy):
         # Variable to keep track of commands
         self.last_commands: List[AutomatonCommand] = []
 
-    def _initialise(
-            self,
-            field_of_views: Dict[int, Coordinate],
-            region_of_interests: Dict[int, List[int]],
-    ) -> List[AutomatonCommand]:
-        self.field_of_views = field_of_views
-        self.region_of_interests = region_of_interests
-
+    def _initialise(self) -> List[AutomatonCommand]:
         # Create commands for first iteration
         self.last_commands = [
             self.command_factory.command_move(fov_id=-1),

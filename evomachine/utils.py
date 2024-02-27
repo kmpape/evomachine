@@ -1,15 +1,165 @@
+from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 import time
-from typing import Dict, List
+from typing import Any, Dict, List, Tuple, Union
 
-from evomachine.config import get_logger
-
-
-logger = get_logger(name=__name__)
+# from evomachine.config import get_logger
+#
+#
+# logger = get_logger(name=__name__)
 
 pd.set_option('display.max_columns', None)
 pd.set_option('display.expand_frame_repr', False)
+
+
+@dataclass
+class EvoCroppingBox:
+    """
+    Class describing a box to cut out. Taken and extended from delta.utils.CroppingBox.
+
+    Attributes
+    ----------
+        xtl : int
+            Top-left corner X coordinate.
+        ytl : int
+            Top-left corner Y coordinate.
+        xbr : int
+            Bottom-right corner X coordinate.
+        ybr : int
+            Bottom-right corner Y coordinate.
+    """
+
+    xtl: int
+    ytl: int
+    xbr: int
+    ybr: int
+
+    @property
+    def shape(self) -> Tuple[int, int]:
+        return self.ybr - self.ytl, self.xbr - self.xtl
+
+    @staticmethod
+    def full(image: Union[np.ndarray, Tuple[int, int]]) -> 'EvoCroppingBox':
+        """
+        Return a cropping box set to the full size of the image.
+
+        Arguments
+        ---------
+            image : np.ndarray
+                Image to use as reference for the bounding box.
+
+        Returns
+        -------
+            box : CroppingBox
+                Cropping box adjusted to the full size of the image.
+        """
+        shape = image.shape[:2] if isinstance(image, np.ndarray) else image
+        return EvoCroppingBox(xtl=0, ytl=0, xbr=shape[1], ybr=shape[0])
+
+    def crop(self, image: np.ndarray) -> np.ndarray:
+        """
+        Crop an image according to the cropping box.
+
+        Pads with zeros if a part of the box falls outside the image.
+
+        Arguments
+        ---------
+            image : np.ndarray
+                Image to crop.
+
+        Returns
+        -------
+            patch : np.ndarray
+                Patch cropped from the image.
+        """
+        if image.ndim != 2:
+            raise ValueError("`image` must have 2 dimensions.")
+        cropped = image[
+            max(self.ytl, 0): min(self.ybr, image.shape[0]),
+            max(self.xtl, 0): min(self.xbr, image.shape[1]),
+        ]
+        padding = (
+            (max(-self.ytl, 0), max(self.ybr - image.shape[0], 0)),
+            (max(-self.xtl, 0), max(self.xbr - image.shape[1], 0)),
+        )
+        return np.pad(cropped, padding)
+
+    def frame(self, image: np.ndarray, thickness: int = 1, value: Any = 0) -> np.ndarray:
+        """
+        Add a frame to an image according to the cropping box.
+
+        Arguments
+        ---------
+            image : np.ndarray
+                Image to crop.
+            thickness : int
+                Thickness of the frame.
+            value : Any
+                Value to use for the frame.
+
+        Returns
+        -------
+            framed : np.ndarray
+                Image with frame
+        """
+        framed = image.copy()
+        framed[max(self.ytl, 0): min(self.ybr, image.shape[0]),
+               max(self.xtl, 0): max(self.xtl, 0) + thickness] = value
+        framed[max(self.ytl, 0): min(self.ybr, image.shape[0]),
+               min(self.xbr, image.shape[1]) - thickness: min(self.xbr, image.shape[1])] = value
+        framed[max(self.ytl, 0): max(self.ytl, 0) + thickness,
+               max(self.xtl, 0): min(self.xbr, image.shape[1])] = value
+        framed[min(self.ybr, image.shape[0]) - thickness: min(self.ybr, image.shape[0]),
+               max(self.xtl, 0): min(self.xbr, image.shape[1])] = value
+
+        return framed
+
+    def patch(self, image: np.ndarray, patch: np.ndarray):
+        """
+        Apply a patch on an image at the position specified by the box.
+
+        Parts of the box may fall outside the image.
+
+        Arguments
+        ---------
+            image : np.ndarray
+                Image to patch.
+            patch : np.ndarray
+                Patch to apply.
+
+        Returns
+        -------
+            image : np.ndarray
+                The patched image.
+        """
+        if image.ndim != 2 or patch.ndim != 2:
+            raise ValueError("`image` and `patch` must have 2 dimensions.")
+        if patch.shape != (self.ybr - self.ytl, self.xbr - self.xtl):
+            raise ValueError(
+                "`patch` must have the same dimensions as the cropping box."
+            )
+        if (
+            self.ybr <= 0
+            or image.shape[0] <= self.ytl
+            or self.xbr <= 0
+            or image.shape[1] <= self.xtl
+        ):
+            raise ValueError("`box` must fall at least partially inside the image.")
+        image[
+            max(self.ytl, 0): min(self.ybr, image.shape[0]),
+            max(self.xtl, 0): min(self.xbr, image.shape[1]),
+        ] = patch[
+            max(-self.ytl, 0): min(self.ybr, image.shape[0]) - self.ytl,
+            max(-self.xtl, 0): min(self.xbr, image.shape[1]) - self.xtl,
+        ]
+        return image
+
+    def __eq__(self, other):
+        if isinstance(other, self.__class__):
+            return self.xbr == other.xbr and self.xtl == other.xtl and self.ybr == other.ybr and self.ytl == other.ytl
+        else:
+            return False
 
 
 class Timer:
@@ -42,10 +192,9 @@ class Timer:
                                   'min': min(elapsed), 'max': max(elapsed)}
         return timings
 
-    def get_timings_per_call(self) -> Dict[str, Dict]:
+    def get_timings_per_call(self) -> Dict[str, List]:
         timings = {}
         for func_name, start_end in self.timings.items():
-            n_calls = len(start_end)
             elapsed = [end-start for start, end in start_end]
             timings[func_name] = elapsed
         return timings
@@ -53,14 +202,14 @@ class Timer:
     def display_timings(self, scaling: int = 1) -> None:
         if not self.enabled:
             return
-        if scaling != 1:
-            logger.info(f"\nTimings {self.name} (timer_level {self.timer_level}) (scaling {scaling}):\n")
-        else:
-            logger.info(f"\nTimings {self.name} (timer_level {self.timer_level}):\n")
+        # if scaling != 1:
+        #     logger.info(f"\nTimings {self.name} (timer_level {self.timer_level}) (scaling {scaling}):\n")
+        # else:
+        #     logger.info(f"\nTimings {self.name} (timer_level {self.timer_level}):\n")
         data = [[func_name, _data['n_calls'], _data['avg']*scaling, _data['median']*scaling,
                  _data['min']*scaling, _data['max']*scaling]
                 for func_name, _data in self.get_timings().items()]
         headers = ["name", "n_calls", "avg", "median", "min", "max"]
         df = pd.DataFrame(data, columns=headers)
-        logger.info(f"{df}")
-        logger.info("---\n")
+        # logger.info(f"{df}")
+        # logger.info("---\n")

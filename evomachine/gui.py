@@ -18,11 +18,12 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QEventLoop, QThread, QTimer, QObject, QRegExp, Qt
-from PyQt5.QtGui import QRegExpValidator, QDoubleValidator, QFont, QPalette, QColor
+from PyQt5 import QtGui
+from PyQt5.QtGui import QRegExpValidator, QDoubleValidator, QFont, QPalette, QColor, QValidator
 from PyQt5.QtWidgets import (
     QWidget,
     QMainWindow, QApplication,
-    QLabel, QLineEdit, QPushButton, QComboBox,
+    QLabel, QLineEdit, QPushButton, QComboBox, QMessageBox,
     QVBoxLayout, QHBoxLayout, QGridLayout,
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
@@ -38,10 +39,11 @@ from asitiger.tigercontroller import SAFE_STAGE_LIMITS
 from evomachine.acquisition import AbstractCamera, EvoCamera
 from evomachine.automaton import Automaton, AutomatonQueueDataType
 from evomachine.commands import AutomatonCommand, AutomatonCommandType
-from evomachine.config import ConfigCRISP, ConfigFocus, ConfigFocusAlgorithm, ConfigLED, get_logger
+from evomachine.config import ConfigCRISP, ConfigFocus, get_logger
 from evomachine.coordinates import Coordinate, CoordinateFactory
 from evomachine.dmd import DMDControl
 from evomachine.exceptions import ConfigError, TigerError
+from evomachine.evotypes import FocusAlgorithmType, LEDType
 
 
 logger = get_logger(name=__name__)
@@ -60,12 +62,14 @@ ARROW_DOWN = "\u2193"
 
 
 class Direction(Enum):
-    LEFT = 0
-    RIGHT = 1
-    UP = 2
-    DOWN = 3
-    HOME = 4
-    MOVETO = 5
+    LEFT = 0   # DECR_X
+    RIGHT = 1  # INCR_X
+    UP = 2     # DECR_Y
+    DOWN = 3   # INCR_Y
+    UP_Z = 4
+    DOWN_Z = 5
+    HOME = 6
+    MOVETO = 7
 
     @classmethod
     def get_all_values(cls) -> List[int]:
@@ -112,10 +116,24 @@ stylesheet_led = """
     QPushButton {background-color: red;}
 """
 
+
 class EvoGUI(QMainWindow):
     # TODO GUI needs a close button that shuts down all threads properly
     update_signal_pic_clear_readin = pyqtSignal(str)
     update_signal_pic_show_boxes = pyqtSignal()
+
+    def closeEvent(self, event):
+        result = QMessageBox.question(self, "Confirm Exit...", "Are you sure you want to exit ?",
+                                      QMessageBox.Yes | QMessageBox.No)
+        event.ignore()
+
+        if result == QMessageBox.Yes:
+            self.dmd.finalise()
+            self.automaton.stop()
+            self.automaton.join()
+            self.cam.finalise()
+
+            event.accept()
 
     def __init__(
             self,
@@ -272,7 +290,7 @@ class EvoGUI(QMainWindow):
     @staticmethod
     def make_pos_str(value: Union[int, None]) -> str:
         try:
-            return f"+{abs(value):06}" if value > 0 else f"-{abs(value):06}"
+            return f"+{float(abs(value))/10:.1f}\u03BCm" if value > 0 else f"-{float(abs(value))/10:.1f}\u03BCm"
         except TypeError as e:
             return "?"*7
 
@@ -385,9 +403,9 @@ class EvoGUI(QMainWindow):
         return exp_widget
 
     def make_led_panel(self) -> QWidget:
-        self.current_led_id: int = ConfigLED.LED_NO_LED.value
+        self.current_led_id: int = LEDType.NO_LED
         self.led_labels = [EvoGUI.make_label(
-            text=ConfigLED.get_name(value_to_find=i),
+            text=LEDType.get_name(value_to_find=i),
             font=SMALL,
             width_px=100,
         ) for i in self.cam.get_led_channels()]
@@ -403,11 +421,11 @@ class EvoGUI(QMainWindow):
             func=self.set_led,
             param=i,
         ) for i in self.cam.get_led_channels()}
-        self.led_textinputs[ConfigLED.LED_NO_LED.value].setText("0")
-        self.led_textinputs[ConfigLED.LED_NO_LED.value].setReadOnly(True)
-        self.led_textinputs[ConfigLED.LED_NO_LED.value].setStyleSheet("background-color: LightGray;")
-        self.led_buttons[ConfigLED.LED_NO_LED.value].setStyleSheet("background-color: green;")
-        self.led_buttons[ConfigLED.LED_NO_LED.value].setText("ON")
+        self.led_textinputs[LEDType.NO_LED].setText("0")
+        self.led_textinputs[LEDType.NO_LED].setReadOnly(True)
+        self.led_textinputs[LEDType.NO_LED].setStyleSheet("background-color: LightGray;")
+        self.led_buttons[LEDType.NO_LED].setStyleSheet("background-color: green;")
+        self.led_buttons[LEDType.NO_LED].setText("ON")
         self.led_layout = QGridLayout()
         self.led_layout.addWidget(EvoGUI.make_label(text="LED Control", font=NORMAL), 0, 0, 1, 2, LEFT)
         _ = [self.led_layout.addWidget(label, i, 0, CENTER) for i, label in enumerate(self.led_labels, start=1)]
@@ -520,7 +538,8 @@ class EvoGUI(QMainWindow):
             width_px=80,
             align=RIGHT,
         ) for _ in AXES]
-        curr_limits = self.cam.tiger.get_stage_limits()
+        tmp = self.cam.get_stage_limits()
+        curr_limits = {'X': (tmp[0].x, tmp[1].x), 'Y': (tmp[0].y, tmp[1].y), 'Z': (tmp[0].z, tmp[1].z)}
         self.pos_limits = [EvoGUI.make_label(
             text=f"[{EvoGUI.make_pos_str(curr_limits[ax][0])}, {EvoGUI.make_pos_str(curr_limits[ax][1])}]",
             font=SMALL,
@@ -608,11 +627,11 @@ class EvoGUI(QMainWindow):
         self.cfg_focus = self.cam.cfg_focus
         self.cfg_focus_default = self.cam.cfg_focus.copy()
 
-        self.swfocus_algorithm_dropdown_options = ConfigFocusAlgorithm.get_all_names()
-        curr_algorithm_name = ConfigFocusAlgorithm.get_name(self.cfg_focus.algorithm.value)
+        self.swfocus_algorithm_dropdown_options = FocusAlgorithmType.get_all_names()
+        curr_algorithm_name = FocusAlgorithmType.get_name(self.cfg_focus.algorithm.value)
         self.swfocus_algorithm_dropdown_options.remove(curr_algorithm_name)
         self.swfocus_algorithm_dropdown_options.insert(0, curr_algorithm_name)
-        self.swfocus_algorithm_current_option = ConfigFocusAlgorithm.from_string(
+        self.swfocus_algorithm_current_option = FocusAlgorithmType.from_string(
             self.swfocus_algorithm_dropdown_options[0]
         )
         self.swfocus_algorithm_dropdown = self.make_dropdown(items=self.swfocus_algorithm_dropdown_options,
@@ -817,7 +836,7 @@ class EvoGUI(QMainWindow):
         self.dmd_thread = ThreadDMD(buttons=self.dmd_buttons, i_active=display_mode)
         self.dmd_thread.start()
 
-    def set_led(self, i_channel: int):
+    def set_led(self, i_channel: LEDType):
         if self.is_testmode:
             logger.info("set_led: no LEDs in testmode.")
             return
@@ -979,7 +998,7 @@ class EvoGUI(QMainWindow):
         # TODO
         try:
             tmp_data = self.data_queue.get(block=True, timeout=10)
-            if tmp_data[0] == AutomatonQueueDataType.FOCUS_CURVES:
+            if tmp_data[0] == AutomatonQueueDataType.FOCUS_DATA:
                 self.exp_focus_data = tmp_data[1]
         except queue.Empty:
             logger.error("Data queue did not contain focus data.")
@@ -997,7 +1016,7 @@ class EvoGUI(QMainWindow):
         return val
 
     def swfocus_update_algorithm_option(self):
-        self.swfocus_algorithm_current_option = ConfigFocusAlgorithm.from_string(
+        self.swfocus_algorithm_current_option = FocusAlgorithmType.from_string(
             self.swfocus_algorithm_dropdown.currentText()
         )
         setattr(self.cfg_focus, 'algorithm', self.swfocus_algorithm_current_option)
@@ -1161,7 +1180,7 @@ class ThreadConfigReset(QThread):
         for param_name in self.labels_values.keys():
             if param_name == 'algorithm':
                 dropdown = self.labels_values[param_name][1]
-                index = dropdown.findText(ConfigFocusAlgorithm.get_name(self.this_cfg.algorithm.value))
+                index = dropdown.findText(FocusAlgorithmType.get_name(self.this_cfg.algorithm.value))
                 self.labels_values[param_name][1].setCurrentIndex(index)
             else:
                 self.labels_values[param_name][1].setText(str(getattr(self.this_cfg, param_name)))
@@ -1705,7 +1724,7 @@ class ThreadExperiment(QThread):
         iteration = 1
         while True:
             logger.info(f"At iteration {iteration}")
-            self.cam.set_led(i_chan=-1)
+            self.cam.set_led(i_chan=LEDType.NO_LED)
             for coord in self.coordinates:
                 if self.stopped():
                     logger.info("Stopping acquisition.")

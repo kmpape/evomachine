@@ -14,6 +14,7 @@ class ErrorCode(Enum):
     ERROR_WRONG_FORMAT = auto()
 
     # Configuration errors
+    ERROR_CONFIG = auto()
     ERROR_CRISP_CONFIG = auto()
     ERROR_DEVICE_CONFIG = auto()
     ERROR_FOCUS_CONFIG = auto()

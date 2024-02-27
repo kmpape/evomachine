@@ -16,7 +16,8 @@ import delta
 from delta.config import Config  # TODO: ask about putting config into init
 from delta.pipeline import TIMER_ROI
 
-from evomachine.config import ConfigImage, get_logger
+from evomachine.config import get_logger, ConfigImageProcessor
+from evomachine.evotypes import ImageConfigType
 from evomachine.exceptions import ImageProcessingError, ErrorCode, ErrorContainer
 # import evomachine.trackingrt as trackingrt
 import evomachine.trackingrt_jit as trackingrt
@@ -35,16 +36,18 @@ class PositionRT(delta.pipeline.Position):
         self,
         position_nb: int,
         config: delta.config.Config,
-        cfg_image: ConfigImage,
-        verbose: Optional[int] = 0,
+        processor_config: ConfigImageProcessor,
+        image_config: ImageConfigType,
     ) -> None:
         super().__init__(position_nb=position_nb, config=config)
+        self.cfg_processor = processor_config
+        "Image processor configuration."
+        self.cfg_image = image_config
+        "Image configuration."
 
         self.roi_boxes: list[delta.utils.CroppingBox] = []
         "List of CroppingBox indexed by i_roi"
-        self.drifttemplate: delta.utils.Image = np.empty((cfg_image.pxl_vert*cfg_image.tile_image[0],
-                                                          cfg_image.pxl_horiz*cfg_image.tile_image[1]),
-                                                         cfg_image.pxl_dtype)
+        self.drifttemplate: delta.utils.Image = np.empty(self.cfg_image.shape)
         "Drift template obtained from reference image"
         self.driftcorbox: delta.utils.CroppingBox = delta.utils.CroppingBox(0, 0, 0, 0)
         "Cropping box used to correct drift"
@@ -56,18 +59,18 @@ class PositionRT(delta.pipeline.Position):
         self.tracking_model = self.config.model("track")
         "Preloading tracking model."
 
-        self.cfg_image = cfg_image
-        "Image configuration."
-
-        self.reference: Union[None, np.ndarray[(int, int, int), 'ConfigImage.pxl_dtype']] = None
+        self.reference: Union[None, np.ndarray[(int, int, int), 'ImageConfigType.pxl_dtype']] = None
         "Reference image used to identify RoIs. Assigned in initialise()."
 
-        self.verbose = verbose
+        self.verbose = self.cfg_processor.image_processing_verbosity
 
     def initialise(
         self,
-        reference: np.ndarray[(int, int, int), 'ConfigImage.pxl_dtype'],
-        ref_channel: int = 0,
+        reference: np.ndarray[(int, int, int), 'ImageConfigType.pxl_dtype'],
+        channel_rot: int = 0,
+        channel_roi: int = 0,
+        rotate: Optional[float] = None,
+        roi_boxes: Optional[list[delta.utils.CroppingBox]] = None,
     ) -> None:
         self._msg("Starting initialisation")
         TIMER_POSITION.start("initialise", 0)
@@ -75,36 +78,37 @@ class PositionRT(delta.pipeline.Position):
 
         # Rotation correction
         if self.config.rotation_correction:
-            self.rotate = delta.utils.deskew(reference[ref_channel, :, :])
+            self.rotate = delta.utils.deskew(reference[channel_rot, :, :]) if rotate is None else rotate
             self._msg(f"Rotation correction: {self.rotate} degrees")
             for i_chan in range(reference.shape[0]):
                 reference[i_chan, :, :] = delta.utils.imrotate(reference[i_chan, :, :], self.rotate)
 
-        if any(val != 1 for val in self.cfg_image.tile_image):
-            reference = np.tile(reference, (1, *self.cfg_image.tile_image))
-
         # Find ROIs
         if "rois" in self.config.models:
-            self._msg("Identifying ROIs.")
-            self.roi_boxes = self.find_roi_boxes(reference[ref_channel, :, :], self.config)
+            if roi_boxes is not None:
+                self._msg(f"Using provided ROI boxes={roi_boxes}.")
+                self.roi_boxes = roi_boxes
+            else:
+                self._msg("Identifying ROIs.")
+                self.roi_boxes = self.find_roi_boxes(reference[channel_roi, :, :], self.config)
         else:
-            self.roi_boxes = [delta.utils.CroppingBox.full(reference[ref_channel, :, :])]
+            self.roi_boxes = [delta.utils.CroppingBox.full(reference[channel_roi, :, :])]
 
         # Get drift correction template and box
         if self.config.drift_correction:
             self.drifttemplate = delta.utils.to_integer_values(
                 delta.utils.getDriftTemplate(
                     self.roi_boxes,
-                    reference[ref_channel, :, :],
+                    reference[channel_rot, :, :],
                     whole_frame=self.config.whole_frame_drift,
                 ),
                 np.uint8
             )
-            self.driftcorbox = delta.utils.CroppingBox.full(reference[ref_channel, :, :])
+            self.driftcorbox = delta.utils.CroppingBox.full(reference[channel_rot, :, :])
             if not self.config.whole_frame_drift:
                 self.driftcorbox.ybr = max(box.ytl for box in self.roi_boxes)
             # Need to apply drift correction to match the output of DeLTA
-            int_frame = delta.utils.to_integer_values(reference[ref_channel, :, :], np.uint8)
+            int_frame = delta.utils.to_integer_values(reference[channel_rot, :, :], np.uint8)
             drift_corr_frame = self.driftcorbox.crop(int_frame)
             res = cv2.matchTemplate(drift_corr_frame, self.drifttemplate, cv2.TM_CCOEFF_NORMED)
             _, _, _, max_loc = cv2.minMaxLoc(res)
@@ -120,8 +124,8 @@ class PositionRT(delta.pipeline.Position):
 
         # Instantiate ROIs with 2x reference
         self.rois = [
-            ROIRT(
-                img_stack=[box.crop(reference[ref_channel, :, :]), box.crop(reference[ref_channel, :, :])],
+            ROIRT(  # TODO fix imaging channels
+                img_stack=[box.crop(reference[channel_roi, :, :]), box.crop(reference[channel_roi, :, :])],
                 fluo_stack=[[box.crop(img) for img in reference[1:, :, :]],
                             [box.crop(img) for img in reference[1:, :, :]]],
                 roi_nb=i_roi,
@@ -135,7 +139,7 @@ class PositionRT(delta.pipeline.Position):
 
         # Run pipeline after init
         self.segment(frames=range(2))
-        if self.cfg_image.use_track_RT:
+        if self.cfg_processor.use_track_RT:
             self.init_track_rt()
         else:
             self.track(frames=range(2))
@@ -151,7 +155,7 @@ class PositionRT(delta.pipeline.Position):
 
     def process_new_frame(
             self,
-            new_frame: np.ndarray[(int, int, int), 'ConfigImage.pxl_dtype']
+            new_frame: np.ndarray[(int, int, int), 'ImageConfigType.pxl_dtype']
     ) -> None:
         if not self._is_initialised:
             raise ImageProcessingError("Position {} not initialised.".format(self.position_nb),
@@ -165,7 +169,7 @@ class PositionRT(delta.pipeline.Position):
         TIMER_POSITION.stop("process_new_frame:segment", 0)
 
         TIMER_POSITION.start("process_new_frame:track", 0)
-        if self.cfg_image.use_track_RT:
+        if self.cfg_processor.use_track_RT:
             self.track_rt()
         else:
             self.track_at_once()
@@ -177,7 +181,7 @@ class PositionRT(delta.pipeline.Position):
 
     def _preprocess_new_frame(
         self,
-        new_frame: np.ndarray[(int, int, int), 'ConfigImage.pxl_dtype'],
+        new_frame: np.ndarray[(int, int, int), 'ImageConfigType.pxl_dtype'],
     ) -> None:
         self._msg("Starting pre-processing of new frame")
 
@@ -187,8 +191,6 @@ class PositionRT(delta.pipeline.Position):
             for i_chan in range(new_frame.shape[0]):
                 new_frame[i_chan, :, :] = delta.utils.imrotate(new_frame[i_chan, :, :], self.rotate)
         TIMER_POSITION.stop("_preprocess_new_frame:rotation_correction", 1)
-        if any(val != 1 for val in self.cfg_image.tile_image):
-            new_frame = np.tile(new_frame, (1, *self.cfg_image.tile_image))
 
         # Drift correction
         TIMER_POSITION.start("_preprocess_new_frame:drift_correction", 1)
@@ -404,7 +406,7 @@ class PositionRT(delta.pipeline.Position):
         reference = (reference - reference.min()) / reference.ptp()  # noqa
         self.tmp_reference_orig = copy.copy(reference)
 
-        if self.cfg_image.crop_out_ROI:
+        if self.cfg_processor.crop_out_ROI:
             reference_shape = reference.shape
             frac = 0.5
             res_width = abs(reference.shape[1]-self.config.target_size_rois[0]) < frac*self.config.target_size_rois[0]

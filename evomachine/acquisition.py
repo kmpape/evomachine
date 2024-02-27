@@ -1,30 +1,24 @@
 from datetime import datetime
 import itertools
-import logging
 import numpy as np
 from pathlib import Path
 import time
 from typing import Any, Dict, Iterator, List, Optional, Union, Tuple
 
-import cv2
 import matplotlib.pyplot as plt
 from pycromanager import Core, Studio
-from pynput import keyboard
 import skimage
 
 from asitiger.command import CRISPState
-from asitiger.status import Status
 import asitiger.tigercontroller
-import delta
 
-from evomachine.config import ConfigCRISP, ConfigDevice, ConfigFocus, ConfigFocusAlgorithm, ConfigImage, ConfigLED, \
-    ConfigObjective, CRISP_CONFIG_DEFAULT, FOCUS_CONFIG_DEFAULT, IMAGE_CONFIG_DEFAULT, OBJECTIVE_CONFIG_DEFAULT, \
-    get_logger
+from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, get_logger
 from evomachine.coordinates import Coordinate
-from evomachine.dmd import DMDColor
-from evomachine.exceptions import CameraError, ConfigError, DMDError, ErrorCode, ErrorContainer, \
+from evomachine.exceptions import CameraError, ConfigError, ErrorCode, ErrorContainer, \
     EvoMachineError, StageError, TigerError
 from evomachine.software_focus import get_focus_score
+from evomachine.utils import EvoCroppingBox
+from evomachine.evotypes import FocusAlgorithmType, ImageConfigType, LEDType
 
 
 logger = get_logger(name=__name__)
@@ -33,21 +27,12 @@ logger = get_logger(name=__name__)
 class AbstractCamera:
     def __init__(
             self,
-            cfg_device: ConfigDevice,
-            cfg_image: Optional[ConfigImage] = IMAGE_CONFIG_DEFAULT,
-            cfg_objective: Optional[ConfigObjective] = OBJECTIVE_CONFIG_DEFAULT,
-            cfg_focus: Optional[ConfigFocus] = FOCUS_CONFIG_DEFAULT,
+            cfg_camera: ConfigCamera,
     ):
         self.error_container: ErrorContainer = ErrorContainer()
         "Deque to store all errors."
-        self.cfg_device: ConfigDevice = cfg_device
-        "Device configuration object."
-        self.cfg_image: ConfigImage = cfg_image
-        "Image configuration object."
-        self.cfg_objective: ConfigObjective = cfg_objective
-        "Objective configuration object."
-        self.cfg_focus: ConfigFocus = cfg_focus
-        "Focus configuration object."
+        self.cfg: ConfigCamera = cfg_camera
+        "Configuration object for the camera."
         self._step: int = -1
         "Increments each time an image is taken."
         self._curr_pos: int = 0  # TODO need to initialise with current position ID
@@ -59,18 +44,22 @@ class AbstractCamera:
         self._curr_exposure: Union[float, None] = None
         "Currently set exposure time. Note: changes from micromanager are NOT registered."
 
-        self.focus_scores: Union[None, np.array] = None
+        self.focus_scores: Union[None, np.ndarray] = None
         "Initialised in software_focus. Contains the focus score of each image. Larger score = sharper image."
-        self.focus_stack: Union[None, np.array] = None
+        self.focus_stack: Union[None, np.ndarray] = None
         "Initialised in software_focus. Contains images of focus stack."
-        self.focus_prev_image: Union[None, np.array] = None
+        self.focus_prev_image: Union[None, np.ndarray] = None
         "Initialised in software_focus. Contains the image from before starting focus."
-        self.focus_Z_coords: Union[None, np.array] = None
+        self.focus_Z_coords: Union[None, np.ndarray] = None
         "Initialised in software_focus. Contains Z coordinates of focus stack. Use focus_curr_pos for X/Y coordinates."
+        self.focus_curr_pos: Optional[Dict[str, int]] = None
+        "Initialised in software_focus. X/Y/Z coordinates of stage before last start of focus routine."
+        self.focus_cropping_box: Union[None, EvoCroppingBox] = None
+        "Initialised in software_focus. Cropping box applied to focus images."
+        self._focus_old_channel: Union[LEDType, None] = None
+        "Initialised in software_focus. LED channel before last start of focus routine."
         self._focus_is_initialised: bool = False
         "Changes to True after initialisation and to False after finalisation."
-
-        self.cfg_device.check_config()
 
     def autofocus_enable(self, this_cfg_crisp: Optional[ConfigCRISP] = None, user_input: Optional[bool] = True):
         raise NotImplementedError()
@@ -104,7 +93,14 @@ class AbstractCamera:
     def disable_led(self):
         raise NotImplementedError()
 
+    def disable_live_mode(self):
+        raise NotImplementedError()
+
+    def finalise(self):
+        raise NotImplementedError()
+
     def get_coordinates(self, axes: List[str]) -> Dict[str, float]:
+        """Returns the current coordinates of the stage."""
         raise NotImplementedError()
 
     def get_software_focus_z_coord(self) -> Union[int, None]:
@@ -122,18 +118,18 @@ class AbstractCamera:
     def get_filename(
             self,
             i_pos: Optional[int] = None,
-            i_channel: Optional[Union[int, ConfigLED]] = None,
+            i_channel: Optional[LEDType] = None,
     ) -> str:
         return "evom_pos{:02d}_{}".format(self._curr_pos, datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f"))
 
     def get_frame(
             self,
-            i_chan: Union[int, None],
+            i_chan: Union[LEDType, None],
             normalise: bool = False,
             brightness: int = 100,
             block: bool = False,
             reset_led: bool = True,
-    ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
+    ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
         self._step += 1
         frame = self._take_frame(i_chan=i_chan, brightness=brightness, block=block, reset_led=reset_led)
         return self.normalise_frame(frame=frame) if (normalise and (frame is not None)) else frame
@@ -149,7 +145,7 @@ class AbstractCamera:
 
     def display_save_frame(
             self,
-            i_chan: Union[int, None],
+            i_chan: Union[LEDType, None],
             path_to_save: Optional[Union[Path, str, None, bool]] = None,
             filename: Optional[Union[str, None]] = None,
             display_frame: Optional[bool] = True,
@@ -227,9 +223,9 @@ class AbstractCamera:
 
     @staticmethod
     def normalise_frame(
-            frame: np.ndarray[(int, int), 'ConfigImage.pxl_dtype'],
+            frame: np.ndarray[(int, int), 'ImageConfigType.pxl_dtype'],
             colormap: Union['plt.cm', bool, None] = True,
-    ) -> np.ndarray[(int, int), 'ConfigImage.pxl_dtype']:
+    ) -> np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']:
         """
         Convenience function to normalise frames.
 
@@ -250,7 +246,7 @@ class AbstractCamera:
         else:
             return colormap(norm(frame))
 
-    def plot_frame(self, frame: np.ndarray[(int, int), 'ConfigImage.pxl_dtype'], normalise: bool = True):
+    def plot_frame(self, frame: np.ndarray[(int, int), 'ImageConfigType.pxl_dtype'], normalise: bool = True):
         image = self.normalise_frame(frame=frame) if normalise else frame
         plt.imshow(image)
         plt.show()
@@ -260,11 +256,11 @@ class AbstractCamera:
 
     def save_frame(
             self,
-            frame: np.ndarray[(int, int), 'ConfigImage.pxl_dtype'],
+            frame: np.ndarray[(int, int), 'ImageConfigType.pxl_dtype'],
             path_to_save: Optional[Union[Path, str, bool]] = True,
             filename: Optional[Union[str, None]] = None,
             i_pos: Optional[int] = None,
-            i_channel: Optional[Union[int, ConfigLED]] = None,
+            i_channel: Optional[LEDType] = None,
     ) -> None:
         """
         Image is saved under path_to_save / filename. See arguments for different options. If provided, checks whether
@@ -288,7 +284,7 @@ class AbstractCamera:
         elif isinstance(path_to_save, bool):
             if not path_to_save:
                 return
-            path_to_save = self.cfg_device.path_to_save
+            path_to_save = self.cfg.path_to_save
         if not path_to_save.exists():
             logger.warning(f"AbstractCamera.save_frame: Path {path_to_save} does not exist. "
                            f"Returning image without saving...")
@@ -299,10 +295,10 @@ class AbstractCamera:
     def software_focus(
             self,
             cfg_focus: Optional[ConfigFocus] = None,
-            focus_channel_override: Optional[int] = None,
+            focus_channel_override: Optional[LEDType] = None,
             rel_range_override: Optional[int] = None,
-            cropping_indices: Optional[Union[None, Tuple[Tuple[int, int], Tuple[int, int]]]] = None, # ((xmin,xmax), (ymin,ymax))
-            algorithm_override: Optional[ConfigFocusAlgorithm] = None,
+            cropping_box: Optional[EvoCroppingBox] = None,
+            algorithm_override: Optional[FocusAlgorithmType] = None,
             user_input_override: bool = False,
             countdown_override: bool = False,
     ):
@@ -310,7 +306,7 @@ class AbstractCamera:
             cfg_focus=cfg_focus,
             focus_channel_override=focus_channel_override,
             rel_range_override=rel_range_override,
-            cropping_indices=cropping_indices,
+            cropping_box=cropping_box,
             algorithm_override=algorithm_override,
             user_input_override=user_input_override,
             countdown_override=countdown_override,
@@ -330,29 +326,36 @@ class AbstractCamera:
     def software_focus_initialise(
             self,
             cfg_focus: Optional[ConfigFocus] = None,
-            focus_channel_override: Optional[int] = None,
+            focus_channel_override: Optional[LEDType] = None,
             rel_range_override: Optional[int] = None,
-            cropping_indices: Optional[Union[None, Tuple[Tuple[int, int], Tuple[int, int]]]] = None, # ((xmin,xmax), (ymin,ymax))
-            algorithm_override: Optional[ConfigFocusAlgorithm] = None,
+            cropping_box: Optional[EvoCroppingBox] = None,
+            algorithm_override: Optional[FocusAlgorithmType] = None,
             user_input_override: bool = False,
             countdown_override: bool = False,
     ):
         """
-        Initialises software focus routine and validates parameter and limits.
+        Initialises software focus routine and validates parameter and limits. May be
+        overwritten by child classes.
 
         Parameters
         ----------
         cfg_focus               : ConfigFocus object. If None, uses self.cfg_focus provided in constructor.
         focus_channel_override  : Overrides cfg_focus.focus_channel.
         rel_range_override      : Overrides cfg_focus.rel_range.
-        cropping_indices        : Apply focus to img[]
-        algorithm_override
-        user_input_override
-        countdown_override
+        cropping_box            : Apply focus to cropped image. If None, uses full image.
+        algorithm_override      : Overrides cfg_focus.algorithm.
+        user_input_override     : Overrides cfg_focus.user_input.
+        countdown_override      : Overrides cfg_focus.countdown (applicable only if user_input_override is True).
 
         Returns
         -------
-
+        Should initialise
+        self.focus_curr_pos: Dict[str, float]
+        self.focus_Z_coords: range of Z coordinates (int)
+        self.focus_stack: 3D np.ndarray of images with dimensions X, Y, len(focus_Z_coords)
+        self.focus_scores: 1D np.ndarray of focus scores
+        self.focus_prev_image: 2D np.ndarray of image before starting focus
+        self.focus_cropping_box: EvoCroppingBox
         """
         raise NotImplementedError()
 
@@ -364,14 +367,14 @@ class AbstractCamera:
 
     def set_exposure(self, exposure_time: Union[int, None] = None):
         if exposure_time is None:
-            exposure_time = self.cfg_focus.exposure_time
+            exposure_time = self.cfg.focus.exposure_time
         self._set_exposure(exposure_time=exposure_time)
         self._curr_exposure = exposure_time
 
     def _set_exposure(self, exposure_time: Union[int, None] = None):
         raise NotImplementedError()
 
-    def set_led(self, i_chan: Union[int, ConfigLED], brightness: int = 100, block: bool = False):
+    def set_led(self, i_chan: LEDType, brightness: int = 100, block: bool = False):
         raise NotImplementedError()
 
     def set_pos_id_to_coordinate(self, pos_id_to_coordinate: Dict[int, Any]) -> bool:
@@ -394,147 +397,12 @@ class AbstractCamera:
 
     def _take_frame(
             self,
-            i_chan: Union[int, None],
+            i_chan: Optional[LEDType] = None,
             brightness: int = 100,
             block: bool = False,
             reset_led: bool = True,
-    ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
+    ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
         raise NotImplementedError()
-
-
-class DeltaCamera(AbstractCamera):
-    """
-    A class to mock the acquisition of frames.
-    """
-    def __init__(
-            self,
-            cfg_device: ConfigDevice,
-            cfg_image: Optional[ConfigImage] = IMAGE_CONFIG_DEFAULT,
-            cfg_objective: Optional[ConfigObjective] = OBJECTIVE_CONFIG_DEFAULT,
-            cfg_focus: Optional[ConfigFocus] = FOCUS_CONFIG_DEFAULT,
-    ):
-        super().__init__(cfg_device=cfg_device, cfg_image=cfg_image, cfg_objective=cfg_objective, cfg_focus=cfg_focus)
-        self.all_frames: List[np.ndarray[(int, int, int, int), np.float32]] = [
-            np.empty((1, 1, 1, 1)) for _ in range(cfg_device.num_periods)
-        ]
-        "List of all frames by position."
-        self._curr_period: int = -1
-        "Incremented after completing one round of imaging the whole device."
-
-        delta_reader: delta.utils.XPReader = \
-            delta.utils.XPReader(self.cfg_device.path_to_images / "Position{p}Channel{c}Frames{t}.tif")
-        for i_pos, i_delta_pos in enumerate(delta_reader.positions, start=0):
-            self.all_frames[i_pos] = delta_reader.getframes(position=i_delta_pos)
-        self.set_pos_id_to_coordinate({i_pos: "" for i_pos in range(len(delta_reader.positions))})
-
-    def _move_stage_to_pos(
-            self,
-            i_pos: int,
-    ) -> bool:
-        return True
-
-    def _initialise(self) -> None:
-        self._curr_period = -1
-
-    def _set_filter_wheel(self, i_pos: int):
-        return
-
-    def _take_frame(
-            self,
-            i_chan: int,
-            brightness: int = 100,
-            block: bool = False,
-            reset_led: bool = True,
-    ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
-        return self.all_frames[self._curr_pos][self._curr_period, i_chan, :, :]
-
-    def autofocus_enable(self, this_cfg_crisp: Optional[ConfigCRISP] = None, user_input: Optional[bool] = True):
-        self._autofocus_is_locked = True
-
-    def autofocus_disable(self):
-        self._autofocus_is_locked = False
-
-    def autofocus_is_locked(self):
-        return self._autofocus_is_locked
-
-    def autofocus_configure(self, this_cfg_crisp: Optional[ConfigCRISP] = None) -> bool:
-        return True
-
-    def autofocus_unlock(self):
-        self._autofocus_is_locked = False
-
-    def coordinate_is_out_of_bounds(self, coordinate: Union[Dict[str, float], Coordinate]) -> bool:
-        return False
-
-    def disable_led(self):
-        return
-
-    def get_delta_fov(self):
-        return self.cfg_objective.fov_size * 10
-
-    def get_filename(
-            self,
-            i_pos: Optional[int] = None,
-            i_channel: Optional[Union[int, ConfigLED]] = None,
-    ) -> str:
-        return ""
-
-    def get_stage_limits(self) -> Tuple[Coordinate, Coordinate]:
-        return Coordinate(-np.Inf, -np.Inf, -np.Inf), Coordinate(np.Inf, np.Inf, np.Inf)
-
-    def increment_period(self, delta_period: int = 1):
-        self._curr_period += delta_period
-
-    def set_period(self, i_period: int):
-        self._curr_period = i_period
-
-    def set_pos_id_to_coordinate(self, pos_id_to_coordinate: Dict[int, Any]) -> bool:
-        return True
-
-    def software_focus_finalise(self):
-        return
-
-    def software_focus_initialise(
-            self,
-            cfg_focus: Optional[ConfigFocus] = None,
-            focus_channel_override: Optional[int] = None,
-            rel_range_override: Optional[int] = None,
-            cropping_indices: Optional[Union[None, Tuple[Tuple[int, int], Tuple[int, int]]]] = None, # ((xmin,xmax), (ymin,ymax))
-            algorithm_override: Optional[ConfigFocusAlgorithm] = None,
-            user_input_override: bool = False,
-            countdown_override: bool = False,
-    ):
-        return
-
-    def software_focus_step(self, ipos: int):
-        return
-
-    def move_home(self, block: Optional[bool] = False):
-        return
-
-    def move_fov_up(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
-        return
-
-    def move_fov_down(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
-        return
-
-    def move_fov_left(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
-        return
-
-    def move_fov_right(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
-        return
-
-    def move_to(self, coordinate: Union[Dict[str, int], Coordinate], block: Optional[bool] = False):
-        return
-
-    def keyboard_control(self):
-        return
-
-    def set_led(self, i_chan: Union[int, ConfigLED], brightness: int = 100, block: bool = False):
-        return
-
-    def _set_exposure(self, exposure_time: Union[int, None] = None):
-        return
 
 
 class TestCamera(AbstractCamera):
@@ -543,16 +411,12 @@ class TestCamera(AbstractCamera):
     """
     def __init__(
             self,
-            cfg_device: ConfigDevice,
+            cfg_camera: ConfigCamera,
             filenames: List[Union[str, Path]],
-            cfg_crisp: Optional[ConfigCRISP] = CRISP_CONFIG_DEFAULT,
-            cfg_image: Optional[ConfigImage] = IMAGE_CONFIG_DEFAULT,
-            cfg_objective: Optional[ConfigObjective] = OBJECTIVE_CONFIG_DEFAULT,
             pos_to_filename: Optional[Union[Dict[int, Union[Path, str]], None]] = None,
-            cfg_focus: Optional[ConfigFocus] = FOCUS_CONFIG_DEFAULT,
             cropping_indices: Optional[Union[None, Tuple[Tuple[int, int], Tuple[int, int]]]] = None,
     ):
-        super().__init__(cfg_device=cfg_device, cfg_image=cfg_image, cfg_objective=cfg_objective, cfg_focus=cfg_focus)
+        super().__init__(cfg_camera=cfg_camera)
         if len(np.unique(filenames)) != len(filenames):
             raise ConfigError("TestCamera.__init__: must provide list with unique filenames.",
                               ErrorCode.ERROR_TEST_CAMERA_CONFIG)
@@ -560,20 +424,22 @@ class TestCamera(AbstractCamera):
         "List of filenames for mock images."
         self.indices: Iterator[int] = itertools.cycle(range(len(filenames)))
         "Cyclic indices."
-        self.cfg_crisp: ConfigCRISP = cfg_crisp
+        self._cfg_focus: ConfigFocus = self.cfg.focus.copy()
         "Settings for CRISP autofocus. Required for GUI interaction."
         self.pos_to_filename: Union[Dict[int, Union[Path, str]], None] = pos_to_filename
         "Optional dictionary mapping from unique position numbers (0,1,2,...) to filename."
-        self._led_channel_keys: Dict[int, str] = {
-            ConfigLED.LED_405_NM.value: "X",
-            ConfigLED.LED_450_NM.value: "Y",
-            ConfigLED.LED_505_NM.value: "Z",
-            ConfigLED.LED_538_NM.value: "F",
+        self._led_channel_keys: Dict[LEDType, Union[str, None]] = {
+            LEDType.LED_405_NM: "X",
+            LEDType.LED_450_NM: "Y",
+            LEDType.LED_505_NM: "Z",
+            LEDType.LED_538_NM: "F",
+            LEDType.NO_LED: None,
         }
         "LED keys i_chan=0,...,3 for communication with Tiger."
         self._crop_inds: Optional[Union[None, Tuple[Tuple[int, int], Tuple[int, int]]]] = \
             cropping_indices if cropping_indices else None
         "Optional cropping indices applied to all images. If provided, must be of the form ((xmin, xmax), (ymin, ymax))"
+        self._current_led_channel: LEDType = LEDType.NO_LED
 
         self._next_filename_index: int = next(self.indices)
 
@@ -585,7 +451,8 @@ class TestCamera(AbstractCamera):
                                   ErrorCode.ERROR_TEST_CAMERA_CONFIG)
             self.pos_to_filename = dict(sorted(self.pos_to_filename.items()))  # warning in pycharm is a bug
             self.filenames = list(self.pos_to_filename.values())
-        self.set_pos_id_to_coordinate({i_pos: "" for i_pos in range(len(self.pos_to_filename))})
+        self._current_pos: Coordinate = Coordinate(0, 0, 0)
+        self.focus_curr_pos: Dict[str, float] = {}
 
     def increment_filename_index(self):
         self._next_filename_index = next(self.indices)
@@ -594,125 +461,258 @@ class TestCamera(AbstractCamera):
             self,
             i_pos: int,
     ) -> bool:
+        logger.info("TestCamera._move_stage_to_pos: moving to pos={}".format(i_pos))
         if self.pos_to_filename is not None:
             if i_pos not in self.pos_to_filename:
-                raise EvoMachineError("TestCamera._move_stage_to_pos: i_pos not in pos_to_filename.")
+                raise EvoMachineError("TestCamera._move_stage_to_pos: i_pos not in pos_to_filename.",
+                                      ErrorCode.ERROR_TEST_CAMERA_CONFIG)
             self._next_filename_index = i_pos
         else:
             self.increment_filename_index()
         return True
 
     def _initialise(self) -> None:
+        logger.info("TestCamera._initialise: initialising TestCamera.")
         return
 
     def _set_filter_wheel(self, i_pos: int):
+        logger.info(f"TestCamera._set_filter_wheel={i_pos}.")
         return
 
     def _take_frame(
             self,
-            i_chan: int,
+            i_chan: Optional[LEDType] = None,
             brightness: int = 100,
             block: bool = False,
             reset_led: bool = True,
-    ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
+    ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
         image = skimage.io.imread(self.filenames[self._next_filename_index])
         if self._crop_inds:
             return image[self._crop_inds[0][0]:self._crop_inds[0][1], self._crop_inds[1][0]:self._crop_inds[1][1]]
         else:
             return image
 
+    def finalise(self):
+        logger.info("TestCamera.finalise: finalising TestCamera.")
+        return
+
     def get_filename(
             self,
             i_pos: Optional[int] = None,
-            i_channel: Optional[Union[int, ConfigLED]] = None,
+            i_channel: Optional[LEDType] = None,
     ) -> str:
         return str(self.filenames[self._next_filename_index]).split("/")[-1]
 
     def get_coordinates(self, axes: List[str]) -> Dict[str, float]:
-        return {ax.upper(): 0.0 for ax in axes}
+        return self._current_pos.to_dict()
 
-    def get_led_channels(self) -> Tuple[int]:
-        return tuple(self._led_channel_keys.keys())
+    def get_led_channels(self) -> List[LEDType]:
+        return self.cfg.leds
 
     def get_stage_limits(self) -> Tuple[Coordinate, Coordinate]:
-        return Coordinate(-np.Inf, -np.Inf, -np.Inf), Coordinate(np.Inf, np.Inf, np.Inf)
+        return Coordinate(-1e7, -1e7, -1e7), Coordinate(1e7, 1e7, 1e7)
 
     def halt_stage(self):
+        logger.info("TestCamera.halt_stage.")
         return
 
     def coordinate_is_out_of_bounds(self, coordinate: Dict[str, float]) -> bool:
         return False
 
     def disable_led(self):
+        self._current_led_channel = LEDType.NO_LED
+        logger.info("TestCamera.disable_led.")
+        return
+
+    def disable_live_mode(self):
+        logger.info("TestCamera.disable_live_mode.")
         return
 
     def autofocus_enable(self, this_cfg_crisp: Optional[ConfigCRISP] = None, user_input: Optional[bool] = True):
+        logger.info("TestCamera.autofocus_enable.")
         self._autofocus_is_locked = True
 
     def autofocus_disable(self):
+        logger.info("TestCamera.autofocus_disable.")
         self._autofocus_is_locked = False
 
     def autofocus_is_locked(self):
         return self._autofocus_is_locked
 
     def autofocus_configure(self, this_cfg_crisp: Optional[ConfigCRISP] = None) -> bool:
+        cfg_crisp = this_cfg_crisp if this_cfg_crisp else self.cfg.autofocus
+        logger.info(f"TestCamera.autofocus_configure with cfg={cfg_crisp} (this_cfg_crisp={this_cfg_crisp}).")
         return True
 
     def autofocus_unlock(self):
+        logger.info("TestCamera.autofocus_unlock.")
         self._autofocus_is_locked = False
 
     def software_focus_finalise(self):
+        logger.info("TestCamera.software_focus_finalise.")
         return
+
+    def software_focus_is_valid_range(self) -> bool:
+        if self.focus_Z_coords is None:
+            return False
+        else:
+            for z_coord in [self.focus_Z_coords[0], self.focus_Z_coords[-1]]:
+                is_out_of_bounds = self.coordinate_is_out_of_bounds({'Z': z_coord})
+                if is_out_of_bounds:
+                    logger.warning(
+                        f"EvoCamera.software_focus_check_range: Coordinates are out of bounds. "
+                        f"Received min, max = {[self.focus_Z_coords[0], self.focus_Z_coords[-1]]}. "
+                        f"Stage limits = {self.get_stage_limits()}). Reset stage limits."
+                    )
+                    return False
+        return True
 
     def software_focus_initialise(
             self,
             cfg_focus: Optional[ConfigFocus] = None,
-            focus_channel_override: Optional[int] = None,
+            focus_channel_override: Optional[LEDType] = None,
             rel_range_override: Optional[int] = None,
-            cropping_indices: Optional[Union[None, Tuple[Tuple[int, int], Tuple[int, int]]]] = None, # ((xmin,xmax), (ymin,ymax))
-            algorithm_override: Optional[ConfigFocusAlgorithm] = None,
+            cropping_box: Optional[EvoCroppingBox] = None,
+            algorithm_override: Optional[FocusAlgorithmType] = None,
             user_input_override: bool = False,
             countdown_override: bool = False,
     ):
-        return
+        args_str = f"cfg_focus={cfg_focus}\nfocus_channel_override={focus_channel_override}, " \
+                   f"rel_range_override={rel_range_override}, cropping_box={cropping_box}, " \
+                   f"algorithm_override={algorithm_override}, user_input_override={user_input_override}, " \
+                   f"countdown_override={countdown_override}."
+        logger.info(f"TestCamera.software_focus_initialise with args={args_str}.")
+        # Assign optional arguments
+        if cropping_box is None:
+            self.focus_cropping_box = EvoCroppingBox.full(np.zeros(self.cfg.image.shape))
+        else:
+            self.focus_cropping_box = cropping_box
+        self._cfg_focus = cfg_focus.copy() if cfg_focus else self.cfg.focus.copy()
+        if focus_channel_override is not None:
+            self._cfg_focus.focus_channel = focus_channel_override
+        if algorithm_override is not None:
+            self._cfg_focus.algorithm = algorithm_override
+        if rel_range_override is not None:
+            self._cfg_focus.rel_range = rel_range_override
+        # Initialise Z stack
+        self.focus_curr_pos = self.get_coordinates(axes=["X", "Y", "Z"])
+        self.focus_Z_coords = range(
+            int(self.focus_curr_pos['Z']-self._cfg_focus.rel_range),
+            int(self.focus_curr_pos['Z']+self._cfg_focus.rel_range),
+            self._cfg_focus.step_size,
+        )
+        if not self.software_focus_is_valid_range():
+            self._focus_is_initialised = False
+            return
+        self.focus_scores = np.zeros(len(self.focus_Z_coords))
+        self.focus_stack = np.zeros(shape=(*self.cfg.image.shape, len(self.focus_Z_coords)), dtype=np.float64)
+        self.disable_led()
+        self.focus_prev_image = self.get_frame(i_chan=self._cfg_focus.focus_channel).astype(np.float64)
+        self._focus_is_initialised = True
 
     def software_focus_step(self, ipos: int):
+        logger.info(f"TestCamera.software_focus_step at pos_z={ipos}.")
+        z_coord = self.focus_Z_coords[ipos]
+        self.move_to(coordinate={'Z': z_coord}, block=True)
+        image_raw = self.display_save_frame(
+            i_chan=self._cfg_focus.focus_channel,
+            path_to_save=False,
+            filename=None,
+            display_frame=False,
+        )
+        if image_raw is None:
+            logger.warning("EvoCamera.software_focus: self._take_frame returned None. Aborting...")
+            return
+        else:
+            self.focus_stack[:, :, ipos] = image_raw
+        self.focus_scores[ipos] = get_focus_score(
+            img=self.focus_cropping_box.crop(self.focus_stack[:, :, ipos]),
+            algorithm=self._cfg_focus.algorithm,
+        )
         return
 
     def move_home(self, block: Optional[bool] = False):
+        self._current_pos = Coordinate(0, 0, 0)
+        logger.info("TestCamera.move_home.")
         self.increment_filename_index()
 
     def move_fov_up(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        self._move_fov(x_or_y='Y', sign=-1, multiplier=multiplier, block=block)
+        logger.info("TestCamera.move_fov_up.")
         self.increment_filename_index()
 
     def move_fov_down(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        self._move_fov(x_or_y='Y', sign=+1, multiplier=multiplier, block=block)
+        logger.info("TestCamera.move_fov_down.")
         self.increment_filename_index()
 
     def move_fov_left(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        self._move_fov(x_or_y='X', sign=-1, multiplier=multiplier, block=block)
+        logger.info("TestCamera.move_fov_left.")
         self.increment_filename_index()
 
     def move_fov_right(self, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        self._move_fov(x_or_y='X', sign=+1, multiplier=multiplier, block=block)
+        logger.info("TestCamera.move_fov_right.")
         self.increment_filename_index()
 
-    def move_to(self, coordinate: Dict[str, int], block: Optional[bool] = False):
+    def _move_fov(self, x_or_y: str, sign: int, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
+        pos = self._current_pos.to_dict()
+        if x_or_y.upper() not in pos:
+            raise TigerError(f"EvoCamera._move_fov: queried coordinate {x_or_y.upper()} not in response: {pos}.",
+                             ErrorCode.ERROR_TIGER_NO_DATA)
+        pos[x_or_y.upper()] += int(sign * self.cfg.fov_size * 10 * multiplier)
+        self._current_pos = Coordinate.from_dict(pos)
+
+    def move_to(self, coordinate: Union[Dict[str, int], Coordinate], block: Optional[bool] = False):
+        if isinstance(coordinate, dict):
+            if not all([key in coordinate for key in ['X', 'Y', 'Z']]):
+                for key in ['X', 'Y', 'Z']:
+                    if key not in coordinate:
+                        coordinate[key] = self._current_pos.to_dict()[key]
+        else:
+            if coordinate.x is None:
+                coordinate.x = self._current_pos.x
+            if coordinate.y is None:
+                coordinate.y = self._current_pos.y
+            if coordinate.z is None:
+                coordinate.z = self._current_pos.z
+        self._current_pos = Coordinate.from_dict(coordinate) if isinstance(coordinate, dict) else coordinate
+        logger.info(f"TestCamera.move_to={str(coordinate)}, block={block}.")
         self.increment_filename_index()
 
     def get_delta_fov(self):
-        return self.cfg_objective.fov_size * 10
+        return self.cfg.fov_size * 10
 
     def keyboard_control(self):
         return
 
     def _set_exposure(self, exposure_time: Union[int, None] = None):
+        logger.info(f"TestCamera._set_exposure={exposure_time}.")
         return
 
-    def set_led(self, i_chan: Union[int, ConfigLED], brightness: int = 100):
+    def set_led(self, i_chan: LEDType, brightness: int = 100, block: bool = False):
+        self._current_led_channel = i_chan
+        logger.info(f"TestCamera.set_led={i_chan}, brightness={brightness}, block={block}.")
         return
 
     def set_pos_id_to_coordinate(self, pos_id_to_coordinate: Dict[int, Any]) -> bool:
+        for i_pos, coord in pos_id_to_coordinate.items():
+            if not coord.has_z():
+                logger.warning(f"EvoCamera.set_pos_id_to_coordinate: Position {i_pos} is missing Z "
+                               f"coordinate ({coord}). Position list not initialised.")
+                return False
+            if self.coordinate_is_out_of_bounds(coord):
+                logger.warning(f"EvoCamera.set_pos_id_to_coordinate: Position {i_pos} is out of bounds. "
+                               f"coordinate ({coord}). Position list not initialised.")
+                return False
+        self._pos_id_to_coordinate = {key: val for key, val in pos_id_to_coordinate.items()}
+        logger.info(f"TestCamera.set_pos_id_to_coordinate={pos_id_to_coordinate}.")
         return True
 
     def zero_coordinates(self):
+        self._current_pos = Coordinate(0, 0, 0)
+        logger.info("TestCamera.zero_coordinates.")
         return
 
 
@@ -722,30 +722,29 @@ class EvoCamera(AbstractCamera):
     """
     def __init__(
             self,
-            cfg_device: ConfigDevice,
-            cfg_image: Optional[ConfigImage] = IMAGE_CONFIG_DEFAULT,
-            cfg_crisp: Optional[ConfigCRISP] = CRISP_CONFIG_DEFAULT,
-            cfg_focus: Optional[ConfigFocus] = FOCUS_CONFIG_DEFAULT,
-            cfg_objective: Optional[ConfigObjective] = OBJECTIVE_CONFIG_DEFAULT,
+            cfg_camera: ConfigCamera,
+            tiger_port: str = "/dev/ttyUSB0",
     ):
-        super().__init__(cfg_device=cfg_device, cfg_image=cfg_image, cfg_objective=cfg_objective, cfg_focus=cfg_focus)
+        super().__init__(cfg_camera=cfg_camera)
 
+        self._tiger_port = tiger_port
+        "Tiger port for serial communication."
         self.tiger: Optional[asitiger.tigercontroller.TigerController, asitiger.tigerthread.TigerThread] = None
         "Object for serial communication with ASI tiger."
         self._tiger_is_alive: bool = False
         "Flag set in _initialise."
         self._is_multi_threaded: bool = False
         "If true, will use Threading wrappers for objects like self.tiger."
-        self.current_channel: int = -1
+        self.current_channel: LEDType = LEDType.NO_LED
         "Current LED channel set."
-        self._last_frame_channel: int = -1
+        self._last_frame_channel: LEDType = LEDType.NO_LED
         "Channel used to take last frame."
-        self._led_channel_keys: Dict[int, Union[str, None]] = {
-            ConfigLED.LED_405_NM.value: "X",
-            ConfigLED.LED_450_NM.value: "Y",
-            ConfigLED.LED_505_NM.value: "Z",
-            ConfigLED.LED_538_NM.value: "F",
-            ConfigLED.LED_NO_LED.value: None,
+        self._led_channel_keys: Dict[LEDType, Union[str, None]] = {
+            LEDType.LED_405_NM: "X",
+            LEDType.LED_450_NM: "Y",
+            LEDType.LED_505_NM: "Z",
+            LEDType.LED_538_NM: "F",
+            LEDType.NO_LED: None,
         }
         "LED keys i_chan=0,...,3 for communication with Tiger."
         self._current_led_brightness: int = 0
@@ -758,21 +757,8 @@ class EvoCamera(AbstractCamera):
         "Available filter wheels."
         self.card_address_crisp: int = 2
         "CRISP card address on ASI tiger."
-        self.cfg_crisp: ConfigCRISP = cfg_crisp
-        "Settings for CRISP autofocus."
-        self._cfg_focus: ConfigFocus = cfg_focus.copy()
+        self._cfg_focus: ConfigFocus = self.cfg.focus.copy()
         "Internal focus configuration used for overrides."
-
-        self.focus_cols: Optional[Tuple[int]] = None
-        "Initialised in software_focus. Contains min/max indices of image to apply focus routine to."
-        self.focus_curr_pos: Optional[Dict[str, int]] = None
-        "Initialised in software_focus. X/Y/Z coordinates of stage before last start of focus routine."
-        self.focus_old_channel: Optional[int] = None
-        "Initialised in software_focus. LED channel before last start of focus routine."
-        self.focus_rows: Optional[Tuple[int]] = None
-        "Initialised in software_focus. Contains min/max indices of image to apply focus routine to."
-        self._focus_is_initialised: bool = False
-        "Changes to True after initialisation and to False after finalisation."
 
         self._pos_id_to_coordinate: Dict[int, Coordinate] = {}
         "Dictionary position ID -> Coordinate. Initialise through set_pos_id_to_coordinate."
@@ -792,13 +778,13 @@ class EvoCamera(AbstractCamera):
         try:
             if self._is_multi_threaded:
                 self.tiger: asitiger.tigerthread.TigerThread = \
-                    asitiger.tigerthread.TigerThread.from_serial_port(port=self.cfg_device.tiger_port)
+                    asitiger.tigerthread.TigerThread.from_serial_port(port=self._tiger_port)
             else:
                 self.tiger: asitiger.tigercontroller.TigerController = \
-                    asitiger.tigercontroller.TigerController.from_serial_port(port=self.cfg_device.tiger_port)
+                    asitiger.tigercontroller.TigerController.from_serial_port(port=self._tiger_port)
         except Exception as e:
             self._tiger_is_alive = False
-            logger.warning(f"EvoCamera._initialise: Error connecting to Tiger: {e}.")
+            logger.warning(f"EvoCamera._initialise: Error connecting to Tiger on port {self._tiger_port}: {e}.")
             self.error_container.add_error(
                 new_error=TigerError(message=str(e), error_code=ErrorCode.ERROR_TIGER_SERIAL_CONNECTION)
             )
@@ -840,18 +826,20 @@ class EvoCamera(AbstractCamera):
         if self._tiger_is_alive:
             self.tiger.filter_wheel(position=i_pos, card_address=self.card_address_fw)
         else:
-            logger.error(msg=f"EvoCamera._set_filter_wheel: Tiger is not alive. "
-                             f"Check ASI Tiger box and serial connection.")
+            logger.error(msg=f"EvoCamera._set_filter_wheel: Tiger is not alive.")
 
     def disable_led(self):
-        self.set_led(i_chan=-1)
+        self.set_led(i_chan=LEDType.NO_LED)
+
+    def disable_live_mode(self):
+        self.studio.live().set_live_mode(False)
 
     def _move_fov(self, x_or_y: str, sign: int, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
         pos = self.tiger.where([x_or_y.upper()])
         if x_or_y.upper() not in pos:
             raise TigerError(f"EvoCamera._move_fov: queried coordinate {x_or_y.upper()} not in response: {pos}.",
                              ErrorCode.ERROR_TIGER_NO_DATA)
-        pos[x_or_y.upper()] += int(sign * self.cfg_objective.fov_size * 10 * multiplier)
+        pos[x_or_y.upper()] += int(sign * self.cfg.fov_size * 10 * multiplier)
         self.move_to(coordinate=pos, block=block)
 
     def _move_stage_to_pos(
@@ -874,11 +862,11 @@ class EvoCamera(AbstractCamera):
 
     def _take_frame(
             self,
-            i_chan: Union[int, None],
+            i_chan: Optional[LEDType] = None,
             brightness: int = 100,
             block: bool = False,
             reset_led: bool = True,
-    ) -> Union[None, np.ndarray[(int, int), 'ConfigImage.pxl_dtype']]:
+    ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
         if not self._mmc_is_alive:
             logger.error(msg=f"EvoCamera._take_frame: MMC is not alive. Check Camera and Micro-Manager.")
             return None
@@ -910,7 +898,7 @@ class EvoCamera(AbstractCamera):
             logger.error(f"EvoCamera.autofocus_enable: Device not alive.")
             return
 
-        cfg_crisp = this_cfg_crisp if this_cfg_crisp else self.cfg_crisp
+        cfg_crisp = this_cfg_crisp if this_cfg_crisp else self.cfg.autofocus
         ask_user = cfg_crisp.user_input and user_input
 
         if ask_user:
@@ -972,16 +960,15 @@ class EvoCamera(AbstractCamera):
         if not self._tiger_is_alive:
             logger.error(f"EvoCamera.autofocus_configure: Device not alive.")
             return False
-        cfg_crisp = this_cfg_crisp if this_cfg_crisp else self.cfg_crisp
+        cfg_crisp = this_cfg_crisp if this_cfg_crisp else self.cfg.autofocus
         try:
-            cfg_crisp.check_config()
             logger.info(f"CRISP: Configuring CRISP with following parameters:\n{cfg_crisp}")
         except ConfigError as e:
             logger.error(f"CRISP: Bad configuration:\n{e}\nCannot use CRISP.")
             return False
         self.autofocus_unlock()
         time.sleep(cfg_crisp.pause_short)
-        self.tiger.crisp_get_set_objective_na(card_address=self.card_address_crisp, value=cfg_crisp.objective_na)
+        self.tiger.crisp_get_set_objective_na(card_address=self.card_address_crisp, value=self.cfg.objective.na)
         time.sleep(cfg_crisp.pause_short)
         self.tiger.crisp_get_set_led_intensity(card_address=self.card_address_crisp, value=cfg_crisp.led_intensity)
         time.sleep(cfg_crisp.pause_short)
@@ -994,7 +981,6 @@ class EvoCamera(AbstractCamera):
         self.tiger.crisp_get_set_lock_range(card_address=self.card_address_crisp, value=cfg_crisp.lock_range)
         time.sleep(cfg_crisp.pause_short)
         new_cfg = ConfigCRISP(
-            objective_na=self.tiger.crisp_get_set_objective_na(card_address=self.card_address_crisp, value=None),
             led_intensity=self.tiger.crisp_get_set_led_intensity(card_address=self.card_address_crisp, value=None),
             loop_gain=self.tiger.crisp_get_set_loop_gain(card_address=self.card_address_crisp, value=None),
             averaging=self.tiger.crisp_get_set_num_avg(card_address=self.card_address_crisp, value=None),
@@ -1015,27 +1001,25 @@ class EvoCamera(AbstractCamera):
         self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.UNLOCK)
 
     def get_coordinates(self, axes: List[str]) -> Dict[str, float]:
+        """ Returns current coordinates of the stage. """
         return self.tiger.where(axes)
 
     def get_delta_fov(self):
-        return self.cfg_objective.fov_size * 10
+        return self.cfg.fov_size * 10
 
     def get_filename(
             self,
             i_pos: Optional[int] = None,
-            i_channel: Optional[Union[int, ConfigLED]] = None,
+            i_channel: Optional[LEDType] = None,
     ) -> str:
         if i_pos is not None:
             pos = self._pos_id_to_coordinate[i_pos].to_dict()
         else:
             pos = self.tiger.where(['X', 'Y', 'Z'])
-        if i_channel is not None:
-            if isinstance(i_channel, ConfigLED):
-                i_channel = i_channel.value
-        else:
+        if i_channel is None:
             i_channel = self._last_frame_channel
         return "{}_P{}_X{}_Y{}_Z{}_{}.tiff".format(
-            ConfigLED.get_name(value_to_find=i_channel).replace("_", ""),
+            LEDType.get_name(value_to_find=i_channel.value).replace("_", ""),
             i_pos if i_pos is not None else "",
             pos['X'],
             pos['Y'],
@@ -1043,8 +1027,8 @@ class EvoCamera(AbstractCamera):
             datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f")
         )
 
-    def get_led_channels(self) -> Tuple[int]:
-        return tuple(self._led_channel_keys.keys())
+    def get_led_channels(self) -> List[LEDType]:
+        return list(self._led_channel_keys.keys())
 
     def get_stage_limits(self) -> Tuple[Coordinate, Coordinate]:
         lim = self.tiger.get_stage_limits()
@@ -1054,33 +1038,7 @@ class EvoCamera(AbstractCamera):
         self.tiger.halt()
 
     def keyboard_control(self):
-        def on_key_release(key):
-            try:
-                delta_pos = 100
-                do_move = True
-                pos = self.tiger.where(['X', 'Y'])
-                print(f"X = {pos['X'] / 10:06.1f} μm, Y = {pos['Y'] / 10:06.1f} μm", end='\r')
-                if key == keyboard.KeyCode.from_char('w'):
-                    pos['Y'] -= delta_pos
-                elif key == keyboard.KeyCode.from_char('s'):
-                    pos['Y'] += delta_pos
-                elif key == keyboard.KeyCode.from_char('a'):
-                    pos['X'] -= delta_pos
-                elif key == keyboard.KeyCode.from_char('d'):
-                    pos['X'] += delta_pos
-                elif (key == keyboard.Key.esc) or (key == keyboard.KeyCode.from_char('q')):
-                    return False
-                else:
-                    do_move = False
-                if do_move:
-                    self.tiger.move(coordinates=pos)
-                    time.sleep(0.1)
-            except Exception as e:
-                logger.debug(f"Exception: {e}\n")
-                return False
-
-        with keyboard.Listener(on_release=on_key_release, suppress=True) as listener:
-            listener.join()
+        return
 
     def move_home(self, block: Optional[bool] = False):
         _ = self.tiger.home()
@@ -1129,23 +1087,21 @@ class EvoCamera(AbstractCamera):
         self._pos_id_to_coordinate = {key: val for key, val in pos_id_to_coordinate.items()}
         return True
 
-    def set_led(self, i_chan: Union[int, ConfigLED], brightness: int = 100, block: bool = False):
-        if isinstance(i_chan, ConfigLED):
-            i_chan = i_chan.value
+    def set_led(self, i_chan: LEDType, brightness: int = 100, block: bool = False):
         if i_chan not in self._led_channel_keys.keys():
             logger.error(msg=f"EvoCamera._set_channel: i_chan={i_chan} not in channels={self._led_channel_keys.keys()}.")
             return
         if self._tiger_is_alive:
-            led_settings = {val: (brightness if ((key == i_chan) and (i_chan != ConfigLED.LED_NO_LED.value)) else 0)
+            led_settings = {val: (brightness if ((key == i_chan) and (i_chan != LEDType.NO_LED)) else 0)
                             for key, val in self._led_channel_keys.items()}
-            if (0 <= brightness <= 100) or (i_chan != ConfigLED.LED_NO_LED.value):
+            if (0 <= brightness <= 100) or (i_chan != LEDType.NO_LED):
                 is_good_brightness_value = True
             else:
                 is_good_brightness_value = False
             if is_good_brightness_value:
                 self.tiger.led(led_brightnesses=led_settings, card_address=self.card_address_led)
                 self.current_channel = i_chan
-                self._current_led_brightness = 0 if i_chan == ConfigLED.LED_NO_LED.value else brightness
+                self._current_led_brightness = 0 if i_chan == LEDType.NO_LED else brightness
             else:
                 logger.error(msg=f"Cannot set brightness: {brightness} is out of range [0, 100]. LED not set.")
         else:
@@ -1178,43 +1134,20 @@ class EvoCamera(AbstractCamera):
                     f"{self.focus_curr_pos['Z'] / 10} μm,"
                     f"coordinate after focus={focus_best_coordinate / 10} μm. Finalising software_focus.")
         self._move_stage_to_coord({'Z': focus_best_coordinate})
-        self.set_led(i_chan=self.focus_old_channel)
-
-        # FIXME remove below
-        import pickle
-        with open(str(self.cfg_device.path_to_save / "FOCUS_STACK_GUI/pickled_data.pkl"), 'wb') as f:
-            data = (
-                self.focus_Z_coords,
-                self.focus_stack,
-                self.focus_scores,
-            )
-            pickle.dump(data, f)
+        self.set_led(i_chan=self._focus_old_channel)
 
     def software_focus_initialise(
             self,
             cfg_focus: Optional[ConfigFocus] = None,
-            focus_channel_override: Optional[int] = None,
+            focus_channel_override: Optional[LEDType] = None,
             rel_range_override: Optional[int] = None,
-            cropping_indices: Optional[Union[None, Tuple[Tuple[int, int], Tuple[int, int]]]] = None, # ((xmin,xmax), (ymin,ymax))
-            algorithm_override: Optional[ConfigFocusAlgorithm] = None,
+            cropping_box: Optional[EvoCroppingBox] = None,
+            algorithm_override: Optional[FocusAlgorithmType] = None,
             user_input_override: bool = False,
             countdown_override: bool = False,
     ):
         """
         Initialises software focus routine and validates parameter and limits.
-
-        Parameters
-        ----------
-        cfg_focus               : ConfigFocus object. If None, uses self.cfg_focus provided in constructor.
-        focus_channel_override  : Overrides cfg_focus.focus_channel.
-        rel_range_override      : Overrides cfg_focus.rel_range.
-        cropping_indices        : Apply focus to img[]
-        algorithm_override
-        user_input_override
-        countdown_override
-
-        Returns
-        -------
 
         """
         if not all([self._mmc_is_alive, self._tiger_is_alive]):
@@ -1222,31 +1155,23 @@ class EvoCamera(AbstractCamera):
                          f"Tiger={self._tiger_is_alive}, MMC={self._mmc_is_alive}.")
             return
         # Assign optional arguments
-        if cropping_indices is None:
-            self.focus_rows = 0, self.cfg_image.pxl_vert
-            self.focus_cols = 0, self.cfg_image.pxl_horiz
+        if cropping_box is None:
+            self.focus_cropping_box = EvoCroppingBox.full(np.zeros(self.cfg.image.shape))
         else:
-            logger.info("EvoCam.software_focus_initialise: using cropping boxes for focus.")
-            self.focus_rows = (cropping_indices[1][0], cropping_indices[1][1])
-            self.focus_cols = (cropping_indices[0][0], cropping_indices[0][1])
-        self._cfg_focus = cfg_focus.copy() if cfg_focus else self.cfg_focus.copy()
+            self.focus_cropping_box = cropping_box
+        self._cfg_focus = cfg_focus.copy() if cfg_focus else self.cfg.focus.copy()
         if focus_channel_override is not None:
             self._cfg_focus.focus_channel = focus_channel_override
         if algorithm_override is not None:
             self._cfg_focus.algorithm = algorithm_override
         if rel_range_override is not None:
             self._cfg_focus.rel_range = rel_range_override
-        try:
-            self._cfg_focus.check_config()
-        except ConfigError as e:
-            logger.warning(f"EvoCamera.software_focus: Invalid focus configuration:\n{e.message}\nAborting...")
-            return
         # Initialise Z stack
         self.focus_curr_pos = self.tiger.where()
         self.focus_Z_coords = range(
             self.focus_curr_pos['Z']-self._cfg_focus.rel_range,
             self.focus_curr_pos['Z']+self._cfg_focus.rel_range,
-            self._cfg_focus.steps_size,
+            self._cfg_focus.step_size,
         )
         if not self.software_focus_is_valid_range():
             self._focus_is_initialised = False
@@ -1277,13 +1202,12 @@ class EvoCamera(AbstractCamera):
             else:
                 logger.info("EvoCamera.software_focus: Aborting software focus.")
                 return
-        self.focus_old_channel = self.current_channel
+        self._focus_old_channel = self.current_channel
         self.set_exposure(exposure_time=int(self._cfg_focus.exposure_time))
         self.studio.live().set_live_mode(False)
         self.focus_scores = np.zeros(len(self.focus_Z_coords))
-        self.focus_stack = np.zeros(shape=(self.cfg_image.pxl_vert, self.cfg_image.pxl_horiz, len(self.focus_Z_coords)),
-                                    dtype=np.float64)
-        self.set_led(i_chan=ConfigLED.LED_NO_LED.value)
+        self.focus_stack = np.zeros(shape=(*self.cfg.image.shape, len(self.focus_Z_coords)), dtype=np.float64)
+        self.disable_led()
         self.focus_prev_image = self.display_save_frame(
             i_chan=self._cfg_focus.focus_channel,
             path_to_save=False,
@@ -1307,7 +1231,7 @@ class EvoCamera(AbstractCamera):
         else:
             self.focus_stack[:, :, ipos] = image_raw
         self.focus_scores[ipos] = get_focus_score(
-            img=self.focus_stack[self.focus_rows[0]:self.focus_rows[1], self.focus_cols[0]:self.focus_cols[1], ipos],
+            img=self.focus_cropping_box.crop(self.focus_stack[:, :, ipos]),
             algorithm=self._cfg_focus.algorithm,
         )
 

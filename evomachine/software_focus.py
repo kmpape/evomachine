@@ -2,19 +2,19 @@ import cv2
 import numpy as np
 from typing import Optional
 
-from evomachine.config import ConfigFocusAlgorithm
 from evomachine.exceptions import ConfigError, ErrorCode
+from evomachine.evotypes import FocusAlgorithmType
 
 
 DEFAULT_SQUARED_GRAD_THRESHOLD = 0.1
 
 
-def get_focus_score(img: np.array, algorithm: ConfigFocusAlgorithm, threshold: Optional[float] = None) -> float:
-    if algorithm == ConfigFocusAlgorithm.LAPLACIAN_VAR:
+def get_focus_score(img: np.array, algorithm: FocusAlgorithmType, threshold: Optional[float] = None) -> float:
+    if algorithm == FocusAlgorithmType.LAPLACIAN_VAR:
         return get_focus_score_laplacian_var(img=img)
-    elif algorithm == ConfigFocusAlgorithm.SQUARED_GRAD_AVG:
+    elif algorithm == FocusAlgorithmType.SQUARED_GRAD_AVG:
         return get_focus_score_squared_gradient(img=img, threshold=threshold)
-    elif algorithm == ConfigFocusAlgorithm.STEEL:
+    elif algorithm == FocusAlgorithmType.STEEL:
         return get_focus_score_steel(img=img)
     else:
         raise ConfigError(f"get_focus_score: Unknown focus algorithm: {algorithm}.", ErrorCode.ERROR_FOCUS_CONFIG)

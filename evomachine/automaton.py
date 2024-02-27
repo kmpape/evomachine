@@ -11,33 +11,25 @@ import delta
 from delta.config import Config
 
 from evomachine.acquisition import AbstractCamera
-from evomachine.commands import AutomatonCommand, AutomatonCommandType
-from evomachine.config import ConfigDevice, ConfigFocus, ConfigImage, ConfigLED, EVO_GUI_LOGGING_LEVEL, get_logger
+from evomachine.commands import AutomatonCommand
+from evomachine.config import ConfigFocus, ConfigImageProcessor, EVO_GUI_LOGGING_LEVEL, get_logger
 from evomachine.coordinates import Coordinate, CoordinateFactory
 from evomachine.dmd import DMDControl
 from evomachine.exceptions import ErrorCode, ErrorContainer, ConfigError
 from evomachine.positionrt import PositionRT
 from evomachine.strategy import AbstractStrategy
+from evomachine.utils import EvoCroppingBox
+from evomachine.evotypes import AutomatonCommandType, AutomatonQueueDataType, ImageConfigType, LEDType
 
 
 logger = get_logger(name=__name__)
 
 
-class AutomatonQueueDataType(Enum):
-    FOCUS_CURVES = auto()
-    FOCUS_FRAMES = auto()
-    INFO_TEXT = auto()
-    PROCESS_DATA = auto()
-
-
 class Automaton(threading.Thread):
     def __init__(
             self,
-            cfg_device: ConfigDevice,  # TODO add reference channel to config
-            cfg_image: ConfigImage,
-            cfg_delta: delta.config.Config,
-            cfg_focus: ConfigFocus,
             camera: AbstractCamera,
+            cfg_processor: ConfigImageProcessor,
             dmd: DMDControl,
             strategy: AbstractStrategy,
             data_queue: Optional[queue.Queue] = None,
@@ -45,45 +37,56 @@ class Automaton(threading.Thread):
     ):
         super().__init__(name="Automaton")
 
-        # TODO temporary switch
+        # FIXME temporary switch
         assert not use_segmentation
         self.use_segmentation = use_segmentation
 
-        self._cfg_delta: delta.config.Config = cfg_delta
+        self._cfg: ConfigImageProcessor = cfg_processor
         "Delta configuration object for image segmentation."
-        self._cfg_device: ConfigDevice = cfg_device
-        "Device configuration object defining geometry."
-        self._cfg_image: ConfigImage = cfg_image
-        "Image configuration object defining size and data type."
-        self._cfg_focus: ConfigFocus = cfg_focus
-        "Focus configuration object."
+        self._channel_to_index: Dict[LEDType, int] = {c: i for i, c in enumerate(self._cfg.channels)}
+        "Dictionary mapping LEDType to channel index in 3D arrays."
         self._curr_pos_id: int = 0
         "Current position."
         self._curr_period: int = 0
         "Incremented after completing one round of imaging the whole device."
         self._curr_step: int = 0
         "Incremented every time a picture is taken."
-        self._camera: AbstractCamera = camera
+        self._cam: AbstractCamera = camera
         "Camera object which can be a real camera or a class that reads from the disk."
         self._dmd: DMDControl = dmd
         "DMDControl object to project images."
         self._pos_processor: List[PositionRT] = []
         "List of Delta objects to process the images."
-        self._all_frames: List[np.ndarray[(int, int, int, int), ConfigImage.pxl_dtype]] = []
+        self._all_frames: List[np.ndarray] = []
         "List indexed by i_pos w. image array: prev/current x channels x pxl_vert x pxl_horiz."
-        self._ref_frames: List[np.ndarray[(int, int, int), ConfigImage.pxl_dtype]] = []
+        self._ref_frames: List[np.ndarray] = []
         "List indexed by i_pos w. reference image array: channels x pxl_vert x pxl_horiz."
-        self._is_initialised: bool = False
-        "Set to true after initialisation."
-        self._position_list_is_initialised: bool = False
+        self._fov_list_is_initialised: bool = False
+        "Set to true after initialise_field_of_view_list."
+        self._focus_is_initialised: bool = False
         "Set to true after initialise_position_list."
+        self._position_processors_is_initialised: List[bool] = []
+        "Set to true after initialise_position_processor."
+        self._reference_frames_is_initialised: bool = False
+        "Set to true after initialise_reference_frames."
+        self._strategy_is_initialised: bool = False
+        "Set to true after _initialise_strategy."
         self._data_queue: Union[queue.Queue, None] = data_queue
         "Queue for communication with the GUI."
-        self._cropping_boxes: Union[None, List[delta.utils.CroppingBox]] = None
-        "List of cropping boxes applied to each FoV. Current: first box used for focus routine."
 
-        self.positions: Dict[int, Coordinate] = {}
-        "Dictionary position coordinates (after focus) initialised in initialise_position_list()."
+        self._fovs: Dict[int, Coordinate] = {}
+        "Dictionary containing coordinates of field of views."
+        self._cropping_boxes: Union[None, Dict[int, List[EvoCroppingBox]]] = None
+        "List of cropping boxes applied to each FoV. One cropping box yields one position."
+        self._fov_to_pos: Dict[int, List[int]] = {}
+        "Dictionary mapping FoV to positions. Initialised in initialise_field_of_view_list()."
+        self._pos_to_fov: Dict[int, int] = {}
+        "Dictionary mapping position to FoV. Initialised in initialise_field_of_view_list()."
+        self._pos_to_fov_index: Dict[int, int] = {}
+        "Dictionary mapping position to index in _cropping_boxes. Initialised in initialise_field_of_view_list()."
+        self._pos_to_roi: Dict[int, List[int]] = {}
+        "Dictionary mapping position to RoI. Initialised in initialise_position_processor."
+
         self.focus_curves: Dict[int, Tuple[np.typing.Array, np.typing.Array]] = {}
         "Dictionary containing (Z coordinates for focus, focus scores) at each position."
         self.focus_stack: Union[None, np.typing.Array] = None
@@ -112,7 +115,7 @@ class Automaton(threading.Thread):
             logging.warning(msg=msg)
         else:
             logging.warning("No errors for automaton found.")
-        self._camera.check_status()
+        self._cam.check_status()
 
     def fill_queue(
             self,
@@ -125,61 +128,35 @@ class Automaton(threading.Thread):
 
     def initialise(
             self,
-            positions: Optional[Union[Dict[int, Coordinate], List[Coordinate]]] = None,
-            cropping_boxes: Optional[List[delta.utils.CroppingBox]] = None,
+            field_of_views: Dict[int, Coordinate],
+            cropping_boxes: Optional[Dict[int, List[EvoCroppingBox]]] = None,
     ):
         logger.info("Automaton.initialise: starting...")
-        self._is_initialised = False
         
         # Initialise devices
-        self._camera.initialise()
-        self._camera.studio.live().set_live_mode(False)
+        self._cam.initialise()
+        self._cam.studio.live().set_live_mode(False)
 
         # Validate position list, get focus coordinates, and broadcast position list to camera
-        if positions is not None:
-            logger.info(f"Automaton.initialise: initialising {len(positions)} positions...")
-            self.initialise_position_list(positions=positions, cropping_boxes=cropping_boxes)
-        elif not self._position_list_is_initialised:
-            raise ConfigError(message="Automaton.initialise: position list is not initialised.",
+        if field_of_views is not None:
+            logger.info(f"Automaton.initialise: initialising {len(field_of_views)} FoVs...")
+            self.initialise_field_of_view_list(field_of_views=field_of_views, cropping_boxes=cropping_boxes)
+        elif not self._fov_list_is_initialised:
+            raise ConfigError(message="Automaton.initialise: FoV list is not initialised.",
                               error_code=ErrorCode.ERROR_DEVICE_CONFIG)
         else:
-            logger.info(f"Automaton.initialise: found {len(self.positions)} initialised positions...")
+            logger.info(f"Automaton.initialise: found {len(self._fovs)} initialised positions...")
 
-        if not self._camera.set_pos_id_to_coordinate(pos_id_to_coordinate=self.positions):
-            raise ConfigError(message="Automaton.initialise: failed to pass position list to camera.",
-                              error_code=ErrorCode.ERROR_DEVICE_CONFIG)
-
-        # Allocate variables
-        self._all_frames = [
-            np.empty((2, self._cfg_device.num_chan, self._cfg_image.pxl_vert, self._cfg_image.pxl_horiz),
-                     dtype=self._cfg_image.pxl_dtype)
-            for _ in self.positions.keys()
-        ]
-        self._ref_frames = [
-            np.empty((self._cfg_device.num_chan, self._cfg_image.pxl_vert, self._cfg_image.pxl_horiz),
-                     dtype=self._cfg_image.pxl_dtype)
-            for _ in self.positions.keys()
-        ]
-        self._pos_processor = [
-            PositionRT(
-                position_nb=i,
-                config=self._cfg_delta,
-                cfg_image=self._cfg_image,
-                verbose=self._cfg_device.image_processing_verbosity
-            )
-            for i in self.positions.keys()
-        ]
+        # Initialise focus
+        self.initialise_fov_focus()
 
         # Take reference frames on each channel
         logger.info(f"Automaton.initialise: taking reference frames on all channels and all positions...")
-        for i_pos in self.positions.keys():
-            self._camera.move_to_pos(i_pos=i_pos)
-            for i_chan in range(self._cfg_device.num_chan):
-                self._ref_frames[i_pos][i_chan, :, :] = self._camera.get_frame(i_chan=i_chan)
-            if self.use_segmentation:
-                self._pos_processor[i_pos].initialise(self._ref_frames[i_pos])
-            self.increment_pos()
-        self._camera.reset_counter()
+        self.initialise_reference_frames()
+
+        # Initialise position processor
+        if self.use_segmentation:
+            self.initialise_position_processor()
 
         assert self._curr_pos_id == 0
         assert self._curr_period == 1  # Note that each ROI keeps track of _curr_period as well
@@ -188,93 +165,187 @@ class Automaton(threading.Thread):
         logger.info(f"Automaton.initialise: initialising strategy...")
         self._initialise_strategy()
 
-        self._is_initialised = True
-
         logger.info(f"Automaton.initialise: initialisation done.")
 
-    def initialise_position_list(
+    def initialise_position_processor(
             self,
-            positions: Union[Dict[int, Coordinate], List[Coordinate]],
-            cfg_focus: Optional[ConfigFocus] = None,
-            cropping_boxes: Optional[List[delta.utils.CroppingBox]] = None,
+            which: Optional[int] = None,
+            rotation: Optional[float] = None,
+            roi_boxes: Optional[Union[None, List[delta.utils.CroppingBox]]] = None,
     ):
-        self._position_list_is_initialised = False
+        if not self._fov_list_is_initialised or not self._reference_frames_is_initialised:
+            raise ConfigError(message="Automaton.initialise_position_processor: position list is not initialised.",
+                              error_code=ErrorCode.ERROR_DEVICE_CONFIG)
+        if which is None:
+            logging.info("Automaton.initialise_position_processor: initialising all position processors.")
+            for i in range(len(self._pos_processor)):
+                self._pos_processor[i].initialise(
+                    reference=self.normalise_frame(self._ref_frames[i]),  # TODO need to crop frames
+                    channel_rot=self._channel_to_index[self._cfg.channel_rot],
+                    channel_roi=self._channel_to_index[self._cfg.channel_roi],
+                    rotate=rotation,
+                    roi_boxes=roi_boxes
+                )
+                self._position_processors_is_initialised[i] = True
+                self.fill_queue(
+                    queue_data_type=AutomatonQueueDataType.PROCESSOR_INIT_DATA,
+                    queue_data=(i, self._pos_processor[i].rotate, self._pos_processor[i].roi_boxes),
+                    logging_level=logging.INFO,
+                )
+            self._pos_to_roi = {i_pos: [i_roi for i_roi in range(len(self._pos_processor[i_pos].rois))]
+                                for i_pos in range(len(self._pos_processor))}
+        else:
+            logging.info(f"Automaton.initialise_position_processor: initialising all position processor {which}.")
+            self._pos_processor[which].initialise(self._ref_frames[which], rotate=rotation, roi_boxes=roi_boxes)
+            self._position_processors_is_initialised[which] = True
+            self._pos_to_roi[which] = [i_roi for i_roi in range(len(self._pos_processor[which].rois))]
+            self.fill_queue(
+                queue_data_type=AutomatonQueueDataType.PROCESSOR_INIT_DATA,
+                queue_data=(which, self._pos_processor[which].rotate, self._pos_processor[which].roi_boxes),
+                logging_level=logging.INFO,
+            )
 
-        cropping_indices = None
+    def initialise_field_of_view_list(
+            self,
+            field_of_views: Dict[int, Coordinate],
+            cropping_boxes: Optional[Dict[int, List[EvoCroppingBox]]] = None,
+    ):
+        self._fov_list_is_initialised = False
+        self._focus_is_initialised = False
+        self._position_processors_is_initialised = []
+        self._strategy_is_initialised = False
+        self._reference_frames_is_initialised = False
+
+        print("INIT FOVs")
+        self._fovs = field_of_views
         if cropping_boxes is not None:
-            if (not cropping_boxes) or (not all(isinstance(c, delta.utils.CroppingBox) for c in cropping_boxes)):
-                raise ConfigError(f"Automaton.initialise_position_list: invalid cropping boxes {cropping_boxes}",
-                                  ErrorCode.ERROR_NOT_INITIALISED)
+            if not field_of_views.keys() == cropping_boxes.keys():
+                raise ConfigError(f"Automaton.initialise_position_list: cropping box keys do not match field_of_views.",
+                                  ErrorCode.ERROR_DEVICE_CONFIG)
             self._cropping_boxes = cropping_boxes
-            box0 = self._cropping_boxes[0]
-            cropping_indices = ((box0.xtl, box0.xbr), (box0.ytl, box0.ybr))
+            pos_id = 0
+            for fov_id, fov_boxes in self._cropping_boxes.items():
+                self._fov_to_pos[fov_id] = [pos_id + i for i in range(len(fov_boxes))]
+                for i in fov_boxes:
+                    self._pos_to_fov[pos_id] = fov_id
+                    self._pos_to_fov_index[pos_id] = i
+                    pos_id += 1
+        else:
+            self._cropping_boxes = {fov_id: [EvoCroppingBox.full(self._cam.cfg.image.shape)]
+                                    for fov_id in field_of_views.keys()}
+            self._fov_to_pos = {fov_id: [fov_id] for fov_id in field_of_views.keys()}
+            self._pos_to_fov = {fov_id: fov_id for fov_id in field_of_views.keys()}
+            self._pos_to_fov_index = {fov_id: 0 for fov_id in field_of_views.keys()}
 
-        self._camera.disable_led()
-        self._camera.studio.live().set_live_mode(False)
+        # Check positions
+        print("Check positions")
+        z_coord = self._cam.get_coordinates(['Z'])['Z']
+        self.focus_prev_z_coords = np.zeros(len(self._fovs))
+        for i_fov, coord in enumerate(self._fovs.values()):
+            if not coord.has_z():
+                coord.z = z_coord
+            if self._cam.coordinate_is_out_of_bounds(coordinate=coord):
+                msg = f"Automaton.initialise_field_of_view_list: {Coordinate} for FoV {i_fov} is out of bounds " \
+                      f"({self._cam.get_stage_limits()})."
+                raise ConfigError(message=msg, error_code=ErrorCode.ERROR_DEVICE_CONFIG)
+            self.focus_prev_z_coords[i_fov] = coord.z
+
+        # Allocate variables
+        print("Allocate")
+        self._all_frames = [
+            np.empty((2, len(self._cfg.channels), *self._cam.cfg.image.shape), dtype=self._cam.cfg.image.pxl_dtype)
+            for _ in self._fovs
+        ]
+        self._ref_frames = [
+            np.empty((len(self._cfg.channels), *self._cam.cfg.image.shape), dtype=self._cam.cfg.image.pxl_dtype)
+            for _ in self._fovs
+        ]
+        self._pos_processor = []
+        for pos_id, fov_ind in self._pos_to_fov_index.items():
+            box = self._cropping_boxes[self._pos_to_fov[pos_id]][fov_ind]
+            pos_image_cfg = ImageConfigType(
+                pxl_horiz=box.shape[1], pxl_vert=box.shape[0], pxl_dtype=self._cam.cfg.image.pxl_dtype,
+            )
+            self._pos_processor.append(
+                PositionRT(
+                    position_nb=pos_id,
+                    config=self._cfg.cfg_delta,
+                    processor_config=self._cfg,
+                    image_config=pos_image_cfg,
+                )
+            )
+        if not self._cam.set_pos_id_to_coordinate(pos_id_to_coordinate=self._fovs):
+            raise ConfigError(message="Automaton.initialise: failed to pass position list to camera.",
+                              error_code=ErrorCode.ERROR_DEVICE_CONFIG)
+        logger.info(f"Automaton.initialise_field_of_view_list: initialised {len(self._fovs)} FoVs with"
+                    f" {len(self._pos_to_fov)} positions.")
+        self._position_processors_is_initialised = [False for _ in self._pos_to_fov.keys()]
+        self._fov_list_is_initialised = True
+        print("Done")
+
+    def initialise_fov_focus(
+            self,
+            cfg_focus: Optional[ConfigFocus] = None,
+    ):
+        if not self._fov_list_is_initialised:
+            raise ConfigError("Automaton.initialise_fov_focus: FoV list is not initialised.", ErrorCode.ERROR_CONFIG)
+
+        self._cam.disable_led()
+        self._cam.disable_live_mode()
 
         # FIXME any DMD call from this thread crashes pygame
         # self._dmd.display_full()
 
-        cfg_focus = self._cfg_focus if cfg_focus is None else cfg_focus
-        if isinstance(positions, list):
-            positions = {i_pos: coord.copy() for i_pos, coord in enumerate(positions)}
-        else:
-            if not all(isinstance(key, int) and key >= 0 for key in positions.keys()):
-                raise ConfigError(message="Automaton.initialise_position_list: dictionary must have integer keys > 0.",
-                                  error_code=ErrorCode.ERROR_DEVICE_CONFIG)
-            positions = {i_pos: coord.copy() for i_pos, coord in positions.items()}
-
-        # Check positions
-        z_coord = self._camera.get_coordinates(['Z'])['Z']
-        self.focus_prev_z_coords = np.zeros(len(positions))
-        for i_pos, coord in positions.items():
-            if not coord.has_z():
-                coord.z = z_coord
-            if self._camera.coordinate_is_out_of_bounds(coordinate=coord):
-                msg = f"Automaton.initialise_position_list: {Coordinate} for position {i_pos} is out of bounds " \
-                      f"({self._camera.get_stage_limits()})."
-                raise ConfigError(message=msg, error_code=ErrorCode.ERROR_DEVICE_CONFIG)
-            self.focus_prev_z_coords[i_pos] = coord.z
-
-        # Run software focus on each position
-        self.focus_curves = {i_pos: None for i_pos in positions.keys()}
-        self.positions = {i_pos: None for i_pos in positions.keys()}
-        self.focus_prev_stack = np.zeros((self._cfg_image.pxl_vert, self._cfg_image.pxl_horiz, len(positions)))
-        self.focus_stack = np.zeros((self._cfg_image.pxl_vert, self._cfg_image.pxl_horiz, len(positions)))
-        for i_pos, coord in positions.items():
-            logger.info(f"Automaton.initialise_position_list: initialising position {i_pos+1} of {len(positions)}.")
+        cfg_focus = self._cam.cfg.focus if cfg_focus is None else cfg_focus
+        self.focus_curves = {i_fov: None for i_fov in self._fovs.keys()}
+        self.focus_prev_stack = np.zeros((*self._cam.cfg.image.shape, len(self._fovs)))
+        self.focus_stack = np.zeros((*self._cam.cfg.image.shape, len(self._fovs)))
+        for i_fov, coord in self._fovs.items():
+            logger.info(f"Automaton.initialise_fov_focus: initialising FoV {i_fov+1} of {len(self._fovs)}.")
             if self.stopped():
                 logger.warning("Automaton.initialise_position_list: stopping initialisation.")
                 return
-            self._camera.move_to(coordinate=coord, block=True)
-            self._camera.software_focus(
+            self._cam.move_to(coordinate=coord, block=True)
+            self._cam.software_focus(
                 cfg_focus=cfg_focus,
                 user_input_override=True,
                 countdown_override=True,
-                cropping_indices=cropping_indices,
+                cropping_box=None,
             )
-            self.focus_curves[i_pos] = (self._camera.focus_Z_coords, self._camera.focus_scores)
-            self.focus_prev_stack[:, :, i_pos] = self._camera.focus_prev_image
-            self.focus_stack[:, :, i_pos] = self._camera.get_software_focus_z_frame()
-            coord.z = self._camera.get_software_focus_z_coord()
-            self.positions[i_pos] = coord
+            self.focus_curves[i_fov] = (self._cam.focus_Z_coords, self._cam.focus_scores)
+            self.focus_prev_stack[:, :, i_fov] = self._cam.focus_prev_image
+            self.focus_stack[:, :, i_fov] = self._cam.get_software_focus_z_frame()
+            coord.z = self._cam.get_software_focus_z_coord()
 
         self.fill_queue(
-            queue_data_type=AutomatonQueueDataType.FOCUS_CURVES,
+            queue_data_type=AutomatonQueueDataType.FOCUS_DATA,
             queue_data=(self.focus_curves, self.focus_prev_stack, self.focus_stack, self.focus_prev_z_coords),
             logging_level=logging.INFO,
         )
 
-        self._camera.disable_led()
+        self._cam.disable_led()
         # TODO any DMD call from this thread crashes pygame
         # self._dmd.display_none()
-        self._position_list_is_initialised = True
+        self._focus_is_initialised = True
+
+    def initialise_reference_frames(self):
+        logger.info("Automaton.initialise_reference_frames: starting...")
+        for i_fov in self._fovs.keys():
+            self._cam.move_to_pos(i_pos=i_fov)
+            for channel_type, ind in self._channel_to_index.items():
+                self._ref_frames[i_fov][ind, :, :] = self._cam.get_frame(i_chan=channel_type)
+            self.increment_pos()
+        self._cam.reset_counter()
+        self._reference_frames_is_initialised = True
 
     def _initialise_strategy(self):
+        if not self._fov_list_is_initialised and not all(self._position_processors_is_initialised):
+            raise ConfigError(message="Automaton._initialise_strategy: not initialised.",
+                              error_code=ErrorCode.ERROR_NOT_INITIALISED)
         self.next_commands = self._strategy.initialise(
-            field_of_views=self.positions,
-            region_of_interests={i_pos: [i_roi for i_roi in range(len(self._pos_processor[i_pos].rois))]
-                                 for i_pos in self.positions.keys()}
+            field_of_views=self._fovs,
+            positions=self._fov_to_pos,
+            region_of_interests=self._pos_to_roi,
         )
 
         # Grab configuration object overrides TODO
@@ -282,12 +353,23 @@ class Automaton(threading.Thread):
             if not self._strategy.path_to_save.exists():
                 raise ConfigError(f"Automaton.initialise: path_to_save provided by strategy is invalid "
                                   f"({self._strategy.path_to_save}).", ErrorCode.ERROR_DEVICE_CONFIG)
-            self._cfg_device.path_to_save = self._strategy.path_to_save
+            self._cam.cfg.path_to_save = self._strategy.path_to_save
+
+        self._strategy_is_initialised = True
 
     def increment_pos(self) -> None:
-        self._curr_period = ((self._curr_period + 1) if (self._curr_pos_id + 1 == len(self.positions))
+        self._curr_period = ((self._curr_period + 1) if (self._curr_pos_id + 1 == len(self._fovs))
                              else self._curr_period)
-        self._curr_pos_id = (self._curr_pos_id + 1) % len(self.positions)
+        self._curr_pos_id = (self._curr_pos_id + 1) % len(self._fovs)
+
+    def normalise_frame(self, frame: np.ndarray, channels: Optional[int] = None) -> np.ndarray:
+        # TODO implement normalisation
+        norm_frame = frame.copy()
+        if channels is None:
+            channels = list(range(frame.shape[0]))
+        for c in channels:
+            norm_frame[c, :, :] = (norm_frame[c, :, :] - norm_frame[c, :, :].min()) / np.ptp(norm_frame[c, :, :])
+        return norm_frame
 
     def process(self):
         self.fill_queue(
@@ -316,21 +398,22 @@ class Automaton(threading.Thread):
                 return
 
             elif cmd.command_type == AutomatonCommandType.IMAGE:
-                if self._camera.get_exposure() != cmd.command_args['exposure_time']:
-                    self._camera.set_exposure(exposure_time=cmd.command_args['exposure_time'])
+                if self._cam.get_exposure() != cmd.command_args['exposure_time']:
+                    self._cam.set_exposure(exposure_time=cmd.command_args['exposure_time'])
                 # TODO actuate DMD
                 self._take_image(channels=cmd.command_args['channels'], brightness=cmd.command_args['brightness'])
                 if not cmd.command_args['segment']:
-                    channels_int = [c.value for c in cmd.command_args['channels']]
+                    channels_int = [self._channel_to_index[c] for c in cmd.command_args['channels']]
                     cmd.command_data = self._all_frames[self._curr_pos_id][1, channels_int, :, :]
                 else:
+                    # TODO make sure segmentation channel is in cmd.command_args['channels']
                     self._process_position()
                     # TODO fill with segmentation data
                     cmd.command_data = {roi_id: None
                                         for roi_id in range(len(self._pos_processor[self._curr_pos_id].rois))}
                 if cmd.command_args['save']:
                     for i_chan in cmd.command_args['channels']:
-                        self._camera.save_frame(
+                        self._cam.save_frame(
                             frame=self._all_frames[self._curr_pos_id][1, i_chan.value, :, :],
                             i_channel=i_chan,
                             i_pos=self._curr_pos_id,
@@ -340,10 +423,10 @@ class Automaton(threading.Thread):
                 # TODO need assert whether DMD image is being displayed
                 # TODO any DMD call from this thread crashes pygame
                 # self._dmd.display_image(img=cmd.command_args['image'])
-                self._camera.set_led(i_chan=cmd.command_args['channel'], brightness=cmd.command_args['brightness'])
+                self._cam.set_led(i_chan=cmd.command_args['channel'], brightness=cmd.command_args['brightness'])
                 # TODO need to block movement and implement the sleep statement as countdown w. callback
                 self.sleep(duration=cmd.command_args['duration'])
-                self._camera.disable_led()
+                self._cam.disable_led()
 
             cmd.command_execution_time = time.time()
 
@@ -363,6 +446,8 @@ class Automaton(threading.Thread):
 
     def run(self):
         has_stopped = True
+        if not self._strategy_is_initialised:
+            self._initialise_strategy()
         if not self.is_initialised():
             raise ConfigError(message="Automaton.run: not initialised.", error_code=ErrorCode.ERROR_NOT_INITIALISED)
         while True:
@@ -382,28 +467,31 @@ class Automaton(threading.Thread):
             return
         elif pos_id == -1:
             self.increment_pos()
-            self._camera.move_to_pos(i_pos=self._curr_pos_id)
+            self._cam.move_to_pos(i_pos=self._curr_pos_id)
         else:
-            self._camera.move_to_pos(i_pos=pos_id)
+            self._cam.move_to_pos(i_pos=pos_id)
             self._curr_pos_id = pos_id
 
-    def _take_image(self, channels: Optional[List[Union[int, ConfigLED]]] = None, brightness: Union[int, List[int]] = 100):
+    def _take_image(self, channels: Optional[List[LEDType]] = None, brightness: Union[int, List[int]] = 100):
         if (channels is None) or not channels:
-            channels = list(range(self._cfg_device.num_chan))
-        channels = [c.value if isinstance(c, ConfigLED) else c for c in channels]
+            channels = self._cfg.channels
         if isinstance(brightness, int):
             brightness = [brightness for _ in channels]
-        for i, i_chan in enumerate(channels):
+        for i, channel in enumerate(channels):
+            i_chan = self._channel_to_index[channel]
             self._all_frames[self._curr_pos_id][0, i_chan, :, :] = self._all_frames[self._curr_pos_id][1, i_chan, :, :]
-            self._all_frames[self._curr_pos_id][1, i_chan, :, :] = self._camera.get_frame(
-                i_chan=i_chan,
+            self._all_frames[self._curr_pos_id][1, i_chan, :, :] = self._cam.get_frame(
+                i_chan=channel,
                 brightness=brightness[i],
             )
 
     def _process_position(self):
         self._pos_processor[self._curr_pos_id].process_new_frame(
-            new_frame=self._all_frames[self._curr_pos_id][1, :, :, :]  # NOTE: frame passed by reference
+            new_frame=self._all_frames[self._curr_pos_id][1, :, :, :],
         )
+
+    def get_channel_to_index(self) -> Dict[LEDType, int]:
+        return {key: value for key, value in self._channel_to_index.items()}
 
     def get_period(self) -> int:
         return self._curr_period
@@ -411,16 +499,19 @@ class Automaton(threading.Thread):
     def get_pos_id(self) -> int:
         return self._curr_pos_id
 
-    def get_frame(self, i_pos: int, i_chan: int) -> np.ndarray[(int, int), 'ConfigImage.pxl_dtype']:
-        return self._all_frames[i_pos][1, i_chan, :, :]
+    def get_frame(self, i_pos: int, channel: LEDType) -> np.ndarray:
+        return self._all_frames[i_pos][1, self._channel_to_index[channel], :, :]
 
     def is_initialised(self):
-        return self._is_initialised
+        return self._strategy_is_initialised and self._reference_frames_is_initialised \
+            and self._fov_list_is_initialised and all(self._position_processors_is_initialised)
 
     def reset(self):
-        self._position_list_is_initialised = False
-        self._is_initialised = False
-        self.positions = {}
+        self._fov_list_is_initialised = False
+        self._focus_is_initialised = False
+        self._strategy_is_initialised = False
+        self._position_processors_is_initialised = []
+        self._reference_frames_is_initialised = False
 
     def sleep(self, duration: float):
         now = time.perf_counter()

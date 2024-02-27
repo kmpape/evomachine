@@ -17,7 +17,7 @@ from evomachine.config import ConfigCRISP, ConfigFocus, ConfigFocusAlgorithm, \
     OBJECTIVE_CONFIG_AIR,  OBJECTIVE_CONFIG_OIL, CRISP_CONFIG_OIL
 from evomachine.dmd import DMDControl
 from evomachine.gui import EvoGUI
-from evomachine.strategy import BasicStrategy
+from evomachine.strategy import BasicStrategy   # TODO add dropdown in GUI
 
 
 if __name__ == '__main__':

@@ -6,8 +6,9 @@ from typing import Any, List, Union
 
 import numpy as np
 
-from evomachine.config import EVO_FORMATTER, ConfigLED, get_logger
+from evomachine.config import EVO_FORMATTER, get_logger
 from evomachine.dmd import DMD_WIDTH_HEIGHT
+from evomachine.evotypes import AutomatonCommandType, LEDType
 
 
 logger = logging.getLogger(__name__)
@@ -18,15 +19,6 @@ handler = logging.StreamHandler()
 handler.setFormatter(EVO_FORMATTER)
 logger.addHandler(handler)
 logger.propagate = False
-
-
-class AutomatonCommandType(Enum):
-    IMAGE = auto()
-    MOVE = auto()
-    PROJECT = auto()
-    WAIT = auto()
-    STOP = auto()
-    # FOCUS = ()  # TODO
 
 
 @dataclass
@@ -44,11 +36,16 @@ class AutomatonCommand:
     command_execution_time: Union[float, None] = None
     "Time at which the command was created. Produced via time.time()."
 
+    @staticmethod
+    def _get_time(t: Union[float, None]) -> str:
+        return "None" if t is None else strftime('%Y-%m-%d %H:%M:%S', gmtime(t))
+
+    def get_exec_time(self):
+        return self._get_time(self.command_execution_time)
+
     def __str__(self):
-        creation_time = "None" if self.command_creation_time is None else \
-            strftime('%Y-%m-%d %H:%M:%S', gmtime(self.command_creation_time))
-        exec_time = "None" if self.command_execution_time is None else \
-            strftime('%Y-%m-%d %H:%M:%S', gmtime(self.command_execution_time))
+        creation_time = self._get_time(self.command_creation_time)
+        exec_time = self._get_time(self.command_execution_time)
         has_data = "True" if self.command_data is not None else "False"
         return f"Command(Type={self.command_type}, ID={self.command_id}, has_data={has_data}, " \
                f"Creation Time={creation_time}, Exec Time={exec_time})"
@@ -89,7 +86,7 @@ class CommandFactory:
 
     def command_image(
             self,
-            channels: List[ConfigLED],
+            channels: List[LEDType],
             exposure_time: Union[int, None],
             segment: bool,
             brightness: Union[int, List[int]] = 100,
@@ -116,7 +113,7 @@ class CommandFactory:
                                                 the corresponding FoV. Otherwise, the single key will be 0 and the
                                                 Lineage object will correspond to all cells in the current FoV.
         """
-        if not (isinstance(channels, list) and all(isinstance(channel, ConfigLED) for channel in channels)):
+        if not (isinstance(channels, list) and all(isinstance(channel, LEDType) for channel in channels)):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument channel ({type(channels)}).")
         if not isinstance(exposure_time, int):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument exposure_time ({type(exposure_time)}).")
@@ -162,7 +159,7 @@ class CommandFactory:
 
     def command_project(
             self,
-            channel: ConfigLED,
+            channel: LEDType,
             image: np.ndarray[(int, int), 'ConfigImage.pxl_dtype'],
             duration: float,
             brightness: int = 100
@@ -182,7 +179,7 @@ class CommandFactory:
         -------
 
         """
-        if not isinstance(channel, ConfigLED):
+        if not isinstance(channel, LEDType):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument channel ({type(channel)}).")
         if not (isinstance(image, np.typing.array) and image.shape == DMD_WIDTH_HEIGHT):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument image ({type(image)}).")
@@ -192,7 +189,7 @@ class CommandFactory:
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type or range for argument brightness.")
         return AutomatonCommand(
             command_type=AutomatonCommandType.PROJECT,
-            command_args={'channel': ConfigLED, 'image': image, 'duration': duration, 'brightness': brightness},
+            command_args={'channel': LEDType, 'image': image, 'duration': duration, 'brightness': brightness},
             command_id=self.get_next_id(),
             command_creation_time=time(),
         )
