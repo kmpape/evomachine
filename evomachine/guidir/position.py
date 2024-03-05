@@ -1,3 +1,4 @@
+from multiprocessing import Event, Queue
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QEventLoop, QThread, QTimer, QObject, QRegExp, Qt
 from PyQt5 import QtGui
@@ -14,9 +15,9 @@ from serial import SerialException
 from asitiger.errors import Errors as ASIErrors
 
 from evomachine.acquisition import AbstractCamera, EvoCamera
-from evomachine.automaton import Automaton, AutomatonQueueDataType
+from evomachine.automaton import Automaton
 from evomachine.commands import AutomatonCommand, AutomatonCommandType
-from evomachine.config import ConfigCRISP, ConfigFocus, get_logger
+from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, ConfigImageProcessor, get_logger
 from evomachine.coordinates import Coordinate, CoordinateFactory
 from evomachine.dmd import DMDControl
 from evomachine.exceptions import ConfigError, TigerError
@@ -24,133 +25,166 @@ from evomachine.evotypes import LEDType, FocusAlgorithmType
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
 from evomachine.guidir.guitypes import DisplayMode, Direction, ARROW_LEFT, ARROW_RIGHT, ARROW_UP, ARROW_DOWN, AXES, \
     SMALL, CENTER, LEFT, RIGHT, NORMAL
+from evomachine.guidir.queuemanager import QueueManager
 
 
-logger = get_logger(name=__name__)
+logger = get_logger(name=__name__, is_gui=True)
 
 
 class PositionWorker(EvoWorkerTemplate):
     def __init__(
             self,
-            cam: AbstractCamera,
+            queue_manager: QueueManager,
             data_curr_pos: pyqtSignal,
             parent: Optional[QMainWindow] = None,
     ):
         super().__init__(parent)
         self.data_curr_pos = data_curr_pos
-        self.cam = cam
+        self.queue_manager = queue_manager
         self.step_z = 5  # half a micrometer
 
     @pyqtSlot(Direction)
     def move_fov(self, direction: Direction):
+        logger.debug(f"move_fov: Move stage direction {direction}.")
         if self.is_disabled():
             logger.warning("MoveThread.move_to: Thread is disabled.")
             return
-
-        try:
-            if direction == Direction.LEFT:
-                self.cam.move_fov_left(block=True)
-            elif direction == Direction.RIGHT:
-                self.cam.move_fov_right(block=True)
-            elif direction == Direction.UP:
-                self.cam.move_fov_up(block=True)
-            elif direction == Direction.DOWN:
-                self.cam.move_fov_down(block=True)
-            elif direction == Direction.HOME:
-                self.cam.move_home(block=True)
-        except (SerialException, ValueError, ASIErrors.ParameterOutOfRangeError, TigerError) as e:
-            if isinstance(e, ASIErrors.ParameterOutOfRangeError):
-                logger.warning(f"MoveThread.move_to: Move is outside stage limits")
-            else:
-                logger.warning(f"ThreadPos.move_to: {e}")
-
-        self.update_position()
+        if direction == Direction.LEFT:
+            self.queue_manager.request(
+                req_str='self.cam.move_fov_left',
+                kwargs_dict={'block': True},
+                callback=self.update_position,
+            )
+        elif direction == Direction.RIGHT:
+            self.queue_manager.request(
+                req_str='self.cam.move_fov_right',
+                kwargs_dict={'block': True},
+                callback=self.update_position,
+            )
+        elif direction == Direction.UP:
+            self.queue_manager.request(
+                req_str='self.cam.move_fov_up',
+                kwargs_dict={'block': True},
+                callback=self.update_position,
+            )
+        elif direction == Direction.DOWN:
+            self.queue_manager.request(
+                req_str='self.cam.move_fov_down',
+                kwargs_dict={'block': True},
+                callback=self.update_position,
+            )
+        elif direction == Direction.HOME:
+            self.queue_manager.request(
+                req_str='self.cam.move_home',
+                kwargs_dict={'block': True},
+                callback=self.update_position,
+            )
+        # try:
+        #     if direction == Direction.LEFT:
+        #         self.cam.move_fov_left(block=True)
+        #     elif direction == Direction.RIGHT:
+        #         self.cam.move_fov_right(block=True)
+        #     elif direction == Direction.UP:
+        #         self.cam.move_fov_up(block=True)
+        #     elif direction == Direction.DOWN:
+        #         self.cam.move_fov_down(block=True)
+        #     elif direction == Direction.HOME:
+        #         self.cam.move_home(block=True)
+        # except (SerialException, ValueError, ASIErrors.ParameterOutOfRangeError, TigerError) as e:
+        #     if isinstance(e, ASIErrors.ParameterOutOfRangeError):
+        #         logger.warning(f"MoveThread.move_to: Move is outside stage limits")
+        #     else:
+        #         logger.warning(f"ThreadPos.move_to: {e}")
+        #
+        # self.update_position()
 
     @pyqtSlot(Coordinate)
     def move_to_coord(self, coordinate: Coordinate):
+        logger.debug(f"move_to_coord: Move stage direction {coordinate}.")
         if self.is_disabled():
             logger.warning("MoveThread.move_to: Thread is disabled.")
             return
-        try:
-            self.cam.move_to(coordinate=coordinate, block=True)
-        except (SerialException, ValueError, ASIErrors.ParameterOutOfRangeError, TigerError) as e:
-            if isinstance(e, ASIErrors.ParameterOutOfRangeError):
-                logger.warning(f"MoveThread.move_to: Move is outside stage limits")
-            else:
-                logger.warning(f"ThreadPos.move_to: {e}")
+        self.queue_manager.request(
+            req_str='self.cam.move_to',
+            kwargs_dict={'block': True, 'coordinate': coordinate},
+            callback=self.update_position,
+        )
+        # try:
+        #     self.queue_manager.request(
+        #         req_str='self.cam.move_to',
+        #         kwargs_dict={'block': True, 'coordinate': coordinate},
+        #         callback=self.update_position,
+        #     )
+        #     self.cam.move_to(coordinate=coordinate, block=True)
+        # except (SerialException, ValueError, ASIErrors.ParameterOutOfRangeError, TigerError) as e:
+        #     if isinstance(e, ASIErrors.ParameterOutOfRangeError):
+        #         logger.warning(f"MoveThread.move_to: Move is outside stage limits")
+        #     else:
+        #         logger.warning(f"ThreadPos.move_to: {e}")
 
-        self.update_position()
-
-    # def move_to(self, direction: Direction, move_to_pos: Optional[Coordinate] = None):
-    #     if self.is_disabled():
-    #         logger.warning("MoveThread.move_to: Thread is disabled.")
-    #         return
-    #
-    #     if direction == Direction.MOVETO and move_to_pos is None:
-    #         logger.warning("MoveThread.move_to: No move_to coordinate given.")
-    #         return
-    #     try:
-    #         if direction == Direction.LEFT:
-    #             self.cam.move_fov_left(block=True)
-    #         elif direction == Direction.RIGHT:
-    #             self.cam.move_fov_right(block=True)
-    #         elif direction == Direction.UP:
-    #             self.cam.move_fov_up(block=True)
-    #         elif direction == Direction.DOWN:
-    #             self.cam.move_fov_down(block=True)
-    #         elif direction == Direction.HOME:
-    #             self.cam.move_home(block=True)
-    #         elif direction == Direction.MOVETO:
-    #             self.cam.move_to(coordinate=move_to_pos, block=True)
-    #     except (SerialException, ValueError, ASIErrors.ParameterOutOfRangeError, TigerError) as e:
-    #         if isinstance(e, ASIErrors.ParameterOutOfRangeError):
-    #             logger.warning(f"MoveThread.move_to: Move is outside stage limits")
-    #         else:
-    #             logger.warning(f"ThreadPos.move_to: {e}")
-    #
-    #     self.update_position()
+        # self.update_position()
 
     @pyqtSlot()
     def halt_stage(self):
+        logger.debug(f"MoveThread.halt_stage.")
         if self.is_disabled():
             logger.warning("MoveThread.halt_stage: Thread is disabled.")
             return
-        self.cam.halt_stage()
-        self.update_position()
+        self.queue_manager.request(
+            req_str='self.cam.halt_stage',
+            kwargs_dict={},
+            callback=self.update_position,
+        )
+        # self.cam.halt_stage()
+        # self.update_position()
 
     @pyqtSlot()
     def zero_position(self):
+        logger.debug("zero_position.")
         if self.is_disabled():
             logger.warning("MoveThread.update_position: Thread is disabled.")
             return
-        self.cam.zero_coordinates()
-        self.update_position()
+        self.queue_manager.request(
+            req_str='self.cam.zero_coordinates',
+            kwargs_dict={},
+            callback=self.update_position,
+        )
+        # self.cam.zero_coordinates()
+        # self.update_position()
 
-    @pyqtSlot()
-    def update_position(self):
+    @pyqtSlot(int)
+    def update_position(self, data: Union[int, None]):
+        logger.debug("update_position.")
         if self.is_disabled():
             logger.warning("MoveThread.update_position: Thread is disabled.")
             return
-        try:
-            pos_dict = self.cam.get_coordinates(AXES)
-            self.data_curr_pos.emit(pos_dict)
-        except (SerialException, KeyError) as e:
-            logger.warning(f"EvoGUI.update_position: {e}")
+        self.queue_manager.request(
+            req_str='self.cam.get_coordinates',
+            kwargs_dict={'axes': AXES},
+            callback=self.data_curr_pos.emit,
+        )
+        # try:
+        #     pos_dict = self.cam.get_coordinates(AXES)
+        #     self.data_curr_pos.emit(pos_dict)
+        # except (SerialException, KeyError) as e:
+        #     logger.warning(f"EvoGUI.update_position: {e}")
 
 
 class PositionPanel(EvoPanelTemplate):
     # Broadcasts current position of stage.
     data_curr_pos = pyqtSignal(dict)
     # Request current position of stage.
-    request_curr_pos = pyqtSignal()
+    request_curr_pos = pyqtSignal(int)
     # Request halt of stage.
     request_halt = pyqtSignal()
-    # Move FoV LEFT/RIGHT/UP/DOWN/HOME.
+    # Move FoV LEFT/RIGHT/UP/DOWN.
     request_move_fov = pyqtSignal(Direction)
+    # Move FoV HOME.
+    request_move_home = pyqtSignal(Direction)
     # Move FoV LEFT/RIGHT/UP/DOWN/HOME.
     request_move_to_coord = pyqtSignal(Coordinate)
     # Zero position.
-    request_zero_position = pyqtSignal(Coordinate)
+    request_zero_position = pyqtSignal()
 
 
     MOVES = [Direction.LEFT.value, Direction.RIGHT.value, Direction.UP.value, Direction.DOWN.value,
@@ -159,48 +193,71 @@ class PositionPanel(EvoPanelTemplate):
 
     def __init__(
             self,
-            cam: AbstractCamera,
+            queue_manager: QueueManager,
+            camera_config: ConfigCamera,
+            processor_config: ConfigImageProcessor,
+            start_strategy_event: Event,
+            stop_strategy_event: Event,
+            stop_event: Event,
+            shutdown_event: Event,
     ):
-        super().__init__(cam=cam)
+        super().__init__(
+            queue_manager=queue_manager,
+            camera_config=camera_config,
+            processor_config=processor_config,
+            start_strategy_event=start_strategy_event,
+            stop_strategy_event=stop_strategy_event,
+            stop_event=stop_event,
+            shutdown_event=shutdown_event,
+        )
 
         self.data_curr_pos.connect(self.update_position_str)
 
-        self.worker = PositionWorker(cam=self.cam, data_curr_pos=self.data_curr_pos)
+        self.worker = PositionWorker(queue_manager=self.queue_manager, data_curr_pos=self.data_curr_pos)
         self.workers.append(self.worker)
         thread = EvoGUIThread()
         self.worker.moveToThread(thread)
-        # thread.start()
+        thread.start()
         self.threads.append(thread)
 
         self.pos_values = [self.make_label(text=self.make_pos_str(None), font=SMALL, align=RIGHT) for _ in AXES]
         "X/Y/Z values."
 
-        tmp = self.cam.get_stage_limits()
-        curr_limits = {'X': (tmp[0].x, tmp[1].x), 'Y': (tmp[0].y, tmp[1].y), 'Z': (tmp[0].z, tmp[1].z)}
+        # tmp = self.cam.get_stage_limits()
+        # curr_limits = {'X': (tmp[0].x, tmp[1].x), 'Y': (tmp[0].y, tmp[1].y), 'Z': (tmp[0].z, tmp[1].z)}
+        curr_limits = {'X': (0, 0), 'Y': (0, 0), 'Z': (0, 0)}
         self.pos_labels = [self.make_label(text=f"{ax} [{self.make_pos_str(curr_limits[ax][0], unit='cm')}, "
                                                 f"{self.make_pos_str(curr_limits[ax][1], unit='cm')}]", font=SMALL)
                            for ax in AXES]
         "X/Y/Z labels."
+        self.queue_manager.request(
+            req_str='self.cam.get_stage_limits',
+            kwargs_dict={},
+            callback=self.update_limits,
+        )
 
         self.request_curr_pos.connect(self.worker.update_position)
-        self.pos_update_button = self.make_button(text="Update", func=self.request_curr_pos.emit, font=SMALL)
+        self.pos_update_button = self.make_button_w_emit(text="Update", signal=self.request_curr_pos, font=SMALL, param=0)
+        self.request_curr_pos.emit(0)
         "Trigger update of self.pos_values."
 
         self.request_halt.connect(self.worker.halt_stage)
-        self.pos_halt_button = self.make_button(text="Halt", func=self.request_halt.emit, font=SMALL)
+        self.pos_halt_button = self.make_button_w_emit(text="Halt", signal=self.request_halt, font=SMALL)
         "Halt stage."
 
-        self.request_move_fov.connect(self.worker.move_fov)
-        self.pos_home_button = self.make_button(text="Home", func=self.request_move_fov.emit, font=SMALL,
-                                                direction=Direction.HOME)
+        self.request_move_home.connect(self.worker.move_fov)
+        self.pos_home_button = self.make_button_w_emit(text="Home", signal=self.request_move_home, font=SMALL,
+                                                       param=Direction.HOME)
         "Move to home position."
 
         self.request_zero_position.connect(self.worker.zero_position)
-        self.pos_zero_button = self.make_button(text="Zero", func=self.request_zero_position.emit, font=SMALL)
+        self.pos_zero_button = self.make_button_w_emit(text="Zero", signal=self.request_zero_position, font=SMALL)
         "Zero coordinate system."
 
+        self.request_move_fov.connect(self.worker.move_fov)
         self.pos_arrow_buttons = [
-            self.make_button(text=self.MOVES_STR[i], func=self.request_move_fov.emit, font=SMALL, direction=Direction(i))
+            self.make_button_w_emit(text=self.MOVES_STR[i], signal=self.request_move_fov, font=SMALL,
+                                    param=Direction(i))
             for i in self.MOVES
         ]
         "Arrow buttons for moving stage."
@@ -218,8 +275,11 @@ class PositionPanel(EvoPanelTemplate):
                                    for key in AXES}
         "Lineedits for entering move_to coordinates."
 
-        # Calls self.request_move_to_coord.emit()
-        self.pos_move_button = self.make_button(text="Move to", func=self.move_to_pos, font=SMALL)
+        self.request_move_to_coord.connect(self.worker.move_to_coord)
+        self.pos_move_button = self.make_button(
+            text="Move to",
+            func=lambda: self.request_move_to_coord.emit(Coordinate.from_dict(self.current_moveto)),
+            font=SMALL)
         "Move to entered coordinates."
 
         self.layout = QGridLayout()
@@ -241,13 +301,10 @@ class PositionPanel(EvoPanelTemplate):
         self.widget = QWidget()
         self.widget.setLayout(self.layout)
 
-    def move_to_pos(self):
-        coord = Coordinate(
-                x=self.current_moveto['X'],
-                y=self.current_moveto['Y'],
-                z=self.current_moveto['Z']
-        )
+    def move_to_coordinate(self):
+        coord = Coordinate.from_dict(self.current_moveto)
         self.request_move_to_coord.emit(coord)
+        logger.debug(f"move_to_coordinate {coord}.")
 
     def update_current_move_to(self, key: str):
         try:
@@ -255,8 +312,15 @@ class PositionPanel(EvoPanelTemplate):
         except ValueError:
             self.current_moveto[key] = None
 
+    def update_limits(self, data: Tuple[Coordinate, Coordinate]):
+        curr_limits = {'X': (data[0].x, data[1].x), 'Y': (data[0].y, data[1].y), 'Z': (data[0].z, data[1].z)}
+        for i, ax in enumerate(AXES):
+            self.pos_labels[i].setText(f"{ax} [{self.make_pos_str(curr_limits[ax][0], unit='cm')}, "
+                                       f"{self.make_pos_str(curr_limits[ax][1], unit='cm')}]")
+
     @pyqtSlot(dict)
     def update_position_str(self, pos_dict: Dict[str, Union[int, float, None]]):
+        logger.debug(f"update_position_str: {pos_dict}.")
         try:
             _ = [lab.setText(self.make_pos_str(pos_dict[ax])) for lab, ax in zip(self.pos_values, AXES)]
         except (SerialException, KeyError) as e:

@@ -69,7 +69,7 @@ class DMDControl:
         self.default_line_width: int = 5
         "Line width used for calibration and displaying lines. Use odd values."
 
-        self.initialise()
+        # self.initialise()  # TODO remove this
 
     def initialise(self):
         monitors = screeninfo.get_monitors()
@@ -105,6 +105,11 @@ class DMDControl:
         else:  # Wrong number of monitors
             msg = f"DMDControl.initialise: found {len(monitors)}  monitor(s) (instead of 2). {mon_info}."
             logger.warning(msg)
+            self.surface = pygame.display.set_mode(
+                size=(300, 300),
+                flags=pygame.NOFRAME,
+            )
+            self._dmd_is_alive = True
             self.error_container.add_error(new_error=DMDError(message=msg, error_code=ErrorCode.ERROR_MONITORS))
 
     def finalise(self):

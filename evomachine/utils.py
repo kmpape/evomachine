@@ -4,6 +4,8 @@ import pandas as pd
 import time
 from typing import Any, Dict, List, Tuple, Union
 
+import delta.utils
+
 # from evomachine.config import get_logger
 #
 #
@@ -34,6 +36,7 @@ class EvoCroppingBox:
     ytl: int
     xbr: int
     ybr: int
+    is_none: bool = False
 
     @property
     def shape(self) -> Tuple[int, int]:
@@ -115,6 +118,10 @@ class EvoCroppingBox:
 
         return framed
 
+    @staticmethod
+    def from_dict(d: Dict[str, int]) -> 'EvoCroppingBox':
+        return EvoCroppingBox(xtl=d['xtl'], ytl=d['ytl'], xbr=d['xbr'], ybr=d['ybr'])
+
     def patch(self, image: np.ndarray, patch: np.ndarray):
         """
         Apply a patch on an image at the position specified by the box.
@@ -154,6 +161,13 @@ class EvoCroppingBox:
             max(-self.xtl, 0): min(self.xbr, image.shape[1]) - self.xtl,
         ]
         return image
+
+    def to_delta_cropping_box(self) -> delta.utils.CroppingBox:
+        return delta.utils.CroppingBox(xtl=self.xtl, ytl=self.ytl, xbr=self.xbr, ybr=self.ybr)
+
+    @staticmethod
+    def none_box() -> 'EvoCroppingBox':
+        return EvoCroppingBox(xtl=0, ytl=0, xbr=0, ybr=0, is_none=True)
 
     def __eq__(self, other):
         if isinstance(other, self.__class__):

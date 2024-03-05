@@ -2,13 +2,17 @@ from dataclasses import dataclass
 from enum import Enum, auto
 import logging
 from time import time, gmtime, strftime
-from typing import Any, List, Union
+from typing import Any, Dict, List, Tuple, Union
 
 import numpy as np
 
+from delta.utils import CroppingBox as DeltaCroppingBox
+
 from evomachine.config import EVO_FORMATTER, get_logger
+from evomachine.coordinates import Coordinate
 from evomachine.dmd import DMD_WIDTH_HEIGHT
 from evomachine.evotypes import AutomatonCommandType, LEDType
+from evomachine.utils import EvoCroppingBox
 
 
 logger = logging.getLogger(__name__)
@@ -35,6 +39,8 @@ class AutomatonCommand:
     "Data collected after executing the command."
     command_execution_time: Union[float, None] = None
     "Time at which the command was created. Produced via time.time()."
+    fov_id: Union[int, None] = None
+    "Field of view ID. Used for commands sent to GUI."
 
     @staticmethod
     def _get_time(t: Union[float, None]) -> str:
@@ -230,3 +236,80 @@ class CommandFactory:
 
     def reset(self):
         self._command_id_counter = -1
+
+    @staticmethod
+    def command_focus_data(
+            focus_curves: Dict[int, Tuple[np.ndarray, np.ndarray]],
+            focus_stack: np.ndarray,
+            focus_prev_stack: np.ndarray,
+            focus_prev_z_coords: np.ndarray,
+    ):
+        command_args = {
+            'focus_curves': focus_curves,
+            'focus_stack': focus_stack,
+            'focus_prev_stack': focus_prev_stack,
+            'focus_prev_z_coords': focus_prev_z_coords,
+        }
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.FOCUS_DATA,
+            command_args=command_args,
+            command_id=-1,
+            command_creation_time=time(),
+        )
+
+    @staticmethod
+    def command_fov_data(
+            fovs: Dict[int, Coordinate],
+            cropping_boxes: Dict[int, List[EvoCroppingBox]],
+            fov_to_pos: Dict[int, List[int]],
+            pos_to_fov_index: Dict[int, int]
+    ):
+        command_args = {
+            'fovs': fovs,
+            'cropping_boxes': cropping_boxes,
+            'fov_to_pos': fov_to_pos,
+            'pos_to_fov_index': pos_to_fov_index,
+        }
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.FOV_DATA,
+            command_args=command_args,
+            command_id=-1,
+            command_creation_time=time(),
+        )
+
+    @staticmethod
+    def command_info_text(
+            text: str,
+    ):
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.INFO_TEXT,
+            command_args={'text': text},
+            command_id=-1,
+            command_creation_time=time(),
+        )
+
+    @staticmethod
+    def command_ref_data(ref_frames: List[np.ndarray]) -> AutomatonCommand:
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.REF_DATA,
+            command_args=ref_frames,
+            command_id=-1,
+            command_creation_time=time(),
+        )
+
+    @staticmethod
+    def command_roi_data(fov_id: int, rotation: float, roi_boxes: list[DeltaCroppingBox]) -> AutomatonCommand:
+        command_args = {
+            'fov_id': fov_id,
+            'rotation': rotation,
+            'roi_boxes': roi_boxes,
+        }
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.ROI_DATA,
+            command_args=command_args,
+            command_id=-1,
+            command_creation_time=time(),
+            fov_id=fov_id,
+        )
+
+

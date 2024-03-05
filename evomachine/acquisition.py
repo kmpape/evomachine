@@ -18,7 +18,7 @@ from evomachine.exceptions import CameraError, ConfigError, ErrorCode, ErrorCont
     EvoMachineError, StageError, TigerError
 from evomachine.software_focus import get_focus_score
 from evomachine.utils import EvoCroppingBox
-from evomachine.evotypes import FocusAlgorithmType, ImageConfigType, LEDType
+from evomachine.evotypes import FilterWheelType, FocusAlgorithmType, ImageConfigType, LEDType
 
 
 logger = get_logger(name=__name__)
@@ -43,6 +43,8 @@ class AbstractCamera:
         "Switches to True after enabling autofocus. Use self.autofocus_is_locked() to query status."
         self._curr_exposure: Union[float, None] = None
         "Currently set exposure time. Note: changes from micromanager are NOT registered."
+        self._current_filter_type: FilterWheelType = FilterWheelType.FILTER
+        "Currently set filter type. Note: changes from micromanager are NOT registered."
 
         self.focus_scores: Union[None, np.ndarray] = None
         "Initialised in software_focus. Contains the focus score of each image. Larger score = sharper image."
@@ -114,6 +116,9 @@ class AbstractCamera:
             return None
         focus_best_position = np.argmax(self.focus_scores)
         return self.focus_stack[:, :, focus_best_position]
+
+    def get_default_filename(self) -> str:
+        return self.get_filename(i_pos=None)
 
     def get_filename(
             self,
@@ -290,8 +295,10 @@ class AbstractCamera:
                            f"Returning image without saving...")
             return
         logger.info(f"Saving image {path_to_save / filename}.")
-        skimage.io.imsave(path_to_save / filename, frame, plugin="tifffile", check_contrast=False)
-
+        if '.tif' in filename:
+            skimage.io.imsave(path_to_save / filename, frame, plugin="tifffile", check_contrast=False)
+        else:
+            skimage.io.imsave(path_to_save / filename, frame, check_contrast=False)
     def software_focus(
             self,
             cfg_focus: Optional[ConfigFocus] = None,
@@ -392,7 +399,11 @@ class AbstractCamera:
     ) -> bool:
         raise NotImplementedError()
 
-    def _set_filter_wheel(self, i_pos: int):
+    def set_filter_wheel(self, filter_type: FilterWheelType):
+        self._set_filter_wheel(filter_type=filter_type)
+        self._current_filter_type = filter_type
+
+    def _set_filter_wheel(self, filter_type: FilterWheelType):
         raise NotImplementedError()
 
     def _take_frame(
@@ -475,8 +486,8 @@ class TestCamera(AbstractCamera):
         logger.info("TestCamera._initialise: initialising TestCamera.")
         return
 
-    def _set_filter_wheel(self, i_pos: int):
-        logger.info(f"TestCamera._set_filter_wheel={i_pos}.")
+    def _set_filter_wheel(self, filter_type: FilterWheelType):
+        logger.info(f"TestCamera._set_filter_wheel={self._current_filter_type}.")
         return
 
     def _take_frame(
@@ -486,7 +497,8 @@ class TestCamera(AbstractCamera):
             block: bool = False,
             reset_led: bool = True,
     ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
-        image = skimage.io.imread(self.filenames[self._next_filename_index])
+        random_matrix = np.random.randint(0, 2 ** 6, size=self.cfg.image.shape, dtype=np.uint16)
+        image = skimage.io.imread(self.filenames[self._next_filename_index]) + random_matrix
         if self._crop_inds:
             return image[self._crop_inds[0][0]:self._crop_inds[0][1], self._crop_inds[1][0]:self._crop_inds[1][1]]
         else:
@@ -501,10 +513,23 @@ class TestCamera(AbstractCamera):
             i_pos: Optional[int] = None,
             i_channel: Optional[LEDType] = None,
     ) -> str:
-        return str(self.filenames[self._next_filename_index]).split("/")[-1]
+        if i_pos is not None:
+            pos = self._pos_id_to_coordinate[i_pos].to_dict()
+        else:
+            pos = self._current_pos.to_dict()
+        if i_channel is None:
+            i_channel = self._current_led_channel
+        return "{}_P{}_X{}_Y{}_Z{}_{}.tiff".format(
+            LEDType.get_name(value_to_find=i_channel.value).replace("_", ""),
+            i_pos if i_pos is not None else "",
+            pos['X'],
+            pos['Y'],
+            pos['Z'],
+            datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f")
+        )
 
     def get_coordinates(self, axes: List[str]) -> Dict[str, float]:
-        return self._current_pos.to_dict()
+        return {key: val for key, val in self._current_pos.to_dict().items() if key in [tmp.upper() for tmp in axes]}
 
     def get_led_channels(self) -> List[LEDType]:
         return self.cfg.leds
@@ -753,7 +778,9 @@ class EvoCamera(AbstractCamera):
         "LED card address on ASI tiger."
         self.card_address_fw: int = 8
         "Filter wheel card address on ASI tiger."
-        self.filter_wheel_settings: Dict[int, str] = {0: "Filter", 1: "Blocking", 2: "Nothing"}
+        self.filter_wheel_settings: Dict[FilterWheelType, int] = {
+            FilterWheelType.FILTER: 0, FilterWheelType.BLOCKING: 1, FilterWheelType.NO_FILTER: 2
+        }
         "Available filter wheels."
         self.card_address_crisp: int = 2
         "CRISP card address on ASI tiger."
@@ -819,12 +846,12 @@ class EvoCamera(AbstractCamera):
         except ValueError:
             return False
 
-    def _set_filter_wheel(self, i_pos: int):
-        if i_pos not in self.filter_wheel_settings.keys():
-            logger.error(msg=f"EvoCamera._set_filter_wheel: i_pos={i_pos} not in wheels={self.filter_wheel_settings}.")
+    def _set_filter_wheel(self, filter_type: FilterWheelType):
+        if filter_type not in self.filter_wheel_settings.keys():
+            logger.error(msg=f"EvoCamera._set_filter_wheel: filter_type={filter_type} not in wheels={self.filter_wheel_settings}.")
             return
         if self._tiger_is_alive:
-            self.tiger.filter_wheel(position=i_pos, card_address=self.card_address_fw)
+            self.tiger.filter_wheel(position=self.filter_wheel_settings[filter_type], card_address=self.card_address_fw)
         else:
             logger.error(msg=f"EvoCamera._set_filter_wheel: Tiger is not alive.")
 

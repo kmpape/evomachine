@@ -1,3 +1,5 @@
+from multiprocessing import Event
+import os
 import queue
 import threading
 import time
@@ -14,13 +16,39 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.acquisition import AbstractCamera
-from evomachine.automaton import Automaton, AutomatonQueueDataType
-from evomachine.config import get_logger
+from evomachine.automaton import Automaton
+from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
 from evomachine.dmd import DMDControl
 from evomachine.guidir.guitypes import NORMAL
+from evomachine.guidir.queuemanager import QueueManager
 
 
 logger = get_logger(name=__name__)
+
+
+class FolderExistsValidator:
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def validate(input_str):
+        path = input_str.strip()
+        return os.path.exists(path) and os.path.isdir(path)
+
+
+class FilenameValidator:
+    def __init__(self):
+        pass
+
+    @staticmethod
+    def validate(input_str):
+        is_valid = False
+        try:
+            suffix = input_str.strip().split(".")[1]
+            is_valid = suffix in ["tiff", "tif", "png", "jpg", "jpeg"]
+        except IndexError:
+            pass
+        return is_valid
 
 
 class EvoGUIThread(QThread):
@@ -29,14 +57,6 @@ class EvoGUIThread(QThread):
     ):
         super(QThread, self).__init__()
         self._stop_event = threading.Event()
-
-    # def run(self) -> None:
-    #     while True:
-    #         while not self.stopped():
-    #             self._run()
-    #
-    # def _run(self):
-    #     pass
 
     def sleep(self, duration: float):
         now = time.perf_counter()
@@ -51,58 +71,55 @@ class EvoGUIThread(QThread):
         return self._stop_event.is_set()
 
 
-class QueueManager(EvoGUIThread):  # TODO make this a normal thread?
-    def __init__(self, data_queue: queue.Queue, queue_timeout: float = 0):
+class SingleShotThread(QThread):
+    def __init__(self, target=None):
         super().__init__()
-        self.main_queue: queue.Queue = data_queue
-        self._listeners: Dict[AutomatonQueueDataType, List[Callable[[Any], None]]] = {
-            key: [] for key in AutomatonQueueDataType.get_all()
-        }
-        self.queue_timeout = queue_timeout
+        self.target = target
 
-    def register(self, func: Callable[[Any], None], msg_type: AutomatonQueueDataType):
-        # TODO merge AutomatonQueueDataType and AutomatonCommandType
-        # TODO make these signals?
-        self._listeners[msg_type].append(func)
-
-    def run(self) -> None:
-        while True:
-            while not self.stopped():
-                try:
-                    tmp_data = self.main_queue.get(block=True, timeout=self.queue_timeout)
-                    for func in self._listeners[tmp_data[0]]:
-                        func(tmp_data[1])
-                except queue.Empty:
-                    pass
-                if self.queue_timeout:
-                    self.sleep(self.queue_timeout)
+    def run(self):
+        if self.target:
+            self.target()
 
 
 class EvoPanelTemplate(QWidget):
     def __init__(
             self,
-            cam: Optional[AbstractCamera] = None,
-            dmd: Optional[DMDControl] = None,
-            automaton: Optional[Automaton] = None,
+            queue_manager: QueueManager,
+            camera_config: ConfigCamera,
+            processor_config: ConfigImageProcessor,
+            start_strategy_event: Event,
+            stop_strategy_event: Event,
+            stop_event: Event,
+            shutdown_event: Event,
             parent=None,
     ):
         super().__init__(parent)
 
+        self.queue_manager: QueueManager = queue_manager
+        "Use to place device requests. Use to register to process callbacks."
+        self.camera_config: ConfigCamera = camera_config
+        "Camera configuration at initialisation."
+        self.processor_config: ConfigImageProcessor = processor_config
+        "Image processor configuration at initialisation."
+        self.start_strategy_event: Event = start_strategy_event
+        "When set, Automaton switches from GUI mode to strategy mode."
+        self.stop_strategy_event: Event = stop_strategy_event
+        "When set, Automaton switches from strategy mode to GUI mode."
+        self.stop_event: Event = stop_event
+        "When set, Automaton stops either GUI or strategy. Clearing restarts either GUI or strategy."
+        self.shutdown_event: Event = shutdown_event
+        "Shuts down everything."
+
         self.threads: List[Union[EvoGUIThread, None]] = []
         "List of threads that are running in the panel."
+        # self.single_shot_threads: List[Union[SingleShotThread, None]] = []
+        # "List of threads that are running in the panel."
         self.layout: QGridLayout = QGridLayout(self)
         "Layout of the panel."
         self.widget: Union[QWidget, None] = None
         "Widget of the panel."
         self.workers: List[EvoWorkerTemplate] = []
         "List of workers that are running in the panel."
-
-        self.cam: Union[AbstractCamera, None] = cam
-        "Camera object."
-        self.dmd: Union[DMDControl, None] = dmd
-        "DMD object."
-        self.automaton: Union[Automaton, None] = automaton
-        "Automaton object."
 
     def clean_threads(self):
         self.threads = [thread for thread in self.threads if thread is not None and not thread.isRunning()]
@@ -120,6 +137,20 @@ class EvoPanelTemplate(QWidget):
     def enable_workers(self):
         for worker in self.workers:
             worker.enable()
+
+    @staticmethod
+    def run_as_thread(
+            self,
+            func: Callable,
+            connect_signal: Optional[Callable[[Any], None]] = None,
+            callback: Optional[Callable[[None], None]] = None,
+    ):
+        thread = SingleShotThread(target=func)
+        if connect_signal is not None:
+            thread.finished.connect(connect_signal)
+        if callback is not None:
+            thread.finished.connect(callback)
+        thread.start()
 
     def stop_threads(self):
         for thread in self.threads:
@@ -140,6 +171,30 @@ class EvoPanelTemplate(QWidget):
         # else:
         #     button.clicked.connect(func)
         button.clicked.connect(lambda: func(**kwargs))
+        button.setFont(font)
+        button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
+        button.setMinimumSize(button.sizeHint())
+        if stylesheet is not None:
+            button.setStyleSheet(stylesheet)
+        return button
+
+    @staticmethod
+    def make_button_w_emit(
+            text: str,
+            signal: pyqtSignal,
+            font: QFont = NORMAL,
+            stylesheet: str = None,
+            param: Any = None,
+    ) -> QPushButton:
+        button = QPushButton(text)
+        # if kwargs:
+        #     button.clicked.connect(lambda: func(**kwargs))
+        # else:
+        #     button.clicked.connect(func)
+        if param is None:
+            button.clicked.connect(signal.emit)
+        else:
+            button.clicked.connect(lambda: signal.emit(param))
         button.setFont(font)
         button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
         button.setMinimumSize(button.sizeHint())

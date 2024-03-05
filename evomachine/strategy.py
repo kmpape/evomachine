@@ -5,7 +5,7 @@ import sys
 from typing import Dict, List, Tuple, Type, Union
 
 from evomachine.commands import AutomatonCommand, CommandFactory
-from evomachine.config import EVOMACHINE_DIR, get_logger
+from evomachine.config import EVOMACHINE_DIR, get_logger, ConfigCamera
 from evomachine.coordinates import Coordinate
 from evomachine.exceptions import ErrorCode, EvoMachineError, StrategyError
 from evomachine.evotypes import AutomatonCommandType, LEDType
@@ -16,9 +16,7 @@ logger = get_logger(name=__name__)
 
 class AbstractStrategy(ABC):
     """
-    TODO Camera object? Unclear whether new command classes provide all what is needed. 15th of Feb: IK thinks not needed
-    TODO AbstractStrategy needs finalise() and _finalise() methods called upon stop automaton
-    TODO Config jungle: allow strategies to have configs grabbed by automaton after initialise
+    TODO strategy needs a test function to check if it is working properly before starting
     """
 
     def __init__(self):
@@ -32,6 +30,8 @@ class AbstractStrategy(ABC):
         "Path to save images. If None, Automaton will use path in ConfigDevice. If Path, extracted after initialise()."
         self.command_factory: CommandFactory = CommandFactory()
         "Factory object to create AutomatonCommands."
+        self.config_camera: Union[None, ConfigCamera] = None
+        "Camera configuration object."
         # TODO add configuration objects here as None. Can be overwritten by base strategies, then read by automaton
 
     def callback(
@@ -96,6 +96,7 @@ class AbstractStrategy(ABC):
             field_of_views: Dict[int, Coordinate],
             positions: Dict[int, List[int]],
             region_of_interests: Dict[int, List[int]],
+            config_camera: ConfigCamera,
     ) -> List[AutomatonCommand]:
         """
         Initialise the strategy.
@@ -108,7 +109,8 @@ class AbstractStrategy(ABC):
             Dictionary with fov_id as key and list of pos_id as value.
         region_of_interests: Dict[int, List[int]]
             Dictionary with pos_id as key and list of roi_id as value.
-
+        config_camera: ConfigCamera
+            Object defining camera configuration.
         Returns
         -------
         List[AutomatonCommand]
@@ -117,11 +119,16 @@ class AbstractStrategy(ABC):
         self.field_of_views = field_of_views
         self.positions = positions
         self.region_of_interests = region_of_interests
+        self.config_camera = config_camera
         new_command_list = self._initialise()
         if not self.is_valid_command_list(new_command_list):
             raise StrategyError(message=f"AbstractStrategy.callback: invalid command list ({new_command_list}).",
                                 error_code=ErrorCode.ERROR_STRATEGY)
         return new_command_list
+
+    @abstractmethod
+    def finalise(self) -> List[AutomatonCommand]:
+        pass
 
     @abstractmethod
     def _initialise(self) -> List[AutomatonCommand]:
@@ -141,6 +148,9 @@ class NoStrategy(AbstractStrategy):
         return []
 
     def _initialise(self) -> List[AutomatonCommand]:
+        return []
+
+    def finalise(self) -> List[AutomatonCommand]:
         return []
 
 
@@ -204,6 +214,9 @@ class BasicStrategy(AbstractStrategy):
             self.command_factory.command_from_template(self.default_image_command),
         ]
         return self.last_commands
+
+    def finalise(self) -> List[AutomatonCommand]:
+        return []
 
 
 def get_all_strategies() -> List[Tuple[Type[AbstractStrategy], str]]:

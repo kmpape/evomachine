@@ -1,0 +1,154 @@
+from dataclasses import dataclass
+from enum import Enum, auto
+import numpy as np
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+
+from evomachine.exceptions import ConfigError, ErrorCode
+
+
+class EvoType(Enum):
+    """ Convenience class for Enumerate classes."""
+    @classmethod
+    def from_string(cls, s: str) -> Union['EvoType', None]:
+        for member in cls:
+            if str(member.name) == s:
+                return member
+        return None
+
+    @classmethod
+    def get_all(cls) -> List['EvoType']:
+        return [member for member in cls]
+
+    @classmethod
+    def get_all_values(cls) -> List[int]:
+        """ Returns all member values defined in Enum class."""
+        return [member.value for member in cls]
+
+    @classmethod
+    def get_all_names(cls) -> List[str]:
+        """ Returns all member names for members defined in Enum class."""
+        return [cls.get_name(member.value) for member in cls]
+
+    @classmethod
+    def get_name(cls, value_to_find) -> str:
+        """ Returns the variable name for a particular enum value. Returns an empty string if not defined."""
+        for member in cls:
+            if member.value == value_to_find:
+                return str(member.name)
+        return ""
+
+    @classmethod
+    def get_dict(cls) -> Dict[int, str]:
+        """ Returns a value-variable_name dictionary. """
+        return {v: cls.get_name(value_to_find=v) for v in cls.get_all_values()}
+
+    def __str__(self):
+        return str(self.name)
+
+
+class AutomatonCommandType(EvoType):
+    IMAGE = auto()
+    MOVE = auto()
+    PROJECT = auto()
+    WAIT = auto()
+    STOP = auto()
+
+    # The types below are used by the GUI
+    FOCUS_DATA = auto()
+    FOV_DATA = auto()
+    INFO_TEXT = auto()
+    PROCESS_DATA = auto()
+    REF_DATA = auto()
+    ROI_DATA = auto()
+
+
+# class AutomatonQueueDataType(EvoType):
+#     FOCUS_DATA = auto()
+#     FOCUS_FRAMES = auto()
+#     INFO_TEXT = auto()
+#     PROCESS_DATA = auto()
+#     PROCESSOR_INIT_DATA = auto()
+
+
+class AxisType(EvoType):
+    X = 0
+    Y = 1
+    Z = 2
+
+
+class FocusAlgorithmType(EvoType):
+    LAPLACIAN_VAR = auto()
+    SQUARED_GRAD_AVG = auto()
+    STEEL = auto()
+
+
+class LEDType(EvoType):
+    NO_LED = -1
+    LED_405_NM = 0
+    LED_450_NM = 1
+    LED_505_NM = 2
+    LED_538_NM = 3
+
+
+class FilterWheelType(EvoType):
+    FILTER = 0
+    BLOCKING = 1
+    NO_FILTER = 2
+
+
+@dataclass
+class ImageConfigType:
+    pxl_horiz: int
+    "Number of pixels in horizontal direction (=number of columns of matrix)."
+    pxl_vert: int
+    "Number of pixels in vertical direction (=number of rows of matrix)."
+    pxl_dtype: np.dtype
+    "Datatype of image."
+
+    @property
+    def shape(self) -> Tuple[int, int]:
+        return self.pxl_vert, self.pxl_horiz
+
+    def __post_init__(self):
+        if not isinstance(self.pxl_horiz, int) or not self.pxl_horiz > 0:
+            raise ConfigError(error_code=ErrorCode.ERROR_IMAGE_CONFIG, message=f"Invalid pxl_horiz: {self.pxl_horiz}")
+        if not isinstance(self.pxl_vert, int) or not self.pxl_vert > 0:
+            raise ConfigError(error_code=ErrorCode.ERROR_IMAGE_CONFIG, message=f"Invalid pxl_vert: {self.pxl_vert}")
+        if not isinstance(self.pxl_dtype, np.dtype):
+            raise ConfigError(error_code=ErrorCode.ERROR_IMAGE_CONFIG, message=f"Invalid pxl_dtype: {self.pxl_dtype}")
+
+
+class ImageConfigTypeFactory:
+    @staticmethod
+    def pv_cam() -> ImageConfigType:
+        return ImageConfigType(pxl_horiz=3200, pxl_vert=3200, pxl_dtype=np.dtype("uint16"))
+
+    @staticmethod
+    def delta() -> ImageConfigType:
+        return ImageConfigType(pxl_horiz=696, pxl_vert=520, pxl_dtype=np.dtype("float32"))
+
+
+@dataclass
+class ObjectiveConfigType:
+    na: float
+    "Numerical aperture NA=n*sin(theta)."
+    mag: int
+    "Magnification of objective."
+    descr: Optional[str] = "UNKNOWN OBJECTIVE"
+    "Optional description of objective."
+
+    def __post_init__(self):
+        if not isinstance(self.na, float) or not 0 < self.na:
+            raise ConfigError(error_code=ErrorCode.ERROR, message=f"Invalid numerical_aperture: {self.na}")
+        if not isinstance(self.mag, int) or not self.mag > 0:
+            raise ConfigError(error_code=ErrorCode.ERROR, message=f"Invalid magnification: {self.mag}")
+
+
+class ObjectiveConfigTypeFactory:
+    @staticmethod
+    def default_oil() -> ObjectiveConfigType:
+        return ObjectiveConfigType(na=1.4, mag=60, descr="Nikon Plan Apo λ 60x/1.4 Oil")
+
+    @staticmethod
+    def default_air() -> ObjectiveConfigType:
+        return ObjectiveConfigType(na=0.95, mag=40, descr="Nikon Plan Fluor 40x/0.95")

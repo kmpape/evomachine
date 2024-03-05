@@ -69,9 +69,10 @@ class Coordinate:
             raise TypeError("Unsupported operand type(s) for -: '{}' and '{}'".format(type(self), type(other)))
 
     def __str__(self):
-        return f"(x={self.x:.{COORD_PRINT_PRECISION}f}, " \
-               f"y={self.y:.{COORD_PRINT_PRECISION}f}, " \
-               f"z={self.z:.{COORD_PRINT_PRECISION}f})"
+        x_str = f"{self.x:.{COORD_PRINT_PRECISION}f}" if self.x is not None else "None"
+        y_str = f"{self.y:.{COORD_PRINT_PRECISION}f}" if self.y is not None else "None"
+        z_str = f"{self.z:.{COORD_PRINT_PRECISION}f}" if self.z is not None else "None"
+        return f"(x={x_str}, y={y_str}, z={z_str})"
 
     def __repr__(self):
         return f"Coordinate{self}"

@@ -16,16 +16,17 @@ from evomachine.evotypes import FilterWheelType, FocusAlgorithmType, LEDType, Im
 # DeLTA lib install directory
 EVOMACHINE_DIR = Path(__file__).parent
 
-EVO_FORMATTER = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s - %(message)s\n<---')
+# EVO_FORMATTER = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s - %(message)s\n<---')
+EVO_FORMATTER = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 EVO_LOGGING_LEVEL = logging.INFO
 EVO_GUI_LOGGING_LEVEL = logging.DEBUG
 
 
-def get_logger(name: str) -> logging.Logger:
+def get_logger(name: str, is_gui: bool = False) -> logging.Logger:
     logger = logging.getLogger(name)
     for handler in logger.handlers:
         logger.removeHandler(handler)
-    logger.setLevel(EVO_LOGGING_LEVEL)
+    logger.setLevel(EVO_LOGGING_LEVEL if not is_gui else EVO_GUI_LOGGING_LEVEL)
     handler = logging.StreamHandler()
     handler.setFormatter(EVO_FORMATTER)
     logger.addHandler(handler)
@@ -52,6 +53,10 @@ class ConfigImageProcessor:
     image_processing_verbosity: int = 0
     "Lowest verbosity is 0."
 
+    @property
+    def channel_to_index(self) -> Dict[LEDType, int]:
+        return {c: i for i, c in enumerate(self.channels)}
+
     def __post_init__(self):
         if not isinstance(self.cfg_delta, delta.config.Config):
             raise TypeError("cfg_delta must be a delta.config.Config object.")
@@ -74,10 +79,11 @@ class ConfigImageProcessor:
 
 class ConfigImageProcessorFactory:
     @staticmethod
-    def default_config() -> ConfigImageProcessor:
+    def default_config(channels: Optional[List[LEDType]] = None) -> ConfigImageProcessor:
+        default_channels = [LEDType.LED_405_NM, LEDType.LED_450_NM, LEDType.LED_505_NM, LEDType.LED_538_NM]
         return ConfigImageProcessor(
             cfg_delta=delta.config.DEFAULT_CONFIG_MOTHERMACHINE,
-            channels=[LEDType.LED_450_NM, LEDType.LED_505_NM],
+            channels=default_channels if channels is None else channels,
             channel_seg=LEDType.LED_450_NM,
             channel_rot=LEDType.LED_450_NM,
             channel_roi=LEDType.LED_450_NM,
@@ -186,13 +192,16 @@ class ConfigFocus:
     "Ask for user input before configuring and starting software focus."
 
     @staticmethod
-    def get_attr_from_str(attr_name: str, attr_value_str: str) -> Union[int, float, bool, FocusAlgorithmType, None]:
+    def get_attr_from_str(attr_name: str, attr_value_str: str) \
+            -> Union[int, float, bool, FocusAlgorithmType, None, LEDType]:
         if attr_name == 'exposure_time':
             return float(attr_value_str)
         elif attr_name == 'user_input':
             return bool(attr_value_str)
         elif attr_name == 'algorithm':
             return FocusAlgorithmType.from_string(attr_value_str)
+        elif attr_name == 'focus_channel':
+            return LEDType(int(attr_value_str))
         else:
             return int(attr_value_str)
 
@@ -225,7 +234,14 @@ class ConfigFocus:
             raise TypeError(f"algorithm must be an instance of FocusAlgorithmType. Provided {self.algorithm}.")
 
     def copy(self):
-        return copy.deepcopy(self)
+        return ConfigFocus(
+            exposure_time=self.exposure_time,
+            focus_channel=self.focus_channel,
+            rel_range=self.rel_range,
+            step_size=self.step_size,
+            algorithm=self.algorithm,
+            user_input=self.user_input,
+        )
 
     def __str__(self):
         attributes = [
@@ -273,11 +289,11 @@ class ConfigCamera:
     "Pixel size of camera in μm."
 
     @property
-    def pxl_size(self):
+    def pxl_size(self) -> float:
         return self.cam_pxl_size / self.objective.mag  # in μm
 
     @property
-    def fov_size(self):
+    def fov_size(self) -> float:
         return self.cam_pxl_size / self.objective.mag * self.image.pxl_vert  # in μm
 
     def __post_init__(self):

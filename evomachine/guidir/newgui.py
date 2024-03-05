@@ -4,6 +4,7 @@ from enum import Enum
 import glob
 import logging
 import matplotlib.pyplot as plt
+from multiprocessing import Event, Lock, Process, Queue
 import numpy as np
 import os
 import PIL
@@ -14,6 +15,7 @@ import sys
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QEventLoop, QThread, QTimer, QObject, QRegExp, Qt
 from PyQt5 import QtGui
 from PyQt5.QtGui import QRegExpValidator, QDoubleValidator, QFont, QPalette, QColor, QValidator
@@ -25,8 +27,8 @@ from PyQt5.QtWidgets import (
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
 
-import delta.utils
 
+sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/de-lta-rt')
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger')
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
 
@@ -34,21 +36,26 @@ from asitiger.errors import Errors as ASIErrors
 from asitiger.tigercontroller import SAFE_STAGE_LIMITS
 
 from evomachine.acquisition import AbstractCamera, EvoCamera
-from evomachine.automaton import Automaton, AutomatonQueueDataType
+from evomachine.automaton import Automaton
 from evomachine.commands import AutomatonCommand, AutomatonCommandType
-from evomachine.config import ConfigCRISP, ConfigFocus, get_logger
+from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
 from evomachine.coordinates import Coordinate, CoordinateFactory
 from evomachine.dmd import DMDControl
 from evomachine.exceptions import ConfigError, TigerError
 from evomachine.evotypes import LEDType, FocusAlgorithmType
+from evomachine.guidir.dmd import DMDPanel
 from evomachine.guidir.experiments import ExperimentPanel
-from evomachine.guidir.figures import FigureMultiWindow, FigureWidget, ImagePlotter
-from evomachine.guidir.guitemplates import EvoGUIThread, EvoPanelTemplate, EvoWorkerTemplate, QueueManager
+from evomachine.guidir.figures import FigureMultiWindow, ImagePlotter
+from evomachine.guidir.filterwheel import FilterWheelPanel
+from evomachine.guidir.focus import FocusPanel
+from evomachine.guidir.guitemplates import EvoGUIThread, EvoPanelTemplate, EvoWorkerTemplate
 from evomachine.guidir.guitypes import Direction, DMDModes, DisplayMode, SMALL, NORMAL
 from evomachine.guidir.position import PositionPanel
+from evomachine.guidir.leds import LEDPanel
+from evomachine.guidir.queuemanager import QueueManager
 
 
-logger = get_logger(name=__name__)
+logger = get_logger(name=__name__, is_gui=True)
 
 AXES = ['X', 'Y', 'Z']
 LEFT = Qt.AlignLeft
@@ -70,10 +77,13 @@ stylesheet_led = """
 class EvoGUI(QMainWindow):
     def __init__(
             self,
-            cam: AbstractCamera,
-            dmd: DMDControl,
-            data_queue: queue.Queue,
-            automaton: Automaton,
+            queue_manager: QueueManager,
+            camera_config: ConfigCamera,
+            processor_config: ConfigImageProcessor,
+            start_strategy_event: Event,
+            stop_strategy_event: Event,
+            stop_event: Event,
+            shutdown_event: Event,
             is_testmode: bool = False,
             *args,
             **kwargs
@@ -81,11 +91,13 @@ class EvoGUI(QMainWindow):
         super(EvoGUI, self).__init__(*args, **kwargs)
         self.panels: List[EvoPanelTemplate] = []
 
-        # Evomachine Objects
-        self.cam: AbstractCamera = cam
-        self.dmd: DMDControl = dmd
-        self.queue_manager: QueueManager = QueueManager(data_queue=data_queue)
-        self.automaton: Automaton = automaton
+        self.queue_manager: QueueManager = queue_manager
+        self.camera_config: ConfigCamera = camera_config
+        self.processor_config: ConfigImageProcessor = processor_config
+        self.start_strategy_event: Event = start_strategy_event
+        self.stop_strategy_event: Event = stop_strategy_event
+        self.stop_event: Event = stop_event
+        self.shutdown_event: Event = shutdown_event
 
         self.is_testmode = is_testmode
 
@@ -94,24 +106,103 @@ class EvoGUI(QMainWindow):
         self.setCentralWidget(central_widget)
 
         # Position Panel
-        self.pos_panel = PositionPanel(cam=self.cam)
+        self.pos_panel = PositionPanel(
+            queue_manager=queue_manager,
+            camera_config=camera_config,
+            processor_config=processor_config,
+            start_strategy_event=start_strategy_event,
+            stop_strategy_event=stop_strategy_event,
+            stop_event=stop_event,
+            shutdown_event=shutdown_event,
+        )
         self.panels.append(self.pos_panel)
 
         # Experiment Panel
-        self.exp_panel = ExperimentPanel(cam=self.cam, automaton=self.automaton, queue_manager=self.queue_manager)
+        self.exp_panel = ExperimentPanel(
+            queue_manager=queue_manager,
+            camera_config=camera_config,
+            processor_config=processor_config,
+            start_strategy_event=start_strategy_event,
+            stop_strategy_event=stop_strategy_event,
+            stop_event=stop_event,
+            shutdown_event=shutdown_event,
+        )
         self.panels.append(self.exp_panel)
 
         # Figure Panel
-        self.fig_panel = ImagePlotter(cam=self.cam, automaton=self.automaton, queue_manager=self.queue_manager)
-        self.panels.append(self.exp_panel)
+        self.fig_panel = ImagePlotter(
+            queue_manager=queue_manager,
+            camera_config=camera_config,
+            processor_config=processor_config,
+            start_strategy_event=start_strategy_event,
+            stop_strategy_event=stop_strategy_event,
+            stop_event=stop_event,
+            shutdown_event=shutdown_event,
+        )
+        self.panels.append(self.fig_panel)
+
+        # Figure Panel
+        self.focus_panel = FocusPanel(
+            queue_manager=queue_manager,
+            camera_config=camera_config,
+            processor_config=processor_config,
+            start_strategy_event=start_strategy_event,
+            stop_strategy_event=stop_strategy_event,
+            stop_event=stop_event,
+            shutdown_event=shutdown_event,
+        )
+        self.panels.append(self.focus_panel)
+
+        # LED Panel
+        self.led_panel = LEDPanel(
+            queue_manager=queue_manager,
+            camera_config=camera_config,
+            processor_config=processor_config,
+            start_strategy_event=start_strategy_event,
+            stop_strategy_event=stop_strategy_event,
+            stop_event=stop_event,
+            shutdown_event=shutdown_event,
+        )
+        self.panels.append(self.led_panel)
+
+        # FilterWheelPanel Panel
+        self.fw_panel = FilterWheelPanel(
+            queue_manager=queue_manager,
+            camera_config=camera_config,
+            processor_config=processor_config,
+            start_strategy_event=start_strategy_event,
+            stop_strategy_event=stop_strategy_event,
+            stop_event=stop_event,
+            shutdown_event=shutdown_event,
+        )
+        self.panels.append(self.fw_panel)
+
+        # DMD Panel
+        self.dmd_panel = DMDPanel(
+            queue_manager=queue_manager,
+            camera_config=camera_config,
+            processor_config=processor_config,
+            start_strategy_event=start_strategy_event,
+            stop_strategy_event=stop_strategy_event,
+            stop_event=stop_event,
+            shutdown_event=shutdown_event,
+        )
+        self.panels.append(self.led_panel)
+
+        # Connect Signals
+        self.fig_panel.worker.cropping_box_drawn.connect(self.exp_panel.update_cropping_boxes)
+        self.led_panel.signal_set_led.connect(self.fig_panel.update_led)
 
         # Main Layout
         main_layout = QGridLayout()
-        main_layout.addWidget(self.pos_panel.widget, 0, 0)
-        main_layout.addWidget(self.exp_panel.widget, 0, 1)
+        main_layout.addWidget(self.pos_panel.widget, 0, 0, 2, 5)
+        main_layout.addWidget(self.led_panel.widget, 2, 0, 2, 5)
+        main_layout.addWidget(self.dmd_panel.widget, 4, 0, 2, 5)
+        main_layout.addWidget(self.fig_panel.widget, 0, 5, 10, 4)
+        main_layout.addWidget(self.exp_panel.widget, 0, 9, 4, 4)
+        main_layout.addWidget(self.fw_panel.widget, 4, 9, 2, 5)
+        main_layout.addWidget(self.focus_panel.widget, 6, 9, 3, 5)
         central_widget.setLayout(main_layout)
-
-        self.queue_manager.start()
 
     def closeEvent(self, event):
         result = QMessageBox.question(self, "Confirm Exit...", "Are you sure you want to exit ?",
@@ -119,18 +210,13 @@ class EvoGUI(QMainWindow):
         event.ignore()
 
         if result == QMessageBox.Yes:
-            logger.info("closing threads")
+            self.stop_event.set()
+            self.stop_strategy_event.set()
+            self.start_strategy_event.set()
+            self.shutdown_event.set()
+            logger.debug("closing threads")
             for panel in self.panels:
                 panel.close_threads()
-            logger.info("closing dmd")
-            self.dmd.finalise()
-            logger.info("closing automaton")
-            self.automaton.stop()
-            if self.automaton.is_alive():
-                self.automaton.join()
-            logger.info("closing cam")
-            self.cam.finalise()
-
             event.accept()
 
 
