@@ -215,39 +215,58 @@ class Automaton:
             logger.info("Automaton.initialise_position_processor: initialising all position processors.")
             for i in range(len(self._pos_processor)):
                 logger.debug(f"Automaton.initialise_position_processor: initialising position processor {i}.")
-                self._pos_processor[i].initialise(
-                    reference=self.normalise_frame(self._ref_frames[i]),  # TODO need to crop frames
-                    channel_rot=self._channel_to_index[self._cfg.channel_rot],
-                    channel_roi=self._channel_to_index[self._cfg.channel_roi],
-                    rotate=rotation,
-                    roi_boxes=roi_boxes
-                )
-                self._position_processors_is_initialised[i] = True
-                self.fill_queue(
-                    queue_data_type=AutomatonCommandType.ROI_DATA,
-                    queue_data=CommandFactory.command_roi_data(
-                        fov_id=i,
-                        rotation=self._pos_processor[i].rotate,
-                        roi_boxes=self._pos_processor[i].roi_boxes
-                    ),
-                    logging_level=logging.INFO,
-                )
+                if self.use_segmentation:
+                    self._pos_processor[i].initialise(
+                        reference=self.normalise_frame(self._ref_frames[i]),  # TODO need to crop frames
+                        channel_rot=self._channel_to_index[self._cfg.channel_rot],
+                        channel_roi=self._channel_to_index[self._cfg.channel_roi],
+                        rotate=rotation,
+                        roi_boxes=roi_boxes
+                    )
+                    self._position_processors_is_initialised[i] = True
+                    self.fill_queue(
+                        queue_data_type=AutomatonCommandType.ROI_DATA,
+                        queue_data=CommandFactory.command_roi_data(
+                            fov_id=i,
+                            rotation=self._pos_processor[i].rotate,
+                            roi_boxes=self._pos_processor[i].roi_boxes,
+                        ),
+                        logging_level=logging.INFO,
+                    )
+                else:
+                    self._position_processors_is_initialised[i] = True
+                    self.fill_queue(
+                        queue_data_type=AutomatonCommandType.ROI_DATA,
+                        queue_data=CommandFactory.command_roi_data(
+                            fov_id=i,
+                            rotation=0,
+                            roi_boxes=[],
+                        ),
+                        logging_level=logging.INFO,
+                    )
             self._pos_to_roi = {i_pos: [i_roi for i_roi in range(len(self._pos_processor[i_pos].rois))]
                                 for i_pos in range(len(self._pos_processor))}
         else:
             logger.info(f"Automaton.initialise_position_processor: initialising position processor {which}.")
-            self._pos_processor[which].initialise(self._ref_frames[which], rotate=rotation, roi_boxes=roi_boxes)
+            if self.use_segmentation:
+                self._pos_processor[which].initialise(self._ref_frames[which], rotate=rotation, roi_boxes=roi_boxes)
+                self.fill_queue(
+                    queue_data_type=AutomatonCommandType.ROI_DATA,
+                    queue_data=CommandFactory.command_roi_data(
+                        fov_id=which,
+                        rotation=self._pos_processor[which].rotate,
+                        roi_boxes=self._pos_processor[which].roi_boxes
+                    ),
+                    logging_level=logging.INFO,
+                )
+            else:
+                self.fill_queue(
+                    queue_data_type=AutomatonCommandType.ROI_DATA,
+                    queue_data=CommandFactory.command_roi_data(fov_id=which, rotation=0, roi_boxes=[]),
+                    logging_level=logging.INFO,
+                )
             self._position_processors_is_initialised[which] = True
             self._pos_to_roi[which] = [i_roi for i_roi in range(len(self._pos_processor[which].rois))]
-            self.fill_queue(
-                queue_data_type=AutomatonCommandType.ROI_DATA,
-                queue_data=CommandFactory.command_roi_data(
-                    fov_id=which,
-                    rotation=self._pos_processor[which].rotate,
-                    roi_boxes=self._pos_processor[which].roi_boxes
-                ),
-                logging_level=logging.INFO,
-            )
 
     def initialise_field_of_view_list(
             self,
@@ -350,6 +369,7 @@ class Automaton:
         self.focus_curves = {i_fov: None for i_fov in self._fovs.keys()}
         self.focus_prev_stack = np.zeros((*self.cam.cfg.image.shape, len(self._fovs)))
         self.focus_stack = np.zeros((*self.cam.cfg.image.shape, len(self._fovs)))
+        logger.info(f"Automaton.initialise_fov_focus with configuration {cfg_focus}")
         for i_fov, coord in self._fovs.items():
             logger.info(f"Automaton.initialise_fov_focus: initialising FoV {i_fov+1} of {len(self._fovs)}.")
             if self.stopped():
@@ -381,7 +401,8 @@ class Automaton:
         self._focus_is_initialised = True
 
     def initialise_reference_frames(self):
-        logger.info("Automaton.initialise_reference_frames: starting...")
+        logger.info(f"Automaton.initialise_reference_frames: "
+                    f"Imaging {len(self._fovs.keys())} on {self._channel_to_index.keys()}.")
         for i_fov in self._fovs.keys():
             self.cam.move_to_pos(i_pos=i_fov)
             for channel_type, ind in self._channel_to_index.items():
@@ -496,7 +517,7 @@ class Automaton:
                 # self._dmd.display_image(img=cmd.command_args['image'])
                 self.cam.set_led(i_chan=cmd.command_args['channel'], brightness=cmd.command_args['brightness'])
                 # TODO need to block movement and implement the sleep statement as countdown w. callback
-                self.sleep(duration=cmd.command_args['duration'])
+                self.sleep(duration=cmd.command_args['duration'])  # TODO disable with timer
                 self.cam.disable_led()
 
             cmd.command_execution_time = time.time()
@@ -587,35 +608,45 @@ class Automaton:
         logger.info("Automaton.run: starting...")
         while not self.has_shutdown():
 
-            logger.debug("Automaton.run: starting gui loop.")
+            logger.info("Automaton.run: Starting GUI loop.")
             if not self._devices_initialised:
                 self.initialise_devices()
             has_stopped = True
             while not self.strategy_has_started():
-                while not self.stopped():
+                while (not self.stopped()) and (not self.strategy_has_started()):
                     self._gui_process()
                     if self.run_timeout > 0:
                         self.sleep(duration=self.run_timeout)
                 if has_stopped:
-                    logger.warning("Automaton.run gui: halting execution.")
+                    logger.warning("Automaton.run: halting GUI execution.")
                     has_stopped = False
+            logger.info("Automaton.run: Leaving GUI loop.")
 
             if not self.strategy_has_stopped():
+                if not self._strategy_is_initialised:
+                    self._initialise_strategy()
                 if not self.is_initialised():
+                    logger.error(f"Automaton.run: Attempt to start strategy before intialisation. Current status:"
+                                 f"_strategy_is_initialised={self._strategy_is_initialised}, "
+                                 f"_reference_frames_is_initialised={self._reference_frames_is_initialised}, "
+                                 f"_fov_list_is_initialised={self._fov_list_is_initialised}, "
+                                 f"_position_processors_is_initialised={all(self._position_processors_is_initialised)}")
                     raise ConfigError(message="Automaton.run strategy: not initialised.",
                                       error_code=ErrorCode.ERROR_NOT_INITIALISED)
-                logger.debug(f"Automaton.run: starting strategy loop. Moving to fov {self._curr_pos_id}.")
+                logger.info(f"Automaton.run: Starting strategy loop. Moving to fov {self._curr_pos_id}.")
                 self._move_to_pos(pos_id=self._curr_pos_id)
+                self._dmd.display_full()  # FIXME temporary statement
 
             has_stopped = True
             while not self.strategy_has_stopped():
-                while not self.stopped():
+                while (not self.stopped()) and (not self.strategy_has_stopped()):
                     self._process()
                     if self.run_timeout > 0:
                         self.sleep(duration=self.run_timeout)
                 if has_stopped:
                     logger.warning("Automaton.run strategy: halting execution.")
                     has_stopped = False
+            logger.info(f"Automaton.run: Leaving strategy loop. Current fov {self._curr_pos_id}.")
 
             if self.is_initialised():
                 logger.info("Automaton.run: finalising strategy.")

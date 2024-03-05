@@ -315,8 +315,8 @@ class PositionPanel(EvoPanelTemplate):
     def update_limits(self, data: Tuple[Coordinate, Coordinate]):
         curr_limits = {'X': (data[0].x, data[1].x), 'Y': (data[0].y, data[1].y), 'Z': (data[0].z, data[1].z)}
         for i, ax in enumerate(AXES):
-            self.pos_labels[i].setText(f"{ax} [{self.make_pos_str(curr_limits[ax][0], unit='cm')}, "
-                                       f"{self.make_pos_str(curr_limits[ax][1], unit='cm')}]")
+            self.pos_labels[i].setText(f"{ax} [{self.make_pos_str(curr_limits[ax][0], unit='mm')}, "
+                                       f"{self.make_pos_str(curr_limits[ax][1], unit='mm')}]")
 
     @pyqtSlot(dict)
     def update_position_str(self, pos_dict: Dict[str, Union[int, float, None]]):

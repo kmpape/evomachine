@@ -167,7 +167,7 @@ class CommandFactory:
             self,
             channel: LEDType,
             image: np.ndarray[(int, int), 'ConfigImage.pxl_dtype'],
-            duration: float,
+            duration: Union[float, int],
             brightness: int = 100
     ) -> AutomatonCommand:
         """
@@ -187,15 +187,15 @@ class CommandFactory:
         """
         if not isinstance(channel, LEDType):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument channel ({type(channel)}).")
-        if not (isinstance(image, np.typing.array) and image.shape == DMD_WIDTH_HEIGHT):
+        if not (isinstance(image, np.ndarray) and image.shape == DMD_WIDTH_HEIGHT):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument image ({type(image)}).")
-        if not isinstance(duration, float):
+        if not (isinstance(duration, float) or isinstance(duration, int)):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument duration ({type(duration)}).")
         if (not isinstance(brightness, int)) or not (0 <= brightness <= 100):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type or range for argument brightness.")
         return AutomatonCommand(
             command_type=AutomatonCommandType.PROJECT,
-            command_args={'channel': LEDType, 'image': image, 'duration': duration, 'brightness': brightness},
+            command_args={'channel': channel, 'image': image, 'duration': duration, 'brightness': brightness},
             command_id=self.get_next_id(),
             command_creation_time=time(),
         )

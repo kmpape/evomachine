@@ -17,7 +17,7 @@ from evomachine.evotypes import FilterWheelType, FocusAlgorithmType, LEDType, Im
 EVOMACHINE_DIR = Path(__file__).parent
 
 # EVO_FORMATTER = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s - %(message)s\n<---')
-EVO_FORMATTER = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+EVO_FORMATTER = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
 EVO_LOGGING_LEVEL = logging.INFO
 EVO_GUI_LOGGING_LEVEL = logging.DEBUG
 

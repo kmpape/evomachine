@@ -299,6 +299,7 @@ class AbstractCamera:
             skimage.io.imsave(path_to_save / filename, frame, plugin="tifffile", check_contrast=False)
         else:
             skimage.io.imsave(path_to_save / filename, frame, check_contrast=False)
+
     def software_focus(
             self,
             cfg_focus: Optional[ConfigFocus] = None,
