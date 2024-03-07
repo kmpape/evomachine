@@ -2,9 +2,10 @@ import matplotlib.pyplot as plt
 from multiprocessing import Event
 import numpy as np
 from serial import SerialException
-from typing import Dict, List, Optional, Tuple, Union
+import threading
+from typing import Any, Dict, List, Optional, Tuple, Union
 from PyQt5.QtCore import pyqtSignal, pyqtSlot
-from PyQt5.QtWidgets import QWidget, QPushButton
+from PyQt5.QtWidgets import QWidget, QPushButton, QDialog, QVBoxLayout, QComboBox, QLabel, QGridLayout
 
 import delta.utils
 
@@ -26,10 +27,15 @@ class ExperimentWorker(EvoWorkerTemplate):
             self,
             queue_manager: QueueManager,
             config_camera: ConfigCamera,
+            signal_enable_button: pyqtSignal,
+            signal_disable_button: pyqtSignal,
     ):
         super().__init__()
         self.queue_manager = queue_manager
         self.cfg_camera = config_camera
+        self.signal_enable_button = signal_enable_button
+        self.signal_disable_button = signal_disable_button
+
         self.valid_coordinates = False
         self.factory: CoordinateFactory = CoordinateFactory(dfov=self.cfg_camera.fov_size)
         self._field_of_views: Union[None, Dict[int, Coordinate]] = None
@@ -97,7 +103,8 @@ class ExperimentWorker(EvoWorkerTemplate):
         self.queue_manager.request(
             req_str='self.initialise_fov_focus',
             kwargs_dict={},
-            callback=None,
+            callback=self.enable_disable_next_buttons,
+            callback_args=([2, 6], [3, 4, 5],),
         )
 
     def initialise_automaton_image_processors(self):
@@ -105,7 +112,8 @@ class ExperimentWorker(EvoWorkerTemplate):
         self.queue_manager.request(
             req_str='self.initialise_position_processor',
             kwargs_dict={},
-            callback=None,
+            callback=self.enable_disable_next_buttons,
+            callback_args=([4], [],),
         )
 
     def initialise_automaton_references(self):
@@ -113,7 +121,8 @@ class ExperimentWorker(EvoWorkerTemplate):
         self.queue_manager.request(
             req_str='self.initialise_reference_frames',
             kwargs_dict={},
-            callback=None,
+            callback=self.enable_disable_next_buttons,
+            callback_args=([3], [4, 5],),
         )
 
     def initialise_automaton_field_of_views(
@@ -135,8 +144,13 @@ class ExperimentWorker(EvoWorkerTemplate):
         self.queue_manager.request(
             req_str='self.initialise_field_of_view_list',
             kwargs_dict={'field_of_views': self._field_of_views, 'cropping_boxes': self._cropping_boxes},
-            callback=None,
+            callback=self.enable_disable_next_buttons,
+            callback_args=([1], [2, 3, 4, 5, 6],),
         )
+
+    def enable_disable_next_buttons(self, data: Any, enable: List[int], disable: List[int]):
+        self.signal_enable_button.emit(enable)
+        self.signal_disable_button.emit(disable)
 
 
 class ButtonWorker(EvoWorkerTemplate):
@@ -149,9 +163,49 @@ class ButtonWorker(EvoWorkerTemplate):
         for i in button_indices:
             self.button_list[i].setStyleSheet(f"background-color: {color_str};")
 
+    @pyqtSlot(list)
+    def disable_button(self, indices: List[int]):
+        for i in indices:
+            self.button_list[i].setEnabled(False)
+
+    @pyqtSlot(list)
+    def enable_button(self, indices: List[int]):
+        for i in indices:
+            self.button_list[i].setEnabled(True)
+
+
+class FoVPanel(EvoPanelTemplate):
+    def __init__(
+            self,
+            queue_manager: QueueManager,
+            camera_config: ConfigCamera,
+            processor_config: ConfigImageProcessor,
+            start_strategy_event: Event,
+            stop_strategy_event: Event,
+            stop_event: Event,
+            shutdown_event: Event,
+    ):
+        super().__init__(
+            queue_manager=queue_manager,
+            camera_config=camera_config,
+            processor_config=processor_config,
+            start_strategy_event=start_strategy_event,
+            stop_strategy_event=stop_strategy_event,
+            stop_event=stop_event,
+            shutdown_event=shutdown_event,
+        )
+        self.worker = ExperimentWorker(queue_manager=queue_manager, config_camera=camera_config)
+        self.workers.append(self.worker)
+        thread = EvoGUIThread()
+        self.worker.moveToThread(thread)
+        thread.start()
+        self.threads.append(thread)
+
 
 class ExperimentPanel(EvoPanelTemplate):
     signal_set_button_color = pyqtSignal(list, str)
+    signal_enable_button = pyqtSignal(list)
+    signal_disable_button = pyqtSignal(list)
 
     def __init__(
             self,
@@ -174,11 +228,16 @@ class ExperimentPanel(EvoPanelTemplate):
         )
 
         queue_manager.register(func=self.read_focus_data, msg_type=AutomatonCommandType.FOCUS_DATA)
-        queue_manager.register(func=self.read_processor_data, msg_type=AutomatonCommandType.ROI_DATA)
-        queue_manager.register(func=self.init_positions_done, msg_type=AutomatonCommandType.FOV_DATA)
+        queue_manager.register(func=self.read_roi_data, msg_type=AutomatonCommandType.ROI_DATA)
+        queue_manager.register(func=self.read_fov_data, msg_type=AutomatonCommandType.FOV_DATA)
         queue_manager.register(func=self.read_ref_data, msg_type=AutomatonCommandType.REF_DATA)
 
-        self.worker = ExperimentWorker(queue_manager=queue_manager, config_camera=camera_config)
+        self.worker = ExperimentWorker(
+            queue_manager=queue_manager,
+            config_camera=camera_config,
+            signal_enable_button=self.signal_enable_button,
+            signal_disable_button=self.signal_disable_button,
+        )
         self.workers.append(self.worker)
         thread = EvoGUIThread()
         self.worker.moveToThread(thread)
@@ -230,21 +289,23 @@ class ExperimentPanel(EvoPanelTemplate):
         buttons = [self.init_positions_button, self.init_focus_button, self.init_references_button,
                    self.init_processors_button, self.start_button, self.stop_button, self.focus_curves_button]
         self.worker_buttons = ButtonWorker(button_list=buttons)
+        self.signal_set_button_color.connect(self.worker_buttons.set_color)
+        self.signal_disable_button.connect(self.worker_buttons.disable_button)
+        self.signal_enable_button.connect(self.worker_buttons.enable_button)
         self.workers.append(self.worker_buttons)
         thread = EvoGUIThread()
         self.worker_buttons.moveToThread(thread)
         thread.start()
         self.threads.append(thread)
-        self.signal_set_button_color.connect(self.worker_buttons.set_color)
+
+        self.signal_disable_button.emit([0, 1, 2, 3, 4, 5, 6])
 
         self.cropping_boxes: Dict[int, Union[None, EvoCroppingBox]] = {0: None, 1: None}
 
-        self.focus_data: Union[None, AutomatonCommand] = None
-        self.focus_curves: Union[None, np.typing.Array] = None
-        self.focus_prev_curr_stack: Union[None, Tuple[np.typing.Array, np.typing.Array]] = None
-        self.focus_curves_window: Union[None, FigureMultiWindow] = None
-
-        self.processor_data: Dict[int, AutomatonCommand] = {}
+        self.fov_data: Dict[str, Any] = {}
+        self.ref_data: Dict[str, Any] = {}
+        self.roi_data: Dict[int, Dict[str, Any]] = {}
+        self.focus_data: Dict[str, Any] = {}
 
     def record_param(self, which: Tuple[int, str]):
         logger.debug(f"ExperimentPanel.record_param: Recording {which}.")
@@ -270,9 +331,14 @@ class ExperimentPanel(EvoPanelTemplate):
             self.read_in_display[i][from_to].setText("?")
             self.read_in_positions[i][from_to] = None
 
+        if self.read_in_positions[i]["from"] is not None and self.read_in_positions[i]["to"] is not None:
+            self.signal_enable_button.emit([0])
+
     def clear_param(self):
         self.read_in_positions = {i: {"from": None, "to": None} for i in range(self.num_read_ins)}
         self.worker.set_labels(labels=self.read_in_display, text="?")
+        if not any(r["from"] is not None and r["to"] is not None for r in self.read_in_positions.values()):
+            self.signal_disable_button.emit([0])
 
     def init_focus(self):
         self._automaton_is_initialised = False
@@ -302,7 +368,14 @@ class ExperimentPanel(EvoPanelTemplate):
             cropping_boxes=[b for b in self.cropping_boxes.values() if b is not None],
         )
 
-    def init_positions_done(self, data: AutomatonCommand):
+    def read_fov_data(self, data: AutomatonCommand):
+        # command_args = {
+        #     'fovs': fovs,
+        #     'cropping_boxes': cropping_boxes,
+        #     'fov_to_pos': fov_to_pos,
+        #     'pos_to_fov_index': pos_to_fov_index,
+        # }
+        self.fov_data = data.command_args
         self.signal_set_button_color.emit([0], "green")
         self.signal_set_button_color.emit([1, 2, 3], "lightgray")
 
@@ -335,23 +408,24 @@ class ExperimentPanel(EvoPanelTemplate):
 
     def read_focus_data(self, data: AutomatonCommand):
         self.signal_set_button_color.emit([1, 6], "green")
-        self.focus_data = data
+        self.focus_data = data.command_args
 
     def read_ref_data(self, data: AutomatonCommand):
+        self.ref_data = data.command_data
         self.signal_set_button_color.emit([2], "green")
 
-    def read_processor_data(self, data: AutomatonCommand):
+    def read_roi_data(self, data: AutomatonCommand):
         self.signal_set_button_color.emit([3], "green")
-        self.processor_data[data.fov_id] = data.command_args
+        self.roi_data[data.fov_id] = data.command_args
 
     def show_focus_curves(self):
         if self.focus_data is None:
             logger.error("exp_show_curve: missing data. Returning.")
             return
-        focus_curves = self.focus_data.command_args['focus_curves']
-        focus_prev_stack = self.focus_data.command_args['focus_prev_stack']
-        focus_stack = self.focus_data.command_args['focus_stack']
-        focus_prev_z_coords = self.focus_data.command_args['focus_prev_z_coords']
+        focus_curves = self.focus_data['focus_curves']
+        focus_prev_stack = self.focus_data['focus_prev_stack']
+        focus_stack = self.focus_data['focus_stack']
+        focus_prev_z_coords = self.focus_data['focus_prev_z_coords']
 
         all_figs = {i: None for i in focus_curves.keys()}
         for i in all_figs.keys():
@@ -385,3 +459,158 @@ class ExperimentPanel(EvoPanelTemplate):
     def update_cropping_boxes(self, fov_id: int, box_id: int, cropping_box: Union[EvoCroppingBox, None]):
         logger.debug(f"ExperimentPanel.update_cropping_boxes: fov_id={fov_id}, box_id={box_id}, cropping_box={cropping_box}")
         self.cropping_boxes[box_id] = None if cropping_box.is_none else cropping_box
+
+
+class PositionDialog(QDialog):
+    def __init__(
+            self,
+            queue_manager: QueueManager,
+            fov_data: Dict[str, Any],
+            ref_data: Dict[str, Any],
+            focus_data: Dict[str, Any],
+            roi_data: Dict[int, Dict[str, Any]],
+     ):
+        super().__init__()
+        self.setWindowTitle("Field of Views")
+        self.setStyleSheet("""
+        background-color: #262626;
+        color: #FFFFFF;
+        font-family: Titillium;
+        font-size: 18px;
+        """)
+        self.queue_manager: QueueManager = queue_manager
+        self.fov_data: Dict[str, Any] = fov_data
+        self.ref_data: Dict[str, Any] = ref_data
+        self.focus_data: Dict[str, Any] = focus_data
+        self.roi_data: Dict[int, Dict[str, Any]] = roi_data
+
+        self.fovs: Dict[int, Coordinate] = fov_data["fovs"]
+        self.fov_cropping_boxes: Dict[int, Union[None, EvoCroppingBox]] = fov_data["cropping_boxes"]
+        self.rotations: Dict[int, float] = {k: d["rotation"] for k, d in self.roi_data.items()}
+
+        self.combo_box = QComboBox()
+        self.combo_box.addItems(["FoV "+str(key) for key in self.fovs.keys()])
+        self.combo_box.currentIndexChanged.connect(self.update_display)
+        self.curr_fov = list(self.fovs.keys())[0]
+
+        self.actives = {k: {"z_pos": self.fovs[k].z, "rotation": self.rotations[k]}
+                        for k in self.fovs.keys()}
+        self.overrides = {k: {"z_pos": None, "rotation": None} for k in self.fovs.keys()}
+        self.param_types = {"z_pos": int, "rotation": float}
+        self.info_labels = {
+            "fov": self.make_label(f"Field of view {self.curr_fov}", font=NORMAL),
+            "coordinate": self.make_label(f"Coordinate {str(self.fovs[self.curr_fov])}", font=NORMAL),
+        }
+        self.labels = {
+            "z_pos": EvoPanelTemplate.make_label("Z Position: ", font=SMALL),
+            "rotation": EvoPanelTemplate.make_label("Rotation: ", font=SMALL),
+        }
+        self.value_labels = {
+            "z_pos": EvoPanelTemplate.make_label(f"{self.actives[self.curr_fov]['z_pos']:.2f}", font=SMALL),
+            "rotation": EvoPanelTemplate.make_label(f"{self.actives[self.curr_fov]['rotation']:.2f}", font=SMALL),
+        }
+        self.override_labels = {
+            "z_pos": EvoPanelTemplate.make_label(f"{str(self.overrides[self.curr_fov]['z_pos'])}", font=SMALL),
+            "rotation": EvoPanelTemplate.make_label(f"{str(self.overrides[self.curr_fov]['rotation'])}", font=SMALL),
+        }
+        self.edits = {
+            "z_pos": EvoPanelTemplate.make_lineedit(text="None", func=self.update_overrides, param="z_pos"),
+            "rotation": EvoPanelTemplate.make_lineedit(text="None", func=self.update_overrides, param="rotation"),
+        }
+        self.override_buttons = {
+            "z_pos": EvoPanelTemplate.make_button("Override", func=self.send_override, font=SMALL, field="z_pos"),
+            "rotation": EvoPanelTemplate.make_button("Override", func=self.send_override, font=SMALL, field="rotation"),
+        }
+
+        self.layout = QGridLayout()
+        self.layout.addWidget(self.info_labels["fov"], 0, 0, 1, 1, LEFT)
+        self.layout.addWidget(self.info_labels["coordinate"], 0, 1, 1, 1, LEFT)
+        self.layout.addWidget(self.combo_box, 0, 2, 1, 1, LEFT)
+
+        self.layout.addWidget(self.make_label(f"Active", font=NORMAL), 1, 0, 1, 1, LEFT)
+        self.layout.addWidget(self.make_label(f"To overwrite", font=NORMAL), 1, 0, 1, 1, LEFT)
+        for i, k in enumerate(self.overrides, start=2):
+            self.layout.addWidget(self.labels[k], i, 0, 1, 1, LEFT)
+            self.layout.addWidget(self.value_labels[k], i, 1, 1, 1, LEFT)
+            self.layout.addWidget(self.override_labels[k], i, 2, 1, 1, LEFT)
+            self.layout.addWidget(self.edits[k], i, 3, 1, 1, LEFT)
+            self.layout.addWidget(self.override_buttons[k], i, 4, 1, 1, LEFT)
+
+        self.setLayout(self.layout)
+
+        # Initialize display with the first index
+        self.update_display(0)
+
+    def update_display(self):
+        self.curr_fov = self.combo_box.currentIndex()
+        thread = threading.Thread(
+            target=self._update_display,
+            args=(
+                self.curr_fov,
+                self.fovs[self.curr_fov],
+                self.actives[self.curr_fov],
+                self.overrides[self.curr_fov],
+                self.info_labels,
+                self.value_labels,
+                self.override_labels
+            ),
+        )
+        thread.start()
+
+    @staticmethod
+    def _update_display(
+            fov_id: int,
+            fov_coordinate: Coordinate,
+            actives: Dict[str, Any],
+            overrides: Dict[str, Any],
+            info_labels: Dict[str, QLabel],
+            value_labels: Dict[str, QLabel],
+            override_labels: Dict[str, QLabel],
+    ):
+        info_labels["fov"].setText(f"Field of view {fov_id}")
+        info_labels["coordinate"].setText(f"Field of view {str(fov_coordinate)}")
+        for k in overrides.keys():
+            value_labels[k].setText(f"{actives[k]:.2f}")
+            override_labels[k].setText("None" if overrides[k] is None else f"{overrides[k]:.2f}")
+
+    def update_override(self, param: str):
+        try:
+            new_val = self.param_types[param](self.edits[param].text())
+        except ValueError as e:
+            logger.error(f"Cannot parse <{self.edits[param].text()}> for parameter {param}.")
+            return
+        if isinstance(new_val, float):
+            self.override_labels[param].setText(f"{new_val:.2f}")
+        else:
+            self.override_labels[param].setText(str(new_val))
+
+    def send_override(self, field: str):
+        logger.debug(f"Sending override for {field}.")
+        if self.overrides[self.curr_fov][field] is None:
+            logger.error(f"Cannot send None for {field} and FoV {self.curr_fov}.")
+            return
+        self.override_buttons[field].setEnabled(False)
+        self.combo_box.setEnabled(False)
+        self.queue_manager.request(
+            req_str='self.override_parameter',
+            kwargs_dict={
+                'fov_id': self.curr_fov,
+                'pos_id': self.curr_fov,  # FIXME
+                'param_name': field,
+                'param_value': self.overrides[self.curr_fov][field],
+            },
+            callback=self.receive_override_response,
+            callback_args=(self.curr_fov, self.curr_fov, field, self.overrides[self.curr_fov][field]),
+        )
+
+    def receive_override_response(self, data: Any, fov_id: int, pos_id: int, param_name: str, param_value: Any):
+        logger.debug(f"Received override response for {param_name}={param_value} for FoV {fov_id}.")
+        if fov_id != self.curr_fov:
+            logger.error(f"Received response for FoV {fov_id}, but currently at {self.curr_fov}.")
+            return
+        self.actives[self.curr_fov][param_name] = param_value
+        self.overrides[self.curr_fov][param_name] = None
+        self.update_display()
+        self.override_buttons[param_name].setEnabled(True)
+        self.combo_box.setEnabled(True)
+

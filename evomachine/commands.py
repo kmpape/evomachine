@@ -243,12 +243,14 @@ class CommandFactory:
             focus_stack: np.ndarray,
             focus_prev_stack: np.ndarray,
             focus_prev_z_coords: np.ndarray,
+            fovs: Dict[int, Coordinate],
     ):
         command_args = {
             'focus_curves': focus_curves,
             'focus_stack': focus_stack,
             'focus_prev_stack': focus_prev_stack,
             'focus_prev_z_coords': focus_prev_z_coords,
+            'fovs': fovs,
         }
         return AutomatonCommand(
             command_type=AutomatonCommandType.FOCUS_DATA,
