@@ -362,7 +362,6 @@ class Automaton:
         self.cam.disable_led()
         self.cam.disable_live_mode()
 
-        # FIXME any DMD call from this thread crashes pygame
         self._dmd.display_full()
 
         cfg_focus = self.cam.cfg.focus if cfg_focus is None else cfg_focus
@@ -392,6 +391,7 @@ class Automaton:
             focus_prev_stack=self.focus_prev_stack,
             focus_stack=self.focus_stack,
             focus_prev_z_coords=self.focus_prev_z_coords,
+            fovs=self._fovs,
         )
         self.fill_queue(queue_data_type=AutomatonCommandType.FOCUS_DATA, queue_data=cmd, logging_level=logging.INFO)
 
@@ -446,6 +446,32 @@ class Automaton:
         for c in channels:
             norm_frame[c, :, :] = (norm_frame[c, :, :] - norm_frame[c, :, :].min()) / np.ptp(norm_frame[c, :, :])
         return norm_frame
+
+    def override_parameter(self, fov_id: int, pos_id: int, param_name: str, param_value: Any):
+        logger.info(f"Automaton.override_parameter: setting {param_name} to {param_value} for "
+                    f"FoV {fov_id} and pos {pos_id}.")
+        avail: List[str] = ["z_pos", "rotation"]
+        if param_name not in avail:
+            raise ConfigError(f"Automaton.override_parameter: {param_name} is not an available override. {avail}",
+                              ErrorCode.ERROR_DEVICE_CONFIG)
+        if fov_id not in self._fovs.keys():
+            raise ConfigError(f"Automaton.override_parameter: {fov_id} is not a valid FoV id. {self._fovs.keys()}",
+                              ErrorCode.ERROR_DEVICE_CONFIG)
+        if pos_id not in self._pos_to_fov.keys():
+            raise ConfigError(f"Automaton.override_parameter: {pos_id} is not a valid position id. {self._pos_to_fov.keys()}",
+                              ErrorCode.ERROR_DEVICE_CONFIG)
+        if param_name == "z_pos":
+            tmp_fov = copy.deepcopy(self._fovs)
+            tmp_fov[fov_id].z = float(param_value)
+            if not self.cam.set_pos_id_to_coordinate(pos_id_to_coordinate=tmp_fov):
+                raise ConfigError(message="Automaton.override_parameter: failed to pass position list to camera.",
+                                  error_code=ErrorCode.ERROR_DEVICE_CONFIG)
+            logger.info(f"Automaton.override_parameter: changing Z from {self._fovs[fov_id].z} to {tmp_fov[fov_id].z}.")
+            self._fovs[fov_id].z = float(param_value)
+        elif param_name == "rotation":
+            logger.info(f"Automaton.override_parameter: changing rotation from {param_value} "
+                        f"to {self._pos_processor[pos_id].rotate}.")
+            self._pos_processor[pos_id].rotate = float(param_value)
 
     def _gui_process(self):
         # logger.debug("Polling _gui_to_automaton_q and filling _automaton_to_gui_q")
