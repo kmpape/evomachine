@@ -27,38 +27,48 @@ PROCESSOR_CONFIG = ConfigImageProcessorFactory.default_config()
 
 class JessStrategy(AbstractStrategy):
     """
-    Strategy for experiment on 2024-03-07 with Jess and Laura.
-    Strategy:
-
-    - Shine light at 535 nm for 3h and image every 5 min at 480 nm.
-    - Shine light at 670 nm for 3h and image every 5 min at 480 nm.
-    - Repeat.
-
-    NOTE: There is no LED at 670 nm currently. Using NO_LED and the red spot instead.
+    Example strategy that projects light on half of the FoV for <timer_interval> seconds and then switches to the other
+    half. The strategy images every <imaging_interval> seconds and saves the images. Additionally, the strategy saves
+    the time at which the changes happened and saves them in a pickle file.
     """
     def __init__(self):
         super().__init__()
         self.path_to_save = Path("/media/hslab/Data/ImageData/Idris/2024-03-07")
 
-        self.exposure_time: int = 1000  # in ms
-        self.imaging_channel: LEDType = LEDType.LED_450_NM
-        self.imaging_interval: float = 5*60  # in seconds
+        self.exposure_time: int = 2000  # in ms
+        self.imaging_channel: LEDType = LEDType.LED_505_NM
+        self.imaging_interval: float = 30*60  # in seconds
 
-        self.current_color: LEDType = LEDType.LED_405_NM
-        self.next_color: LEDType = LEDType.NO_LED
-        self.timer_interval: float = 3*60*60  # in seconds
-        self.timer: threading.Timer = threading.Timer(self.timer_interval, self.change_color)
-        self.time_changes: List[Tuple[datetime, LEDType]] = [(datetime.now(), self.current_color)]
+        self.dmd_led_channel: LEDType = LEDType.LED_538_NM
+        self.dmd_image_1 = np.ones(shape=DMD_WIDTH_HEIGHT, dtype=np.uint8)*255
+        self.dmd_image_1[0:int(DMD_WIDTH_HEIGHT[0]/2), :] = 0
+        self.dmd_image_2 = np.ones(shape=DMD_WIDTH_HEIGHT, dtype=np.uint8)*255
+        self.dmd_image_2[int(DMD_WIDTH_HEIGHT[0]/2):-1, :] = 0
+        # HACK for avoiding overfill
+        self.dmd_image_1[2250:-1, :] = 0
+        self.dmd_image_2[2250:-1, :] = 0
+
+        self.current_dmd_image = self.dmd_image_1
+        self.next_dmd_image = self.dmd_image_2
+
+        self.timer_interval: float = 60*60*5  # in seconds
+        # Change DMD projection using a timer
+        self.timer: threading.Timer = threading.Timer(self.timer_interval, self.change_image)
+        self.time_changes: List[datetime] = []
         self.timer_started: bool = False
+        self.timer_must_stop: bool = False
 
-    def change_color(self):
-        tmp = self.current_color
-        self.current_color = self.next_color
-        self.next_color = tmp
-        self.time_changes.append((datetime.now(), self.current_color))
-        self.timer = threading.Timer(self.timer_interval, self.change_color)
-        self.timer.start()
-        logger.info(f"Changed current_color to {self.current_color} from {tmp} at {self.time_changes[-1]}")
+    def change_image(self):
+        tmp = self.current_dmd_image
+        self.current_dmd_image = self.next_dmd_image
+        self.next_dmd_image = tmp
+        self.time_changes.append(datetime.now())
+        if not self.timer_must_stop:
+            self.timer = threading.Timer(self.timer_interval, self.change_image)
+            self.timer.start()
+            logger.info(f"Changed image. Switching to next image in {self.timer_interval/60/60} min.")
+        else:
+            logger.info("Cancelling timer.")
 
     def _initialise(self) -> List[AutomatonCommand]:
         """
@@ -86,8 +96,8 @@ class JessStrategy(AbstractStrategy):
             save=True,
         )
         project = self.command_factory.command_project(
-            channel=self.current_color,
-            image=np.ones(DMD_WIDTH_HEIGHT),
+            channel=self.dmd_led_channel,
+            image=self.current_dmd_image,
             duration=self.imaging_interval,
             brightness=100,
         )
@@ -125,9 +135,10 @@ class JessStrategy(AbstractStrategy):
 
         # Restart timer in case it was stopped
         if not self.timer_started:
-            self.timer = threading.Timer(self.timer_interval, self.change_color)
+            self.timer = threading.Timer(self.timer_interval, self.change_image)
             self.timer.start()
-            logger.info(f"Starting timer for changing color at {self.timer_interval} seconds.")
+            self.timer_started = True
+            logger.info(f"Starting timer for changing image at {self.timer_interval} seconds.")
 
         # Define next commands
         image = self.command_factory.command_image(
@@ -137,8 +148,8 @@ class JessStrategy(AbstractStrategy):
             save=True,
         )
         project = self.command_factory.command_project(
-            channel=self.current_color,
-            image=np.ones(DMD_WIDTH_HEIGHT),
+            channel=self.dmd_led_channel,
+            image=self.current_dmd_image,
             duration=self.imaging_interval,
             brightness=100,
         )
@@ -154,8 +165,8 @@ class JessStrategy(AbstractStrategy):
             List of commands to be executed by the automaton at the last iteration.
         """
         logger.info("Finalising strategy and saving data.")
-        if self.timer.is_alive():
-            self.timer.cancel()
+        self.timer_must_stop = True
+        self.timer.cancel()
         self.timer_started = False
         current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         filename = self.path_to_save / f"strategy_2024_03_07_savetime_{current_time}.pkl"
@@ -170,10 +181,9 @@ class JessStrategy(AbstractStrategy):
             save=True,
         )
         project = self.command_factory.command_project(
-            channel=self.current_color,
-            image=np.ones(DMD_WIDTH_HEIGHT),
+            channel=self.dmd_led_channel,
+            image=self.current_dmd_image,
             duration=self.imaging_interval,
             brightness=100,
         )
         return [image, project]
-

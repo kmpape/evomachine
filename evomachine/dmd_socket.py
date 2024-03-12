@@ -87,7 +87,7 @@ class DMDControl:
             self.error_container.add_error(new_error=DMDError(message=msg, error_code=ErrorCode.ERROR_SOCKET))
             return False
 
-    def initialise(self):
+    def initialise(self, is_test: bool = False):
         try:
             self._launch_dmd_window()
         except Exception as e:
@@ -98,7 +98,7 @@ class DMDControl:
         monitors = screeninfo.get_monitors()
         mon_info = "\n".join(m.__str__() for m in monitors)
         has_two_monitors = len(monitors) == 2
-        if has_two_monitors:
+        if (not is_test) and has_two_monitors:
             has_one_primary = any(m.is_primary for m in monitors) and any(not m.is_primary for m in monitors)
             if has_one_primary:
                 mon_dmd = [m for m in monitors if (not m.is_primary)][0]
@@ -135,11 +135,15 @@ class DMDControl:
         """
         Closes connection with the C program and the program itself.
         """
+        if not self._dmd_is_alive:
+            logger.warning("DMDControl.finalise: DMD not initialised.")
+            return
         # self._output_thread.join()
         self.s.close()
         time.sleep(0.5)
         if (self._process is not None) and (self._process.poll() is None):
             self._process.terminate()
+        self._dmd_is_alive = False
 
     def display_none(self):
         """
@@ -182,7 +186,7 @@ class DMDControl:
         return np.zeros(DMD_WIDTH_HEIGHT, dtype=ARR_TYPE)
 
     @staticmethod
-    def make_half_line_width(line_width: int, at_pos: int, length: int) -> Tuple[int, int]:
+    def _make_half_line_width(line_width: int, at_pos: int, length: int) -> Tuple[int, int]:
         if line_width == 1:
             return at_pos, min(at_pos+line_width, length)
         elif line_width % 2 == 0:
@@ -200,13 +204,13 @@ class DMDControl:
         Parameters
         ----------
         at_pos: int                 Line position (row)
-        line_width: int             Thickness of line (see make_half_line_width)
+        line_width: int             Thickness of line (see _make_half_line_width)
 
         """
         if not line_width:
             line_width = DMDControl.DEFAULT_LINE_WIDTH
         img = self.get_zero_array()
-        row_start, row_end = self.make_half_line_width(
+        row_start, row_end = self._make_half_line_width(
             line_width=line_width,
             at_pos=at_pos,
             length=DMD_WIDTH_HEIGHT[0]-1,
@@ -224,13 +228,13 @@ class DMDControl:
         Parameters
         ----------
         at_pos: int                 Line position (column)
-        line_width: int             Thickness of line (see make_half_line_width)
+        line_width: int             Thickness of line (see _make_half_line_width)
 
         """
         if not line_width:
             line_width = DMDControl.DEFAULT_LINE_WIDTH
         img = self.get_zero_array()
-        col_start, col_end = self.make_half_line_width(
+        col_start, col_end = self._make_half_line_width(
             line_width=line_width,
             at_pos=at_pos,
             length=DMD_WIDTH_HEIGHT[1]-1,
@@ -248,16 +252,16 @@ class DMDControl:
         Parameters
         ----------
         at_pos: Tuple[int, int]     Tuple with crosshair position (row, column and NOT x, y)
-        line_width: int             Thickness of line (see make_half_line_width)
+        line_width: int             Thickness of line (see _make_half_line_width)
 
         """
         img = self.get_zero_array()
-        row_start, row_end = self.make_half_line_width(
+        row_start, row_end = self._make_half_line_width(
             line_width=line_width,
             at_pos=at_pos[0],
             length=DMD_WIDTH_HEIGHT[0]-1,
         )
-        col_start, col_end = self.make_half_line_width(
+        col_start, col_end = self._make_half_line_width(
             line_width=line_width,
             at_pos=at_pos[1],
             length=DMD_WIDTH_HEIGHT[1]-1,

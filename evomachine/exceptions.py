@@ -26,6 +26,7 @@ class ErrorCode(Enum):
 
     # DMD errors
     ERROR_MONITORS = auto()
+    ERROR_SOCKET = auto()
 
     # Tiger errors
     ERROR_TIGER_SERIAL_CONNECTION = auto()

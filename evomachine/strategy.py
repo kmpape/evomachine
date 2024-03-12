@@ -16,6 +16,15 @@ logger = get_logger(name=__name__)
 
 class AbstractStrategy(ABC):
     """
+    Strategy class to be used by the automaton. This class is an abstract class that should be inherited by a specific
+    strategy. Upon starting a strategy, the automaton calls
+
+    - `initialise` to initialise the strategy,
+    - `callback` repeatedly to get the next commands to be executed,
+    - `finalise` to finalise the strategy, e.g., saving data.
+
+    The children classes must implement _initialise, _callback and finalise methods.
+
     TODO strategy needs a test function to check if it is working properly before starting
     """
 

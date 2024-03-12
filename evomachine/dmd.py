@@ -71,14 +71,14 @@ class DMDControl:
 
         # self.initialise()  # TODO remove this
 
-    def initialise(self):
+    def initialise(self, is_test: bool = False):
         if self._dmd_is_alive:
             logger.warning("DMDControl.initialise: DMD already initialised.")
             return
         monitors = screeninfo.get_monitors()
         mon_info = "\n".join(m.__str__() for m in monitors)
         has_two_monitors = len(monitors) == 2
-        if has_two_monitors:
+        if (not is_test) and has_two_monitors:
             has_one_primary = any(m.is_primary for m in monitors) and any(not m.is_primary for m in monitors)
             if has_one_primary:
                 mon_dmd = [m for m in monitors if (not m.is_primary)][0]
@@ -130,13 +130,16 @@ class DMDControl:
         if not self._dmd_is_alive:
             logger.error(f"DMDControl.display_image: DMD not initialised. Try running DMDControl.initialise.")
             return
-        if img.shape == (*self.width_height_DMD, 3):
+        if img.shape == self.width_height_DMD:
+            self.surface.blit(pygame.surfarray.make_surface(np.repeat(img[:, :, np.newaxis], 3, axis=-1)), (0, 0))
+        elif img.shape == (*self.width_height_DMD, 3):
             self.surface.blit(pygame.surfarray.make_surface(img), (0, 0))
-            if update_display:
-                pygame.display.update()
         else:
             logger.error(f"DMDControl.display_image: provided image of shape={img.shape}, "
                          f"but DMD shape={(*self.width_height_DMD, 3)}.")
+            return
+        if update_display:
+            pygame.display.update()
 
     def display_full(
             self,
@@ -233,32 +236,7 @@ class DMDControl:
         img = np.repeat(img[:, :, np.newaxis], 3, axis=2)
         self.display_image(img=img)
 
-    def moving_rectangles(self):  # TODO
-        clock = pygame.time.Clock()
-        rect1 = pygame.locals.Rect(0, 0, 200, self.width_height_DMD[1])
-        rect2 = pygame.locals.Rect(self.width_height_DMD[0] - 200, 0, 200, self.width_height_DMD[1])
-
-        v = 10
-
-        try:
-            while True:
-                for event in pygame.event.get():
-                    if event.type == pygame.locals.QUIT:
-                        pygame.quit()
-                        sys.exit()
-                self.surface.fill((0, 0, 0))
-
-                if rect1.left < 0 or rect1.left > self.width_height_DMD[0] - 200:
-                    v *= -1
-
-                rect1.move_ip(v, 0)
-                rect2.move_ip(-v, 0)
-
-                pygame.draw.rect(self.surface, (255, 255, 255), rect1)
-                pygame.draw.rect(self.surface, (255, 255, 255), rect2)
-
-                pygame.display.update()
-                clock.tick(50)  # Framerate: 50 Hz
-        except KeyboardInterrupt:
-            pass
+    @staticmethod
+    def get_zero_array():
+        return np.zeros(DMD_WIDTH_HEIGHT, dtype=np.uint8)
 
