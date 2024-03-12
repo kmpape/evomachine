@@ -507,7 +507,7 @@ class Automaton:
                 self._move_to_pos(pos_id=cmd.command_args)
 
             elif cmd.command_type == AutomatonCommandType.WAIT:
-                self.sleep(cmd.command_args)  # TODO implement our own function that reacts to stop event
+                self.sleep(cmd.command_args)
 
             elif cmd.command_type == AutomatonCommandType.STOP:
                 logger.warning("Automaton.process: Received STOP command. Shutting down.")
@@ -516,9 +516,9 @@ class Automaton:
                 return
 
             elif cmd.command_type == AutomatonCommandType.IMAGE:
+                self._dmd.display_full()
                 if self.cam.get_exposure() != cmd.command_args['exposure_time']:
                     self.cam.set_exposure(exposure_time=cmd.command_args['exposure_time'])
-                # TODO actuate DMD
                 self._take_image(channels=cmd.command_args['channels'], brightness=cmd.command_args['brightness'])
                 if not cmd.command_args['segment']:
                     channels_int = [self._channel_to_index[c] for c in cmd.command_args['channels']]
@@ -536,11 +536,11 @@ class Automaton:
                             i_channel=i_chan,
                             i_pos=self._curr_pos_id,
                         )
+                self._dmd.display_none()
 
             elif cmd.command_type == AutomatonCommandType.PROJECT:
                 # TODO need assert whether DMD image is being displayed
-                # TODO any DMD call from this thread crashes pygame
-                # self._dmd.display_image(img=cmd.command_args['image'])
+                self._dmd.display_image(img=cmd.command_args['image'])
                 self.cam.set_led(i_chan=cmd.command_args['channel'], brightness=cmd.command_args['brightness'])
                 # TODO need to block movement and implement the sleep statement as countdown w. callback
                 self.sleep(duration=cmd.command_args['duration'])  # TODO disable with timer
@@ -591,9 +591,9 @@ class Automaton:
                 return
 
             elif cmd.command_type == AutomatonCommandType.IMAGE:
+                self._dmd.display_full()
                 if self.cam.get_exposure() != cmd.command_args['exposure_time']:
                     self.cam.set_exposure(exposure_time=cmd.command_args['exposure_time'])
-                # TODO actuate DMD
                 self._take_image(channels=cmd.command_args['channels'], brightness=cmd.command_args['brightness'])
                 if not cmd.command_args['segment']:
                     channels_int = [self._channel_to_index[c] for c in cmd.command_args['channels']]
@@ -611,11 +611,11 @@ class Automaton:
                             i_channel=i_chan,
                             i_pos=self._curr_pos_id,
                         )
+                self._dmd.display_none()
 
             elif cmd.command_type == AutomatonCommandType.PROJECT:
                 # TODO need assert whether DMD image is being displayed
-                # TODO any DMD call from this thread crashes pygame
-                # self._dmd.display_image(img=cmd.command_args['image'])
+                self._dmd.display_image(img=cmd.command_args['image'])
                 self.cam.set_led(i_chan=cmd.command_args['channel'], brightness=cmd.command_args['brightness'])
                 # TODO need to block movement and implement the sleep statement as countdown w. callback
                 self.sleep(duration=cmd.command_args['duration'])

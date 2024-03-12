@@ -37,7 +37,7 @@ class ExperimentWorker(EvoWorkerTemplate):
         self.signal_disable_button = signal_disable_button
 
         self.valid_coordinates = False
-        self.factory: CoordinateFactory = CoordinateFactory(dfov=self.cfg_camera.fov_size)
+        self.factory: CoordinateFactory = CoordinateFactory(dfov=self.cfg_camera.fov_size * 10)
         self._field_of_views: Union[None, Dict[int, Coordinate]] = None
         self._cropping_boxes: Union[None, List[delta.utils.CroppingBox]] = None
         self._stage_limits: Union[None, Dict[str, Tuple[float, float]]] = None

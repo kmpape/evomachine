@@ -72,6 +72,9 @@ class DMDControl:
         # self.initialise()  # TODO remove this
 
     def initialise(self):
+        if self._dmd_is_alive:
+            logger.warning("DMDControl.initialise: DMD already initialised.")
+            return
         monitors = screeninfo.get_monitors()
         mon_info = "\n".join(m.__str__() for m in monitors)
         has_two_monitors = len(monitors) == 2
@@ -113,8 +116,11 @@ class DMDControl:
             self.error_container.add_error(new_error=DMDError(message=msg, error_code=ErrorCode.ERROR_MONITORS))
 
     def finalise(self):
-        self.display_none()
+        if not self._dmd_is_alive:
+            logger.warning("DMDControl.finalise: DMD not initialised.")
+            return
         DMDControl.close_window()
+        self._dmd_is_alive = False
 
     @staticmethod
     def close_window():
