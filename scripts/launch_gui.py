@@ -14,13 +14,24 @@ sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9
 from evomachine.acquisition import TestCamera, EvoCamera
 from evomachine.automaton import Automaton
 from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, ConfigImageProcessorFactory, \
-    EVOMACHINE_DIR
-from evomachine.dmd import DMDControl
+    EVOMACHINE_DIR, USE_DMD_SOCKET
+if USE_DMD_SOCKET:
+    from evomachine.dmd_socket import DMDControl
+else:
+    from evomachine.dmd import DMDControl
+
 from evomachine.guidir.newgui import EvoGUI
 from evomachine.guidir.queuemanager import QueueManager
 from evomachine.strategy import BasicStrategy   # TODO add dropdown in GUI
 from strategies.strategy_2024_03_07 import JessStrategy
 
+# TODO remove test code below
+# from evomachine.evotypes import LEDType
+# camera_config = ConfigCameraFactory.default_air_config()
+# cam = EvoCamera(cfg_camera=camera_config)
+# cam.set_led(i_chan=LEDType.LED_450_NM, brightness=100)
+# pygame.init()
+# dmd = DMDControl()
 
 def create_automaton_process(
         camera_config: ConfigCamera,

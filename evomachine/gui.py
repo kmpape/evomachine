@@ -37,11 +37,14 @@ from asitiger.errors import Errors as ASIErrors
 from asitiger.tigercontroller import SAFE_STAGE_LIMITS
 
 from evomachine.acquisition import AbstractCamera, EvoCamera
-from evomachine.automaton import Automaton, AutomatonQueueDataType
+from evomachine.automaton import Automaton
 from evomachine.commands import AutomatonCommand, AutomatonCommandType
-from evomachine.config import ConfigCRISP, ConfigFocus, get_logger
+from evomachine.config import ConfigCRISP, ConfigFocus, get_logger, USE_DMD_SOCKET
 from evomachine.coordinates import Coordinate, CoordinateFactory
-from evomachine.dmd import DMDControl
+if USE_DMD_SOCKET:
+    from evomachine.dmd_socket import DMDControl
+else:
+    from evomachine.dmd import DMDControl
 from evomachine.exceptions import ConfigError, TigerError
 from evomachine.evotypes import FocusAlgorithmType, LEDType
 
@@ -1393,8 +1396,9 @@ class FigureWindow(QWidget):
         super().__init__()
         self.setWindowTitle(title)
         layout = QVBoxLayout()
-        canvas = FigureCanvas(fig)
-        layout.addWidget(canvas)
+        self.canvas = FigureCanvas(fig)
+        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layout.addWidget(self.canvas)
         self.setLayout(layout)
 
 

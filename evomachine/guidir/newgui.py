@@ -32,17 +32,8 @@ sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger')
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
 
-from asitiger.errors import Errors as ASIErrors
-from asitiger.tigercontroller import SAFE_STAGE_LIMITS
 
-from evomachine.acquisition import AbstractCamera, EvoCamera
-from evomachine.automaton import Automaton
-from evomachine.commands import AutomatonCommand, AutomatonCommandType
 from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
-from evomachine.coordinates import Coordinate, CoordinateFactory
-from evomachine.dmd import DMDControl
-from evomachine.exceptions import ConfigError, TigerError
-from evomachine.evotypes import LEDType, FocusAlgorithmType
 from evomachine.guidir.dmd import DMDPanel
 from evomachine.guidir.experiments import ExperimentPanel
 from evomachine.guidir.figures import FigureMultiWindow, ImagePlotter

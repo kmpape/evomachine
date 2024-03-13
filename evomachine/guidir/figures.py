@@ -22,16 +22,13 @@ from PyQt5.QtWidgets import (
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
 
-from evomachine.acquisition import AbstractCamera
-from evomachine.automaton import Automaton
 from evomachine.commands import AutomatonCommand
 from evomachine.coordinates import Coordinate
-from evomachine.dmd import DMDControl
 from evomachine.evotypes import AutomatonCommandType, LEDType
 from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoGUIThread, EvoWorkerTemplate, FolderExistsValidator, \
     FilenameValidator, EVO_STYLE
-from evomachine.guidir.guitypes import DisplayMode, SMALL, LEFT
+from evomachine.guidir.guitypes import SMALL, LEFT
 from evomachine.guidir.queuemanager import QueueManager
 from evomachine.utils import EvoCroppingBox
 
@@ -48,8 +45,9 @@ class FigureWindow(QWidget):
         super().__init__()
         self.setWindowTitle(title)
         layout = QVBoxLayout()
-        canvas = FigureCanvas(fig)
-        layout.addWidget(canvas)
+        self.canvas = FigureCanvas(fig)
+        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        layout.addWidget(self.canvas)
         self.setLayout(layout)
 
 
@@ -610,7 +608,6 @@ class ImagePlotter(EvoPanelTemplate):
         # self.canvas.draw()
         self.signal_new_image.emit(image_to_plot, title)
         self.signal_update_all_boxes.emit()
-
 
 class FigureMultiWindow(QWidget):
     def __init__(self, fig_dict):

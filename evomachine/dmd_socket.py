@@ -39,6 +39,29 @@ class DMDControl:
         | (width,height)                         (0,height) |
         |___________________________________________________|
 
+
+        Example:
+            Line 1 produced by display_line_horiz(100)
+            Line 2 produced by display_line_vert(100)
+
+        -> Monitor view:
+        _____________________________________________________
+        | 1111112111111111111111111111111111111111111111111 |
+        |       2                                           |
+        |       2                                           |
+        |       2                                           |
+        |       2                                           |
+        |_______2___________________________________________|
+
+        -> Camera view:
+        _____________________________________________________
+        | 2222221222222222222222222222222222222222222222222 |
+        |       1                                           |
+        |       1                                           |
+        |       1                                           |
+        |       1                                           |
+        |_______1___________________________________________|
+
         """
         self.error_container: ErrorContainer = ErrorContainer()
         "Deque to store all errors."
@@ -194,7 +217,7 @@ class DMDControl:
         else:
             return max(0, at_pos-int(line_width/2)), min(length, at_pos+int(line_width/2))
 
-    def display_line_horiz(
+    def display_line_vert(
             self,
             at_pos: int,
             line_width: Optional[Union[int, None]] = None,
@@ -218,7 +241,7 @@ class DMDControl:
         img[row_start:row_end, :] = 255
         self.display_image(img)
 
-    def display_line_vert(
+    def display_line_horiz(
             self,
             at_pos: int,
             line_width: Optional[Union[int, None]] = None,

@@ -114,13 +114,13 @@ class DMDCalibConfigType:
 
 class DMDCalibConfigTypeFactory:
     @staticmethod
-    def default(channel: LEDType = LEDType.LED_405_NM) -> DMDCalibConfigType:
+    def default(channel: LEDType = LEDType.LED_505_NM) -> DMDCalibConfigType:
         return DMDCalibConfigType(
             channel=channel,
-            brightness=10,
-            exposure=100,
-            line_width=11,
-            step=1,
+            brightness=100,
+            exposure=10,
+            line_width=3,
+            step=100,  # FIXME replace with 1
             delay=1,
         )
 

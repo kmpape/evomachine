@@ -15,10 +15,7 @@ from PyQt5.QtWidgets import (
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
 
-from evomachine.acquisition import AbstractCamera
-from evomachine.automaton import Automaton
 from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
-from evomachine.dmd import DMDControl
 from evomachine.guidir.guitypes import NORMAL
 from evomachine.guidir.queuemanager import QueueManager
 

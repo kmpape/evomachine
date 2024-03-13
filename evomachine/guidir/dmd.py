@@ -12,19 +12,10 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QGridLayout,
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
-from serial import SerialException
 
-from asitiger.errors import Errors as ASIErrors
-
-from evomachine.acquisition import AbstractCamera, EvoCamera
-from evomachine.automaton import Automaton
-from evomachine.commands import AutomatonCommand, AutomatonCommandType
-from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, ConfigImageProcessor, get_logger
-from evomachine.coordinates import Coordinate, CoordinateFactory
-from evomachine.dmd import DMDControl, DMDColor
-from evomachine.exceptions import ConfigError, TigerError
+from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
 from evomachine.evotypes import DMDCalibConfigType, DMDCalibConfigTypeFactory
-from evomachine.guidir.figures import FigureWindow
+from evomachine.guidir.figures import FigureWindow, FigureMultiWindow
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
 from evomachine.guidir.guitypes import DMDModes, SMALL, CENTER, LEFT, RIGHT, NORMAL
 from evomachine.guidir.queuemanager import QueueManager
@@ -237,6 +228,7 @@ class DMDPanel(EvoPanelTemplate):
         self.signal_dmd_done.emit()
 
     def show_calibration(self):
+        logger.debug("Showing calibration data.")
         if self.calib_data is None:
             logger.error("exp_show_curve: missing data. Returning.")
             return
@@ -254,8 +246,11 @@ class DMDPanel(EvoPanelTemplate):
             axs[1, i].set_title(f"Values {k}")
             axs[1, i].set_xlabel("DMD loc")
             axs[1, i].set_ylabel("Max value")
-        window = FigureWindow(fig=fig, title="DMD Calibration Curves")
-        window.show()
+        self.calib_window = FigureWindow(fig=fig, title="DMD Calibration Curves")
+        self.calib_window.show()
+        # self.exp_focus_curves_window = FigureMultiWindow({0: fig})
+        # self.exp_focus_curves_window.show()
+        logger.debug("Showing window.")
 
     def show_config(self):
         dialog = DMDCalibDialog(cfg=self.calib_config)

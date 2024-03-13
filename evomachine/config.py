@@ -14,7 +14,10 @@ from evomachine.evotypes import FilterWheelType, FocusAlgorithmType, LEDType, Im
     ImageConfigTypeFactory, ObjectiveConfigTypeFactory
 
 # DeLTA lib install directory
-EVOMACHINE_DIR = Path(__file__).parent
+EVOMACHINE_DIR: Path = Path(__file__).parent
+
+# Switch between pygame dmd.py and dmd_socket.py
+USE_DMD_SOCKET: bool = True
 
 # EVO_FORMATTER = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s - %(message)s\n<---')
 EVO_FORMATTER = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')

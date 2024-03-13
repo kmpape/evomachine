@@ -13,8 +13,11 @@ sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9
 from evomachine.acquisition import TestCamera
 from evomachine.automaton import Automaton
 from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, ConfigImageProcessorFactory, \
-    EVOMACHINE_DIR
-from evomachine.dmd import DMDControl
+    EVOMACHINE_DIR, USE_DMD_SOCKET
+if USE_DMD_SOCKET:
+    from evomachine.dmd_socket import DMDControl
+else:
+    from evomachine.dmd import DMDControl
 from evomachine.guidir.newgui import EvoGUI
 from evomachine.guidir.queuemanager import QueueManager
 from evomachine.strategy import BasicStrategy   # TODO add dropdown in GUI

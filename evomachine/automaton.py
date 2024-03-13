@@ -14,9 +14,13 @@ from delta.config import Config
 
 from evomachine.acquisition import AbstractCamera, EvoCamera
 from evomachine.commands import AutomatonCommand, CommandFactory
-from evomachine.config import ConfigFocus, ConfigImageProcessor, EVO_GUI_LOGGING_LEVEL, get_logger, EVOMACHINE_DIR
+from evomachine.config import ConfigFocus, ConfigImageProcessor, EVO_GUI_LOGGING_LEVEL, get_logger, EVOMACHINE_DIR,\
+    USE_DMD_SOCKET
 from evomachine.coordinates import Coordinate, CoordinateFactory
-from evomachine.dmd import DMDControl
+if USE_DMD_SOCKET:
+    from evomachine.dmd_socket import DMDControl
+else:
+    from evomachine.dmd import DMDControl
 from evomachine.exceptions import ErrorCode, ErrorContainer, ConfigError
 from evomachine.positionrt import PositionRT
 from evomachine.strategy import AbstractStrategy
@@ -573,6 +577,7 @@ class Automaton:
             elif cmd.command_type == AutomatonCommandType.PROJECT:
                 # TODO need assert whether DMD image is being displayed
                 self._dmd.display_image(img=cmd.command_args['image'])
+                # TODO allow for NONE LED to actuate LED separately
                 self.cam.set_led(i_chan=cmd.command_args['channel'], brightness=cmd.command_args['brightness'])
                 # TODO need to block movement and implement the sleep statement as countdown w. callback
                 self.sleep(duration=cmd.command_args['duration'])  # TODO disable with timer
@@ -817,34 +822,46 @@ class Automaton:
             cfg: DMDCalibConfigType,
             filename: Optional[str] = None
     ) -> Tuple[Dict[str, List[int]], Dict[str, np.ndarray], Dict[str, np.ndarray]]:
+        if filename is None:
+            filename = str(EVOMACHINE_DIR / "dmd_calibration_data.pkl")
+        logger.info(f"Starting DMD calibration with config {cfg} and filename {filename}.")
         self.cam.set_exposure(exposure_time=cfg.exposure)
+        if isinstance(self.cam, EvoCamera):
+            self.cam.studio.live().set_live_mode(False)
         ranges: Dict[str, List[int]] = {
-            'horiz': list(range(0, self._dmd.width_height_DMD[0], cfg.step)),
-            'vert': list(range(0, self._dmd.width_height_DMD[1], cfg.step)),
+            'horiz': list(range(0, self._dmd.width_height_DMD[1], cfg.step)),
+            'vert': list(range(0, self._dmd.width_height_DMD[0], cfg.step)),
         }
-        indices: Dict[str, np.ndarray] = {k: np.zeros(len(r), dtype=np.int) for k, r in ranges.items()}
+        indices: Dict[str, np.ndarray] = {k: np.zeros(len(r), dtype=np.dtype('int32')) for k, r in ranges.items()}
         data: Dict[str, np.ndarray] = {k: np.zeros(len(r)) for k, r in ranges.items()}
         funcs = {
             'horiz': self._dmd.display_line_horiz,
             'vert': self._dmd.display_line_vert,
         }
-        for k in ranges.keys():
-            for i, at_pos in enumerate(ranges[k]):
-                self._dmd.display_none(update_display=False)
+        self.cam.set_led(i_chan=cfg.channel, brightness=cfg.brightness)
+        for i, k in enumerate(ranges.keys()):
+            logger.info(f"Calibrating {k} direction. Taking {len(ranges[k])} images.")
+            for j, at_pos in enumerate(ranges[k]):
+                if self.stopped():
+                    logger.warning("Aborting DMD calibration.")
+                    return ()
+                if not USE_DMD_SOCKET:
+                    self._dmd.display_none(update_display=False)
                 funcs[k](at_pos=at_pos, line_width=cfg.line_width)
                 self.sleep(duration=cfg.delay)
                 img = self.cam.get_frame(
-                    i_chan=cfg.channel,
-                    brightness=cfg.brightness,
+                    i_chan=None,
                     normalise=False
                 )
+                if j == int(len(ranges[k])/2):
+                    filename_tmp = str(EVOMACHINE_DIR) + "dmd_calibration_img_" + str(k) + ".pkl"
+                    with open(filename_tmp, 'wb') as file:
+                        pickle.dump(img, file)
                 img_max = img.max(axis=i)
-                data[k][i] = img_max.max()
-                indices[k][i] = img_max.argmax()
+                data[k][j] = img_max.max()
+                indices[k][j] = img_max.argmax()
         self.dmd_calibration_data = (ranges, indices, data)
-
-        if filename is None:
-            filename = str(EVOMACHINE_DIR / "dmd_calibration_data.pkl")
+        self.cam.disable_led()
 
         if filename is not None:
             with open(filename, 'wb') as file:

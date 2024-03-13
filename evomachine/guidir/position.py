@@ -12,16 +12,9 @@ from PyQt5.QtWidgets import (
 )
 from serial import SerialException
 
-from asitiger.errors import Errors as ASIErrors
 
-from evomachine.acquisition import AbstractCamera, EvoCamera
-from evomachine.automaton import Automaton
-from evomachine.commands import AutomatonCommand, AutomatonCommandType
 from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, ConfigImageProcessor, get_logger
 from evomachine.coordinates import Coordinate, CoordinateFactory
-from evomachine.dmd import DMDControl
-from evomachine.exceptions import ConfigError, TigerError
-from evomachine.evotypes import LEDType, FocusAlgorithmType
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
 from evomachine.guidir.guitypes import DisplayMode, Direction, ARROW_LEFT, ARROW_RIGHT, ARROW_UP, ARROW_DOWN, AXES, \
     SMALL, CENTER, LEFT, RIGHT, NORMAL
