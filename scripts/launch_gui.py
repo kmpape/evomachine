@@ -130,7 +130,7 @@ if __name__ == '__main__':
         stop_event=stop_event,
         shutdown_event=shutdown_event,
     )
-    icon = QIcon(str(EVOMACHINE_DIR.parent / 'em_logo.png'))
+    icon = QIcon(str(EVOMACHINE_DIR / 'guidir/em_logo.jpg'))
     w.setWindowIcon(icon)
     w.show()
     sys.exit(app.exec_())

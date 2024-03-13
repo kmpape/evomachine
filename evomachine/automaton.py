@@ -842,6 +842,8 @@ class Automaton:
         for i, k in enumerate(ranges.keys()):
             logger.info(f"Calibrating {k} direction. Taking {len(ranges[k])} images.")
             for j, at_pos in enumerate(ranges[k]):
+                if j % 50 == 0:
+                    logger.info(f"At {j} of {len(ranges[k])}")
                 if self.stopped():
                     logger.warning("Aborting DMD calibration.")
                     return ()
@@ -860,6 +862,9 @@ class Automaton:
                 img_max = img.max(axis=i)
                 data[k][j] = img_max.max()
                 indices[k][j] = img_max.argmax()
+            # NOTE Automaton gets stuck for step=3 (starting with vert)
+            # Also gets stuck for step=5 but half through vertical direction - socket problem? run separately!
+            self.sleep(1)
         self.dmd_calibration_data = (ranges, indices, data)
         self.cam.disable_led()
 

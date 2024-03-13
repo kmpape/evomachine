@@ -120,8 +120,8 @@ class DMDCalibConfigTypeFactory:
             brightness=100,
             exposure=10,
             line_width=3,
-            step=100,  # FIXME replace with 1
-            delay=1,
+            step=5,  # FIXME
+            delay=0.01,  # >= 0.5
         )
 
 

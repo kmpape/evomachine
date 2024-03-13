@@ -131,8 +131,7 @@ if __name__ == '__main__':
         stop_event=stop_event,
         shutdown_event=shutdown_event,
     )
-    icon = QIcon('/home/idris/workspace_python/conda_evomachine3.9/evomachine_repo/evomachine/guidir/trial.jpg')
-    # w.setWindowIcon(w.style().standardIcon(getattr(w.style(), 'SP_DesktopIcon')))
+    icon = QIcon(str(EVOMACHINE_DIR / 'guidir/em_logo.jpg'))
     w.setWindowIcon(icon)
     w.show()
     sys.exit(app.exec_())
