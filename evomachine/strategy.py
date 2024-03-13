@@ -1,11 +1,13 @@
 from abc import ABC, abstractmethod
 import inspect
+import importlib.util
+import os
 from pathlib import Path
 import sys
 from typing import Dict, List, Tuple, Type, Union
 
 from evomachine.commands import AutomatonCommand, CommandFactory
-from evomachine.config import EVOMACHINE_DIR, get_logger, ConfigCamera
+from evomachine.config import get_logger, ConfigCamera
 from evomachine.coordinates import Coordinate
 from evomachine.exceptions import ErrorCode, EvoMachineError, StrategyError
 from evomachine.evotypes import AutomatonCommandType, LEDType
@@ -26,6 +28,7 @@ class AbstractStrategy(ABC):
     The children classes must implement _initialise, _callback and finalise methods.
 
     TODO strategy needs a test function to check if it is working properly before starting
+    TODO add functions to reconfigure camera object through GUI
     """
 
     def __init__(self):
@@ -41,64 +44,10 @@ class AbstractStrategy(ABC):
         "Factory object to create AutomatonCommands."
         self.config_camera: Union[None, ConfigCamera] = None
         "Camera configuration object."
-        # TODO add configuration objects here as None. Can be overwritten by base strategies, then read by automaton
-
-    def callback(
-            self,
-            fov_id: int,  # TODO need to consider several move commands passed or allow for one only
-            data: List[AutomatonCommand],
-            errors: List[EvoMachineError],
-    ) -> List[AutomatonCommand]:
-        """Callback function for the strategy. This function is called by the\\
-        automaton when new data is available.
-
-
-        Parameters
-        ----------
-        `fov_id` : int
-            The id of the current field of view.
-        `t` : int
-            The time of the data.
-        `data` : dict
-            Processed image data such as cell positions.
-        """
-        new_command_list = self._callback(fov_id=fov_id, data=data, errors=errors)
-        if not self.is_valid_command_list(new_command_list):
-            raise StrategyError(message=f"AbstractStrategy.callback: invalid command list ({new_command_list}).",
-                                error_code=ErrorCode.ERROR_STRATEGY)
-        return new_command_list
 
     @abstractmethod
-    def _callback(
-            self,
-            fov_id: int,
-            data: List[AutomatonCommand],
-            errors: List[EvoMachineError],
-    ) -> List[AutomatonCommand]:
-        """Callback function for the strategy. This function is called by the\\
-        automaton when new data is available. 
-        
-
-        Parameters
-        ----------
-        `fov_id` : int
-            The id of the current field of view.
-        `t` : int
-            The time of the data.
-        `data` : dict
-            Processed image data such as cell positions.
-        """
+    def _initialise(self) -> List[AutomatonCommand]:
         pass
-
-    @staticmethod
-    def is_valid_command_list(command_list: List[AutomatonCommand]):
-        # Max one MOVE command
-        # TODO channel NO_LED should give false
-        # TODO should only have one command_type per list (?)
-        if len([cmd for cmd in command_list if cmd.command_type == AutomatonCommandType.MOVE]) > 1:
-            return False
-        else:
-            return True
 
     def initialise(
             self,
@@ -136,12 +85,65 @@ class AbstractStrategy(ABC):
         return new_command_list
 
     @abstractmethod
-    def finalise(self) -> List[AutomatonCommand]:
+    def _callback(
+            self,
+            fov_id: int,
+            data: List[AutomatonCommand],
+            errors: List[EvoMachineError],
+    ) -> List[AutomatonCommand]:
         pass
 
+    def callback(
+            self,
+            fov_id: int,  # TODO need to consider several move commands passed or allow for one only
+            data: List[AutomatonCommand],
+            errors: List[EvoMachineError],
+    ) -> List[AutomatonCommand]:
+        """
+        Callback function for the strategy. This function is called by the
+        automaton when new data is available.
+
+
+        Parameters
+        ----------
+        `fov_id` : int
+            The id of the current field of view.
+        `data` : List[AutomatonCommand]
+            List of AutomatonCommand.
+        `errors` : List[EvoMachineError]
+            List of errors that occurred during execution.
+        """
+        new_command_list = self._callback(fov_id=fov_id, data=data, errors=errors)
+        if not self.is_valid_command_list(new_command_list):
+            raise StrategyError(message=f"AbstractStrategy.callback: invalid command list ({new_command_list}).",
+                                error_code=ErrorCode.ERROR_STRATEGY)
+        return new_command_list
+
     @abstractmethod
-    def _initialise(self) -> List[AutomatonCommand]:
+    def finalise(self) -> List[AutomatonCommand]:
+        """
+        Finalise strategy and potentially save data. Provide a last list of commands to be executed. Note that
+        callback will not be called after finalise.
+
+        Returns
+        -------
+        List[AutomatonCommand]
+            List of commands to be executed by the automaton.
+        """
         pass
+
+    def name(self) -> str:
+        return self.__class__.__name__
+
+    @staticmethod
+    def is_valid_command_list(command_list: List[AutomatonCommand]):
+        # Max one MOVE command
+        # TODO channel NO_LED should give false
+        # TODO should only have one command_type per list (?)
+        if len([cmd for cmd in command_list if cmd.command_type == AutomatonCommandType.MOVE]) > 1:
+            return False
+        else:
+            return True
 
 
 class NoStrategy(AbstractStrategy):
@@ -234,4 +236,15 @@ def get_all_strategies() -> List[Tuple[Type[AbstractStrategy], str]]:
     for name, obj in inspect.getmembers(current_module):
         if inspect.isclass(obj) and issubclass(obj, AbstractStrategy) and obj != AbstractStrategy and obj != NoStrategy:
             subclasses.append((obj, name))
+
+    strategies_folder = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'strategies'))
+    for file_name in os.listdir(strategies_folder):
+        if file_name.endswith('.py') and file_name != '__init__.py':
+            module_name = os.path.splitext(file_name)[0]
+            spec = importlib.util.spec_from_file_location(module_name, os.path.join(strategies_folder, file_name))
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            for name, obj in inspect.getmembers(module):
+                if inspect.isclass(obj) and issubclass(obj, AbstractStrategy):
+                    subclasses.append((obj, name))
     return subclasses

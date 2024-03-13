@@ -79,24 +79,6 @@ class PositionWorker(EvoWorkerTemplate):
                 kwargs_dict={'block': True},
                 callback=self.update_position,
             )
-        # try:
-        #     if direction == Direction.LEFT:
-        #         self.cam.move_fov_left(block=True)
-        #     elif direction == Direction.RIGHT:
-        #         self.cam.move_fov_right(block=True)
-        #     elif direction == Direction.UP:
-        #         self.cam.move_fov_up(block=True)
-        #     elif direction == Direction.DOWN:
-        #         self.cam.move_fov_down(block=True)
-        #     elif direction == Direction.HOME:
-        #         self.cam.move_home(block=True)
-        # except (SerialException, ValueError, ASIErrors.ParameterOutOfRangeError, TigerError) as e:
-        #     if isinstance(e, ASIErrors.ParameterOutOfRangeError):
-        #         logger.warning(f"MoveThread.move_to: Move is outside stage limits")
-        #     else:
-        #         logger.warning(f"ThreadPos.move_to: {e}")
-        #
-        # self.update_position()
 
     @pyqtSlot(Coordinate)
     def move_to_coord(self, coordinate: Coordinate):
@@ -109,20 +91,6 @@ class PositionWorker(EvoWorkerTemplate):
             kwargs_dict={'block': True, 'coordinate': coordinate},
             callback=self.update_position,
         )
-        # try:
-        #     self.queue_manager.request(
-        #         req_str='self.cam.move_to',
-        #         kwargs_dict={'block': True, 'coordinate': coordinate},
-        #         callback=self.update_position,
-        #     )
-        #     self.cam.move_to(coordinate=coordinate, block=True)
-        # except (SerialException, ValueError, ASIErrors.ParameterOutOfRangeError, TigerError) as e:
-        #     if isinstance(e, ASIErrors.ParameterOutOfRangeError):
-        #         logger.warning(f"MoveThread.move_to: Move is outside stage limits")
-        #     else:
-        #         logger.warning(f"ThreadPos.move_to: {e}")
-
-        # self.update_position()
 
     @pyqtSlot()
     def halt_stage(self):
@@ -135,8 +103,6 @@ class PositionWorker(EvoWorkerTemplate):
             kwargs_dict={},
             callback=self.update_position,
         )
-        # self.cam.halt_stage()
-        # self.update_position()
 
     @pyqtSlot()
     def zero_position(self):
@@ -149,8 +115,6 @@ class PositionWorker(EvoWorkerTemplate):
             kwargs_dict={},
             callback=self.update_position,
         )
-        # self.cam.zero_coordinates()
-        # self.update_position()
 
     @pyqtSlot(int)
     def update_position(self, data: Union[int, None]):
@@ -163,11 +127,6 @@ class PositionWorker(EvoWorkerTemplate):
             kwargs_dict={'axes': AXES},
             callback=self.data_curr_pos.emit,
         )
-        # try:
-        #     pos_dict = self.cam.get_coordinates(AXES)
-        #     self.data_curr_pos.emit(pos_dict)
-        # except (SerialException, KeyError) as e:
-        #     logger.warning(f"EvoGUI.update_position: {e}")
 
 
 class PositionPanel(EvoPanelTemplate):
@@ -185,7 +144,6 @@ class PositionPanel(EvoPanelTemplate):
     request_move_to_coord = pyqtSignal(Coordinate)
     # Zero position.
     request_zero_position = pyqtSignal()
-
 
     MOVES = [Direction.LEFT.value, Direction.RIGHT.value, Direction.UP.value, Direction.DOWN.value,
              Direction.DOWN_Z.value, Direction.UP_Z.value]
@@ -260,18 +218,19 @@ class PositionPanel(EvoPanelTemplate):
                                     param=Direction(i))
             for i in self.MOVES
         ]
+        self.pos_arrow_buttons[Direction.DOWN_Z.value].setEnabled(False)
+        self.pos_arrow_buttons[Direction.UP_Z.value].setEnabled(False)
         "Arrow buttons for moving stage."
 
-        self.current_moveto = {'X': 0, 'Y': 0, 'Z': 0}
-        line_edit_validator = QDoubleValidator(
-            bottom=-1e10,
-            top=1e10,
-            decimals=5,
-        )
+        self.current_moveto = {'X': None, 'Y': None, 'Z': None}
+        # line_edit_validator = QDoubleValidator(
+        #     bottom=-1e10,
+        #     top=1e10,
+        #     decimals=5,
+        # )
         self.pos_move_lineedits = {key: self.make_lineedit(text=str(self.current_moveto[key]),
                                                            func=self.update_current_move_to,
-                                                           param=key,
-                                                           validator=line_edit_validator)
+                                                           param=key)
                                    for key in AXES}
         "Lineedits for entering move_to coordinates."
 
@@ -310,6 +269,7 @@ class PositionPanel(EvoPanelTemplate):
         try:
             self.current_moveto[key] = float(self.pos_move_lineedits[key].text())
         except ValueError:
+            logger.error(f"Invalid move to input: {self.pos_move_lineedits[key].text()}")
             self.current_moveto[key] = None
 
     def update_limits(self, data: Tuple[Coordinate, Coordinate]):

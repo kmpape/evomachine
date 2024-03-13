@@ -26,6 +26,14 @@ from evomachine.guidir.queuemanager import QueueManager
 logger = get_logger(name=__name__)
 
 
+EVO_STYLE = """
+background-color: #262626;
+color: #FFFFFF;
+font-family: Titillium;
+font-size: 12px;
+"""
+
+
 class FolderExistsValidator:
     def __init__(self):
         pass
@@ -174,6 +182,8 @@ class EvoPanelTemplate(QWidget):
         button.setFont(font)
         button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Minimum)
         button.setMinimumSize(button.sizeHint())
+        button.clearFocus()
+        button.setAutoDefault(False)
         if stylesheet is not None:
             button.setStyleSheet(stylesheet)
         return button

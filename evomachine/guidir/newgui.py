@@ -48,7 +48,7 @@ from evomachine.guidir.experiments import ExperimentPanel
 from evomachine.guidir.figures import FigureMultiWindow, ImagePlotter
 from evomachine.guidir.filterwheel import FilterWheelPanel
 from evomachine.guidir.focus import FocusPanel
-from evomachine.guidir.guitemplates import EvoGUIThread, EvoPanelTemplate, EvoWorkerTemplate
+from evomachine.guidir.guitemplates import EvoGUIThread, EvoPanelTemplate, EvoWorkerTemplate, EVO_STYLE
 from evomachine.guidir.guitypes import Direction, DMDModes, DisplayMode, SMALL, NORMAL
 from evomachine.guidir.position import PositionPanel
 from evomachine.guidir.leds import LEDPanel
@@ -203,6 +203,8 @@ class EvoGUI(QMainWindow):
         main_layout.addWidget(self.fw_panel.widget, 4, 9, 2, 5)
         main_layout.addWidget(self.focus_panel.widget, 6, 9, 3, 5)
         central_widget.setLayout(main_layout)
+
+        self.setStyleSheet(EVO_STYLE)
 
     def closeEvent(self, event):
         result = QMessageBox.question(self, "Confirm Exit...", "Are you sure you want to exit ?",

@@ -1,10 +1,12 @@
 from multiprocessing import Event, Queue
+import matplotlib.pyplot as plt
+import numpy as np
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QEventLoop, QThread, QTimer, QObject, QRegExp, Qt
 from PyQt5 import QtGui
 from PyQt5.QtGui import QRegExpValidator, QDoubleValidator, QFont, QPalette, QColor, QValidator
 from PyQt5.QtWidgets import (
-    QWidget,
+    QWidget, QDialog, QTableWidget, QTableWidgetItem,
     QMainWindow, QApplication,
     QLabel, QLineEdit, QPushButton, QComboBox, QMessageBox,
     QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -21,7 +23,8 @@ from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, ConfigImag
 from evomachine.coordinates import Coordinate, CoordinateFactory
 from evomachine.dmd import DMDControl, DMDColor
 from evomachine.exceptions import ConfigError, TigerError
-from evomachine.evotypes import LEDType, FocusAlgorithmType
+from evomachine.evotypes import DMDCalibConfigType, DMDCalibConfigTypeFactory
+from evomachine.guidir.figures import FigureWindow
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
 from evomachine.guidir.guitypes import DMDModes, SMALL, CENTER, LEFT, RIGHT, NORMAL
 from evomachine.guidir.queuemanager import QueueManager
@@ -58,6 +61,62 @@ class DMDWorker(EvoWorkerTemplate):
             button.setEnabled(True)
 
 
+class DMDCalibDialog(QDialog):
+    def __init__(self, cfg: DMDCalibConfigType):
+        super().__init__()
+
+        self.cfg = cfg
+        self.override_values = {field: None for field in cfg.__annotations__}
+
+        self.setWindowTitle("Configuration Dialog")
+
+        layout = QVBoxLayout()
+
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setRowCount(len(cfg.__annotations__))
+        self.table.setHorizontalHeaderLabels(["Config", "Override", "Value"])
+
+        row = 0
+        for field, value in cfg.__dict__.items():
+            self.table.setItem(row, 0, QTableWidgetItem(field))
+            self.table.setItem(row, 1, QTableWidgetItem("None"))
+            self.table.setItem(row, 2, QTableWidgetItem(str(value)))
+            row += 1
+
+        self.table.itemChanged.connect(self.update_override)
+
+        layout.addWidget(self.table)
+
+        buttons_layout = QVBoxLayout()
+        ok_button = QPushButton("OK")
+        cancel_button = QPushButton("Cancel")
+        ok_button.clicked.connect(self.accept)
+        cancel_button.clicked.connect(self.reject)
+        buttons_layout.addWidget(ok_button)
+        buttons_layout.addWidget(cancel_button)
+
+        layout.addLayout(buttons_layout)
+        self.setLayout(layout)
+
+    def update_override(self, item):
+        row = item.row()
+        col = item.column()
+        if col == 2:  # Value column
+            value = item.text()
+            self.override_values[self.table.item(row, 0).text()] = value
+            self.table.item(row, 1).setText("Overridden")
+
+    def accept(self):
+        for field, value in self.override_values.items():
+            if value is not None:
+                setattr(self.cfg, field, value)
+        super().accept()
+
+    def reject(self):
+        super().reject()
+
+
 class DMDPanel(EvoPanelTemplate):
     signal_set_dmd = pyqtSignal(int)
     signal_dmd = pyqtSignal()
@@ -82,6 +141,8 @@ class DMDPanel(EvoPanelTemplate):
             stop_event=stop_event,
             shutdown_event=shutdown_event,
         )
+        self.calib_config: DMDCalibConfigType = DMDCalibConfigTypeFactory.default()
+        self.calib_data: Optional[Tuple[Dict[str, List[int]], Dict[str, np.ndarray], Dict[str, np.ndarray]]] = None
         self.dmd_buttons = {i: self.make_button(
             text=txt,
             func=self.set_dmd,
@@ -100,16 +161,31 @@ class DMDPanel(EvoPanelTemplate):
             func=self.finalise_dmd,
             font=SMALL,
         )
+        self.dmd_calibrate_button = self.make_button(
+            text="Calibrate",
+            func=self.calibrate_dmd,
+            font=SMALL,
+        )
+        self.dmd_calib_curves_button = self.make_button(
+            text="Data",
+            func=self.show_calibration,
+            font=SMALL,
+        )
+        self.dmd_calib_curves_button.setEnabled(False)
         self.layout = QGridLayout()
         self.layout.addWidget(self.make_label(text="DMD Control", font=NORMAL), 0, 0, 1, 1, LEFT)
-        _ = [self.layout.addWidget(button, 1, i, CENTER) for i, button in enumerate(self.dmd_buttons.values())]
+        _ = [self.layout.addWidget(button, i+1, 0, CENTER) for i, button in enumerate(self.dmd_buttons.values())]
         self.layout.addWidget(self.dmd_init_button, 1, 2, 1, 1, CENTER)
-        self.layout.addWidget(self.dmd_finalise_button, 1, 3, 1, 1, CENTER)
+        self.layout.addWidget(self.dmd_finalise_button, 2, 2, 1, 1, CENTER)
+        self.layout.addWidget(self.dmd_calibrate_button, 1, 3, 1, 1, CENTER)
+        self.layout.addWidget(self.dmd_calib_curves_button, 2, 3, 1, 1, CENTER)
         self.widget = QWidget()
         self.widget.setLayout(self.layout)
 
         self.dmd_buttons[max(list(self.dmd_buttons.keys()))+1] = self.dmd_init_button
         self.dmd_buttons[max(list(self.dmd_buttons.keys()))+1] = self.dmd_finalise_button
+        self.dmd_buttons[max(list(self.dmd_buttons.keys()))+1] = self.dmd_calibrate_button
+        self.dmd_buttons[max(list(self.dmd_buttons.keys()))+1] = self.dmd_calib_curves_button
         self.worker = DMDWorker(buttons=self.dmd_buttons)
         self.signal_set_dmd.connect(self.worker.set_dmd_states)
         self.signal_dmd.connect(self.worker.dmd_click_start)
@@ -137,6 +213,18 @@ class DMDPanel(EvoPanelTemplate):
         )
         self.signal_dmd.emit()
 
+    def calibrate_dmd(self):
+        self.queue_manager.request(
+            req_str='self.dmd_calibrate',
+            kwargs_dict={'cfg': self.calib_config},
+            callback=self.update_calibration,
+        )
+        self.signal_dmd.emit()
+
+    def update_calibration(self, data: Tuple[Dict[str, List[int]], Dict[str, np.ndarray], Dict[str, np.ndarray]]):
+        self.calib_data = data
+        self.signal_dmd_done.emit()
+
     def finalise_dmd(self):
         self.queue_manager.request(
             req_str='self._dmd.finalise',
@@ -147,3 +235,32 @@ class DMDPanel(EvoPanelTemplate):
 
     def show_dmd_done(self, data: Any):
         self.signal_dmd_done.emit()
+
+    def show_calibration(self):
+        if self.calib_data is None:
+            logger.error("exp_show_curve: missing data. Returning.")
+            return
+
+        ranges: Dict[str, List[int]] = self.calib_data[0]
+        indices: Dict[str, np.ndarray] = self.calib_data[1]
+        data: Dict[str, np.ndarray] = self.calib_data[2]
+        fig, axs = plt.subplots(2, 2)
+        for i, k in enumerate(ranges.keys()):
+            axs[0, i].plot(ranges[k], indices[k])
+            axs[0, i].set_title(f"Indices {k}")
+            axs[0, i].set_xlabel("DMD loc")
+            axs[0, i].set_ylabel("CAM loc")
+            axs[1, i].plot(ranges[k], data[k])
+            axs[1, i].set_title(f"Values {k}")
+            axs[1, i].set_xlabel("DMD loc")
+            axs[1, i].set_ylabel("Max value")
+        window = FigureWindow(fig=fig, title="DMD Calibration Curves")
+        window.show()
+
+    def show_config(self):
+        dialog = DMDCalibDialog(cfg=self.calib_config)
+        if dialog.exec_():
+            logger.info(f"Updated DMD calibration configuration: {dialog.cfg}")
+            self.calib_config = dialog.cfg
+        else:
+            logger.info("Configuration not modified")

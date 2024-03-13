@@ -21,7 +21,7 @@ MAX_BYTE_SIZE = 65482
 NUM_CHUNKS = 97
 CHUNK_ROWS = int(DMD_WIDTH_HEIGHT[0] / NUM_CHUNKS)
 ARR_TYPE = np.uint8
-EM_DMD_PROGRAM_PATH = EVOMACHINE_DIR / "C/evomachine_dmd_window"
+EM_DMD_PROGRAM_PATH = EVOMACHINE_DIR / "C/evomachine_dmd_window"  # TODO test version that opens on the same screen
 
 
 class DMDControl:

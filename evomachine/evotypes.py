@@ -97,6 +97,36 @@ class FilterWheelType(EvoType):
 
 
 @dataclass
+class DMDCalibConfigType:
+    channel: LEDType
+    "LED type for calibration."
+    brightness: int
+    "Brightness of LED."
+    exposure: Union[float, int]
+    "Exposure time for calibration in milliseconds."
+    line_width: int
+    "Thickness of calibration lines."
+    step: int
+    "Step size for calibration in pixels."
+    delay: Union[int, float]
+    "Delay between calbriation steps in seconds."
+
+
+class DMDCalibConfigTypeFactory:
+    @staticmethod
+    def default(channel: LEDType = LEDType.LED_405_NM) -> DMDCalibConfigType:
+        return DMDCalibConfigType(
+            channel=channel,
+            brightness=10,
+            exposure=100,
+            line_width=11,
+            step=1,
+            delay=1,
+        )
+
+
+
+@dataclass
 class ImageConfigType:
     pxl_horiz: int
     "Number of pixels in horizontal direction (=number of columns of matrix)."

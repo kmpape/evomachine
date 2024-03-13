@@ -3,6 +3,7 @@ from enum import auto, Enum
 import logging
 from multiprocessing import Event, Queue
 import numpy as np
+import pickle
 import queue
 import time
 import traceback
@@ -13,14 +14,14 @@ from delta.config import Config
 
 from evomachine.acquisition import AbstractCamera, EvoCamera
 from evomachine.commands import AutomatonCommand, CommandFactory
-from evomachine.config import ConfigFocus, ConfigImageProcessor, EVO_GUI_LOGGING_LEVEL, get_logger
+from evomachine.config import ConfigFocus, ConfigImageProcessor, EVO_GUI_LOGGING_LEVEL, get_logger, EVOMACHINE_DIR
 from evomachine.coordinates import Coordinate, CoordinateFactory
 from evomachine.dmd import DMDControl
 from evomachine.exceptions import ErrorCode, ErrorContainer, ConfigError
 from evomachine.positionrt import PositionRT
 from evomachine.strategy import AbstractStrategy
 from evomachine.utils import EvoCroppingBox
-from evomachine.evotypes import AutomatonCommandType, ImageConfigType, LEDType
+from evomachine.evotypes import AutomatonCommandType, DMDCalibConfigType, ImageConfigType, LEDType
 
 
 logger = get_logger(name=__name__)
@@ -66,6 +67,8 @@ class Automaton:
         "Set to true after initialise_devices."
         self._pos_processor: List[PositionRT] = []
         "List of Delta objects to process the images."
+        self._all_frames_raw: List[np.ndarray] = []
+        "List indexed by i_pos w. image array: prev/current x channels x pxl_vert x pxl_horiz."
         self._all_frames: List[np.ndarray] = []
         "List indexed by i_pos w. image array: prev/current x channels x pxl_vert x pxl_horiz."
         self._ref_frames: List[np.ndarray] = []
@@ -102,6 +105,9 @@ class Automaton:
         "3D array with frame before focus for each position (3rd dimension)."
         self.focus_prev_z_coords: Union[None, np.ndarray] = None
         "1D array with z coordinate before focus for each position."
+
+        self.dmd_calibration_data: Tuple[Dict[str, List[int]], Dict[str, np.ndarray], Dict[str, np.ndarray]] = ()
+        "Tuple containing calibration data."
 
         self.next_commands: List[AutomatonCommand] = []
         "List of commands to be executed at the next timestep."
@@ -249,7 +255,11 @@ class Automaton:
         else:
             logger.info(f"Automaton.initialise_position_processor: initialising position processor {which}.")
             if self.use_segmentation:
-                self._pos_processor[which].initialise(self._ref_frames[which], rotate=rotation, roi_boxes=roi_boxes)
+                self._pos_processor[which].initialise(
+                    self.normalise_frame(self._ref_frames[which]),
+                    rotate=rotation,
+                    roi_boxes=roi_boxes
+                )
                 self.fill_queue(
                     queue_data_type=AutomatonCommandType.ROI_DATA,
                     queue_data=CommandFactory.command_roi_data(
@@ -313,6 +323,10 @@ class Automaton:
 
         # Allocate variables
         self._all_frames = [
+            np.empty((2, len(self._cfg.channels), *self.cam.cfg.image.shape), dtype=np.float32)
+            for _ in self._fovs
+        ]
+        self._all_frames_raw = [
             np.empty((2, len(self._cfg.channels), *self.cam.cfg.image.shape), dtype=self.cam.cfg.image.pxl_dtype)
             for _ in self._fovs
         ]
@@ -410,7 +424,8 @@ class Automaton:
             self.increment_pos()
         self.cam.reset_counter()
         self._reference_frames_is_initialised = True
-        cmd = CommandFactory.command_ref_data(ref_frames=self._ref_frames)
+        norm_frames = [self.normalise_frame(frame) for frame in self._ref_frames]
+        cmd = CommandFactory.command_ref_data(ref_frames=norm_frames)
         self.fill_queue(queue_data_type=AutomatonCommandType.REF_DATA, queue_data=cmd, logging_level=logging.INFO)
 
     def _initialise_strategy(self):
@@ -438,13 +453,30 @@ class Automaton:
                              else self._curr_period)
         self._curr_pos_id = (self._curr_pos_id + 1) % len(self._fovs)
 
-    def normalise_frame(self, frame: np.ndarray, channels: Optional[int] = None) -> np.ndarray:
+    def normalise_frame(
+            self,
+            frame: np.ndarray,
+            channels: Optional[int] = None,
+            norm_method: str = 'ptp',
+    ) -> np.ndarray:
         # TODO implement normalisation
-        norm_frame = frame.copy()
         if channels is None:
             channels = list(range(frame.shape[0]))
-        for c in channels:
-            norm_frame[c, :, :] = (norm_frame[c, :, :] - norm_frame[c, :, :].min()) / np.ptp(norm_frame[c, :, :])
+        norm_frame = frame.astype(float)
+        if norm_method == 'ptp':
+            f = [np.ptp(norm_frame[c, :, :]) for c in channels]
+            for c in channels:
+                norm_frame[c, :, :] = (norm_frame[c, :, :] - norm_frame[c, :, :].min()) / np.ptp(norm_frame[c, :, :])
+        elif norm_method == 'dtype':
+            depth = {np.uint8: 8, np.uint16: 16, np.uint32: 32}[frame.dtype]
+            f = float(2**depth - 1)
+            for c in channels:
+                norm_frame[c, :, :] = norm_frame[c, :, :] / f
+        elif norm_method == 'cfgdtype':
+            depth = {np.uint8: 8, np.uint16: 16, np.uint32: 32}[self.cam.cfg.image.pxl_dtype]
+            f = float(2**depth - 1)
+            for c in channels:
+                norm_frame[c, :, :] = norm_frame[c, :, :] / f
         return norm_frame
 
     def override_parameter(self, fov_id: int, pos_id: int, param_name: str, param_value: Any):
@@ -469,8 +501,8 @@ class Automaton:
             logger.info(f"Automaton.override_parameter: changing Z from {self._fovs[fov_id].z} to {tmp_fov[fov_id].z}.")
             self._fovs[fov_id].z = float(param_value)
         elif param_name == "rotation":
-            logger.info(f"Automaton.override_parameter: changing rotation from {param_value} "
-                        f"to {self._pos_processor[pos_id].rotate}.")
+            logger.info(f"Automaton.override_parameter: changing rotation from {self._pos_processor[pos_id].rotate} "
+                        f"to {param_value}.")
             self._pos_processor[pos_id].rotate = float(param_value)
 
     def _gui_process(self):
@@ -532,7 +564,7 @@ class Automaton:
                 if cmd.command_args['save']:
                     for i_chan in cmd.command_args['channels']:
                         self.cam.save_frame(
-                            frame=self._all_frames[self._curr_pos_id][1, i_chan.value, :, :],
+                            frame=self._all_frames_raw[self._curr_pos_id][1, i_chan.value, :, :],
                             i_channel=i_chan,
                             i_pos=self._curr_pos_id,
                         )
@@ -607,7 +639,7 @@ class Automaton:
                 if cmd.command_args['save']:
                     for i_chan in cmd.command_args['channels']:
                         self.cam.save_frame(
-                            frame=self._all_frames[self._curr_pos_id][1, i_chan.value, :, :],
+                            frame=self._all_frames_raw[self._curr_pos_id][1, i_chan.value, :, :],
                             i_channel=i_chan,
                             i_pos=self._curr_pos_id,
                         )
@@ -701,10 +733,16 @@ class Automaton:
             brightness = [brightness for _ in channels]
         for i, channel in enumerate(channels):
             i_chan = self._channel_to_index[channel]
+            self._all_frames_raw[self._curr_pos_id][0, i_chan, :, :] = self._all_frames_raw[self._curr_pos_id][1, i_chan, :, :]
             self._all_frames[self._curr_pos_id][0, i_chan, :, :] = self._all_frames[self._curr_pos_id][1, i_chan, :, :]
-            self._all_frames[self._curr_pos_id][1, i_chan, :, :] = self.cam.get_frame(
+
+            self._all_frames_raw[self._curr_pos_id][1, i_chan, :, :] = self.cam.get_frame(
                 i_chan=channel,
                 brightness=brightness[i],
+                normalise=False,
+            )
+            self._all_frames[self._curr_pos_id][1, i_chan, :, :] = self.normalise_frame(
+                self._all_frames_raw[self._curr_pos_id][1, i_chan, :, :]
             )
 
     def _process_position(self):
@@ -723,6 +761,9 @@ class Automaton:
 
     def get_frame(self, i_pos: int, channel: LEDType) -> np.ndarray:
         return self._all_frames[i_pos][1, self._channel_to_index[channel], :, :]
+
+    def get_strategy_name(self) -> str:
+        return self._strategy.name()
 
     def is_initialised(self):
         return self._strategy_is_initialised and self._reference_frames_is_initialised \
@@ -770,5 +811,45 @@ class Automaton:
 
     def has_shutdown(self) -> bool:
         return self._shutdown_event.is_set()
+
+    def dmd_calibrate(
+            self,
+            cfg: DMDCalibConfigType,
+            filename: Optional[str] = None
+    ) -> Tuple[Dict[str, List[int]], Dict[str, np.ndarray], Dict[str, np.ndarray]]:
+        self.cam.set_exposure(exposure_time=cfg.exposure)
+        ranges: Dict[str, List[int]] = {
+            'horiz': list(range(0, self._dmd.width_height_DMD[0], cfg.step)),
+            'vert': list(range(0, self._dmd.width_height_DMD[1], cfg.step)),
+        }
+        indices: Dict[str, np.ndarray] = {k: np.zeros(len(r), dtype=np.int) for k, r in ranges.items()}
+        data: Dict[str, np.ndarray] = {k: np.zeros(len(r)) for k, r in ranges.items()}
+        funcs = {
+            'horiz': self._dmd.display_line_horiz,
+            'vert': self._dmd.display_line_vert,
+        }
+        for k in ranges.keys():
+            for i, at_pos in enumerate(ranges[k]):
+                self._dmd.display_none(update_display=False)
+                funcs[k](at_pos=at_pos, line_width=cfg.line_width)
+                self.sleep(duration=cfg.delay)
+                img = self.cam.get_frame(
+                    i_chan=cfg.channel,
+                    brightness=cfg.brightness,
+                    normalise=False
+                )
+                img_max = img.max(axis=i)
+                data[k][i] = img_max.max()
+                indices[k][i] = img_max.argmax()
+        self.dmd_calibration_data = (ranges, indices, data)
+
+        if filename is None:
+            filename = str(EVOMACHINE_DIR / "dmd_calibration_data.pkl")
+
+        if filename is not None:
+            with open(filename, 'wb') as file:
+                pickle.dump(self.dmd_calibration_data, file)
+
+        return self.dmd_calibration_data
 
 

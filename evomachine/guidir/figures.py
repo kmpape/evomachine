@@ -30,7 +30,7 @@ from evomachine.dmd import DMDControl
 from evomachine.evotypes import AutomatonCommandType, LEDType
 from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoGUIThread, EvoWorkerTemplate, FolderExistsValidator, \
-    FilenameValidator
+    FilenameValidator, EVO_STYLE
 from evomachine.guidir.guitypes import DisplayMode, SMALL, LEFT
 from evomachine.guidir.queuemanager import QueueManager
 from evomachine.utils import EvoCroppingBox
@@ -204,6 +204,59 @@ class ImageCroppingBoxes(EvoWorkerTemplate):
         self.update_all_boxes()
 
 
+class ChannelPlotter(QWidget):
+    FONT_SIZE = 8
+
+    def __init__(
+            self,
+            img: np.ndarray,
+            channel_to_index: Dict[LEDType, int],
+            width: int = 8,
+            height: int = 8,
+            title_prefix: str = "",
+    ):
+        super().__init__()
+        self.img = img
+        self.channel_to_index = channel_to_index
+        self.title_prefix = title_prefix
+
+        self.curr_channel = list(self.channel_to_index.keys())[0]
+
+        self.fig = Figure(figsize=(width, height))
+        self.fig.patch.set_facecolor('#262626')
+        self.ax = self.fig.add_subplot(111)
+        self.ax.imshow(self.img[self.channel_to_index[self.curr_channel], :, :], cmap='gray')
+        self.ax.set_title(self.title_prefix + f" {self.curr_channel}", fontsize=self.FONT_SIZE)
+        self.ax.tick_params(axis='both', labelsize=self.FONT_SIZE)
+        self.fig.tight_layout(pad=5)
+        self.canvas = FigureCanvas(self.fig)
+        self.canvas.setStyleSheet(EVO_STYLE)
+
+        self.channel_combo_box = QComboBox()
+        self._channels = [ch for ch in self.channel_to_index.keys()]
+        self.channel_combo_box.addItems([str(ch) for ch in self._channels])
+        self.channel_combo_box.currentIndexChanged.connect(self.update_plot)
+
+        self.layout = QGridLayout()
+        self.layout.addWidget(self.canvas, 0, 0, 1, 1)
+        self.layout.addWidget(self.channel_combo_box, 1, 0, 1, 1)
+
+        self.widget = QWidget()
+        self.widget.setLayout(self.layout)
+
+    def update_plot(self, index):
+        self.curr_channel = self._channels[self.channel_combo_box.currentIndex()]
+        self.ax.clear()
+        self.ax.imshow(self.img[self.channel_to_index[self.curr_channel], :, :], cmap='gray')
+        self.ax.set_title(self.title_prefix + f" {self.curr_channel}", fontsize=self.FONT_SIZE)
+        self.ax.tick_params(axis='both', labelsize=self.FONT_SIZE)
+        self.canvas.draw()
+
+    def update_image(self, img: np.ndarray):
+        self.img = img
+        self.update_plot(0)
+
+
 class ImagePlotter(EvoPanelTemplate):
     signal_draw = pyqtSignal(int)
     signal_clear = pyqtSignal(int)
@@ -240,14 +293,14 @@ class ImagePlotter(EvoPanelTemplate):
         self.fovs: Dict[int, Coordinate] = {}
         self.channel_to_index = self.processor_config.channel_to_index
         self.fig = Figure(figsize=(width, height))
-        self.fig.patch.set_facecolor('lightgray')
+        self.fig.patch.set_facecolor('#262626')
         self.ax = self.fig.add_subplot(111)
         self.ax.imshow(np.zeros(self.camera_config.image.shape), cmap='gray')
         self.ax.set_title("No Image", fontsize=self.FONT_SIZE)
         self.ax.tick_params(axis='both', labelsize=self.FONT_SIZE)
         self.fig.tight_layout(pad=5)
         self.canvas = FigureCanvas(self.fig)
-        self.canvas.setStyleSheet("background-color: lightgray;")
+        self.canvas.setStyleSheet(EVO_STYLE)
 
         self.worker = ImageCroppingBoxes(canvas=self.canvas, ax=self.ax, fig=self.fig)
         self.workers.append(self.worker)
@@ -307,13 +360,13 @@ class ImagePlotter(EvoPanelTemplate):
         self.filename_edit = QLineEdit()
         self.filename_edit.returnPressed.connect(self.on_enter_pressed_filename)
 
-        self.layout = QGridLayout()
         self.fov_combo_box: QComboBox = QComboBox()
         self.fov_combo_box.addItems(["None"])
         self.fov_combo_box.currentIndexChanged.connect(self.update_plot)
 
         self.channel_combo_box = QComboBox()
-        self.channel_combo_box.addItems([str(ch) for ch in self.channel_to_index.keys()])
+        self._channels = list(self.channel_to_index.keys())
+        self.channel_combo_box.addItems([str(ch) for ch in self._channels])
         self.channel_combo_box.currentIndexChanged.connect(self.update_plot)
 
         self.labels_cropping = [self.make_label(f"Cropping Box {i}", align=LEFT) for i in range(2)]
@@ -333,6 +386,7 @@ class ImagePlotter(EvoPanelTemplate):
         self.clear_cropping[1].clicked.connect(lambda: self.signal_clear.emit(1))
         self.clear_cropping[1].setFont(SMALL)
 
+        self.layout = QGridLayout()
         self.layout.addWidget(self.exposure_label, 0, 0, 1, 1)
         self.layout.addWidget(self.exposure_edit, 0, 1, 1, 1)
         self.layout.addWidget(self.exposure_value, 0, 2, 1, 1)
@@ -546,7 +600,7 @@ class ImagePlotter(EvoPanelTemplate):
     @pyqtSlot()
     def update_plot(self):
         fov_index = -1 if self.fov_combo_box.currentText() == "None" else int(self.fov_combo_box.currentText())
-        channel_index = self.channel_combo_box.currentIndex()
+        channel_index = self.channel_to_index[self._channels[self.channel_combo_box.currentIndex()]]
         image_to_plot = self.image_array[fov_index][channel_index, :, :]
         # self.ax.clear()
         # self.ax.imshow(image_to_plot, cmap='gray')

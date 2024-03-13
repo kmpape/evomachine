@@ -4,6 +4,7 @@ from typing import List
 from PyQt5.QtGui import QFont
 from PyQt5.QtCore import Qt
 
+VERYSMALL = QFont("Arial", 8)
 SMALL = QFont("Arial", 10)
 NORMAL = QFont("Arial", 12)
 LEFT = Qt.AlignLeft

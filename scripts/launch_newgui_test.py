@@ -113,6 +113,12 @@ if __name__ == '__main__':
 
     app = QApplication(sys.argv)
     app.setStyleSheet("* { background-color: lightgray; }")
+    app.setStyleSheet("""
+    background-color: #262626;
+    color: #FFFFFF;
+    font-family: Titillium;
+    font-size: 18px;
+    """)
     w = EvoGUI(
         queue_manager=queue_manager,
         camera_config=camera_config,

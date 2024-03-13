@@ -109,6 +109,21 @@ class QueueManager:
             callback: Optional[Callable[[Any], None]] = None,
             callback_args: Optional[Tuple] = None,
     ):
+        """
+        Request an automaton function executed as result = eval(req_str(**kwargs_dict)) and provide a callback
+        executed in a thread as callback(result, *callback_args).
+
+        Parameters
+        ----------
+        req_str : str
+            The name of the automaton function to be executed.
+        kwargs_dict : Dict[str, Any]
+            The arguments for the automaton function (`key`=`val`).
+        callback : Optional[Callable[[Any], None]]
+            Executed on automaton response.
+        callback_args : Optional[Tuple]
+            Appended to the result returned by automaton response.
+        """
         # if 'Automaton' not in request_func.__qualname__:
         #     logger.warning(f"Request function {request_func} does not belong to Automaton.")
         #     raise RuntimeError(f"Request function {request_func} does not belong to Automaton.")
