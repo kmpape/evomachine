@@ -1,8 +1,9 @@
 from dataclasses import dataclass
 import numpy as np
 import pandas as pd
+import skimage
 import time
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import delta.utils
 
@@ -14,6 +15,77 @@ import delta.utils
 pd.set_option('display.max_columns', None)
 pd.set_option('display.expand_frame_repr', False)
 
+
+def rotation_correction(img: np.ndarray) -> float:
+    """
+
+    Parameters
+    ----------
+    img: np.ndarray
+        Image (2D) of any type.
+
+    Returns
+    -------
+    angle: float
+        Returns the correction angle in degrees. Apply to image e.g. via skimage.transform.rotate(img, angle, resize=True).
+    """
+    img = skimage.transform.resize(img, (img.shape[0] // 4, img.shape[1] // 4))
+    rs = skimage.filters.butterworth(img, cutoff_frequency_ratio=0.02, high_pass=False)
+    rs = skimage.exposure.equalize_hist(rs)
+    rs = skimage.filters.frangi(rs, sigmas=(4,))
+    rs = skimage.util.crop(rs, 100)
+    rs = skimage.exposure.rescale_intensity(rs, out_range=(0, 1))
+    rs = (rs > 0.1) & (rs < 0.3)
+    hspace, angles, distances = skimage.transform.hough_line(rs)
+    _, angles, distances = skimage.transform.hough_line_peaks(hspace, angles, distances, threshold=0.7*np.max(hspace))
+    bin_edges = np.linspace(-np.pi/2, np.pi/2, 200)
+    bins = bin_edges[:-1] + (bin_edges[1] - bin_edges[0]) / 2
+    hist, _ = np.histogram(angles, bins=bin_edges)
+    angle = bins[np.argmax(hist)]
+    return np.rad2deg(angle)
+
+
+def normalise_frame(
+        frame: np.ndarray,
+        channels: Optional[List[int]] = None,
+        dtype: Optional[np.dtype] = None
+) -> np.ndarray:
+    """
+    Normalises frame by datatype or range.
+
+    Parameters
+    ----------
+    frame: np.ndarray
+        Either a 2D or a 3D image (of shape (channels, X, Y))
+    channels: Optional[List[int]]
+        For 3D array, provide a list of integers to apply normalisation to (i, X, Y) for i in channels.
+    dtype: Optional[np.dtype]
+        If none, frame normalised as (frame-frame.min())/(frame.max()-frame.min())
+    Returns
+    -------
+    norm_frame: np.ndarray
+        Array of doubles with values in [0,1].
+    """
+    norm_frame = frame.astype(float)
+    if len(frame.shape) == 2:
+        if dtype is None:
+            norm_frame = (norm_frame - norm_frame.min()) / np.ptp(norm_frame)
+        else:
+            depth = {np.dtype('uint8'): 8, np.dtype('uint16'): 16, np.dtype('uint32'): 32}[dtype]
+            f = float(2 ** depth - 1)
+            norm_frame = norm_frame / f
+    else:
+        if channels is None:
+            channels = list(range(frame.shape[0]))
+        if dtype is None:
+            for c in channels:
+                norm_frame[c, :, :] = (norm_frame[c, :, :] - norm_frame[c, :, :].min()) / np.ptp(norm_frame[c, :, :])
+        else:
+            depth = {np.dtype('uint8'): 8, np.dtype('uint16'): 16, np.dtype('uint32'): 32}[dtype]
+            f = float(2**depth - 1)
+            for c in channels:
+                norm_frame[c, :, :] = norm_frame[c, :, :] / f
+    return norm_frame
 
 @dataclass
 class EvoCroppingBox:

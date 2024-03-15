@@ -33,7 +33,7 @@ class JessStrategy(AbstractStrategy):
     """
     def __init__(self):
         super().__init__()
-        self.path_to_save = Path("/media/hslab/Data/ImageData/Idris/2024-03-07")
+        self.path_to_save = Path("/media/hslab/Data/ImageData/Idris/2024-03-14")
 
         self.exposure_time: int = 2000  # in ms
         self.imaging_channel: LEDType = LEDType.LED_505_NM

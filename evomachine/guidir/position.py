@@ -13,8 +13,10 @@ from PyQt5.QtWidgets import (
 from serial import SerialException
 
 
+from evomachine.commands import AutomatonCommand
 from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, ConfigImageProcessor, get_logger
 from evomachine.coordinates import Coordinate, CoordinateFactory
+from evomachine.evotypes import AutomatonCommandType
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
 from evomachine.guidir.guitypes import DisplayMode, Direction, ARROW_LEFT, ARROW_RIGHT, ARROW_UP, ARROW_DOWN, AXES, \
     SMALL, CENTER, LEFT, RIGHT, NORMAL
@@ -137,6 +139,8 @@ class PositionPanel(EvoPanelTemplate):
     request_move_to_coord = pyqtSignal(Coordinate)
     # Zero position.
     request_zero_position = pyqtSignal()
+    # Move FoV to FoV ID.
+    request_move_to_fov = pyqtSignal(int)
 
     MOVES = [Direction.LEFT.value, Direction.RIGHT.value, Direction.UP.value, Direction.DOWN.value,
              Direction.DOWN_Z.value, Direction.UP_Z.value]
@@ -216,11 +220,6 @@ class PositionPanel(EvoPanelTemplate):
         "Arrow buttons for moving stage."
 
         self.current_moveto = {'X': None, 'Y': None, 'Z': None}
-        # line_edit_validator = QDoubleValidator(
-        #     bottom=-1e10,
-        #     top=1e10,
-        #     decimals=5,
-        # )
         self.pos_move_lineedits = {key: self.make_lineedit(text=str(self.current_moveto[key]),
                                                            func=self.update_current_move_to,
                                                            param=key)
@@ -234,6 +233,19 @@ class PositionPanel(EvoPanelTemplate):
             font=SMALL)
         "Move to entered coordinates."
 
+        self.fovs: Dict[int, Coordinate] = {}
+        self.curr_fov: Union[int, None] = None
+        self.fov_combo_box: QComboBox = QComboBox()
+        self.fov_combo_box.addItems(["None"])
+        self.fov_combo_box.setEnabled(False)
+        self.fov_combo_box.currentIndexChanged.connect(self.update_current_fov)
+        self.pos_move_fov_button = self.make_button(
+            text="Move to FoV",
+            func=self.move_to_fov,
+            font=SMALL)
+        "Move to selected FoV ID."
+        self.pos_move_fov_button.setEnabled(False)
+
         self.layout = QGridLayout()
         self.layout.addWidget(self.make_label(text="Stage Control", font=NORMAL), 0, 0, 1, 5, LEFT)
         _ = [self.layout.addWidget(pos_label, i, 0, CENTER) for i, pos_label in enumerate(self.pos_labels, start=1)]
@@ -246,6 +258,9 @@ class PositionPanel(EvoPanelTemplate):
         _ = [self.layout.addWidget(self.pos_move_lineedits[key], i + 1, 4) for i, key in enumerate(AXES)]
         # _ = [self.layout.addWidget(pos_lim, i, 5, CENTER) for i, pos_lim in enumerate(self.pos_limits, start=1)]
         self.layout.addWidget(self.pos_move_button, 4, 4, 1, 1)
+
+        self.layout.addWidget(self.fov_combo_box, 3, 5, 1, 1)
+        self.layout.addWidget(self.pos_move_fov_button, 4, 5, 1, 1)
         _ = [self.layout.setColumnMinimumWidth(i, 0) for i in range(self.layout.columnCount())]
         _ = [self.layout.setColumnStretch(i, 0) for i in range(self.layout.columnCount())]
         self.layout.setHorizontalSpacing(0)
@@ -253,10 +268,31 @@ class PositionPanel(EvoPanelTemplate):
         self.widget = QWidget()
         self.widget.setLayout(self.layout)
 
+        # This will catch FoV list after initialisation.
+        queue_manager.register(self.update_fovs, AutomatonCommandType.FOV_DATA)
+
     def move_to_coordinate(self):
         coord = Coordinate.from_dict(self.current_moveto)
         self.request_move_to_coord.emit(coord)
         logger.debug(f"move_to_coordinate {coord}.")
+
+    def move_to_fov(self):
+        if (self.fovs is None) or (self.curr_fov not in self.fovs):
+            logger.error(f"Cannot move to FoV {self.curr_fov}. Available = {self.fovs}")
+            return
+        logger.info(f"Moving stage to FoV {self.curr_fov} at {self.fovs[self.curr_fov]}.")
+        self.request_move_to_coord.emit(self.fovs[self.curr_fov])
+
+    def update_current_fov(self):
+        self.curr_fov = None if self.fov_combo_box.currentText() == "None" else int(self.fov_combo_box.currentText())
+
+    def update_fovs(self, cmd: AutomatonCommand):
+        logger.debug(f"Position: Updating FoVs.")
+        self.fovs = cmd.command_args['fovs']
+        self.fov_combo_box.clear()
+        self.fov_combo_box.addItems([str(fov) for fov in self.fovs.keys()])
+        self.fov_combo_box.setEnabled(True)
+        self.pos_move_fov_button.setEnabled(True)
 
     def update_current_move_to(self, key: str):
         try:

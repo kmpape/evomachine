@@ -21,7 +21,7 @@ from evomachine.evotypes import ImageConfigType
 from evomachine.exceptions import ImageProcessingError, ErrorCode, ErrorContainer
 # import evomachine.trackingrt as trackingrt
 import evomachine.trackingrt_jit as trackingrt
-from evomachine.utils import Timer
+from evomachine.utils import Timer, rotation_correction
 
 TIMER_POSITION = Timer(timer_level=0, name="PositionRT", enabled=True)
 
@@ -79,6 +79,7 @@ class PositionRT(delta.pipeline.Position):
         # Rotation correction
         if self.config.rotation_correction:
             self.rotate = delta.utils.deskew(reference[channel_rot, :, :]) if rotate is None else rotate
+            # self.rotate = rotation_correction(reference[channel_rot, :, :]) if rotate is None else rotate
             self._msg(f"Rotation correction: {self.rotate} degrees")
             for i_chan in range(reference.shape[0]):
                 reference[i_chan, :, :] = delta.utils.imrotate(reference[i_chan, :, :], self.rotate)

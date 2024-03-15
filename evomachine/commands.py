@@ -114,13 +114,16 @@ class CommandFactory:
 
         Returns in AbstractStrategy.callback
         ------------------------------------
-        If segment was False:
-            command_data (np.array) : 3D int16 numpy array with 1st dimension = len(channels)
-        If segment was True:
-            command_data (Dict[int, Lineage]) : A dictionary with ROI IDs as keys and a delta.Lineage object as values.
-                                                In case of a mothermachine experiment, the ROIs will be the trenches in
-                                                the corresponding FoV. Otherwise, the single key will be 0 and the
-                                                Lineage object will correspond to all cells in the current FoV.
+        command_data: List[Any]
+            command_data[0]: 3D int16 numpy array (normalised & rotated images) with 1st dimension = len(channels)
+            command_data[1]: Provided if segment is True. A dictionary with ROI IDs as keys and a delta.Lineage object
+                             as values. In case of a mothermachine experiment, the ROIs will be the trenches in
+                             the corresponding FoV. Otherwise, the single key will be 0 and the Lineage object will
+                             correspond to all cells in the current FoV.
+
+        Returns
+        -------
+        command: AutomatonCommand
         """
         if not (isinstance(channels, list) and all(isinstance(channel, LEDType) for channel in channels)):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument channel ({type(channels)}).")
@@ -156,6 +159,10 @@ class CommandFactory:
         Returns in AbstractStrategy.callback
         ------------------------------------
         command_data : Always returns True.
+
+        Returns
+        -------
+        command: AutomatonCommand
         """
         if not (isinstance(fov_id, int) or fov_id is None):
             raise TypeError(f"AutomatonCommandFactory.move: Wrong type provided ({type(fov_id)}).")
@@ -185,6 +192,10 @@ class CommandFactory:
         Returns in AbstractStrategy.callback
         ------------------------------------
         command_data : Always returns True.
+
+        Returns
+        -------
+        command: AutomatonCommand
         -------
 
         """
@@ -210,6 +221,10 @@ class CommandFactory:
         Returns in AbstractStrategy.callback
         ------------------------------------
         command_data (bool)  : Always returns True.
+
+        Returns
+        -------
+        command: AutomatonCommand
         """
         return AutomatonCommand(
             command_type=AutomatonCommandType.STOP,
@@ -229,6 +244,10 @@ class CommandFactory:
         Returns in AbstractStrategy.callback
         ------------------------------------
             command_data : Always returns None.
+
+        Returns
+        -------
+        command: AutomatonCommand
         """
         return AutomatonCommand(
             command_type=AutomatonCommandType.WAIT,
@@ -239,6 +258,8 @@ class CommandFactory:
 
     def reset(self):
         self._command_id_counter = -1
+
+    # Methods below used by Automaton for GUI communication
 
     @staticmethod
     def command_focus_data(

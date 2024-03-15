@@ -5,6 +5,7 @@ from multiprocessing import Event, Queue
 import numpy as np
 import pickle
 import queue
+import skimage
 import time
 import traceback
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -24,8 +25,8 @@ else:
 from evomachine.exceptions import ErrorCode, ErrorContainer, ConfigError
 from evomachine.positionrt import PositionRT
 from evomachine.strategy import AbstractStrategy
-from evomachine.utils import EvoCroppingBox
-from evomachine.evotypes import AutomatonCommandType, DMDCalibConfigType, ImageConfigType, LEDType
+from evomachine.utils import EvoCroppingBox, normalise_frame, rotation_correction
+from evomachine.evotypes import AutomatonCommandType, DMDCalibConfigType, ImageConfigType, LEDType, FocusAlgorithmType
 
 
 logger = get_logger(name=__name__)
@@ -51,13 +52,13 @@ class Automaton:
     ):
         # FIXME temporary switch
         assert not use_segmentation
-        self.use_segmentation = use_segmentation
+        self.use_segmentation = True
 
         self._cfg: ConfigImageProcessor = cfg_processor
         "Delta configuration object for image segmentation."
         self._channel_to_index: Dict[LEDType, int] = self._cfg.channel_to_index
         "Dictionary mapping LEDType to channel index in 3D arrays."
-        self._curr_pos_id: int = 0
+        self._curr_fov_id: int = 0
         "Current position."
         self._curr_period: int = 0
         "Incremented after completing one round of imaging the whole device."
@@ -193,7 +194,7 @@ class Automaton:
         if self.use_segmentation:
             self.initialise_position_processor()
 
-        assert self._curr_pos_id == 0
+        assert self._curr_fov_id == 0
         assert self._curr_period == 1  # Note that each ROI keeps track of _curr_period as well
 
         # Initialise strategy
@@ -221,17 +222,22 @@ class Automaton:
             logging.warning("Automaton.initialise_position_processor: position list is not initialised.")
             raise ConfigError(message="Automaton.initialise_position_processor: position list is not initialised.",
                               error_code=ErrorCode.ERROR_DEVICE_CONFIG)
+        self._create_position_processor(which=which)
         if which is None:
             logger.info("Automaton.initialise_position_processor: initialising all position processors.")
             for i in range(len(self._pos_processor)):
                 logger.debug(f"Automaton.initialise_position_processor: initialising position processor {i}.")
                 if self.use_segmentation:
+                    if rotation is None:
+                        rotation = rotation_correction(
+                            img=self._ref_frames[i][self._channel_to_index[self._cfg.channel_rot], :, :],
+                        )
                     self._pos_processor[i].initialise(
-                        reference=self.normalise_frame(self._ref_frames[i]),  # TODO need to crop frames
+                        reference=normalise_frame(self._ref_frames[i]),  # TODO need to crop frames
                         channel_rot=self._channel_to_index[self._cfg.channel_rot],
                         channel_roi=self._channel_to_index[self._cfg.channel_roi],
                         rotate=rotation,
-                        roi_boxes=roi_boxes
+                        roi_boxes=roi_boxes,
                     )
                     self._position_processors_is_initialised[i] = True
                     self.fill_queue(
@@ -259,10 +265,16 @@ class Automaton:
         else:
             logger.info(f"Automaton.initialise_position_processor: initialising position processor {which}.")
             if self.use_segmentation:
+                if rotation is None:
+                    rotation = rotation_correction(
+                        img=self._ref_frames[which][self._channel_to_index[self._cfg.channel_rot], :, :],
+                    )
                 self._pos_processor[which].initialise(
-                    self.normalise_frame(self._ref_frames[which]),
+                    reference=normalise_frame(self._ref_frames[which]),  # TODO need to crop frames
+                    channel_rot=self._channel_to_index[self._cfg.channel_rot],
+                    channel_roi=self._channel_to_index[self._cfg.channel_roi],
                     rotate=rotation,
-                    roi_boxes=roi_boxes
+                    roi_boxes=roi_boxes,
                 )
                 self.fill_queue(
                     queue_data_type=AutomatonCommandType.ROI_DATA,
@@ -338,20 +350,20 @@ class Automaton:
             np.empty((len(self._cfg.channels), *self.cam.cfg.image.shape), dtype=self.cam.cfg.image.pxl_dtype)
             for _ in self._fovs
         ]
-        self._pos_processor = []
-        for pos_id, fov_ind in self._pos_to_fov_index.items():
-            box = self._cropping_boxes[pos_id][fov_ind]
-            pos_image_cfg = ImageConfigType(
-                pxl_horiz=box.shape[1], pxl_vert=box.shape[0], pxl_dtype=self.cam.cfg.image.pxl_dtype,
-            )
-            self._pos_processor.append(
-                PositionRT(
-                    position_nb=pos_id,
-                    config=self._cfg.cfg_delta,
-                    processor_config=self._cfg,
-                    image_config=pos_image_cfg,
-                )
-            )
+        # self._pos_processor = []
+        # for pos_id, fov_ind in self._pos_to_fov_index.items():
+        #     box = self._cropping_boxes[pos_id][fov_ind]
+        #     pos_image_cfg = ImageConfigType(
+        #         pxl_horiz=box.shape[1], pxl_vert=box.shape[0], pxl_dtype=self.cam.cfg.image.pxl_dtype,
+        #     )
+        #     self._pos_processor.append(
+        #         PositionRT(
+        #             position_nb=pos_id,
+        #             config=self._cfg.cfg_delta,
+        #             processor_config=self._cfg,
+        #             image_config=pos_image_cfg,
+        #         )
+        #     )
         if not self.cam.set_pos_id_to_coordinate(pos_id_to_coordinate=self._fovs):
             raise ConfigError(message="Automaton.initialise: failed to pass position list to camera.",
                               error_code=ErrorCode.ERROR_DEVICE_CONFIG)
@@ -428,7 +440,7 @@ class Automaton:
             self.increment_pos()
         self.cam.reset_counter()
         self._reference_frames_is_initialised = True
-        norm_frames = [self.normalise_frame(frame) for frame in self._ref_frames]
+        norm_frames = [normalise_frame(frame) for frame in self._ref_frames]
         cmd = CommandFactory.command_ref_data(ref_frames=norm_frames)
         self.fill_queue(queue_data_type=AutomatonCommandType.REF_DATA, queue_data=cmd, logging_level=logging.INFO)
 
@@ -452,36 +464,44 @@ class Automaton:
 
         self._strategy_is_initialised = True
 
-    def increment_pos(self) -> None:
-        self._curr_period = ((self._curr_period + 1) if (self._curr_pos_id + 1 == len(self._fovs))
-                             else self._curr_period)
-        self._curr_pos_id = (self._curr_pos_id + 1) % len(self._fovs)
+    def _create_position_processor(self, which: Optional[int] = None):
+        if which is None:
+            logger.debug("Creating position procesors.")
+            self._pos_processor = []
+            for pos_id, fov_ind in self._pos_to_fov_index.items():
+                box = self._cropping_boxes[pos_id][fov_ind]
+                pos_image_cfg = ImageConfigType(
+                    pxl_horiz=box.shape[1], pxl_vert=box.shape[0], pxl_dtype=self.cam.cfg.image.pxl_dtype,
+                )
+                self._pos_processor.append(
+                    PositionRT(
+                        position_nb=pos_id,
+                        config=self._cfg.cfg_delta,
+                        processor_config=self._cfg,
+                        image_config=pos_image_cfg,
+                    )
+                )
+        else:
+            if (which >= len(self._pos_processor)) or (which not in self._pos_to_fov):
+                raise ConfigError(message=f"Cannot recreate processor {which}.",
+                                  error_code=ErrorCode.ERROR_NOT_INITIALISED)
+            fov_ind = self._pos_to_fov[which]
+            box = self._cropping_boxes[which][fov_ind]
+            pos_image_cfg = ImageConfigType(
+                pxl_horiz=box.shape[1], pxl_vert=box.shape[0], pxl_dtype=self.cam.cfg.image.pxl_dtype,
+            )
+            self._pos_processor[which] = PositionRT(
+                    position_nb=which,
+                    config=self._cfg.cfg_delta,
+                    processor_config=self._cfg,
+                    image_config=pos_image_cfg,
+            )
 
-    def normalise_frame(
-            self,
-            frame: np.ndarray,
-            channels: Optional[int] = None,
-            norm_method: str = 'ptp',
-    ) -> np.ndarray:
-        # TODO implement normalisation
-        if channels is None:
-            channels = list(range(frame.shape[0]))
-        norm_frame = frame.astype(float)
-        if norm_method == 'ptp':
-            f = [np.ptp(norm_frame[c, :, :]) for c in channels]
-            for c in channels:
-                norm_frame[c, :, :] = (norm_frame[c, :, :] - norm_frame[c, :, :].min()) / np.ptp(norm_frame[c, :, :])
-        elif norm_method == 'dtype':
-            depth = {np.uint8: 8, np.uint16: 16, np.uint32: 32}[frame.dtype]
-            f = float(2**depth - 1)
-            for c in channels:
-                norm_frame[c, :, :] = norm_frame[c, :, :] / f
-        elif norm_method == 'cfgdtype':
-            depth = {np.uint8: 8, np.uint16: 16, np.uint32: 32}[self.cam.cfg.image.pxl_dtype]
-            f = float(2**depth - 1)
-            for c in channels:
-                norm_frame[c, :, :] = norm_frame[c, :, :] / f
-        return norm_frame
+
+    def increment_pos(self) -> None:
+        self._curr_period = ((self._curr_period + 1) if (self._curr_fov_id + 1 == len(self._fovs))
+                             else self._curr_period)
+        self._curr_fov_id = (self._curr_fov_id + 1) % len(self._fovs)
 
     def override_parameter(self, fov_id: int, pos_id: int, param_name: str, param_value: Any):
         logger.info(f"Automaton.override_parameter: setting {param_name} to {param_value} for "
@@ -556,21 +576,21 @@ class Automaton:
                 if self.cam.get_exposure() != cmd.command_args['exposure_time']:
                     self.cam.set_exposure(exposure_time=cmd.command_args['exposure_time'])
                 self._take_image(channels=cmd.command_args['channels'], brightness=cmd.command_args['brightness'])
-                if not cmd.command_args['segment']:
-                    channels_int = [self._channel_to_index[c] for c in cmd.command_args['channels']]
-                    cmd.command_data = self._all_frames[self._curr_pos_id][1, channels_int, :, :]
-                else:
+                channels_int = [self._channel_to_index[c] for c in cmd.command_args['channels']]
+                cmd.command_data = [self._all_frames[self._curr_fov_id][1, channels_int, :, :]]
+                if cmd.command_args['segment']:
                     # TODO make sure segmentation channel is in cmd.command_args['channels']
                     self._process_position()
                     # TODO fill with segmentation data
-                    cmd.command_data = {roi_id: None
-                                        for roi_id in range(len(self._pos_processor[self._curr_pos_id].rois))}
+                    cmd.command_data.append(
+                        {roi_id: None for roi_id in range(len(self._pos_processor[self._curr_fov_id].rois))}
+                    )
                 if cmd.command_args['save']:
                     for i_chan in cmd.command_args['channels']:
                         self.cam.save_frame(
-                            frame=self._all_frames_raw[self._curr_pos_id][1, i_chan.value, :, :],
+                            frame=self._all_frames_raw[self._curr_fov_id][1, i_chan.value, :, :],
                             i_channel=i_chan,
-                            i_pos=self._curr_pos_id,
+                            i_pos=self._curr_fov_id,
                         )
                 self._dmd.display_none()
 
@@ -584,7 +604,7 @@ class Automaton:
                 self.cam.disable_led()
 
             cmd.command_execution_time = time.time()
-            cmd.fov_id = self._curr_pos_id
+            cmd.fov_id = self._curr_fov_id
 
             self.fill_queue(
                 queue_data_type=AutomatonCommandType.PROCESS_DATA,
@@ -595,7 +615,7 @@ class Automaton:
         new_errors = list(self.error_container.error_list)  # TODO extract new errors
         self.last_commands = self.next_commands
         self.next_commands = self._strategy.callback(
-            fov_id=self._curr_pos_id,
+            fov_id=self._curr_fov_id,
             data=self.last_commands,
             errors=new_errors,
         )
@@ -634,19 +654,19 @@ class Automaton:
                 self._take_image(channels=cmd.command_args['channels'], brightness=cmd.command_args['brightness'])
                 if not cmd.command_args['segment']:
                     channels_int = [self._channel_to_index[c] for c in cmd.command_args['channels']]
-                    cmd.command_data = self._all_frames[self._curr_pos_id][1, channels_int, :, :]
+                    cmd.command_data = self._all_frames[self._curr_fov_id][1, channels_int, :, :]
                 else:
                     # TODO make sure segmentation channel is in cmd.command_args['channels']
                     self._process_position()
                     # TODO fill with segmentation data
                     cmd.command_data = {roi_id: None
-                                        for roi_id in range(len(self._pos_processor[self._curr_pos_id].rois))}
+                                        for roi_id in range(len(self._pos_processor[self._curr_fov_id].rois))}
                 if cmd.command_args['save']:
                     for i_chan in cmd.command_args['channels']:
                         self.cam.save_frame(
-                            frame=self._all_frames_raw[self._curr_pos_id][1, i_chan.value, :, :],
+                            frame=self._all_frames_raw[self._curr_fov_id][1, i_chan.value, :, :],
                             i_channel=i_chan,
-                            i_pos=self._curr_pos_id,
+                            i_pos=self._curr_fov_id,
                         )
                 self._dmd.display_none()
 
@@ -659,7 +679,7 @@ class Automaton:
                 self.cam.disable_led()
 
             cmd.command_execution_time = time.time()
-            cmd.fov_id = self._curr_pos_id
+            cmd.fov_id = self._curr_fov_id
 
             self.fill_queue(
                 queue_data_type=AutomatonCommandType.PROCESS_DATA,
@@ -696,8 +716,8 @@ class Automaton:
                                  f"_position_processors_is_initialised={all(self._position_processors_is_initialised)}")
                     raise ConfigError(message="Automaton.run strategy: not initialised.",
                                       error_code=ErrorCode.ERROR_NOT_INITIALISED)
-                logger.info(f"Automaton.run: Starting strategy loop. Moving to fov {self._curr_pos_id}.")
-                self._move_to_pos(pos_id=self._curr_pos_id)
+                logger.info(f"Automaton.run: Starting strategy loop. Moving to fov {self._curr_fov_id}.")
+                self._move_to_pos(pos_id=self._curr_fov_id)
                 self._dmd.display_full()  # FIXME temporary statement
 
             has_stopped = True
@@ -709,7 +729,7 @@ class Automaton:
                 if has_stopped:
                     logger.warning("Automaton.run strategy: halting execution.")
                     has_stopped = False
-            logger.info(f"Automaton.run: Leaving strategy loop. Current fov {self._curr_pos_id}.")
+            logger.info(f"Automaton.run: Leaving strategy loop. Current fov {self._curr_fov_id}.")
 
             if self.is_initialised():
                 logger.info("Automaton.run: finalising strategy.")
@@ -726,10 +746,10 @@ class Automaton:
             return
         elif pos_id == -1:
             self.increment_pos()
-            self.cam.move_to_pos(i_pos=self._curr_pos_id)
+            self.cam.move_to_pos(i_pos=self._curr_fov_id)
         else:
             self.cam.move_to_pos(i_pos=pos_id)
-            self._curr_pos_id = pos_id
+            self._curr_fov_id = pos_id
 
     def _take_image(self, channels: Optional[List[LEDType]] = None, brightness: Union[int, List[int]] = 100):
         if (channels is None) or not channels:
@@ -738,21 +758,31 @@ class Automaton:
             brightness = [brightness for _ in channels]
         for i, channel in enumerate(channels):
             i_chan = self._channel_to_index[channel]
-            self._all_frames_raw[self._curr_pos_id][0, i_chan, :, :] = self._all_frames_raw[self._curr_pos_id][1, i_chan, :, :]
-            self._all_frames[self._curr_pos_id][0, i_chan, :, :] = self._all_frames[self._curr_pos_id][1, i_chan, :, :]
+            self._all_frames_raw[self._curr_fov_id][0, i_chan, :, :] = self._all_frames_raw[self._curr_fov_id][1, i_chan, :, :]
+            self._all_frames[self._curr_fov_id][0, i_chan, :, :] = self._all_frames[self._curr_fov_id][1, i_chan, :, :]
 
-            self._all_frames_raw[self._curr_pos_id][1, i_chan, :, :] = self.cam.get_frame(
+            self._all_frames_raw[self._curr_fov_id][1, i_chan, :, :] = self.cam.get_frame(
                 i_chan=channel,
                 brightness=brightness[i],
                 normalise=False,
             )
-            self._all_frames[self._curr_pos_id][1, i_chan, :, :] = self.normalise_frame(
-                self._all_frames_raw[self._curr_pos_id][1, i_chan, :, :]
-            )
+            if self._pos_processor[self._curr_fov_id].rotate is not None:
+                # TODO this should only be done once. Already rotated in preprocess image
+                self._all_frames[self._curr_fov_id][1, i_chan, :, :] = normalise_frame(
+                    skimage.transform.rotate(
+                        self._all_frames_raw[self._curr_fov_id][1, i_chan, :, :],
+                        self._pos_processor[self._curr_fov_id].rotate,
+                        resize=True,
+                    )
+                )
+            else:
+                self._all_frames[self._curr_fov_id][1, i_chan, :, :] = normalise_frame(
+                    self._all_frames_raw[self._curr_fov_id][1, i_chan, :, :]
+                )
 
     def _process_position(self):
-        self._pos_processor[self._curr_pos_id].process_new_frame(
-            new_frame=self._all_frames[self._curr_pos_id][1, :, :, :],
+        self._pos_processor[self._curr_fov_id].process_new_frame(
+            new_frame=self._all_frames[self._curr_fov_id][1, :, :, :],
         )
 
     def get_channel_to_index(self) -> Dict[LEDType, int]:
@@ -762,7 +792,7 @@ class Automaton:
         return self._curr_period
 
     def get_pos_id(self) -> int:
-        return self._curr_pos_id
+        return self._curr_fov_id
 
     def get_frame(self, i_pos: int, channel: LEDType) -> np.ndarray:
         return self._all_frames[i_pos][1, self._channel_to_index[channel], :, :]
@@ -792,6 +822,34 @@ class Automaton:
 
     def stop(self):
         self._stop_event.set()
+
+    def software_focus(
+            self,
+            cfg_focus: Optional[ConfigFocus] = None,
+            focus_channel_override: Optional[LEDType] = None,
+            rel_range_override: Optional[int] = None,
+            cropping_box: Optional[EvoCroppingBox] = None,
+            algorithm_override: Optional[FocusAlgorithmType] = None,
+            user_input_override: bool = False,
+            countdown_override: bool = False,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]:
+        self.cam.software_focus(
+            cfg_focus=cfg_focus,
+            focus_channel_override=focus_channel_override,
+            rel_range_override=rel_range_override,
+            cropping_box=cropping_box,
+            algorithm_override=algorithm_override,
+            user_input_override=user_input_override,
+            countdown_override=countdown_override,
+        )
+        focus_z_coords = self.cam.focus_Z_coords
+        focus_scores = self.cam.focus_scores
+        focus_stack = self.cam.focus_stack
+        prev_image = self.cam.focus_prev_image
+        prev_z = self.cam.focus_curr_pos['Z']
+        new_z = self.cam.get_software_focus_z_coord()
+
+        return focus_z_coords, focus_scores, focus_stack, prev_image, prev_z, new_z
 
     def start_strategy(self):
         return self._start_strategy_event.set()

@@ -745,6 +745,28 @@ class TestCamera(AbstractCamera):
 class EvoCamera(AbstractCamera):
     """
     EvoMachine acquisition class.
+
+    Orientation is "Left on camera == left on stage":
+
+    -> Camera view:
+        __________________________________
+        | 111111211111111111111111111111 |
+        |       2                        |
+        |       2                        |
+        |       2                        |
+        |       2                        |
+        |_______2________________________|
+
+    -> Stage view (incubator door at bottom):
+
+        _____________BACK_________________
+        | 111111211111111111111111111111 |
+        |       2                        |
+        |       2                        |
+        |       2                        |
+        |       2                        |
+        |_______2____DOOR________________|
+
     """
     def __init__(
             self,

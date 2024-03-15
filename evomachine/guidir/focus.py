@@ -13,8 +13,10 @@ from PyQt5.QtWidgets import (
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
 
+from evomachine.acquisition import AbstractCamera
 from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, ConfigImageProcessor, get_logger
-from evomachine.evotypes import FocusAlgorithmType
+from evomachine.evotypes import FocusAlgorithmType, LEDType
+from evomachine.guidir.figures import FigureWindow
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
 from evomachine.guidir.guitypes import SMALL, CENTER, LEFT, RIGHT, NORMAL
 from evomachine.guidir.queuemanager import QueueManager
@@ -35,6 +37,15 @@ class FocusWorker(EvoWorkerTemplate):
         self.this_cfg: Union[ConfigFocus, ConfigCRISP] = this_cfg
         self.labels_values: Dict[str, List[QLabel, QLineEdit]] = labels_values
 
+        # Available after calling the focus routine
+        self.focus_curve_window: Union[FigureWindow, None] = None
+        self.focus_z_coords: Union[np.ndarray, None] = None
+        self.focus_scores: Union[np.ndarray, None] = None
+        self.focus_stack: Union[np.ndarray, None] = None
+        self.prev_image: Union[np.ndarray, None] = None
+        self.prev_z: Union[float, None] = None
+        self.new_z: Union[float, None] = None
+
     @pyqtSlot()
     def clear_config(self):
         for param_name in self.labels_values.keys():
@@ -45,35 +56,38 @@ class FocusWorker(EvoWorkerTemplate):
             else:
                 self.labels_values[param_name][1].setText(str(getattr(self.this_cfg, param_name)))
 
+    def read_focus_data(self, data: Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]):
+        self.focus_z_coords, self.focus_scores, self.focus_stack, self.prev_image, self.prev_z, self.new_z = data
+
     @pyqtSlot()
     def show_curve(self):
-        return
-        # if self.cam.focus_Z_coords is None or self.cam.focus_scores is None:
-        #     logger.error("swfocus_show_curve: Focus is None. Run software focus first. Returning.")
-        #     return
-        # fig = plt.figure()
-        # gs = fig.add_gridspec(2, 2, width_ratios=[1, 1])
-        # ax1 = fig.add_subplot(gs[0, :])
-        # z_coords = np.array(list(self.cam.focus_Z_coords)) / 10
-        # ax1.plot(z_coords, self.cam.focus_scores, marker='x')
-        # ax1.set_xticks(z_coords.tolist())
-        # ax1.set_xticklabels([f'{x:.1f}' for x in z_coords.tolist()])
-        # ax1.set_xlabel("Z position [um]")
-        # ax1.set_ylabel("Sharpness Scores")
-        # ax1.set_title("Focus Curve")
-        # best_index = np.argmax(self.cam.focus_scores)
-        # best_image = self.cam.normalise_frame(self.cam.focus_stack[:, :, best_index])
-        # prev_image = self.cam.normalise_frame(self.cam.focus_prev_image)
-        # ax2 = fig.add_subplot(gs[1, 0])
-        # ax2.imshow(prev_image)
-        # ax2.set_title(f"Before Focus\n Z={self.cam.focus_curr_pos['Z']/10:.1f}")
-        # ax3 = fig.add_subplot(gs[1, 1])
-        # ax3.imshow(best_image)
-        # ax3.set_title(f"After Focus\n Z={z_coords[best_index]:.1f}")
-        # fig.tight_layout()
-        # self.focus_curve_window = FigureWindow(fig, title="mothermachine_gui: Focus curve.")
+        if self.focus_z_coords is None:
+            logger.error("Cannot show focus curves. No data available.")
+            return
+
+        fig = plt.figure()
+        gs = fig.add_gridspec(2, 2, width_ratios=[1, 1])
+        ax1 = fig.add_subplot(gs[0, :])
+        z_coords = np.array(list(self.focus_z_coords)) / 10
+        ax1.plot(z_coords, self.focus_scores, marker='x')
+        ax1.set_xticks(z_coords.tolist())
+        ax1.set_xticklabels([f'{x:.1f}' for x in z_coords.tolist()])
+        ax1.set_xlabel("Z position [um]")
+        ax1.set_ylabel("Sharpness Scores")
+        ax1.set_title("Focus Curve")
+        best_index = np.argmax(self.focus_scores)
+        best_image = AbstractCamera.normalise_frame(self.focus_stack[:, :, best_index])
+        prev_image = AbstractCamera.normalise_frame(self.prev_image)
+        ax2 = fig.add_subplot(gs[1, 0])
+        ax2.imshow(prev_image)
+        ax2.set_title(f"Before Focus\n Z={self.prev_z/10:.1f}")
+        ax3 = fig.add_subplot(gs[1, 1])
+        ax3.imshow(best_image)
+        ax3.set_title(f"After Focus\n Z={z_coords[best_index]:.1f}")
+        fig.tight_layout()
+        self.focus_curve_window = FigureWindow(fig, title="mothermachine_gui: Focus curve.")
         # self.focus_curve_window.move(self.geometry().x() + self.geometry().width() + 10, self.geometry().y())
-        # self.focus_curve_window.show()
+        self.focus_curve_window.show()
 
 
 class FocusPanel(EvoPanelTemplate):
@@ -102,6 +116,7 @@ class FocusPanel(EvoPanelTemplate):
         self.cfg_focus = self.camera_config.focus
         self.cfg_focus_default = self.camera_config.focus.copy()
         self.cropping_box: Union[None, EvoCroppingBox] = None
+        self.focus_data: Union[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float], None] = None
 
         self.algorithm_dropdown_options = FocusAlgorithmType.get_all_names()
         curr_algorithm_name = FocusAlgorithmType.get_name(self.cfg_focus.algorithm.value)
@@ -173,6 +188,9 @@ class FocusPanel(EvoPanelTemplate):
         self.signal_clear_cfg.emit()
 
     def show_curve(self):
+        if self.focus_data is None:
+            logger.error("No focus data available. Returning...")
+            return
         self.signal_show_curve.emit()
 
     def update_algorithm_option(self):
@@ -186,11 +204,13 @@ class FocusPanel(EvoPanelTemplate):
         if box_id == 0:
             self.cropping_box = None if cropping_box is None else cropping_box
 
-    def show_focus_done(self, data: Any):
+    def read_focus_data(self, data: Any):
         logger.info("Focus done.")
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.curve_button.setEnabled(True)
+        self.focus_data = data
+        self.worker.read_focus_data(data)
 
     @pyqtSlot()
     def stop_crisp(self):
@@ -219,19 +239,22 @@ class FocusPanel(EvoPanelTemplate):
             logger.warning(f"start: invalid parameter provided. Aborting. {e}")
             return
         self.queue_manager.request(
-            req_str='self.cam.software_focus',
+            req_str='self.software_focus',
             kwargs_dict={
                 'cfg_focus': self.cfg_focus,
                 'cropping_box': self.cropping_box,
                 'user_input_override': True,
             },
-            callback=self.show_focus_done,
+            callback=self.read_focus_data,
         )
 
     def update_param(self, param_name: str):
         try:
             val = self.get_param(param_name=param_name)
+            if param_name == 'focus_channel':
+                val = LEDType(val)
             setattr(self.cfg_focus, param_name, val)
+            logger.debug(f"Changed {param_name} to {val}")
         except ValueError as e:
             logger.warning(f"update: invalid parameter for key {param_name}: {e}")
             self.labels_values[param_name][1].setText(str(getattr(self.cfg_focus_default, param_name)))
