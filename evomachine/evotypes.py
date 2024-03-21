@@ -115,6 +115,20 @@ class DMDCalibConfigType:
     "Step size for calibration in pixels."
     delay: Union[int, float]
     "Delay between calbriation steps in seconds."
+    start_row: int
+    "Start index for rows (DMD coordinates)."
+    end_row: int
+    "End index for rows (DMD coordinates)."
+    start_col: int
+    "Start index for columns (DMD coordinates)."
+    end_col: int
+    "End index for columns (DMD coordinates)."
+
+    def __post_init__(self):
+        if not ((0 <= self.start_row) and (self.start_row < self.end_row) and (self.end_row < 2716)):
+            raise ValueError("Indices must be within DMD boundaries.")
+        if not ((0 <= self.start_col) and (self.start_col < self.end_col) and (self.end_col < 1600)):
+            raise ValueError("Indices must be within DMD boundaries.")
 
 
 class DMDCalibConfigTypeFactory:
@@ -134,10 +148,14 @@ class DMDCalibConfigTypeFactory:
         return DMDCalibConfigType(
             channel=channel,
             brightness=100,
-            exposure=10,
-            line_width=3,
-            step=3,
-            delay=0.1,
+            exposure=100,
+            line_width=10,
+            step=400,
+            delay=0.5,
+            start_row=750,
+            end_row=2250,
+            start_col=80,
+            end_col=1550,
         )
 
 

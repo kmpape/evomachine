@@ -133,7 +133,7 @@ class DMDPanel(EvoPanelTemplate):
             shutdown_event=shutdown_event,
         )
         self.calib_config: DMDCalibConfigType = DMDCalibConfigTypeFactory.default()
-        self.calib_data: Optional[Tuple[Dict[str, List[int]], Dict[str, np.ndarray], Dict[str, np.ndarray]]] = None
+        self.calib_data: Optional[List[Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]]] = None
         self.dmd_buttons = {i: self.make_button(
             text=txt,
             func=self.set_dmd,
@@ -233,19 +233,18 @@ class DMDPanel(EvoPanelTemplate):
             logger.error("exp_show_curve: missing data. Returning.")
             return
 
-        ranges: Dict[str, List[int]] = self.calib_data[0]
-        indices: Dict[str, np.ndarray] = self.calib_data[1]
-        data: Dict[str, np.ndarray] = self.calib_data[2]
-        fig, axs = plt.subplots(2, 2)
-        for i, k in enumerate(ranges.keys()):
-            axs[0, i].plot(ranges[k], indices[k])
-            axs[0, i].set_title(f"Indices {k}")
-            axs[0, i].set_xlabel("DMD loc")
-            axs[0, i].set_ylabel("CAM loc")
-            axs[1, i].plot(ranges[k], data[k])
-            axs[1, i].set_title(f"Values {k}")
-            axs[1, i].set_xlabel("DMD loc")
-            axs[1, i].set_ylabel("Max value")
+        data = self.calib_data
+        fig, axs = plt.subplots(1, 2)
+        for i, ((r_dmd, c_dmd), (r_cam, c_cam), _) in enumerate(data):
+            marker = str(i)
+            _ = axs[0].scatter(c_dmd, r_dmd, marker='$' + marker + '$')
+            _ = axs[0].set_title('DMD Points')
+            _ = axs[0].set_xlabel('Column')
+            _ = axs[0].set_ylabel('Row')
+            _ = axs[1].scatter(c_cam, r_cam, marker='$' + marker + '$')
+            _ = axs[1].set_title('Camera Points')
+            _ = axs[1].set_xlabel('Column')
+            _ = axs[1].set_ylabel('Row')
         self.calib_window = FigureWindow(fig=fig, title="DMD Calibration Curves")
         self.calib_window.show()
         # self.exp_focus_curves_window = FigureMultiWindow({0: fig})

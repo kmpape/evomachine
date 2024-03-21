@@ -112,8 +112,8 @@ class Automaton:
         self.focus_prev_z_coords: Union[None, np.ndarray] = None
         "1D array with z coordinate before focus for each position."
 
-        self.dmd_calibration_data: Tuple[Dict[DMDDirType, List[int]], Dict[DMDDirType, np.ndarray], Dict[DMDDirType, np.ndarray]] = ()
-        "Tuple containing calibration data."
+        self.dmd_calibration_data: List[Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]] = []
+        "Tuple containing calibration data: [((r_dmd, c_dmd), (r_cam, c_cam), (r_max_val, c_max_val)), ...]."
 
         self.next_commands: List[AutomatonCommand] = []
         "List of commands to be executed at the next timestep."
@@ -876,7 +876,7 @@ class Automaton:
     def has_shutdown(self) -> bool:
         return self._shutdown_event.is_set()
 
-    def dmd_calibrate_lines(
+    def dmd_calibrate_old(
             self,
             cfg: DMDCalibConfigType,
             filename: Optional[str] = None
@@ -933,7 +933,7 @@ class Automaton:
 
         return self.dmd_calibration_data
 
-    def dmd_calibrate_dots(
+    def dmd_calibrate(
             self,
             cfg: DMDCalibConfigType,
             filename: Optional[str] = None
@@ -945,10 +945,13 @@ class Automaton:
         if isinstance(self.cam, EvoCamera):
             self.cam.studio.live().set_live_mode(False)
 
-        col_range = np.arange(0, self._dmd.width_height_DMD[1], cfg.step)
-        row_range = np.arange(0, self._dmd.width_height_DMD[0], cfg.step)
+        col_range = np.arange(cfg.start_col, cfg.end_col, cfg.step)
+        row_range = np.arange(cfg.start_row, cfg.end_row, cfg.step)
         cols, rows = np.meshgrid(col_range, row_range)
+
         results = []
+
+        self.cam.set_led(i_chan=cfg.channel, brightness=cfg.brightness)
         for i, (col, row) in enumerate(zip(cols.flatten(), rows.flatten())):
             if i % 50 == 0:
                 logger.info(f"At {i} of {len(cols.flatten())}")
@@ -963,16 +966,21 @@ class Automaton:
                 i_chan=None,
                 normalise=False
             )
-            img_col = img.max(axis=0)
-            img_row = img.max(axis=1)
+            img_col_max = img.max(axis=0)
+            img_row_max = img.max(axis=1)
 
-            results.append(((row, col), (img_row, img_col)))
+            results.append(((row, col),
+                            (img_row_max.argmax(), img_col_max.argmax()),
+                            (img_row_max.max(), img_col_max.max())))
 
         self.cam.disable_led()
+        self._dmd.display_none()
+
+        self.dmd_calibration_data = results
 
         if filename is not None:
             with open(filename, 'wb') as file:
-                pickle.dump(self.dmd_calibration_data, file)
+                pickle.dump(results, file)
 
         return results
 
