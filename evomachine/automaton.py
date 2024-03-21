@@ -26,7 +26,8 @@ from evomachine.exceptions import ErrorCode, ErrorContainer, ConfigError
 from evomachine.positionrt import PositionRT
 from evomachine.strategy import AbstractStrategy
 from evomachine.utils import EvoCroppingBox, normalise_frame, rotation_correction
-from evomachine.evotypes import AutomatonCommandType, DMDCalibConfigType, ImageConfigType, LEDType, FocusAlgorithmType
+from evomachine.evotypes import AutomatonCommandType, DMDCalibConfigType, DMDDirType, ImageConfigType, \
+    LEDType, FocusAlgorithmType
 
 
 logger = get_logger(name=__name__)
@@ -111,7 +112,7 @@ class Automaton:
         self.focus_prev_z_coords: Union[None, np.ndarray] = None
         "1D array with z coordinate before focus for each position."
 
-        self.dmd_calibration_data: Tuple[Dict[str, List[int]], Dict[str, np.ndarray], Dict[str, np.ndarray]] = ()
+        self.dmd_calibration_data: Tuple[Dict[DMDDirType, List[int]], Dict[DMDDirType, np.ndarray], Dict[DMDDirType, np.ndarray]] = ()
         "Tuple containing calibration data."
 
         self.next_commands: List[AutomatonCommand] = []
@@ -875,7 +876,7 @@ class Automaton:
     def has_shutdown(self) -> bool:
         return self._shutdown_event.is_set()
 
-    def dmd_calibrate(
+    def dmd_calibrate_lines(
             self,
             cfg: DMDCalibConfigType,
             filename: Optional[str] = None
@@ -886,15 +887,15 @@ class Automaton:
         self.cam.set_exposure(exposure_time=cfg.exposure)
         if isinstance(self.cam, EvoCamera):
             self.cam.studio.live().set_live_mode(False)
-        ranges: Dict[str, List[int]] = {
-            'horiz': list(range(0, self._dmd.width_height_DMD[1], cfg.step)),
-            'vert': list(range(0, self._dmd.width_height_DMD[0], cfg.step)),
+        ranges: Dict[DMDDirType, List[int]] = {
+            DMDDirType.HORIZ: list(range(0, self._dmd.width_height_DMD[1], cfg.step)),
+            DMDDirType.VERT: list(range(0, self._dmd.width_height_DMD[0], cfg.step)),
         }
         indices: Dict[str, np.ndarray] = {k: np.zeros(len(r), dtype=np.dtype('int32')) for k, r in ranges.items()}
         data: Dict[str, np.ndarray] = {k: np.zeros(len(r)) for k, r in ranges.items()}
         funcs = {
-            'horiz': self._dmd.display_line_horiz,
-            'vert': self._dmd.display_line_vert,
+            DMDDirType.HORIZ: self._dmd.display_line_horiz,
+            DMDDirType.VERT: self._dmd.display_line_vert,
         }
         self.cam.set_led(i_chan=cfg.channel, brightness=cfg.brightness)
         for i, k in enumerate(ranges.keys()):
@@ -931,5 +932,48 @@ class Automaton:
                 pickle.dump(self.dmd_calibration_data, file)
 
         return self.dmd_calibration_data
+
+    def dmd_calibrate_dots(
+            self,
+            cfg: DMDCalibConfigType,
+            filename: Optional[str] = None
+    ) -> List[Tuple[Tuple[int, int], Tuple[int, int]]]:
+        if filename is None:
+            filename = str(EVOMACHINE_DIR / "dmd_calibration_data.pkl")
+        logger.info(f"Starting DMD calibration with config {cfg} and filename {filename}.")
+        self.cam.set_exposure(exposure_time=cfg.exposure)
+        if isinstance(self.cam, EvoCamera):
+            self.cam.studio.live().set_live_mode(False)
+
+        col_range = np.arange(0, self._dmd.width_height_DMD[1], cfg.step)
+        row_range = np.arange(0, self._dmd.width_height_DMD[0], cfg.step)
+        cols, rows = np.meshgrid(col_range, row_range)
+        results = []
+        for i, (col, row) in enumerate(zip(cols.flatten(), rows.flatten())):
+            if i % 50 == 0:
+                logger.info(f"At {i} of {len(cols.flatten())}")
+            if self.stopped():
+                logger.warning("Aborting DMD calibration.")
+                return ()
+            if not USE_DMD_SOCKET:
+                self._dmd.display_none(update_display=False)
+            self._dmd.display_circle(row=row, col=col, radius=cfg.line_width)
+            self.sleep(duration=cfg.delay)
+            img = self.cam.get_frame(
+                i_chan=None,
+                normalise=False
+            )
+            img_col = img.max(axis=0)
+            img_row = img.max(axis=1)
+
+            results.append(((row, col), (img_row, img_col)))
+
+        self.cam.disable_led()
+
+        if filename is not None:
+            with open(filename, 'wb') as file:
+                pickle.dump(self.dmd_calibration_data, file)
+
+        return results
 
 

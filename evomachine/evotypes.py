@@ -96,6 +96,11 @@ class FilterWheelType(EvoType):
     NO_FILTER = 2
 
 
+class DMDDirType(EvoType):
+    HORIZ = 0
+    VERT = 1
+
+
 @dataclass
 class DMDCalibConfigType:
     channel: LEDType

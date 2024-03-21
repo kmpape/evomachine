@@ -1,3 +1,4 @@
+import cv2
 from enum import Enum
 import logging
 import os
@@ -177,6 +178,17 @@ class DMDControl:
 
     def display_none(self, update_display: Optional[bool] = True):
         self.display_full(update_display=update_display, color=DMDColor.BLACK)
+
+    def display_circle(
+            self,
+            row: int,
+            col: int,
+            radius: int = 1,
+    ):
+        img = np.zeros(self.width_height_DMD, dtype=np.uint8)
+        cv2.circle(img, (col, row), radius, color=255, thickness=-1)
+        img = np.repeat(img[:, :, np.newaxis], 3, axis=2)
+        self.display_image(img=img)
 
     def display_line(
             self,

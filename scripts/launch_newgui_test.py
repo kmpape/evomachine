@@ -18,6 +18,7 @@ if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMDControl
 else:
     from evomachine.dmd import DMDControl
+
 from evomachine.guidir.newgui import EvoGUI
 from evomachine.guidir.queuemanager import QueueManager
 from evomachine.strategy import BasicStrategy   # TODO add dropdown in GUI

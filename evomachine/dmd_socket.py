@@ -1,3 +1,4 @@
+import cv2
 import logging
 import numpy as np
 from PIL import Image, ImageFont, ImageDraw
@@ -5,7 +6,7 @@ import screeninfo
 import subprocess
 import socket
 import time
-from typing import List, Optional, Union, Tuple
+from typing import Dict, List, Optional, Union, Tuple
 from threading import Thread
 
 from evomachine.config import get_logger, EVOMACHINE_DIR
@@ -30,6 +31,19 @@ class DMDControl:
 
     def __init__(self):
         """
+        Class for communicating with the DMD. After calling initialise(), communicate with the DMD using following
+        functions:
+        - display_full():           Full illumination
+        - display_none():           No illumination
+        - display_fov_full():       Display full illumination on entire FoV.
+        - display_line_horiz(...):  Display a horizontal line. Uses DMD coordinates.
+        - display_line_vert(...):   Display a vertical line. Uses DMD coordinates.
+        - display_on_fov(...):      Display a number of rectangles on FoV. Uses image coordinates.
+
+
+        Note:
+        The DMD has width DMD_WIDTH_HEIGHT[0] and height DMD_WIDTH_HEIGHT[1]. In this class, the images are allocated as
+        an array with the number of rows corresponding to the width and columns corresponding to the height.
 
         _____________________________________________________
         | (width,0)                                   (0,0) |
@@ -77,6 +91,10 @@ class DMDControl:
         "Process for C program."
         self._output_thread: Union[Thread, None] = None
         "Thread to display output from C program."
+        self.dmd_calibration_data: Union[Tuple[Dict[str, List[int]],
+                                               Dict[str, np.ndarray],
+                                               Dict[str, np.ndarray]], None] = None
+        "Tuple containing calibration data."
 
     def _launch_dmd_window(self):
         def read_output(pipe):
@@ -88,16 +106,32 @@ class DMDControl:
         # self._output_thread.start()
 
     def _send_image(self, img: np.ndarray):
+        """
+        Sends an image over the socket to the C program. Note that we are allocating the image
+        as width (rows) x height (columns), so the transpose is sent here.
+
+        Parameters
+        ----------
+        img: np.ndarray     Image must be of ARR_TYPE and of size DMD_WIDTH_HEIGHT.
+        """
         self.s.sendall(img.transpose().tobytes())
 
     def _connect_socket(self):
+        """
+        This function opens a socket. Note that after calling s.close(), e.g. after a restart, re-opening a socket throws
+        an error. The error is therefore caught once.
+        """
         try:
             self.s.connect((HOST, PORT))
         except OSError as e:
+            logger.info(f"Received error {str(e)} on opening socket. Retrying once.")
             self.s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.s.connect((HOST, PORT))
 
     def _connection_test(self) -> bool:
+        """
+        Hard-coded enumeration test required after launching the C program.
+        """
         try:
             test_arr = np.zeros(DMD_WIDTH_HEIGHT, dtype=np.uint8)  # ROW MAJOR FORMAT
             for i in range(DMD_WIDTH_HEIGHT[0]):
@@ -216,6 +250,16 @@ class DMDControl:
             return max(0, at_pos+1-int(line_width/2)), min(length, at_pos+int(line_width/2))
         else:
             return max(0, at_pos-int(line_width/2)), min(length, at_pos+int(line_width/2))
+
+    def display_circle(
+            self,
+            row: int,
+            col: int,
+            radius: int = 1,
+    ):
+        img = self.get_zero_array()
+        cv2.circle(img, (col, row), radius, color=255, thickness=-1)
+        self.display_image(img)
 
     def display_line_vert(
             self,
