@@ -53,7 +53,7 @@ class Automaton:
     ):
         # FIXME temporary switch
         assert not use_segmentation
-        self.use_segmentation = True
+        self.use_segmentation = False
 
         self._cfg: ConfigImageProcessor = cfg_processor
         "Delta configuration object for image segmentation."

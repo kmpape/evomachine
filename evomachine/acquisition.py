@@ -324,6 +324,7 @@ class AbstractCamera:
                 f"software_focus: Focus not initialised or initialisation failed. Check log. Aborting focus."
             )
             return
+        self.set_led(i_chan=cfg_focus.focus_channel)
         for ipos in range(len(self.focus_Z_coords)):
             self.software_focus_step(ipos=ipos)
         self.software_focus_finalise()
@@ -641,7 +642,7 @@ class TestCamera(AbstractCamera):
         z_coord = self.focus_Z_coords[ipos]
         self.move_to(coordinate={'Z': z_coord}, block=True)
         image_raw = self.display_save_frame(
-            i_chan=self._cfg_focus.focus_channel,
+            i_chan=None,  # self._cfg_focus.focus_channel,
             path_to_save=False,
             filename=None,
             display_frame=False,
@@ -992,7 +993,7 @@ class EvoCamera(AbstractCamera):
             logger.info("CRISP: Setting UNLOCK status.")
             self.autofocus_unlock()
         time.sleep(cfg_crisp.pause_short)
-        curr_state = self.tiger.autofocus_get_set_state(card_address=self.card_address_crisp, value=None)
+        curr_state = self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=None)
         logger.info(f"CRISP: Finalising autofocus. Current state is {curr_state}.")
 
     def autofocus_disable(self):
@@ -1219,8 +1220,8 @@ class EvoCamera(AbstractCamera):
         # Initialise Z stack
         self.focus_curr_pos = self.tiger.where()
         self.focus_Z_coords = range(
-            self.focus_curr_pos['Z']-self._cfg_focus.rel_range,
-            self.focus_curr_pos['Z']+self._cfg_focus.rel_range,
+            int(self.focus_curr_pos['Z'])-self._cfg_focus.rel_range,
+            int(self.focus_curr_pos['Z'])+self._cfg_focus.rel_range,
             self._cfg_focus.step_size,
         )
         if not self.software_focus_is_valid_range():
@@ -1270,7 +1271,7 @@ class EvoCamera(AbstractCamera):
         z_coord = self.focus_Z_coords[ipos]
         self.move_to(coordinate={'Z': z_coord}, block=True)
         image_raw = self.display_save_frame(
-            i_chan=self._cfg_focus.focus_channel,
+            i_chan=None,    # self._cfg_focus.focus_channel
             path_to_save=False,
             filename=None,
             display_frame=False,

@@ -156,6 +156,7 @@ class AbstractStrategy(ABC):
         TODO this should be more elaborate and directly use Automaton._process with a TestCamera
         TODO image processing not included yet
         """
+        logger.warning("AbstractStrategy: Testing strategy.")
         field_of_views: Dict[int, Coordinate] = {0: Coordinate(0, 0, 0), 1: Coordinate(1000, 0, 0)}
         positions: Dict[int, List[int]] = {0: [0], 1: [1]}
         region_of_interests: Dict[int, List[int]] = {0: [0], 1: [0]}
@@ -204,6 +205,7 @@ class AbstractStrategy(ABC):
                 elif cmd.command_type == AutomatonCommandType.WAIT:
                     if not cmd.command_args >= 0:
                         raise KeyError(f"invalid wait command arguments {cmd.command_args}")
+            logger.warning("AbstractStrategy: Strategy successfully tested.")
             return True
         except Exception as e:
             logger.error(f"AbstractStrategy.test_strategy: failed with error {str(e)}.")
@@ -237,8 +239,8 @@ class BasicStrategy(AbstractStrategy):
         super().__init__()
         self.path_to_save = Path(save_path)
         self.imaging_interval: int = 60*10  # seconds
-        self.imaging_channels: List[LEDType] = [LEDType.LED_405_NM, LEDType.LED_450_NM, LEDType.LED_505_NM]
-        self.exposure_time: int = 1000
+        self.imaging_channels: List[LEDType] = [LEDType.LED_450_NM]  # GFP
+        self.exposure_time: int = 1000  # milliseconds
         self.num_fovs: Union[int, None] = None
 
     def _initialise(self) -> List[AutomatonCommand]:

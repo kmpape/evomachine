@@ -165,6 +165,20 @@ class ConfigCRISP:
         ]
         return "\n".join(attributes)
 
+    def copy(self):
+        return ConfigCRISP(
+            led_intensity=self.led_intensity,
+            loop_gain=self.loop_gain,
+            averaging=self.averaging,
+            update_rate=self.update_rate,
+            lock_range=self.lock_range,
+            user_input=self.user_input,
+            min_snr=self.min_snr,
+            min_error=self.min_error,
+            pause_long=self.pause_long,
+            pause_short=self.pause_short,
+        )
+
 
 class ConfigCRISPFactory:
     @staticmethod
@@ -263,7 +277,7 @@ class ConfigFocusFactory:
         return ConfigFocus(
             exposure_time=1000,
             focus_channel=LEDType.LED_450_NM,
-            rel_range=100,
+            rel_range=50,
             step_size=10,
         )
 
@@ -284,7 +298,7 @@ class ConfigCamera:
     "Available filter wheels. See FilterWheelType."
     path_to_save: Path
     "Path to save images."
-    default_exposure_time: Union[float, int] = 100
+    default_exposure_time: Union[float, int] = 1000
     "Default exposure time in ms."
     default_focus_channel_id: int = 0
     "Default LED channel index in self.leds."

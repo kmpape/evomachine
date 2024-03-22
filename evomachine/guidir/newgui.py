@@ -34,6 +34,7 @@ sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9
 
 
 from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
+from evomachine.guidir.crisp import CRISPPanel
 from evomachine.guidir.dmd import DMDPanel
 from evomachine.guidir.experiments import ExperimentPanel
 from evomachine.guidir.figures import FigureMultiWindow, ImagePlotter
@@ -178,7 +179,19 @@ class EvoGUI(QMainWindow):
             stop_event=stop_event,
             shutdown_event=shutdown_event,
         )
-        self.panels.append(self.led_panel)
+        self.panels.append(self.dmd_panel)
+
+        # CRISP Panel
+        self.crisp_panel = CRISPPanel(
+            queue_manager=queue_manager,
+            camera_config=camera_config,
+            processor_config=processor_config,
+            start_strategy_event=start_strategy_event,
+            stop_strategy_event=stop_strategy_event,
+            stop_event=stop_event,
+            shutdown_event=shutdown_event,
+        )
+        self.panels.append(self.crisp_panel)
 
         # Connect Signals
         self.fig_panel.worker.cropping_box_drawn.connect(self.exp_panel.update_cropping_boxes)
@@ -186,13 +199,18 @@ class EvoGUI(QMainWindow):
 
         # Main Layout
         main_layout = QGridLayout()
+
         main_layout.addWidget(self.pos_panel.widget, 0, 0, 2, 5)
         main_layout.addWidget(self.led_panel.widget, 2, 0, 2, 5)
         main_layout.addWidget(self.dmd_panel.widget, 4, 0, 2, 5)
+        main_layout.addWidget(self.crisp_panel.widget, 6, 0, 2, 5)
+
         main_layout.addWidget(self.fig_panel.widget, 0, 5, 10, 4)
+
         main_layout.addWidget(self.exp_panel.widget, 0, 9, 4, 4)
         main_layout.addWidget(self.fw_panel.widget, 4, 9, 2, 5)
         main_layout.addWidget(self.focus_panel.widget, 6, 9, 3, 5)
+
         central_widget.setLayout(main_layout)
 
         self.setStyleSheet(EVO_STYLE)

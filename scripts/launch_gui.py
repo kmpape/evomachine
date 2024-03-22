@@ -69,6 +69,7 @@ def create_automaton_process(
 if __name__ == '__main__':
     # Provide strategy that will be loaded by GUI
     save_path: str = "/media/hslab/Data/ImageData/DEFAULT"
+    save_path: str = "/media/hslab/Data/ImageData/Idris/2024-03-22"
     strategy: AbstractStrategy = BasicStrategy(save_path=save_path)
 
     # Create configurations (modify if needed)

@@ -495,7 +495,8 @@ class ExperimentPanel(EvoPanelTemplate):
 
     def read_roi_data(self, data: AutomatonCommand):
         self.signal_set_button_color.emit([3], "green")
-        self.roi_data[data.fov_id] = data.command_args
+        # FIXME need to initialise FoVs first, seemed to have bugged.
+        # self.roi_data.append(data.command_args)
 
     def show_focus_curves(self):
         if self.focus_data is None:

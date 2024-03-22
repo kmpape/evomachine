@@ -83,8 +83,6 @@ class DMDControl:
         "Deque to store all errors."
         self._dmd_is_alive: bool = False
         "Flag set in initialise."
-        self.width_height_DMD: Tuple[int, int] = DMD_WIDTH_HEIGHT
-        "Size of DMD. Double-checked in initialise."
         self.s: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         "Socket to connect with C program."
         self.default_line_width: int = 5
@@ -192,14 +190,14 @@ class DMDControl:
             if has_one_primary:
                 mon_dmd = [m for m in monitors if (not m.is_primary)][0]
                 is_correct_size = all(x1 == x2
-                                      for (x1, x2) in zip(self.width_height_DMD, (mon_dmd.width, mon_dmd.height)))
+                                      for (x1, x2) in zip(DMD_WIDTH_HEIGHT, (mon_dmd.width, mon_dmd.height)))
                 if is_correct_size:
                     try:
                         self._connect_socket()
                         if self._connection_test():
                             self._dmd_is_alive = True
                             # self.display_none()
-                            logging.info(f"DMD: initialised with size={self.width_height_DMD}.")
+                            logging.info(f"DMD: initialised with size={DMD_WIDTH_HEIGHT}.")
                         if not self._load_calibration_data():
                             logger.info("DMDControl.initialise: no calibration data loaded.")
                     except ConnectionError as e:
@@ -263,18 +261,20 @@ class DMDControl:
         if not self._dmd_is_alive:
             logger.error(f"DMDControl.display_image: DMD not initialised. Try running DMDControl.initialise.")
             return
-        if img.shape == self.width_height_DMD:
+        if img.shape == DMD_WIDTH_HEIGHT:
             self._send_image(img)
-        elif img.shape == (*self.width_height_DMD, 3):
+        elif img.shape == (*DMD_WIDTH_HEIGHT, 3):
             logger.warning(f"DMDControl.display_image: B/W image expected. Sending image[:,:,0] instead.")
             self._send_image(img[:, :, 0])
         else:
             logger.error(f"DMDControl.display_image: provided image of shape={img.shape}, "
-                         f"but DMD shape={self.width_height_DMD}.")
+                         f"but DMD shape={DMD_WIDTH_HEIGHT}.")
 
     @staticmethod
-    def get_zero_array():
-        return np.zeros(DMD_WIDTH_HEIGHT, dtype=ARR_TYPE)
+    def get_zero_array(img_size: Optional[Tuple[int, int]] = None) -> np.ndarray:
+        if img_size is None:
+            img_size = DMD_WIDTH_HEIGHT
+        return np.zeros(img_size, dtype=ARR_TYPE)
 
     @staticmethod
     def _make_half_line_width(line_width: int, at_pos: int, length: int) -> Tuple[int, int]:
@@ -347,6 +347,7 @@ class DMDControl:
             self,
             at_pos: Optional[Tuple[int, int]] = None,
             line_width: Optional[Union[int, None]] = None,
+            img_size: Optional[Tuple[int, int]] = None,
     ):
         """
 
@@ -354,18 +355,20 @@ class DMDControl:
         ----------
         at_pos: Tuple[int, int]     Tuple with crosshair position (row, column and NOT x, y)
         line_width: int             Thickness of line (see _make_half_line_width)
-
+        img_size: Tuple[int, int]   Note that changing the image size here requires to change it in the C program too
         """
-        img = self.get_zero_array()
+        if img_size is None:
+            img_size = DMD_WIDTH_HEIGHT
+        img = self.get_zero_array(img_size=img_size)
         row_start, row_end = self._make_half_line_width(
             line_width=line_width,
             at_pos=at_pos[0],
-            length=DMD_WIDTH_HEIGHT[0]-1,
+            length=img_size[0]-1,
         )
         col_start, col_end = self._make_half_line_width(
             line_width=line_width,
             at_pos=at_pos[1],
-            length=DMD_WIDTH_HEIGHT[1]-1,
+            length=img_size[1]-1,
         )
         img[row_start:row_end, :] = 255
         img[:, col_start:col_end] = 255
@@ -376,9 +379,10 @@ class DMDControl:
             text: str,
             img_fraction: float,
             path_to_font: str,
+            img_size: Tuple[int, int],
     ) -> np.ndarray:
-        image_pil = Image.fromarray(np.transpose(np.zeros(self.width_height_DMD, dtype=np.uint8)))
-        img_height, img_width = self.width_height_DMD
+        image_pil = Image.fromarray(np.transpose(np.zeros(img_size, dtype=np.uint8)))
+        img_height, img_width = img_size
         font_size = 2
         font = ImageFont.truetype(path_to_font, font_size)
         while font.getlength(text) < img_fraction * image_pil.size[0]:
@@ -386,7 +390,7 @@ class DMDControl:
             font = ImageFont.truetype(path_to_font, font_size)
         draw = ImageDraw.Draw(image_pil)
         font = ImageFont.truetype(path_to_font, font_size)
-        draw.text((int(img_width / 2), int(img_height / 2)), text, fill=255, font=font, anchor='center')
+        draw.text((int(img_width / 2), int(img_height / 2)), text, fill=255, font=font, anchor='mm', align='center')
         return np.transpose(np.array(image_pil))
 
     def display_text(
@@ -394,8 +398,15 @@ class DMDControl:
             text: Optional[str] = "Hello, World!",
             img_fraction: Optional[float] = 0.5,
             path_to_font: Optional[str] = "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+            img_size: Optional[Tuple[int, int]] = None,
     ):
-        self.display_image(img=self._make_text(text=text, img_fraction=img_fraction, path_to_font=path_to_font))
+        if not Path(path_to_font).exists():
+            logger.error("DMDControl.display_test: Path to font does not exist.")
+            return
+        if img_size is None:
+            img_size = DMD_WIDTH_HEIGHT
+        img = self._make_text(text=text, img_fraction=img_fraction, path_to_font=path_to_font, img_size=img_size)
+        self.display_image(img=img)
 
     def warp_image_to_dmd(self, img: np.ndarray) -> np.ndarray:
-        return cv2.warpPerspective(img, self._homography_mat, self.width_height_DMD)
+        return cv2.warpPerspective(img, self._homography_mat, DMD_WIDTH_HEIGHT)

@@ -143,6 +143,10 @@ class EvoPanelTemplate(QWidget):
         for worker in self.workers:
             worker.enable()
 
+    def init_widget(self):
+        self.widget = QWidget()
+        self.widget.setLayout(self.layout)
+
     @staticmethod
     def run_as_thread(
             self,
