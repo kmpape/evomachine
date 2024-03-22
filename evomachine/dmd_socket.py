@@ -1,6 +1,8 @@
 import cv2
 import logging
 import numpy as np
+from pathlib import Path
+import pickle as pkl
 from PIL import Image, ImageFont, ImageDraw
 import screeninfo
 import subprocess
@@ -91,10 +93,35 @@ class DMDControl:
         "Process for C program."
         self._output_thread: Union[Thread, None] = None
         "Thread to display output from C program."
-        self.dmd_calibration_data: Union[Tuple[Dict[str, List[int]],
-                                               Dict[str, np.ndarray],
-                                               Dict[str, np.ndarray]], None] = None
-        "Tuple containing calibration data."
+        self._calib_data: Optional[List[Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]]] = None
+        "List containing calibration data."
+        self._calib_file: Path = EVOMACHINE_DIR / 'dmd_calibration_data.pkl'
+        "Path to calibration file."
+        self._homography_mat: Optional[np.ndarray] = None
+        "Homography matrix for mapping image to DMD coordinates."
+
+    def _load_calibration_data(self, filepath: Optional[Path] = None) -> bool:
+        if filepath is None:
+            filepath = self._calib_file
+        if not filepath.exists():
+            logger.error(f"DMDControl._load_calibration_data: file {filepath} not found.")
+            return False
+        logger.info(f"DMDControl._load_calibration_data: loading calibration data from {filepath}.")
+        with open(str(filepath), 'rb') as f:
+            self._calib_data = pkl.load(f)
+
+        dmd_points = np.array([(c_dmd, r_dmd) for ((r_dmd, c_dmd), _, _) in self._calib_data])
+        cam_points = np.array([(c_cam, r_cam) for (_, (r_cam, c_cam), _) in self._calib_data])
+        self._homography_mat, _ = cv2.findHomography(srcPoints=cam_points, dstPoints=dmd_points)
+
+        points_cam = np.array([[[0, 0], [3199, 3199]]], dtype=np.float32)
+        points_dmd = cv2.perspectiveTransform(points_cam.reshape(-1, 1, 2), self._homography_mat)
+        logger.info(f"DMDControl._load_calibration_data: mapping point "
+                    f"({int(points_cam[0][0][0])},{int(points_cam[0][0][1])}) to "
+                    f"({int(points_dmd[0][0][0])},{int(points_dmd[0][0][1])}) and "
+                    f"({int(points_cam[0][1][0])},{int(points_cam[0][1][1])}) to "
+                    f"({int(points_dmd[1][0][0])},{int(points_dmd[1][0][1])}).")
+        return True
 
     def _launch_dmd_window(self):
         def read_output(pipe):
@@ -144,6 +171,11 @@ class DMDControl:
             self.error_container.add_error(new_error=DMDError(message=msg, error_code=ErrorCode.ERROR_SOCKET))
             return False
 
+    def img_to_dmd_coords(self, img_row: int, img_col: int) -> Tuple[int, int]:
+        point_cam = np.array([[[img_col, img_row]]])
+        point_dmd = cv2.perspectiveTransform(point_cam, self._homography_mat)
+        return int(np.round(point_dmd[0][0][1])), int(np.round(point_dmd[0][0][0]))
+
     def initialise(self, is_test: bool = False):
         try:
             self._launch_dmd_window()
@@ -168,6 +200,8 @@ class DMDControl:
                             self._dmd_is_alive = True
                             # self.display_none()
                             logging.info(f"DMD: initialised with size={self.width_height_DMD}.")
+                        if not self._load_calibration_data():
+                            logger.info("DMDControl.initialise: no calibration data loaded.")
                     except ConnectionError as e:
                         msg = f"Error connection to DMD C socket: {e}"
                         logger.error(msg)
@@ -337,12 +371,12 @@ class DMDControl:
         img[:, col_start:col_end] = 255
         self.display_image(img)
 
-    def display_text(
+    def _make_text(
             self,
-            text: Optional[str] = "Hello, World!",
-            img_fraction: Optional[float] = 0.5,
-            path_to_font: Optional[str] = "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
-    ):
+            text: str,
+            img_fraction: float,
+            path_to_font: str,
+    ) -> np.ndarray:
         image_pil = Image.fromarray(np.transpose(np.zeros(self.width_height_DMD, dtype=np.uint8)))
         img_height, img_width = self.width_height_DMD
         font_size = 2
@@ -352,7 +386,16 @@ class DMDControl:
             font = ImageFont.truetype(path_to_font, font_size)
         draw = ImageDraw.Draw(image_pil)
         font = ImageFont.truetype(path_to_font, font_size)
-        draw.text((int(img_width / 2), int(img_height / 2)), text, fill=255, font=font, anchor='mm')
-        img = np.transpose(np.array(image_pil))
-        img = np.repeat(img[:, :, np.newaxis], 3, axis=2)
-        self.display_image(img=img)
+        draw.text((int(img_width / 2), int(img_height / 2)), text, fill=255, font=font, anchor='center')
+        return np.transpose(np.array(image_pil))
+
+    def display_text(
+            self,
+            text: Optional[str] = "Hello, World!",
+            img_fraction: Optional[float] = 0.5,
+            path_to_font: Optional[str] = "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+    ):
+        self.display_image(img=self._make_text(text=text, img_fraction=img_fraction, path_to_font=path_to_font))
+
+    def warp_image_to_dmd(self, img: np.ndarray) -> np.ndarray:
+        return cv2.warpPerspective(img, self._homography_mat, self.width_height_DMD)

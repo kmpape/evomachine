@@ -2,6 +2,7 @@ import cv2
 from enum import Enum
 import logging
 import os
+from pathlib import Path
 from PIL import Image, ImageFont, ImageDraw
 import subprocess
 import sys
@@ -12,7 +13,7 @@ import pygame
 import pygame.locals
 import screeninfo
 
-from evomachine.config import get_logger
+from evomachine.config import get_logger, EVOMACHINE_DIR
 from evomachine.exceptions import DMDError, ErrorCode, ErrorContainer
 
 logger = get_logger(name=__name__)
@@ -91,8 +92,37 @@ class DMDControl:
         "PyGame object to display images. Initialised in initialise."
         self.default_line_width: int = 5
         "Line width used for calibration and displaying lines. Use odd values."
+        self._calib_data: Optional[List[Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]]] = None
+        "List containing calibration data."
+        self._calib_file: Path = EVOMACHINE_DIR / 'dmd_calibration_data.pkl'
+        "Path to calibration file."
+        self._homography_mat: Optional[np.ndarray] = None
+        "Homography matrix for mapping image to DMD coordinates."
 
         # self.initialise()  # TODO remove this
+
+    def _load_calibration_data(self, filepath: Optional[Path] = None) -> bool:
+        if filepath is None:
+            filepath = self._calib_file
+        if not filepath.exists():
+            logger.error(f"DMDControl._load_calibration_data: file {filepath} not found.")
+            return False
+        logger.info(f"DMDControl._load_calibration_data: loading calibration data from {filepath}.")
+        with open(str(filepath), 'rb') as f:
+            self._calib_data = pkl.load(f)
+
+        dmd_points = np.array([(c_dmd, r_dmd) for ((r_dmd, c_dmd), _, _) in self._calib_data])
+        cam_points = np.array([(c_cam, r_cam) for (_, (r_cam, c_cam), _) in self._calib_data])
+        self._homography_mat, _ = cv2.findHomography(srcPoints=cam_points, dstPoints=dmd_points)
+
+        points_cam = np.array([[[0, 0], [3199, 3199]]], dtype=np.float32)
+        points_dmd = cv2.perspectiveTransform(points_cam.reshape(-1, 1, 2), self._homography_mat)
+        logger.info(f"DMDControl._load_calibration_data: mapping point ("
+                    f"{int(points_cam[0][0][0])},{int(points_cam[0][0][1])}) to "
+                    f"{int(points_dmd[0][0][0])},{int(points_dmd[0][0][1])}) and "
+                    f"{int(points_cam[0][1][0])},{int(points_cam[0][1][1])}) to "
+                    f"{int(points_dmd[1][0][0])},{int(points_dmd[1][0][1])}).")
+        return True
 
     def initialise(self, is_test: bool = False):
         if self._dmd_is_alive:
@@ -119,6 +149,8 @@ class DMDControl:
                     subprocess.Popen(["wmctrl", "-i", "-r", str(window_id), "-b", "add,above"])
                     self._dmd_is_alive = True
                     self.display_none()
+                    if not self._load_calibration_data():
+                        logger.info("DMDControl.initialise: no calibration data loaded.")
                     logging.info(f"DMD: initialised at pos={self.offset_DMD} with size={self.width_height_DMD}.")
                 else:  # Wrong DMD size (or wrong monitor selected)
                     msg = f"DMDControl.initialise: incorrect DMD size: {mon_dmd}."
