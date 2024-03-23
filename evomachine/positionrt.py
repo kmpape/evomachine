@@ -1,16 +1,12 @@
 import copy
-# from collections.abc import Sequence
-# import concurrent.futures
 import logging
-# import multiprocessing
-# from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Union, cast, Tuple
+
 
 import cv2
 import dask
-# from joblib import Parallel, delayed
 import numpy as np
-# import tqdm
+import tensorflow as tf
 
 import delta
 from delta.config import Config  # TODO: ask about putting config into init
@@ -19,7 +15,6 @@ from delta.pipeline import TIMER_ROI
 from evomachine.config import get_logger, ConfigImageProcessor
 from evomachine.evotypes import ImageConfigType
 from evomachine.exceptions import ImageProcessingError, ErrorCode, ErrorContainer
-# import evomachine.trackingrt as trackingrt
 import evomachine.trackingrt_jit as trackingrt
 from evomachine.utils import Timer, rotation_correction
 
@@ -54,11 +49,6 @@ class PositionRT(delta.pipeline.Position):
         self._is_initialised: bool = False
         "Flag set to true after calling initialise()"
 
-        self.segmentation_model = self.config.model("seg")
-        "Preloading segmentation model."
-        self.tracking_model = self.config.model("track")
-        "Preloading tracking model."
-
         self.reference: Union[None, np.ndarray[(int, int, int), 'ImageConfigType.pxl_dtype']] = None
         "Reference image used to identify RoIs. Assigned in initialise()."
 
@@ -71,6 +61,9 @@ class PositionRT(delta.pipeline.Position):
         channel_roi: int = 0,
         rotate: Optional[float] = None,
         roi_boxes: Optional[list[delta.utils.CroppingBox]] = None,
+        seg_model: Optional[tf.keras.Model] = None,
+        tracking_model: Optional[tf.keras.Model] = None,
+        roi_model: Optional[tf.keras.Model] = None,
     ) -> None:
         self._msg("Starting initialisation")
         TIMER_POSITION.start("initialise", 0)
@@ -91,7 +84,7 @@ class PositionRT(delta.pipeline.Position):
                 self.roi_boxes = roi_boxes
             else:
                 self._msg("Identifying ROIs.")
-                self.roi_boxes = self.find_roi_boxes(reference[channel_roi, :, :], self.config)
+                self.roi_boxes = self.find_roi_boxes(reference[channel_roi, :, :], self.config, roi_model)
         else:
             self.roi_boxes = [delta.utils.CroppingBox.full(reference[channel_roi, :, :])]
 
@@ -139,11 +132,11 @@ class PositionRT(delta.pipeline.Position):
         ]
 
         # Run pipeline after init
-        self.segment(frames=range(2))
+        self.segment(frames=range(2), seg_model=seg_model)
         if self.cfg_processor.use_track_RT:
             self.init_track_rt()
         else:
-            self.track(frames=range(2))
+            self.track(frames=range(2), tracking_model=tracking_model)
         self.compute_growthrates(frames=range(2))
 
         # Remove redundant cell lineage object
@@ -156,7 +149,10 @@ class PositionRT(delta.pipeline.Position):
 
     def process_new_frame(
             self,
-            new_frame: np.ndarray[(int, int, int), 'ImageConfigType.pxl_dtype']
+            new_frame: np.ndarray[(int, int, int), 'ImageConfigType.pxl_dtype'],
+            seg_model: Optional[tf.keras.Model] = None,
+            tracking_model: Optional[tf.keras.Model] = None,
+
     ) -> None:
         if not self._is_initialised:
             raise ImageProcessingError("Position {} not initialised.".format(self.position_nb),
@@ -166,14 +162,14 @@ class PositionRT(delta.pipeline.Position):
         TIMER_POSITION.stop("process_new_frame:_preprocess_new_frame", 0)
 
         TIMER_POSITION.start("process_new_frame:segment", 0)
-        self.segment_at_once()
+        self.segment_at_once(seg_model=seg_model)
         TIMER_POSITION.stop("process_new_frame:segment", 0)
 
         TIMER_POSITION.start("process_new_frame:track", 0)
         if self.cfg_processor.use_track_RT:
             self.track_rt()
         else:
-            self.track_at_once()
+            self.track_at_once(tracking_model=tracking_model)
         TIMER_POSITION.stop("process_new_frame:track", 0)
 
         TIMER_POSITION.start("process_new_frame:compute_growthrates", 0)
@@ -250,7 +246,7 @@ class PositionRT(delta.pipeline.Position):
             )
         TIMER_POSITION.stop("_preprocess_new_frame:swap", 1)
 
-    def segment(self, frames: range) -> None:
+    def segment(self, frames: range, seg_model: Optional[tf.keras.Model] = None) -> None:
         """
         Segment cells in all ROIs in position.
 
@@ -258,6 +254,10 @@ class PositionRT(delta.pipeline.Position):
         ----------
         frames : range
             Frames to run.
+        seg_model : Optional[tf.keras.Model]
+            Segmentation model to use.  This is to avoid having to reload it
+            for every ROI.  If None, will use `self.config.model("seg")`.
+            The default is None.
 
         Returns
         -------
@@ -268,9 +268,9 @@ class PositionRT(delta.pipeline.Position):
 
         for iroi, roi in enumerate(self.rois, start=1):
             self._msg(f"Segmentation - ROI {iroi}/{len(self.rois)}")
-            roi.segment(frames, self.segmentation_model)
+            roi.segment(frames, seg_model)
 
-    def segment_at_once(self) -> None:
+    def segment_at_once(self, seg_model: Optional[tf.keras.Model] = None) -> None:
         self._msg(f"Starting segmentation for {len(self.rois)} ROIs")
 
         TIMER_POSITION.start("segment_at_once:prepare", 1)
@@ -278,7 +278,7 @@ class PositionRT(delta.pipeline.Position):
         TIMER_POSITION.stop("segment_at_once:prepare", 1)
 
         TIMER_POSITION.start("segment_at_once:predict", 1)
-        logits = self.segmentation_model.predict(inputs, batch_size=4, verbose=0)
+        seg_model.predict(inputs, batch_size=4, verbose=0)
         TIMER_POSITION.stop("segment_at_once:predict", 1)
 
         TIMER_POSITION.start("segment_at_once:process", 1)
@@ -290,7 +290,7 @@ class PositionRT(delta.pipeline.Position):
             )
         TIMER_POSITION.stop("segment_at_once:process", 1)
 
-    def track(self, frames: range) -> None:
+    def track(self, frames: range, tracking_model: Optional[tf.keras.Model] = None) -> None:
         """
         Track cells in all ROIs in position.
 
@@ -308,9 +308,9 @@ class PositionRT(delta.pipeline.Position):
 
         for iroi, roi in enumerate(self.rois, start=1):
             self._msg(f"Tracking - ROI {iroi}/{len(self.rois)}")
-            roi.track(frames, self.tracking_model)
+            roi.track(frames, tracking_model)
 
-    def track_at_once(self) -> None:
+    def track_at_once(self, tracking_model: Optional[tf.keras.Model] = None) -> None:
         """
         Track cells in all ROIs in position.
         """
@@ -334,7 +334,7 @@ class PositionRT(delta.pipeline.Position):
 
         TIMER_POSITION.start("track_at_once:predict", 1)
         all_inputs = np.concatenate(inputs_with_cells)
-        logits = self.tracking_model.predict(
+        tracking_model.predict(
             all_inputs,
             batch_size=4,
             verbose=self.verbose,
@@ -386,7 +386,13 @@ class PositionRT(delta.pipeline.Position):
         # delayed_calls = [dask.delayed(this_track_rt_roi)(roi) for roi in self.rois]
         # dask.compute(*delayed_calls)
 
-    def find_roi_boxes(self, reference: delta.utils.Image, config: Config) -> list[delta.utils.CroppingBox]:
+    def find_roi_boxes(
+            self,
+            reference: delta.utils.Image,
+            config: Config,
+            roi_model: Optional[tf.keras.Model] = None,
+
+    ) -> list[delta.utils.CroppingBox]:
         """
         Use U-Net to detect ROIs (chambers etc...).
 
@@ -403,6 +409,8 @@ class PositionRT(delta.pipeline.Position):
             List of ROI boxes.
 
         """
+        if roi_model is None:
+            roi_model = config.model("rois")
         # Rescale pixel values between 0 and 1 for the old model
         reference = (reference - reference.min()) / reference.ptp()  # noqa
         self.tmp_reference_orig = copy.copy(reference)
@@ -421,7 +429,7 @@ class PositionRT(delta.pipeline.Position):
             # Crop out windows
             inputs, win_y, win_x = delta.utils.create_windows(image=reference, target_size=self.config.target_size_rois)
             # Predict
-            logits = self.config.model("rois").predict(inputs[:, :, :, np.newaxis], verbose=0)
+            logits = roi_model.predict(inputs[:, :, :, np.newaxis], verbose=0)
             rois_pred = delta.utils.stitch_pic(logits[..., 0], win_y, win_x)
             # Clean up
             rois_mask = delta.data.postprocess(
@@ -430,7 +438,7 @@ class PositionRT(delta.pipeline.Position):
             )
         else:
             # Predict
-            rois_pred = self.config.model("rois").predict(
+            rois_pred = roi_model.predict(
                 cv2.resize(reference, self.config.target_size_rois)[
                     np.newaxis, :, :, np.newaxis
                 ],

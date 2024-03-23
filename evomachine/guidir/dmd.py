@@ -17,7 +17,7 @@ from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
 from evomachine.evotypes import DMDCalibConfigType, DMDCalibConfigTypeFactory
 from evomachine.guidir.figures import FigureWindow, FigureMultiWindow
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
-from evomachine.guidir.guitypes import DMDModes, SMALL, CENTER, LEFT, RIGHT, NORMAL
+from evomachine.guidir.guitypes import ButtonState, DMDModes, SMALL, CENTER, LEFT, RIGHT, NORMAL
 from evomachine.guidir.queuemanager import QueueManager
 
 
@@ -141,7 +141,7 @@ class DMDPanel(EvoPanelTemplate):
             mode=i,
             stylesheet="QPushButton {background-color: red;}",
         ) for i, txt in zip([DMDModes.DISPLAY_NONE.value, DMDModes.DISPLAY_FULL.value], ["NONE", "FULL"])}
-        self.dmd_buttons[DMDModes.DISPLAY_NONE.value].setStyleSheet("background-color: green;")
+        self.dmd_buttons[DMDModes.DISPLAY_FULL.value].setStyleSheet("background-color: green;")
         self.dmd_init_button = self.make_button(
             text="Initialise",
             func=self.initialise_dmd,

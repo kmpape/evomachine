@@ -7,19 +7,14 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
-import matplotlib.patches as patches
-import matplotlib.pyplot as plt
 import numpy as np
-from PyQt5.QtGui import QValidator, QIntValidator
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
-import PIL
-from PyQt5.QtCore import pyqtSignal, pyqtSlot, QEventLoop, QThread, QTimer, QObject, QRegExp, Qt
+from PyQt5.QtGui import QIntValidator
+from typing import Any, Dict, Tuple, Union
+from PyQt5.QtCore import pyqtSignal, pyqtSlot, QTimer, Qt
 from PyQt5.QtWidgets import (
-    QWidget,
-    QMainWindow, QApplication,
-    QLabel, QLineEdit, QPushButton, QComboBox, QMessageBox,
-    QVBoxLayout, QHBoxLayout, QGridLayout,
-    QSizePolicy, QScrollArea, QFileDialog, QCheckBox
+    QWidget, QLineEdit, QPushButton, QComboBox,
+    QVBoxLayout, QGridLayout,
+    QSizePolicy,
 )
 
 from evomachine.commands import AutomatonCommand
@@ -34,10 +29,6 @@ from evomachine.utils import EvoCroppingBox
 
 
 logger = get_logger(name=__name__)
-
-
-# font = {'size': 6}
-# matplotlib.rc('font', **font)
 
 
 class FigureWindow(QWidget):

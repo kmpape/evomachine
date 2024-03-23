@@ -63,7 +63,7 @@ class AbstractCamera:
         self._focus_is_initialised: bool = False
         "Changes to True after initialisation and to False after finalisation."
 
-    def autofocus_enable(self, this_cfg_crisp: Optional[ConfigCRISP] = None, user_input: Optional[bool] = True):
+    def autofocus_initialise(self, this_cfg_crisp: Optional[ConfigCRISP] = None, user_input: Optional[bool] = True):
         raise NotImplementedError()
 
     def autofocus_disable(self):
@@ -73,6 +73,9 @@ class AbstractCamera:
         raise NotImplementedError()
 
     def autofocus_configure(self, this_cfg_crisp: Optional[ConfigCRISP] = None) -> bool:
+        raise NotImplementedError()
+
+    def autofocus_lock(self):
         raise NotImplementedError()
 
     def autofocus_unlock(self):
@@ -386,7 +389,7 @@ class AbstractCamera:
     def set_led(self, i_chan: LEDType, brightness: int = 100, block: bool = False):
         raise NotImplementedError()
 
-    def set_pos_id_to_coordinate(self, pos_id_to_coordinate: Dict[int, Any]) -> bool:
+    def set_pos_id_to_coordinate(self, pos_id_to_coordinate: Dict[int, Any], use_autofocus: bool) -> bool:
         raise NotImplementedError()
 
     def zero_coordinates(self):
@@ -555,8 +558,8 @@ class TestCamera(AbstractCamera):
         logger.info("TestCamera.disable_live_mode.")
         return
 
-    def autofocus_enable(self, this_cfg_crisp: Optional[ConfigCRISP] = None, user_input: Optional[bool] = True):
-        logger.info("TestCamera.autofocus_enable.")
+    def autofocus_initialise(self, this_cfg_crisp: Optional[ConfigCRISP] = None, user_input: Optional[bool] = True):
+        logger.info("TestCamera.autofocus_initialise.")
         self._autofocus_is_locked = True
 
     def autofocus_disable(self):
@@ -570,6 +573,10 @@ class TestCamera(AbstractCamera):
         cfg_crisp = this_cfg_crisp if this_cfg_crisp else self.cfg.autofocus
         logger.info(f"TestCamera.autofocus_configure with cfg={cfg_crisp} (this_cfg_crisp={this_cfg_crisp}).")
         return True
+
+    def autofocus_lock(self):
+        logger.info("TestCamera.autofocus_unlock.")
+        self._autofocus_is_locked = True
 
     def autofocus_unlock(self):
         logger.info("TestCamera.autofocus_unlock.")
@@ -723,9 +730,9 @@ class TestCamera(AbstractCamera):
         logger.info(f"TestCamera.set_led={i_chan}, brightness={brightness}, block={block}.")
         return
 
-    def set_pos_id_to_coordinate(self, pos_id_to_coordinate: Dict[int, Any]) -> bool:
+    def set_pos_id_to_coordinate(self, pos_id_to_coordinate: Dict[int, Any], use_autofocus: bool) -> bool:
         for i_pos, coord in pos_id_to_coordinate.items():
-            if not coord.has_z():
+            if (not use_autofocus) and (not coord.has_z()):
                 logger.warning(f"EvoCamera.set_pos_id_to_coordinate: Position {i_pos} is missing Z "
                                f"coordinate ({coord}). Position list not initialised.")
                 return False
@@ -944,9 +951,9 @@ class EvoCamera(AbstractCamera):
             coordinate.to_dict() if isinstance(coordinate, Coordinate) else coordinate
         )
 
-    def autofocus_enable(self, this_cfg_crisp: Optional[ConfigCRISP] = None, user_input: Optional[bool] = True):
+    def autofocus_initialise(self, this_cfg_crisp: Optional[ConfigCRISP] = None, user_input: Optional[bool] = True):
         if not self._tiger_is_alive:
-            logger.error(f"EvoCamera.autofocus_enable: Device not alive.")
+            logger.error(f"EvoCamera.autofocus_initialise: Device not alive.")
             return
 
         cfg_crisp = this_cfg_crisp if this_cfg_crisp else self.cfg.autofocus
@@ -965,6 +972,8 @@ class EvoCamera(AbstractCamera):
 
         logger.info("CRISP: Setting IDLE status.")
         self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.IDLE)
+        logger.info("CRISP: Resetting offsets.")
+        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.SET_OFFSET)
         time.sleep(cfg_crisp.pause_short)
         logger.info("CRISP: Setting LOG_CAL status.")
         self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.LOG_CAL)
@@ -982,7 +991,7 @@ class EvoCamera(AbstractCamera):
         self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.SET_GAIN)
         time.sleep(cfg_crisp.pause_short)
 
-        do_lock = True
+        do_lock = False
         if ask_user:
             user_input_str = input("Do you want to lock CRISP autofocus? (yes/no): ")
             do_lock = True if user_input_str.lower() == "yes" else False
@@ -1043,13 +1052,15 @@ class EvoCamera(AbstractCamera):
         logger.info(f"CRISP: Parameters set to:\n{new_cfg}")
         return True
 
+    def autofocus_lock(self):
+        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.LOCK)
+
+    def autofocus_unlock(self):
+        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.UNLOCK)
     def finalise(self):
         if self._is_multi_threaded:
             self.tiger.stop()
             self.tiger.join()
-
-    def autofocus_unlock(self):
-        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.UNLOCK)
 
     def get_coordinates(self, axes: List[str]) -> Dict[str, float]:
         """ Returns current coordinates of the stage. """
@@ -1125,11 +1136,15 @@ class EvoCamera(AbstractCamera):
             logger.warning("EvoCamera._set_exposure: cannot set exposure as MMC is not alive.")
             # TODO raise error?
 
-    def set_pos_id_to_coordinate(self, pos_id_to_coordinate: Dict[int, Coordinate]) -> bool:
+    def set_pos_id_to_coordinate(self, pos_id_to_coordinate: Dict[int, Coordinate], use_autofocus: bool) -> bool:
         for i_pos, coord in pos_id_to_coordinate.items():
-            if not coord.has_z():
+            if (not use_autofocus) and (not coord.has_z()):
                 logger.warning(f"EvoCamera.set_pos_id_to_coordinate: Position {i_pos} is missing Z "
                                f"coordinate ({coord}). Position list not initialised.")
+                return False
+            if use_autofocus and coord.has_z():
+                logger.warning(f"EvoCamera.set_pos_id_to_coordinate: Position {i_pos} has Z "
+                               f"coordinate ({coord}) even though autofocus enabled.")
                 return False
             if self.coordinate_is_out_of_bounds(coord):
                 logger.warning(f"EvoCamera.set_pos_id_to_coordinate: Position {i_pos} is out of bounds. "

@@ -4,10 +4,9 @@ import matplotlib.pyplot as plt
 from multiprocessing import Event
 import numpy as np
 from serial import SerialException
-import threading
 from typing import Any, Dict, List, Optional, Tuple, Union
-from PyQt5.QtCore import pyqtSignal, pyqtSlot
-from PyQt5.QtWidgets import QWidget, QPushButton, QDialog, QVBoxLayout, QComboBox, QLabel, QGridLayout
+from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
+from PyQt5.QtWidgets import QWidget, QPushButton, QDialog, QComboBox, QLabel, QGridLayout, QCheckBox
 
 import delta.utils
 
@@ -103,18 +102,18 @@ class ExperimentWorker(EvoWorkerTemplate):
         logger.info(f"Extracted {len(coordinates)} coordinates: {coordinates}")
         return coordinates
 
-    def initialise_automaton_focus(self, data: Any = None, is_init_all: bool = False):
+    def initialise_automaton_focus(self, data: Any = None, is_init_all: bool = False, use_autofocus: bool = False):
         if not is_init_all:
             self.queue_manager.request(
                 req_str='self.initialise_fov_focus',
-                kwargs_dict={},
+                kwargs_dict={'use_autofocus': use_autofocus},
                 callback=self.enable_disable_next_buttons,
                 callback_args=([2, 6], [3, 4, 5, 7],),
             )
         else:
             self.queue_manager.request(
                 req_str='self.initialise_fov_focus',
-                kwargs_dict={},
+                kwargs_dict={'use_autofocus': use_autofocus},
                 callback=self.initialise_automaton_references,
                 callback_args=(True,),
             )
@@ -157,6 +156,7 @@ class ExperimentWorker(EvoWorkerTemplate):
             read_in_positions: Dict[int, Dict[str, Union[None, Dict[str, Union[float, int]]]]],
             cropping_boxes: Optional[List[EvoCroppingBox]] = None,
             is_init_all: bool = False,
+            use_autofocus: bool = False,
     ):
         logger.debug(f"ExperimentWorker.initialise_automaton_field_of_views: {read_in_positions}.")
         coordinates = self.get_positions_from_dict(read_in_positions)
@@ -172,27 +172,37 @@ class ExperimentWorker(EvoWorkerTemplate):
         if not is_init_all:
             self.queue_manager.request(
                 req_str='self.initialise_field_of_view_list',
-                kwargs_dict={'field_of_views': self._field_of_views, 'cropping_boxes': self._cropping_boxes},
+                kwargs_dict={
+                    'field_of_views': self._field_of_views,
+                    'cropping_boxes': self._cropping_boxes,
+                    'use_autofocus': use_autofocus,
+                },
                 callback=self.enable_disable_next_buttons,
-                callback_args=([1], [2, 3, 4, 5, 6, 7],),
+                callback_args=([1], [2, 3, 4, 5, 6, 7, 9],),
             )
         else:
             self.queue_manager.request(
                 req_str='self.initialise_field_of_view_list',
-                kwargs_dict={'field_of_views': self._field_of_views, 'cropping_boxes': self._cropping_boxes},
+                kwargs_dict={
+                    'field_of_views': self._field_of_views,
+                    'cropping_boxes': self._cropping_boxes,
+                    'use_autofocus': use_autofocus,
+                },
                 callback=self.initialise_automaton_focus,
-                callback_args=(True,),
+                callback_args=(True, use_autofocus),
             )
 
     def initialise_all(
             self,
             read_in_positions: Dict[int, Dict[str, Union[None, Dict[str, Union[float, int]]]]],
             cropping_boxes: Optional[List[EvoCroppingBox]] = None,
+            use_autofocus: bool = False,
     ):
         self.initialise_automaton_field_of_views(
             read_in_positions=read_in_positions,
             cropping_boxes=cropping_boxes,
             is_init_all=True,
+            use_autofocus=use_autofocus,
         )
 
     def enable_after_init_all(self, data: Any):
@@ -211,7 +221,7 @@ class ButtonWorker(EvoWorkerTemplate):
     def __init__(
             self,
             queue_manager: QueueManager,
-            button_list: List[QPushButton],
+            button_list: List[Union[QPushButton, QCheckBox]],
             strategy_label: QLabel
     ):
         super().__init__()
@@ -223,17 +233,26 @@ class ButtonWorker(EvoWorkerTemplate):
     @pyqtSlot(list, str)
     def set_color(self, button_indices: List[int], color_str: str):
         for i in button_indices:
-            self.button_list[i].setStyleSheet(f"background-color: {color_str};")
+            if i >= len(self.button_list):
+                logger.error(f"ButtonWorker: Cannot set color for button {i}.")
+            else:
+                self.button_list[i].setStyleSheet(f"background-color: {color_str};")
 
     @pyqtSlot(list)
     def disable_button(self, indices: List[int]):
         for i in indices:
-            self.button_list[i].setEnabled(False)
+            if i >= len(self.button_list):
+                logger.error(f"ButtonWorker: Cannot disable button {i}.")
+            else:
+                self.button_list[i].setEnabled(False)
 
     @pyqtSlot(list)
     def enable_button(self, indices: List[int]):
         for i in indices:
-            self.button_list[i].setEnabled(True)
+            if i >= len(self.button_list):
+                logger.error(f"ButtonWorker: Cannot enable button {i}.")
+            else:
+                self.button_list[i].setEnabled(True)
 
     @pyqtSlot()
     def update_strategy_label(self):
@@ -310,6 +329,9 @@ class ExperimentPanel(EvoPanelTemplate):
         self.init_processors_button = self.make_button(text="Initialise IP", func=self.init_processors, font=SMALL)
         self.read_in_clear_button = self.make_button(text="Clear Paths", func=self.clear_param, font=SMALL)
         self.focus_curves_button = self.make_button(text="Focus Curves", func=self.show_focus_curves, font=SMALL)
+        self.use_autofocus: bool = False
+        self.autofocus_checkbox = self.make_checkbox(text="Use autofocus", font=SMALL, set_true=self.use_autofocus,
+                                                     func=self.toggle_autofocus)
         self.position_dialog_button = self.make_button(text="FoVs", func=self.show_position_dialog, font=SMALL)
         self.strategy_label = self.make_label(text="???", font=SMALL)
         self._automaton_is_initialised: bool = False
@@ -323,15 +345,16 @@ class ExperimentPanel(EvoPanelTemplate):
         self.layout.addWidget(self.read_in_clear_button, 1, 0, 1, 1)
         self.layout.addWidget(self.init_positions_button, 2, 0, 1, 1)
         self.layout.addWidget(self.init_focus_button, 3, 0, 1, 1)
+        self.layout.addWidget(self.autofocus_checkbox, 3, 1, 1, 1)
         self.layout.addWidget(self.init_references_button, 4, 0, 1, 1)
         self.layout.addWidget(self.init_processors_button, 5, 0, 1, 1)
         self.layout.addWidget(self.init_all_button, 6, 0, 1, 1)
         for i in range(self.num_read_ins):
-            self.layout.addWidget(self.read_in_label[i], 2*i+1, 1, 1, 1)
-            self.layout.addWidget(self.read_in_buttons[i]["from"], 2*i+1, 2, 1, 1)
-            self.layout.addWidget(self.read_in_buttons[i]["to"], 2*i+1, 3, 1, 1)
-            self.layout.addWidget(self.read_in_display[i]["from"], 2*i+2, 2, 1, 1)
-            self.layout.addWidget(self.read_in_display[i]["to"], 2*i+2, 3, 1, 1)
+            self.layout.addWidget(self.read_in_label[i], 2*i+1, 2, 1, 1)
+            self.layout.addWidget(self.read_in_buttons[i]["from"], 2*i+1, 3, 1, 1)
+            self.layout.addWidget(self.read_in_buttons[i]["to"], 2*i+1, 4, 1, 1)
+            self.layout.addWidget(self.read_in_display[i]["from"], 2*i+2, 3, 1, 1)
+            self.layout.addWidget(self.read_in_display[i]["to"], 2*i+2, 4, 1, 1)
 
         this_row = min(7, 1+2*self.num_read_ins)
         self.layout.addWidget(self.start_button, this_row, 0, 1, 1)
@@ -350,7 +373,8 @@ class ExperimentPanel(EvoPanelTemplate):
                    self.stop_button,                # 5
                    self.focus_curves_button,        # 6
                    self.position_dialog_button,     # 7
-                   self.init_all_button]            # 8
+                   self.init_all_button,            # 8
+                   self.autofocus_checkbox]         # 9
         self.worker_buttons = ButtonWorker(
             queue_manager=queue_manager,
             button_list=buttons,
@@ -416,7 +440,8 @@ class ExperimentPanel(EvoPanelTemplate):
         self.init_focus_button.setStyleSheet("background-color: orange;")
         self.init_references_button.setStyleSheet("background-color: lightgray;")
         self.init_processors_button.setStyleSheet("background-color: lightgray;")
-        self.worker.initialise_automaton_focus()
+        self.signal_disable_button.emit([9])
+        self.worker.initialise_automaton_focus(use_autofocus=self.use_autofocus)
         self.signal_set_button_color.emit([1], "orange")
         self.signal_set_button_color.emit([2, 3], "lightgray")
 
@@ -434,17 +459,21 @@ class ExperimentPanel(EvoPanelTemplate):
     def init_all(self):
         self._automaton_is_initialised = True
         self.signal_set_button_color.emit([0, 1, 2, 3, 8], "orange")
+        self.signal_disable_button.emit([9])
         self.worker.initialise_all(
             read_in_positions=self.read_in_positions,
             cropping_boxes=[b for b in self.cropping_boxes.values() if b is not None],
+            use_autofocus=self.use_autofocus,
         )
 
     def init_positions(self):
         self._automaton_is_initialised = False
         self.signal_set_button_color.emit([0], "orange")
+        self.signal_disable_button.emit([9])
         self.worker.initialise_automaton_field_of_views(
             read_in_positions=self.read_in_positions,
             cropping_boxes=[b for b in self.cropping_boxes.values() if b is not None],
+            use_autofocus=self.use_autofocus,
         )
 
     def read_fov_data(self, data: AutomatonCommand):
@@ -486,8 +515,10 @@ class ExperimentPanel(EvoPanelTemplate):
         self.stop_button.setEnabled(False)
 
     def read_focus_data(self, data: AutomatonCommand):
-        self.signal_set_button_color.emit([1, 6], "green")
+        if not self.use_autofocus:
+            self.signal_set_button_color.emit([1, 6], "green")
         self.focus_data = data.command_args
+        logger.debug("Received focus data.")
 
     def read_ref_data(self, data: AutomatonCommand):
         self.ref_data = data.command_args
@@ -499,8 +530,11 @@ class ExperimentPanel(EvoPanelTemplate):
         # self.roi_data.append(data.command_args)
 
     def show_focus_curves(self):
+        if self.use_autofocus:
+            logger.error("show_focus_curves: using autofocus. Returning.")
+            return
         if self.focus_data is None:
-            logger.error("exp_show_curve: missing data. Returning.")
+            logger.error("show_focus_curves: missing data. Returning.")
             return
         focus_curves = self.focus_data['focus_curves']
         focus_prev_stack = self.focus_data['focus_prev_stack']
@@ -546,8 +580,15 @@ class ExperimentPanel(EvoPanelTemplate):
             focus_data=self.focus_data,
             roi_data=self.roi_data,
             processor_config=self.processor_config,
+
         )
         self.pos_dialog.open()
+
+    def toggle_autofocus(self, state):
+        if state == Qt.Checked:
+            self.use_autofocus = True
+        else:
+            self.use_autofocus = False
 
     @pyqtSlot(int, int, EvoCroppingBox)
     def update_cropping_boxes(self, fov_id: int, box_id: int, cropping_box: Union[EvoCroppingBox, None]):

@@ -1,4 +1,4 @@
-from enum import Enum
+from enum import Enum, auto
 from typing import List
 
 from PyQt5.QtGui import QFont
@@ -17,6 +17,12 @@ ARROW_LEFT = "\u2190"
 ARROW_RIGHT = "\u2192"
 ARROW_UP = "\u2191"
 ARROW_DOWN = "\u2193"
+
+
+class ButtonState(Enum):
+    ACTIVE = auto()
+    INACTIVE = auto()
+    WORKING = auto()
 
 class Direction(Enum):
     LEFT = 0   # DECR_X

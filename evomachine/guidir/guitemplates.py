@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
-from evomachine.guidir.guitypes import NORMAL
+from evomachine.guidir.guitypes import NORMAL, ButtonState
 from evomachine.guidir.queuemanager import QueueManager
 
 
@@ -27,7 +27,7 @@ EVO_STYLE = """
 background-color: #262626;
 color: #FFFFFF;
 font-family: Titillium;
-font-size: 12px;
+font-size: 11px;
 """
 
 
@@ -296,6 +296,20 @@ class EvoPanelTemplate(QWidget):
             return f"+{float(abs(value))*f:.1f}{ustr}" if value > 0 else f"-{float(abs(value))*f:.1f}{ustr}"
         except TypeError as e:
             return "?"*7
+
+    @staticmethod
+    def set_button_state(button: QPushButton, states: Union[ButtonState, List[ButtonState]]):
+        if not isinstance(states, list):
+            states = [states]
+        for state in states:
+            if state == ButtonState.ACTIVE:
+                button.setStyleSheet("background-color: green;")
+            elif state == ButtonState.INACTIVE:
+                button.setStyleSheet("background-color: red;")
+            elif state == ButtonState.WORKING:
+                button.setStyleSheet("background-color: orange;")
+
+
 
 
 class EvoWorkerTemplate(QObject):

@@ -221,6 +221,8 @@ class EvoGUI(QMainWindow):
         event.ignore()
 
         if result == QMessageBox.Yes:
+            # self.crisp_panel.signal_unlock_crisp.emit()
+            # time.sleep(1)
             self.stop_event.set()
             self.stop_strategy_event.set()
             self.start_strategy_event.set()
