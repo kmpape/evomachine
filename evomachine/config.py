@@ -17,7 +17,7 @@ from evomachine.evotypes import FilterWheelType, FocusAlgorithmType, LEDType, Im
 EVOMACHINE_DIR: Path = Path(__file__).parent
 
 # Switch between pygame dmd.py and dmd_socket.py
-USE_DMD_SOCKET: bool = True
+USE_DMD_SOCKET: bool = False
 
 # EVO_FORMATTER = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s - %(message)s\n<---')
 EVO_FORMATTER = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')

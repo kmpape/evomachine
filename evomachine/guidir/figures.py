@@ -10,7 +10,7 @@ from matplotlib.patches import Rectangle
 import numpy as np
 from PyQt5.QtGui import QIntValidator
 from typing import Any, Dict, Tuple, Union
-from PyQt5.QtCore import pyqtSignal, pyqtSlot, QTimer, Qt
+from PyQt5.QtCore import pyqtSignal, pyqtSlot, QTimer, Qt, QThread
 from PyQt5.QtWidgets import (
     QWidget, QLineEdit, QPushButton, QComboBox,
     QVBoxLayout, QGridLayout,
@@ -193,8 +193,34 @@ class ImageCroppingBoxes(EvoWorkerTemplate):
         self.update_all_boxes()
 
 
+class ChannelWorker(EvoWorkerTemplate):
+    def __init__(
+            self,
+            canvas: FigureCanvas,
+            ax: Axes,
+            img: np.ndarray,
+            title: str,
+            font_size: int = 8,
+    ):
+
+        super().__init__()
+        self.canvas = canvas
+        self.ax = ax
+        self.font_size = font_size
+        self.update_plot(img, title)
+
+    @pyqtSlot(np.ndarray, str)
+    def update_plot(self, img: np.ndarray, title: str):
+        self.ax.clear()
+        self.ax.imshow(img, cmap='gray')
+        self.ax.set_title(title, fontsize=self.font_size)
+        self.ax.tick_params(axis='both', labelsize=self.font_size)
+        self.canvas.draw()
+
+
 class ChannelPlotter(QWidget):
     FONT_SIZE = 8
+    signal_worker_update = pyqtSignal(np.ndarray, str)
 
     def __init__(
             self,
@@ -215,7 +241,8 @@ class ChannelPlotter(QWidget):
         self.fig.patch.set_facecolor('#262626')
         self.ax = self.fig.add_subplot(111)
         self.ax.imshow(self.img[self.channel_to_index[self.curr_channel], :, :], cmap='gray')
-        self.ax.set_title(self.title_prefix + f" {self.curr_channel}", fontsize=self.FONT_SIZE)
+        self.title = self.title_prefix + f" {self.curr_channel}"
+        self.ax.set_title(self.title, fontsize=self.FONT_SIZE)
         self.ax.tick_params(axis='both', labelsize=self.FONT_SIZE)
         self.fig.tight_layout(pad=5)
         self.canvas = FigureCanvas(self.fig)
@@ -232,19 +259,34 @@ class ChannelPlotter(QWidget):
 
         self.widget = QWidget()
         self.widget.setLayout(self.layout)
+        self.worker = ChannelWorker(
+            canvas=self.canvas,
+            ax=self.ax,
+            img=self.img[self.channel_to_index[self.curr_channel], :, :],
+            title=self.title,
+            font_size=self.FONT_SIZE
+        )
+        self.signal_worker_update.connect(self.worker.update_plot)
+        self.thread = QThread()
+        self.worker.moveToThread(self.thread)
+        self.thread.start()
 
     def update_plot(self, index):
         self.curr_channel = self._channels[self.channel_combo_box.currentIndex()]
-        self.ax.clear()
-        self.ax.imshow(self.img[self.channel_to_index[self.curr_channel], :, :], cmap='gray')
-        self.ax.set_title(self.title_prefix + f" {self.curr_channel}", fontsize=self.FONT_SIZE)
-        self.ax.tick_params(axis='both', labelsize=self.FONT_SIZE)
-        self.canvas.draw()
+        self.title = self.title_prefix + f" {self.curr_channel}"
+        self.signal_worker_update.emit(self.img[self.channel_to_index[self.curr_channel], :, :], self.title)
+        # self.ax.clear()
+        # self.ax.imshow(self.img[self.channel_to_index[self.curr_channel], :, :], cmap='gray')
+        # self.ax.set_title(self.title_prefix + f" {self.curr_channel}", fontsize=self.FONT_SIZE)
+        # self.ax.tick_params(axis='both', labelsize=self.FONT_SIZE)
+        # self.canvas.draw()
 
-    @pyqtSlot(np.ndarray)
     def update_image(self, img: np.ndarray):
         self.img = img
-        self.update_plot(0)
+        self.curr_channel = self._channels[self.channel_combo_box.currentIndex()]
+        self.signal_worker_update.emit(self.img[self.channel_to_index[self.curr_channel], :, :], self.title)
+        # self.img = img
+        # self.update_plot(0)
 
 
 class ImagePlotter(EvoPanelTemplate):

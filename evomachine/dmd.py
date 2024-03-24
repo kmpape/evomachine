@@ -170,6 +170,9 @@ class DMDControl:
             self._dmd_is_alive = True
             self.error_container.add_error(new_error=DMDError(message=msg, error_code=ErrorCode.ERROR_MONITORS))
 
+    def is_initialised(self) -> bool:
+        return self._dmd_is_alive
+
     def finalise(self):
         if not self._dmd_is_alive:
             logger.warning("DMDControl.finalise: DMD not initialised.")

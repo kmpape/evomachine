@@ -45,7 +45,7 @@ def create_automaton_process(
         camera=cam,
         cfg_processor=processor_config,
         dmd=dmd,
-        strategy=BasicStrategy(),
+        strategy=BasicStrategy(str(EVOMACHINE_DIR.parent / "tests")),
         start_strategy_event=start_strategy_event,
         stop_strategy_event=stop_strategy_event,
         stop_event=stop_event,
@@ -53,7 +53,7 @@ def create_automaton_process(
         process_q=process_queue,
         gui_to_automaton_q=gui_to_automaton_queue,
         automaton_to_gui_q=automaton_to_gui_queue,
-        use_segmentation=False,
+        use_seg=False,
         run_timeout=0,
     )
     automaton.run()

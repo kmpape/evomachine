@@ -698,8 +698,6 @@ class PositionDialogWorker(EvoWorkerTemplate):
 
 
 class PositionDialog(QDialog):
-    signal_update_orig_img = pyqtSignal(np.ndarray)
-    signal_update_rot_img = pyqtSignal(np.ndarray)
     signal_update_override = pyqtSignal(str, float)
     signal_update_active = pyqtSignal(str, float)
     signal_update_buttons = pyqtSignal(bool)
@@ -796,10 +794,6 @@ class PositionDialog(QDialog):
             width=6,
             title_prefix="Raw - ",
         )
-        self.signal_update_orig_img.connect(self.orig_plot.update_image)
-        self.thread_orig = EvoGUIThread()
-        self.orig_plot.moveToThread(self.thread_orig)
-        self.thread_orig.start()
         self.rot_data = copy.deepcopy(self.ref_data)
         for i in range(len(self.rot_data)):
             for j in range(self.rot_data[i].shape[0]):
@@ -811,10 +805,6 @@ class PositionDialog(QDialog):
             width=6,
             title_prefix="Rotated - ",
         )
-        self.signal_update_rot_img.connect(self.rot_plot.update_image)
-        self.thread_rot = EvoGUIThread()
-        self.rot_plot.moveToThread(self.thread_rot)
-        self.thread_rot.start()
 
         self.layout = QGridLayout()
         this_row = 0
@@ -845,8 +835,8 @@ class PositionDialog(QDialog):
     def update_display(self):
         self.curr_fov = self.combo_box.currentIndex()
         self.signal_update_fov_id.emit(self.curr_fov)
-        self.signal_update_orig_img.emit(self.orig_data[self.curr_fov])
-        self.signal_update_rot_img.emit(self.rot_data[self.curr_fov])
+        self.orig_plot.update_image(self.ref_data[self.curr_fov])
+        self.rot_plot.update_image(self.rot_data[self.curr_fov])
 
     def update_override(self, param: str):
         logger.debug(f"Updating override for {param}.")

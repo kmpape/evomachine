@@ -377,8 +377,8 @@ class DMDControl:
         img[:, col_start:col_end] = 255
         self.display_image(img)
 
+    @staticmethod
     def _make_text(
-            self,
             text: str,
             img_fraction: float,
             path_to_font: str,
