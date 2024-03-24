@@ -265,15 +265,17 @@ class BasicStrategy(AbstractStrategy):
         # Create commands for first iteration
         self.num_fovs = len(self.field_of_views)
         cmd_move = self.command_factory.command_move(fov_id=0)
+        cmd_live_mode_off = self.command_factory.command_live_mode(status=False)
         cmd_image = self.command_factory.command_image(
             channels=self.imaging_channels,
             exposure_time=self.exposure_time,
             segment=False,
             save=True,
         )
+        cmd_live_mode_on = self.command_factory.command_live_mode(status=True)
         cmd_wait = self.command_factory.command_wait(duration=self.imaging_interval/self.num_fovs)
         logger.info(f"Initialised strategy with {self.imaging_interval}s imaging interval and {self.num_fovs} FoVs.")
-        return [cmd_move, cmd_image, cmd_wait]
+        return [cmd_move, cmd_live_mode_off, cmd_image, cmd_live_mode_on, cmd_wait]
 
     def _callback(
             self,
@@ -302,14 +304,16 @@ class BasicStrategy(AbstractStrategy):
             errors,
         ))
         cmd_move = self.command_factory.command_move(fov_id=-1)
+        cmd_live_mode_off = self.command_factory.command_live_mode(status=False)
         cmd_image = self.command_factory.command_image(
             channels=self.imaging_channels,
             exposure_time=self.exposure_time,
             segment=False,
             save=True,
         )
+        cmd_live_mode_on = self.command_factory.command_live_mode(status=True)
         cmd_wait = self.command_factory.command_wait(duration=self.imaging_interval/self.num_fovs)
-        return [cmd_move, cmd_image, cmd_wait]
+        return [cmd_move, cmd_live_mode_off, cmd_image, cmd_live_mode_on, cmd_wait]
 
     def finalise(self) -> List[AutomatonCommand]:
         """
@@ -322,7 +326,8 @@ class BasicStrategy(AbstractStrategy):
             List of commands to be executed by the automaton.
         """
         logger.info("Finalising strategy.")
-        return []
+        cmd_live_mode_on = self.command_factory.command_live_mode(status=True)
+        return [cmd_live_mode_on]
 
 
 def get_all_strategies() -> List[Tuple[Type[AbstractStrategy], str]]:

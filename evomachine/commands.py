@@ -148,6 +148,29 @@ class CommandFactory:
             command_creation_time=time(),
         )
 
+    def command_live_mode(self, status: bool) -> AutomatonCommand:
+        """
+        Sets MMC live mode for EvoCamera.
+
+        Returns in AbstractStrategy.callback
+        ------------------------------------
+        command_data (bool)  : Always returns True.
+
+        Parameters
+        ----------
+        status: bool    Set to true to enable live mode.
+
+        Returns
+        -------
+        command: AutomatonCommand
+        """
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.LIVE_MODE,
+            command_args=status,
+            command_id=self.get_next_id(),
+            command_creation_time=time(),
+        )
+
     def command_move(self, fov_id: Union[int, None]) -> AutomatonCommand:
         """
         Create a command for moving the stage.

@@ -287,7 +287,7 @@ class PositionPanel(EvoPanelTemplate):
         self.curr_fov = None if self.fov_combo_box.currentText() == "None" else int(self.fov_combo_box.currentText())
 
     def update_fovs(self, cmd: AutomatonCommand):
-        logger.debug(f"Position: Updating FoVs.")
+        logger.debug(f"Position: Updating FoVs: {cmd.command_args['fovs']}.")
         self.fovs = cmd.command_args['fovs']
         self.fov_combo_box.clear()
         self.fov_combo_box.addItems([str(fov) for fov in self.fovs.keys()])

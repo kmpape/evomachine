@@ -33,6 +33,9 @@ class AbstractCamera:
         "Deque to store all errors."
         self.cfg: ConfigCamera = cfg_camera
         "Configuration object for the camera."
+        self._is_initialised: bool = False
+        "Set by initialise(). Query status through is_initialised()."
+
         self._step: int = -1
         "Increments each time an image is taken."
         self._curr_pos: int = 0  # TODO need to initialise with current position ID
@@ -84,9 +87,12 @@ class AbstractCamera:
     def coordinate_is_out_of_bounds(self, coordinate: Union[Dict[str, float], Coordinate]) -> bool:
         raise NotImplementedError()
 
+    def is_initialised(self):
+        return self._is_initialised
+
     def initialise(self):
         self.reset_counter()
-        self._initialise()
+        self._is_initialised = self._initialise()
 
     def check_status(self):
         if len(self.error_container) > 0:
@@ -395,7 +401,7 @@ class AbstractCamera:
     def zero_coordinates(self):
         raise NotImplementedError()
 
-    def _initialise(self) -> None:
+    def _initialise(self) -> bool:
         raise NotImplementedError()
 
     def _move_stage_to_pos(
@@ -487,9 +493,9 @@ class TestCamera(AbstractCamera):
             self.increment_filename_index()
         return True
 
-    def _initialise(self) -> None:
+    def _initialise(self) -> bool:
         logger.info("TestCamera._initialise: initialising TestCamera.")
-        return
+        return True
 
     def _set_filter_wheel(self, filter_type: FilterWheelType):
         logger.info(f"TestCamera._set_filter_wheel={self._current_filter_type}.")
@@ -830,7 +836,7 @@ class EvoCamera(AbstractCamera):
 
         self.initialise()  # Must be called before using EvoCamera
 
-    def _initialise(self) -> None:
+    def _initialise(self) -> bool:
         """ Initialises EvoCamera objects with peripherals. Tests connections and sets is_alive flags. """
         # Tiger box communication
         try:
@@ -867,6 +873,8 @@ class EvoCamera(AbstractCamera):
             )
         self.disable_led()
         self.set_exposure()
+
+        return self._mmc_is_alive and self._tiger_is_alive
 
     def _get_tiger_is_alive(self) -> bool:
         if not self.tiger:
@@ -1057,6 +1065,7 @@ class EvoCamera(AbstractCamera):
 
     def autofocus_unlock(self):
         self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.UNLOCK)
+
     def finalise(self):
         if self._is_multi_threaded:
             self.tiger.stop()

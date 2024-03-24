@@ -241,6 +241,7 @@ class ChannelPlotter(QWidget):
         self.ax.tick_params(axis='both', labelsize=self.FONT_SIZE)
         self.canvas.draw()
 
+    @pyqtSlot(np.ndarray)
     def update_image(self, img: np.ndarray):
         self.img = img
         self.update_plot(0)

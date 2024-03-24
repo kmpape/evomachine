@@ -200,15 +200,23 @@ class EvoGUI(QMainWindow):
         # Main Layout
         main_layout = QGridLayout()
 
-        main_layout.addWidget(self.pos_panel.widget, 0, 0, 2, 5)
-        main_layout.addWidget(self.led_panel.widget, 2, 0, 2, 5)
-        main_layout.addWidget(self.dmd_panel.widget, 4, 0, 2, 5)
-        main_layout.addWidget(self.crisp_panel.widget, 6, 0, 2, 5)
+        r, c = 0, 0
+        main_layout.addWidget(self.pos_panel.widget, r, c, 2, 5)
+        r, c = r+2, c
+        main_layout.addWidget(self.led_panel.widget, r, c, 2, 5)
+        r, c = r+2, c
+        main_layout.addWidget(self.dmd_panel.widget, r, c, 2, 5)
+        r, c = r+2, c
+        main_layout.addWidget(self.crisp_panel.widget, r, c, 2, 5)
 
-        main_layout.addWidget(self.fig_panel.widget, 0, 5, 10, 4)
+        r, c = 0, 5
+        main_layout.addWidget(self.fig_panel.widget, r, c, 10, 4)
 
+        r, c = 0, c+4
         main_layout.addWidget(self.exp_panel.widget, 0, 9, 4, 4)
+        r, c = r+4, c
         main_layout.addWidget(self.fw_panel.widget, 4, 9, 2, 5)
+        r, c = r+2, c
         main_layout.addWidget(self.focus_panel.widget, 6, 9, 3, 5)
 
         central_widget.setLayout(main_layout)

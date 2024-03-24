@@ -52,6 +52,7 @@ class AutomatonCommandType(EvoType):
     PROJECT = auto()
     WAIT = auto()
     STOP = auto()
+    LIVE_MODE = auto()
 
     # The types below are used by the GUI
     FOCUS_DATA = auto()

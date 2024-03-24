@@ -69,7 +69,10 @@ class ExperimentWorker(EvoWorkerTemplate):
                                                             (val > self._stage_limits[key][1])
                                                             for key, val in coordinates.items())
 
-    def update_limits(self, data: Tuple[Coordinate, Coordinate]):
+    def update_limits(self, data: Union[Tuple[Coordinate, Coordinate], Exception]):
+        if isinstance(data, Exception):
+            logger.error("ExperimentWorker.update_limits: received exception. Returning.")
+            return
         logger.info(f"Stage limits: {data}")
         self._stage_limits = {'X': (data[0].x, data[1].x), 'Y': (data[0].y, data[1].y), 'Z': (data[0].z, data[1].z)}
 
@@ -119,6 +122,9 @@ class ExperimentWorker(EvoWorkerTemplate):
             )
 
     def initialise_automaton_image_processors(self, data: Any = None, is_init_all: bool = False):
+        if isinstance(data, Exception):
+            logger.error("ExperimentWorker.initialise_automaton_image_processors: received exception. Returning.")
+            return
         logger.debug("ExperimentWorker.initialise_automaton_image_processors: Requesting initialisation of IP.")
         if not is_init_all:
             self.queue_manager.request(
@@ -135,6 +141,9 @@ class ExperimentWorker(EvoWorkerTemplate):
             )
 
     def initialise_automaton_references(self, data: Any = None, is_init_all: bool = False):
+        if isinstance(data, Exception):
+            logger.error("ExperimentWorker.initialise_automaton_references: received exception. Returning.")
+            return
         logger.debug("ExperimentWorker.initialise_automaton_references: Requesting initialisation of references.")
         if not is_init_all:
             self.queue_manager.request(
@@ -206,11 +215,17 @@ class ExperimentWorker(EvoWorkerTemplate):
         )
 
     def enable_after_init_all(self, data: Any):
+        if isinstance(data, Exception):
+            logger.error("ExperimentWorker.enable_after_init_all: received exception. Returning.")
+            return
         self.signal_enable_button.emit([4, 6, 7])
         self.signal_set_button_color.emit([0, 1, 2, 3], "green")
         self.signal_set_button_color.emit([8], "lightgray")
 
     def enable_disable_next_buttons(self, data: Any, enable: List[int], disable: List[int]):
+        if isinstance(data, Exception):
+            logger.error("ExperimentWorker.enable_disable_next_buttons: received exception. Returning.")
+            return
         self.signal_enable_button.emit(enable)
         self.signal_disable_button.emit(disable)
 
@@ -259,8 +274,14 @@ class ButtonWorker(EvoWorkerTemplate):
         self.queue_manager.request(
             req_str="self.get_strategy_name",
             kwargs_dict={},
-            callback=self.signal_update_strategy_label.emit,
+            callback=self.update_strategy_label_callback,
         )
+
+    def update_strategy_label_callback(self, data: Any):
+        if isinstance(data, Exception):
+            logger.error("ExperimentWorker.update_strategy_label_callback: received exception. Returning.")
+            return
+        self.signal_update_strategy_label.emit(data)
 
     @pyqtSlot(str)
     def _update_strategy_label(self, data: str):
@@ -412,6 +433,9 @@ class ExperimentPanel(EvoPanelTemplate):
         )
 
     def _record_param(self, data, which: Tuple[int, str]):
+        if isinstance(data, Exception):
+            logger.error("ExperimentWorker._record_param: received exception. Returning.")
+            return
         logger.debug("ExperimentPanel._record_param: Recording coordinates.")
         i, from_to = which
         try:
@@ -501,6 +525,10 @@ class ExperimentPanel(EvoPanelTemplate):
         self.stop_button.setEnabled(True)
 
     def _start_acquisition(self, data):
+        if isinstance(data, Exception):
+            logger.error("ExperimentWorker._start_acquisition: received exception. Returning.")
+            self._automaton_is_initialised = False
+            return
         logger.info("ExperimentPanel._start_acquisition: Starting acquisition.")
         self.stop_strategy_event.clear()
         self.start_strategy_event.set()
@@ -525,9 +553,13 @@ class ExperimentPanel(EvoPanelTemplate):
         self.signal_set_button_color.emit([2], "green")
 
     def read_roi_data(self, data: AutomatonCommand):
+        # command_args = {
+        #     'fov_id': fov_id,
+        #     'rotation': rotation,
+        #     'roi_boxes': roi_boxes,
+        # }
         self.signal_set_button_color.emit([3], "green")
-        # FIXME need to initialise FoVs first, seemed to have bugged.
-        # self.roi_data.append(data.command_args)
+        self.roi_data[data.command_args['fov_id']] = {'rotation': data.command_args['rotation']}
 
     def show_focus_curves(self):
         if self.use_autofocus:
@@ -666,6 +698,7 @@ class PositionDialogWorker(EvoWorkerTemplate):
 
 
 class PositionDialog(QDialog):
+    signal_update_orig_img = pyqtSignal(np.ndarray)
     signal_update_rot_img = pyqtSignal(np.ndarray)
     signal_update_override = pyqtSignal(str, float)
     signal_update_active = pyqtSignal(str, float)
@@ -763,6 +796,10 @@ class PositionDialog(QDialog):
             width=6,
             title_prefix="Raw - ",
         )
+        self.signal_update_orig_img.connect(self.orig_plot.update_image)
+        self.thread_orig = EvoGUIThread()
+        self.orig_plot.moveToThread(self.thread_orig)
+        self.thread_orig.start()
         self.rot_data = copy.deepcopy(self.ref_data)
         for i in range(len(self.rot_data)):
             for j in range(self.rot_data[i].shape[0]):
@@ -774,6 +811,10 @@ class PositionDialog(QDialog):
             width=6,
             title_prefix="Rotated - ",
         )
+        self.signal_update_rot_img.connect(self.rot_plot.update_image)
+        self.thread_rot = EvoGUIThread()
+        self.rot_plot.moveToThread(self.thread_rot)
+        self.thread_rot.start()
 
         self.layout = QGridLayout()
         this_row = 0
@@ -804,6 +845,8 @@ class PositionDialog(QDialog):
     def update_display(self):
         self.curr_fov = self.combo_box.currentIndex()
         self.signal_update_fov_id.emit(self.curr_fov)
+        self.signal_update_orig_img.emit(self.orig_data[self.curr_fov])
+        self.signal_update_rot_img.emit(self.rot_data[self.curr_fov])
 
     def update_override(self, param: str):
         logger.debug(f"Updating override for {param}.")
@@ -835,6 +878,9 @@ class PositionDialog(QDialog):
         )
 
     def receive_override_response(self, data: Any, fov_id: int, pos_id: int, param_name: str, param_value: Any):
+        if isinstance(data, Exception):
+            logger.error("PositionDialog.receive_override_response: received exception. Returning.")
+            return
         logger.debug(f"Received override response for {param_name}={param_value} for FoV {fov_id}.")
         if fov_id != self.curr_fov:
             logger.error(f"Received response for FoV {fov_id}, but currently at {self.curr_fov}.")

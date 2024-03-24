@@ -81,7 +81,7 @@ class DMDControl:
         """
         self.error_container: ErrorContainer = ErrorContainer()
         "Deque to store all errors."
-        self._dmd_is_alive: bool = False
+        self._is_initialised: bool = False
         "Flag set in initialise."
         self.s: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         "Socket to connect with C program."
@@ -195,7 +195,7 @@ class DMDControl:
                     try:
                         self._connect_socket()
                         if self._connection_test():
-                            self._dmd_is_alive = True
+                            self._is_initialised = True
                             # self.display_none()
                             logging.info(f"DMD: initialised with size={DMD_WIDTH_HEIGHT}.")
                         if not self._load_calibration_data():
@@ -217,14 +217,17 @@ class DMDControl:
             msg = f"DMDControl.initialise: found {len(monitors)}  monitor(s) (instead of 2). {mon_info}."
             logger.error(msg)
             # FIXME this is allowed for the TestCamera
-            self._dmd_is_alive = True
+            self._is_initialised = True
             self.error_container.add_error(new_error=DMDError(message=msg, error_code=ErrorCode.ERROR_MONITORS))
+
+    def is_initialised(self) -> bool:
+        return self._is_initialised
 
     def finalise(self):
         """
         Closes connection with the C program and the program itself.
         """
-        if not self._dmd_is_alive:
+        if not self._is_initialised:
             logger.warning("DMDControl.finalise: DMD not initialised.")
             return
         # self._output_thread.join()
@@ -232,7 +235,7 @@ class DMDControl:
         time.sleep(0.5)
         if (self._process is not None) and (self._process.poll() is None):
             self._process.terminate()
-        self._dmd_is_alive = False
+        self._is_initialised = False
 
     def display_none(self):
         """
@@ -258,7 +261,7 @@ class DMDControl:
         -------
 
         """
-        if not self._dmd_is_alive:
+        if not self._is_initialised:
             logger.error(f"DMDControl.display_image: DMD not initialised. Try running DMDControl.initialise.")
             return
         if img.shape == DMD_WIDTH_HEIGHT:

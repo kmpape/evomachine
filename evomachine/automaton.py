@@ -68,10 +68,10 @@ class Automaton:
         "Incremented every time a picture is taken."
         self.cam: AbstractCamera = camera
         "Camera object which can be a real camera or a class that reads from the disk."
+        self._mmc_live_mode_is_on: bool = True
+        "Flag for live mode for EvoCamera that uses MMC."
         self._dmd: DMDControl = dmd
         "DMDControl object to project images."
-        self._devices_initialised: bool = False
-        "Set to true after initialise_devices."
         self._pos_processor: List[PositionRT] = []
         "List of Delta objects to process the images."
         self._all_frames_raw: List[np.ndarray] = []
@@ -181,7 +181,7 @@ class Automaton:
         logger.info("Automaton.initialise: starting...")
         
         # Initialise devices
-        if not self._devices_initialised:
+        if not self.devices_is_initialised():
             self.initialise_devices()
 
         # Initialise field of views
@@ -219,14 +219,31 @@ class Automaton:
 
         logger.info(f"Automaton.initialise: initialisation done.")
 
+    def set_cam_live_mode(self, status: bool):
+        if not self.cam.is_initialised():
+            logger.warning(f"Automaton.set_mmc_live_mode: Camera not initialised.")
+            return
+        if not isinstance(self.cam, EvoCamera):
+            logger.warning(f"Automaton.set_mmc_live_mode: Camera is not of type EvoCamera.")
+            return
+        self.cam.studio.live().set_live_mode(False)
+        self._mmc_live_mode_is_on = status
+
     def initialise_devices(self):
         logger.info("Automaton.initialise_devices")
         self.cam.initialise()
         if isinstance(self.cam, EvoCamera):
-            self.cam.studio.live().set_live_mode(False)
-        self.cam.set_exposure(exposure_time=self.cam.cfg.default_exposure_time)
+            if self.cam.is_initialised():
+                self.set_cam_live_mode(False)
+                self.cam.set_exposure(exposure_time=self.cam.cfg.default_exposure_time)
+            else:
+                logger.error("Automaton.initialise_devices: Camera or Tiger not initialised.")
         self._dmd.initialise()
-        self._devices_initialised = True
+        if not self._dmd.is_initialised():
+            logger.error("Automaton.initialise_devices: DMD not initialised.")
+
+    def devices_is_initialised(self) -> bool:
+        return self.cam.is_initialised() and self._dmd.is_initialised()
 
     def initialise_position_processor(
             self,
@@ -403,7 +420,9 @@ class Automaton:
     ):
         if not self._fov_list_is_initialised:
             raise ConfigError("Automaton.initialise_fov_focus: FoV list is not initialised.", ErrorCode.ERROR_CONFIG)
-
+        if not self.devices_is_initialised():
+            raise ConfigError("Automaton.initialise_fov_focus: Devices not initialised.", ErrorCode.ERROR_CONFIG)
+        self.set_cam_live_mode(False)
         self._use_autofocus = use_autofocus
 
 
@@ -451,6 +470,9 @@ class Automaton:
         self._focus_is_initialised = True
 
     def initialise_reference_frames(self):
+        if not self.devices_is_initialised():
+            raise ConfigError("Automaton.initialise_fov_focus: Devices not initialised.", ErrorCode.ERROR_CONFIG)
+        self.set_cam_live_mode(False)
         logger.info(f"Automaton.initialise_reference_frames: "
                     f"Imaging {len(self._fovs.keys())} on {self._channel_to_index.keys()}.")
         for i_fov in self._fovs.keys():
@@ -584,6 +606,9 @@ class Automaton:
             if cmd.command_type == AutomatonCommandType.MOVE:
                 self._move_to_pos(pos_id=cmd.command_args)
 
+            elif cmd.command_type == AutomatonCommandType.LIVE_MODE:
+                self.set_cam_live_mode(cmd.command_args)
+
             elif cmd.command_type == AutomatonCommandType.WAIT:
                 self.sleep(cmd.command_args)
 
@@ -594,6 +619,9 @@ class Automaton:
                 return
 
             elif cmd.command_type == AutomatonCommandType.IMAGE:
+                if self._mmc_live_mode_is_on:
+                    logger.warning("Automaton._process: Camera live mode is on for IMAGE. Disabling.")
+                    self.set_cam_live_mode(False)
                 self._dmd.display_full()
                 if self.cam.get_exposure() != cmd.command_args['exposure_time']:
                     self.cam.set_exposure(exposure_time=cmd.command_args['exposure_time'])
@@ -660,6 +688,9 @@ class Automaton:
             if cmd.command_type == AutomatonCommandType.MOVE:
                 self._move_to_pos(pos_id=cmd.command_args)
 
+            elif cmd.command_type == AutomatonCommandType.LIVE_MODE:
+                self.set_cam_live_mode(cmd.command_args)
+
             elif cmd.command_type == AutomatonCommandType.WAIT:
                 self.sleep(cmd.command_args)  # TODO implement our own function that reacts to stop event
 
@@ -670,6 +701,9 @@ class Automaton:
                 return
 
             elif cmd.command_type == AutomatonCommandType.IMAGE:
+                if self._mmc_live_mode_is_on:
+                    logger.warning("Automaton._finalise_process: Camera live mode is on for IMAGE. Disabling.")
+                    self.set_cam_live_mode(False)
                 self._dmd.display_full()
                 if self.cam.get_exposure() != cmd.command_args['exposure_time']:
                     self.cam.set_exposure(exposure_time=cmd.command_args['exposure_time'])
@@ -714,7 +748,7 @@ class Automaton:
         while not self.has_shutdown():
 
             logger.info("Automaton.run: Starting GUI loop.")
-            if not self._devices_initialised:
+            if not self.devices_is_initialised():
                 self.initialise_devices()
             has_stopped = True
             while not self.strategy_has_started():
@@ -825,7 +859,7 @@ class Automaton:
         return self._strategy.name()
 
     def is_initialised(self):
-        return self._strategy_is_initialised and self._reference_frames_is_initialised \
+        return self.devices_is_initialised() and self._strategy_is_initialised and self._reference_frames_is_initialised \
             and self._fov_list_is_initialised and all(self._position_processors_is_initialised)
 
     def reset(self):
@@ -904,12 +938,15 @@ class Automaton:
             cfg: DMDCalibConfigType,
             filename: Optional[str] = None
     ) -> List[Tuple[Tuple[int, int], Tuple[int, int]]]:
+        if not self.devices_is_initialised():
+            logging.error("Automaton.dmd_calibrate: Devices not initialised. Returning.")
+            return []
         if filename is None:
             filename = str(EVOMACHINE_DIR / "dmd_calibration_data.pkl")
         logger.info(f"Starting DMD calibration with config {cfg} and filename {filename}.")
         self.cam.set_exposure(exposure_time=cfg.exposure)
         if isinstance(self.cam, EvoCamera):
-            self.cam.studio.live().set_live_mode(False)
+            self.set_cam_live_mode(False)
 
         col_range = np.arange(cfg.start_col, cfg.end_col, cfg.step)
         row_range = np.arange(cfg.start_row, cfg.end_row, cfg.step)
