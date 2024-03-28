@@ -85,10 +85,20 @@ class FocusAlgorithmType(EvoType):
 
 class LEDType(EvoType):
     NO_LED = -1
-    LED_405_NM = 0
+    # LED_405_NM = 0
+    # LED_450_NM = 1
+    # LED_505_NM = 2
+    # LED_538_NM = 3
+    LED_385_NM = 0
     LED_450_NM = 1
-    LED_505_NM = 2
-    LED_538_NM = 3
+    LED_515_NM = 2
+    LED_560_NM = 3
+    LED_625_NM = 4
+
+    # OLD LEDs
+    LED_405_NM = 5
+    LED_505_NM = 6
+    LED_538_NM = 7
 
 
 class FilterWheelType(EvoType):

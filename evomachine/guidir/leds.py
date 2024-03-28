@@ -25,9 +25,11 @@ class LEDWorker(EvoWorkerTemplate):
     def __init__(
             self,
             buttons: Dict[LEDType, QPushButton],
+            queue_manager: QueueManager,
             parent: Optional[QObject] = None,
     ):
         super().__init__(parent)
+        self.queue_manager: QueueManager = queue_manager
         self.buttons = buttons
 
     @pyqtSlot(LEDType)
@@ -80,7 +82,7 @@ class LEDPanel(EvoPanelTemplate):
             stylesheet="QPushButton {background-color: red;}",
         ) for led in self.led_channels}
         self.led_textinputs = {led: self.make_lineedit(
-            text="100",
+            text="29",
             func=self.set_led,
             param=led,
         ) for led in self.led_channels}
@@ -99,7 +101,10 @@ class LEDPanel(EvoPanelTemplate):
         self.widget = QWidget()
         self.widget.setLayout(self.layout)
 
-        self.worker = LEDWorker(buttons=self.led_buttons)
+        self.worker = LEDWorker(
+            buttons=self.led_buttons,
+            queue_manager=self.queue_manager,
+        )
         self.signal_set_led.connect(self.worker.set_led_states)
         self.workers.append(self.worker)
         thread = EvoGUIThread()

@@ -17,7 +17,10 @@ from evomachine.evotypes import FilterWheelType, FocusAlgorithmType, LEDType, Im
 EVOMACHINE_DIR: Path = Path(__file__).parent
 
 # Switch between pygame dmd.py and dmd_socket.py
-USE_DMD_SOCKET: bool = False
+USE_DMD_SOCKET: bool = True
+
+# Switch between ASI Tiger LEDs and SyncBoard
+USE_SYNC_BOARD: bool = True
 
 # EVO_FORMATTER = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s - %(message)s\n<---')
 EVO_FORMATTER = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
@@ -341,13 +344,21 @@ class ConfigCamera:
 
 class ConfigCameraFactory:
     @staticmethod
+    def get_available_leds() -> List[LEDType]:
+        if USE_SYNC_BOARD:
+            return [LEDType.NO_LED, LEDType.LED_385_NM, LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_560_NM,
+                    LEDType.LED_625_NM]
+        else:
+            return [LEDType.NO_LED, LEDType.LED_405_NM, LEDType.LED_450_NM, LEDType.LED_505_NM, LEDType.LED_538_NM]
+
+    @staticmethod
     def default_oil_config(path_to_save: Optional[Path] = None) -> ConfigCamera:
         return ConfigCamera(
             objective=ObjectiveConfigTypeFactory.default_oil(),
             image=ImageConfigTypeFactory.pv_cam(),
             focus=ConfigFocusFactory.default_config(),
             autofocus=ConfigCRISPFactory.default_config(),
-            leds=[LEDType.NO_LED, LEDType.LED_405_NM, LEDType.LED_450_NM, LEDType.LED_505_NM, LEDType.LED_538_NM],
+            leds=ConfigCameraFactory.get_available_leds(),
             filters=[FilterWheelType.FILTER, FilterWheelType.BLOCKING, FilterWheelType.NO_FILTER],
             path_to_save=EVOMACHINE_DIR.parent / "images/DEFAULT" if path_to_save is None else path_to_save,
         )
@@ -359,7 +370,7 @@ class ConfigCameraFactory:
             image=ImageConfigTypeFactory.pv_cam(),
             focus=ConfigFocusFactory.default_config(),
             autofocus=ConfigCRISPFactory.default_config(),
-            leds=[LEDType.NO_LED, LEDType.LED_405_NM, LEDType.LED_450_NM, LEDType.LED_505_NM, LEDType.LED_538_NM],
+            leds=ConfigCameraFactory.get_available_leds(),
             filters=[FilterWheelType.FILTER, FilterWheelType.BLOCKING, FilterWheelType.NO_FILTER],
             path_to_save=EVOMACHINE_DIR.parent / "images/DEFAULT" if path_to_save is None else path_to_save,
         )

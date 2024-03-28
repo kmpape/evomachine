@@ -40,6 +40,9 @@ class ErrorCode(Enum):
     ERROR_TRACK_NO_INPUTS = auto()
     ERROR_TRACK_NO_PREV_STATE = auto()
 
+    # SyncBoard errors
+    ERROR_SYNC_BOARD = auto()
+
     # Strategy errors
     ERROR_STRATEGY = auto()
 
@@ -102,6 +105,14 @@ class StageError(EvoMachineError):
 
 
 class TigerError(EvoMachineError):
+    def __init__(self, message: str, error_code: ErrorCode):
+        super().__init__(message=message, error_code=error_code)
+
+    def __reduce__(self):
+        return super().__reduce__()
+
+
+class SyncBoardError(EvoMachineError):
     def __init__(self, message: str, error_code: ErrorCode):
         super().__init__(message=message, error_code=error_code)
 

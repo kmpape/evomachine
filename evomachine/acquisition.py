@@ -12,10 +12,12 @@ import skimage
 from asitiger.command import CRISPState
 import asitiger.tigercontroller
 
+from syncboard.syncboardcontroller import SyncBoardController
+
 from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, get_logger
 from evomachine.coordinates import Coordinate
 from evomachine.exceptions import CameraError, ConfigError, ErrorCode, ErrorContainer, \
-    EvoMachineError, StageError, TigerError
+    EvoMachineError, StageError, TigerError, SyncBoardError
 from evomachine.software_focus import get_focus_score
 from evomachine.utils import EvoCroppingBox
 from evomachine.evotypes import FilterWheelType, FocusAlgorithmType, ImageConfigType, LEDType
@@ -834,7 +836,7 @@ class EvoCamera(AbstractCamera):
         self._mmc_is_alive: bool = False
         "Flag set in _initialise."
 
-        self.initialise()  # Must be called before using EvoCamera
+        # self.initialise()  # Must be called before using EvoCamera
 
     def _initialise(self) -> bool:
         """ Initialises EvoCamera objects with peripherals. Tests connections and sets is_alive flags. """
@@ -936,9 +938,9 @@ class EvoCamera(AbstractCamera):
         if not self._mmc_is_alive:
             logger.error(msg=f"EvoCamera._take_frame: MMC is not alive. Check Camera and Micro-Manager.")
             return None
+        curr_channel = self.current_channel
         if i_chan is not None:
             self._last_frame_channel = i_chan
-            curr_channel = self.current_channel
             self.set_led(i_chan=i_chan, brightness=brightness, block=block)
         try:
             self.mmc.snap_image()
@@ -1279,7 +1281,7 @@ class EvoCamera(AbstractCamera):
                 return
         self._focus_old_channel = self.current_channel
         self.set_exposure(exposure_time=int(self._cfg_focus.exposure_time))
-        self.studio.live().set_live_mode(False)
+        self.disable_live_mode()
         self.focus_scores = np.zeros(len(self.focus_Z_coords))
         self.focus_stack = np.zeros(shape=(*self.cfg.image.shape, len(self.focus_Z_coords)), dtype=np.float64)
         self.disable_led()
@@ -1314,7 +1316,140 @@ class EvoCamera(AbstractCamera):
         self.tiger.zero()
 
 
+class EvoCamerav2(EvoCamera):
+    """
+    EvoMachine acquisition class.
 
+    Orientation is "Left on camera == left on stage":
 
+    -> Camera view:
+        __________________________________
+        | 111111211111111111111111111111 |
+        |       2                        |
+        |       2                        |
+        |       2                        |
+        |       2                        |
+        |_______2________________________|
 
+    -> Stage view (incubator door at bottom):
 
+        _____________BACK_________________
+        | 111111211111111111111111111111 |
+        |       2                        |
+        |       2                        |
+        |       2                        |
+        |       2                        |
+        |_______2____DOOR________________|
+
+    """
+    def __init__(
+            self,
+            cfg_camera: ConfigCamera,
+            tiger_port: str = "/dev/ttyUSB0",
+            syncboard_port: str = "/dev/ttyACM1",
+    ):
+        super().__init__(cfg_camera=cfg_camera, tiger_port=tiger_port)
+        self.syncboard: Optional[SyncBoardController] = None
+        self._syncboard_port: str = syncboard_port
+        self._syncboard_is_alive: bool = False
+        self._led_channel_keys: Dict[LEDType, Union[int, None]] = {
+            LEDType.LED_385_NM: 7,
+            LEDType.LED_450_NM: 1,
+            LEDType.LED_515_NM: 2,
+            LEDType.LED_560_NM: 3,
+            LEDType.LED_625_NM: 4,
+            LEDType.NO_LED: None,
+        }
+
+    def _initialise(self) -> bool:
+        """ Initialises EvoCamera objects with peripherals. Tests connections and sets is_alive flags. """
+        # Tiger box communication
+        try:
+            if self._is_multi_threaded:
+                self.tiger: asitiger.tigerthread.TigerThread = \
+                    asitiger.tigerthread.TigerThread.from_serial_port(port=self._tiger_port)
+            else:
+                self.tiger: asitiger.tigercontroller.TigerController = \
+                    asitiger.tigercontroller.TigerController.from_serial_port(port=self._tiger_port)
+        except Exception as e:
+            self._tiger_is_alive = False
+            logger.warning(f"EvoCamera._initialise: Error connecting to Tiger on port {self._tiger_port}: {e}.")
+            self.error_container.add_error(
+                new_error=TigerError(message=str(e), error_code=ErrorCode.ERROR_TIGER_SERIAL_CONNECTION)
+            )
+        if not self._get_tiger_is_alive():
+            self._tiger_is_alive = False
+            logger.warning("EvoCamera._initialise: Tiger is not alive.")
+            self.error_container.add_error(
+                new_error=TigerError(message="Tiger is not alive.", error_code=ErrorCode.ERROR_TIGER_NOT_ALIVE)
+            )
+        else:
+            self._tiger_is_alive = True
+        # Camera communication
+        try:
+            self.mmc = Core()
+            self.studio = Studio()
+            self._mmc_is_alive = True
+        except Exception as e:
+            self._mmc_is_alive = False
+            logger.warning(f"EvoCamera._initialise: Error connecting to MMC: {e}.")
+            self.error_container.add_error(
+                new_error=CameraError(message=str(e), error_code=ErrorCode.ERROR_MMC_NOT_ALIVE)
+            )
+        # Syncboard communication
+        try:
+            self.syncboard: SyncBoardController = SyncBoardController.from_serial_port(port=self._syncboard_port)
+        except Exception as e:
+            self._syncboard_is_alive = False
+            logger.warning(f"EvoCamera._initialise: Error connecting to SyncBoard on port {self._syncboard_port}: {e}.")
+            self.error_container.add_error(
+                new_error=SyncBoardError(message=str(e), error_code=ErrorCode.ERROR_SYNC_BOARD)
+            )
+        if not self._get_syncboard_is_alive():
+            self._syncboard_is_alive = False
+            logger.warning("EvoCamera._initialise: SyncBoard is not alive.")
+            self.error_container.add_error(
+                new_error=SyncBoardError(message="SyncBoard is not alive.", error_code=ErrorCode.ERROR_SYNC_BOARD)
+            )
+        else:
+            self._syncboard_is_alive = True
+
+        self.disable_led()
+        self.set_exposure()
+
+        return self._mmc_is_alive and self._tiger_is_alive and self._syncboard_is_alive
+
+    def set_led(self, i_chan: LEDType, brightness: int = 100, block: bool = False):
+        if i_chan not in self._led_channel_keys.keys():
+            logger.error(msg=f"EvoCamera._set_channel: i_chan={i_chan} not in channels={self._led_channel_keys.keys()}.")
+            return
+        if self._syncboard_is_alive:
+            if i_chan == LEDType.NO_LED:
+                self.syncboard.disable_led()
+                return
+
+            if (0 < brightness <= 100) or (i_chan != LEDType.NO_LED):
+                is_good_brightness_value = True
+            else:
+                is_good_brightness_value = False
+            if is_good_brightness_value:
+                self.syncboard.enable_led(led_id=self._led_channel_keys[i_chan], intensity=float(brightness)/100.0)
+                self.current_channel = i_chan
+                self._current_led_brightness = 0 if i_chan == LEDType.NO_LED else brightness
+            else:
+                logger.error(msg=f"Cannot set brightness: {brightness} is out of range [0, 100]. LED not set.")
+        else:
+            logger.error(msg=f"EvoCamera._set_channel: SyncBoard is not alive.")
+
+    def finalise(self):
+        if self._is_multi_threaded:
+            self.tiger.stop()
+            self.tiger.join()
+        self.syncboard.finalise()
+        self._tiger_is_alive = False
+        self._syncboard_is_alive = False
+
+    def _get_syncboard_is_alive(self):
+        if not self.syncboard:
+            return False
+        return self._syncboard_is_alive

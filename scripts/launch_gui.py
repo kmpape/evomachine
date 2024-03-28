@@ -10,11 +10,12 @@ from PyQt5.QtGui import QIcon
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger')
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/de-lta-rt')
+sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/sync_board')
 
-from evomachine.acquisition import TestCamera, EvoCamera
+from evomachine.acquisition import TestCamera, EvoCamera, EvoCamerav2
 from evomachine.automaton import Automaton
 from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, ConfigImageProcessorFactory, \
-    EVOMACHINE_DIR, USE_DMD_SOCKET
+    EVOMACHINE_DIR, USE_DMD_SOCKET, USE_SYNC_BOARD
 if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMDControl
 else:
@@ -45,7 +46,10 @@ def create_automaton_process(
         automaton_to_gui_queue: Queue,
         strategy: AbstractStrategy,
 ):
-    cam = EvoCamera(cfg_camera=camera_config)
+    if USE_SYNC_BOARD:
+        cam = EvoCamerav2(cfg_camera=camera_config)
+    else:
+        cam = EvoCamera(cfg_camera=camera_config)
     pygame.init()
     dmd = DMDControl()
     automaton = Automaton(
@@ -69,7 +73,7 @@ def create_automaton_process(
 if __name__ == '__main__':
     # Provide strategy that will be loaded by GUI
     save_path: str = "/media/hslab/Data/ImageData/DEFAULT"
-    save_path: str = "/media/hslab/Data/ImageData/Idris/2024-03-22"
+    # save_path: str = "/media/hslab/Data/ImageData/Idris/2024-03-22"
     strategy: AbstractStrategy = BasicStrategy(save_path=save_path)
 
     # Create configurations (modify if needed)
