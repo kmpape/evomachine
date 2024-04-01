@@ -15,8 +15,15 @@ import delta.utils
 pd.set_option('display.max_columns', None)
 pd.set_option('display.expand_frame_repr', False)
 
+# Data Class to hold rotation parameters
+@dataclass
+class RotationParameters:
+    cutoff_frequency_ratio: float = 0.04
+    min_exposure: float = 0.05
+    max_exposure: float = 0.1
+    hough_threshold: float = 0.7
 
-def rotation_correction(img: np.ndarray) -> float:
+def rotation_correction(img: np.ndarray, params: RotationParameters = RotationParameters()) -> float:
     """
 
     Parameters
@@ -30,14 +37,14 @@ def rotation_correction(img: np.ndarray) -> float:
         Returns the correction angle in degrees. Apply to image e.g. via skimage.transform.rotate(img, angle, resize=True).
     """
     img = skimage.transform.resize(img, (img.shape[0] // 4, img.shape[1] // 4))
-    rs = skimage.filters.butterworth(img, cutoff_frequency_ratio=0.02, high_pass=False)
+    rs = skimage.filters.butterworth(img, cutoff_frequency_ratio=params.cutoff_frequency_ratio, high_pass=False)
     rs = skimage.exposure.equalize_hist(rs)
     rs = skimage.filters.frangi(rs, sigmas=(4,))
     rs = skimage.util.crop(rs, 100)
     rs = skimage.exposure.rescale_intensity(rs, out_range=(0, 1))
-    rs = (rs > 0.1) & (rs < 0.3)
+    rs = (rs > params.min_exposure) & (rs < params.max_exposure)
     hspace, angles, distances = skimage.transform.hough_line(rs)
-    _, angles, distances = skimage.transform.hough_line_peaks(hspace, angles, distances, threshold=0.7*np.max(hspace))
+    _, angles, distances = skimage.transform.hough_line_peaks(hspace, angles, distances, threshold=params.hough_threshold*np.max(hspace))
     bin_edges = np.linspace(-np.pi/2, np.pi/2, 200)
     bins = bin_edges[:-1] + (bin_edges[1] - bin_edges[0]) / 2
     hist, _ = np.histogram(angles, bins=bin_edges)
