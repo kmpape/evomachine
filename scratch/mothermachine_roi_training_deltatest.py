@@ -26,17 +26,12 @@ import delta.utils as utils
 
 # Load config
 config = DEFAULT_CONFIG_MOTHERMACHINE
-config.model_file_rois
-print(f"Original target_size_seg: {config.target_size_seg}")
-print(f"Original target_size_rois: {config.target_size_rois}")
-config.target_size_rois = (3200, 3200)
-print(f"New target_size_rois: {config.target_size_rois}")
-savefile = EVOMACHINE_DIR.parent / "delta_models/evo_roi_v0.hdf5"
+savefile = EVOMACHINE_DIR.parent / "delta_models/delta_roi_test.hdf5"
+standard_model = "/home/lady5906/.cache/delta/models/unet_momachambers_seg.hdf5"
 epochs = 3
 steps_per_epoch = 30
 patience = 50
-# training_set_delta = config.training_set_path("rois")
-training_set = "/home/lady5906/workspace_python/chambers/ImageData/roi_data_v2_LED450NM"
+training_set = "/home/lady5906/workspace_python/chambers/ImageData/deltatest"
 
 # Data generator parameters:
 data_gen_args = dict(
@@ -65,7 +60,7 @@ ds_train, ds_val = load_training_dataset_seg(
 )
 
 # Define model:
-model = unet_seg(input_size=config.target_size_rois + (1,))
+model = unet_seg(input_size=config.target_size_rois + (1,), pretrained_weights=standard_model)
 model.summary()
 
 # Callbacks:
