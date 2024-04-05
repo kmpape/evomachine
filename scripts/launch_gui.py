@@ -3,14 +3,13 @@ from multiprocessing import Event, Lock, Process, Queue
 from pathlib import Path
 import sys
 import threading
-import pygame
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QIcon
 
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger')
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/de-lta-rt')
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/sync_board')
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'asitiger'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'de-lta-rt'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'sync_board'))
 
 from evomachine.acquisition import TestCamera, EvoCamera, EvoCamerav2
 from evomachine.automaton import Automaton
@@ -20,19 +19,13 @@ if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMDControl
 else:
     from evomachine.dmd import DMDControl
+    import pygame
 
 from evomachine.guidir.newgui import EvoGUI
 from evomachine.guidir.queuemanager import QueueManager
 from evomachine.strategy import AbstractStrategy, BasicStrategy   # TODO add dropdown in GUI
 from strategies.strategy_2024_03_07 import JessStrategy
 
-# TODO remove test code below
-# from evomachine.evotypes import LEDType
-# camera_config = ConfigCameraFactory.default_air_config()
-# cam = EvoCamera(cfg_camera=camera_config)
-# cam.set_led(i_chan=LEDType.LED_450_NM, brightness=100)
-# pygame.init()
-# dmd = DMDControl()
 
 def create_automaton_process(
         camera_config: ConfigCamera,
@@ -50,7 +43,8 @@ def create_automaton_process(
         cam = EvoCamerav2(cfg_camera=camera_config)
     else:
         cam = EvoCamera(cfg_camera=camera_config)
-    pygame.init()
+    if not USE_DMD_SOCKET:
+        pygame.init()
     dmd = DMDControl()
     automaton = Automaton(
         camera=cam,
@@ -73,7 +67,13 @@ def create_automaton_process(
 if __name__ == '__main__':
     # Provide strategy that will be loaded by GUI
     save_path: str = "/media/hslab/Data/ImageData/DEFAULT"
-    # save_path: str = "/media/hslab/Data/ImageData/Idris/2024-03-22"
+    if not os.path.exists(save_path):
+        current_folder = os.path.dirname(os.path.abspath(__file__))
+        save_folder = os.path.join(current_folder, "DEFAULT")
+        os.makedirs(save_folder, exist_ok=True)
+        save_path = os.path.join(save_folder, "filename.ext")
+
+    # Provide strategy that will be loaded by GUI
     strategy: AbstractStrategy = BasicStrategy(save_path=save_path)
 
     # Create configurations (modify if needed)
