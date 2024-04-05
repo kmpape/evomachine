@@ -69,9 +69,8 @@ if __name__ == '__main__':
     save_path: str = "/media/hslab/Data/ImageData/DEFAULT"
     if not os.path.exists(save_path):
         current_folder = os.path.dirname(os.path.abspath(__file__))
-        save_folder = os.path.join(current_folder, "DEFAULT")
-        os.makedirs(save_folder, exist_ok=True)
-        save_path = os.path.join(save_folder, "filename.ext")
+        save_path = os.path.join(current_folder, "DEFAULT")
+        os.makedirs(save_path, exist_ok=True)
 
     # Provide strategy that will be loaded by GUI
     strategy: AbstractStrategy = BasicStrategy(save_path=save_path)
