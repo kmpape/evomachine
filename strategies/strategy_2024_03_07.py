@@ -1,19 +1,18 @@
-from abc import ABC, abstractmethod
 from datetime import datetime
-import inspect
 import numpy as np
 from pathlib import Path
 import pickle
-import sys
 import threading
 from typing import Dict, List, Tuple, Type, Union
 
-from evomachine.commands import AutomatonCommand, CommandFactory
-from evomachine.config import EVOMACHINE_DIR, get_logger, ConfigCameraFactory, ConfigImageProcessorFactory
-from evomachine.coordinates import Coordinate
-from evomachine.dmd import DMD_WIDTH_HEIGHT
-from evomachine.exceptions import ErrorCode, EvoMachineError, StrategyError
-from evomachine.evotypes import AutomatonCommandType, LEDType
+from evomachine.commands import AutomatonCommand
+from evomachine.config import get_logger, ConfigCameraFactory, ConfigImageProcessorFactory, USE_DMD_SOCKET
+if USE_DMD_SOCKET:
+    from evomachine.dmd_socket import DMD_WIDTH_HEIGHT
+else:
+    from evomachine.dmd import DMD_WIDTH_HEIGHT
+from evomachine.exceptions import EvoMachineError
+from evomachine.evotypes import LEDType
 from evomachine.strategy import AbstractStrategy
 
 

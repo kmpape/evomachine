@@ -224,8 +224,12 @@ class EvoGUI(QMainWindow):
         self.setStyleSheet(EVO_STYLE)
 
     def closeEvent(self, event):
-        result = QMessageBox.question(self, "Confirm Exit...", "Are you sure you want to exit ?",
-                                      QMessageBox.Yes | QMessageBox.No)
+        result = QMessageBox.question(
+            self,
+            "Confirm Exit...",
+            "Are you sure you want to exit?\nShutting down will take about 5s, so don't panic on the titanic!",
+            QMessageBox.Yes | QMessageBox.No,
+        )
         event.ignore()
 
         if result == QMessageBox.Yes:
