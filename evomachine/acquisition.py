@@ -1069,6 +1069,7 @@ class EvoCamera(AbstractCamera):
         self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.UNLOCK)
 
     def finalise(self):
+        logger.info(f"EvoCamera.finalise: Finalising EvoCamera.")
         if self._is_multi_threaded:
             self.tiger.stop()
             self.tiger.join()
@@ -1396,15 +1397,37 @@ class EvoCamerav2(EvoCamera):
             self.error_container.add_error(
                 new_error=CameraError(message=str(e), error_code=ErrorCode.ERROR_MMC_NOT_ALIVE)
             )
-        # Syncboard communication
+        # SyncBoard communication
         try:
             self.syncboard: SyncBoardController = SyncBoardController.from_serial_port(port=self._syncboard_port)
+            self.syncboard.initialise()
+            if not self.syncboard.is_initialised():
+                raise ConfigError("EvoCamera._initialise: Unable to initialise SyncBoard.")
+            self._syncboard_is_alive = True
         except Exception as e:
             self._syncboard_is_alive = False
             logger.warning(f"EvoCamera._initialise: Error connecting to SyncBoard on port {self._syncboard_port}: {e}.")
             self.error_container.add_error(
                 new_error=SyncBoardError(message=str(e), error_code=ErrorCode.ERROR_SYNC_BOARD)
             )
+        if ('ttyACM1' in self._syncboard_port) or ('ttyACM0' in self._syncboard_port):
+            self._syncboard_port = self._syncboard_port.replace('1', '0') if 'ttyACM1' in self._syncboard_port \
+                else self._syncboard_port.replace('1', '0')
+            logger.warning(f"EvoCamera._initialise: Re-trying on port {self._syncboard_port}.")
+            try:
+                self.syncboard: SyncBoardController = SyncBoardController.from_serial_port(port=self._syncboard_port)
+                self.syncboard.initialise()
+                if not self.syncboard.is_initialised():
+                    raise ConfigError("EvoCamera._initialise: Unable to initialise SyncBoard.")
+                self._syncboard_is_alive = True
+                logger.info(f"EvoCamera._initialise: Connected to SyncBoard on port {self._syncboard_port}.")
+            except Exception as e:
+                self._syncboard_is_alive = False
+                logger.warning(
+                    f"EvoCamera._initialise: Error connecting to SyncBoard on port {self._syncboard_port}: {e}.")
+                self.error_container.add_error(
+                    new_error=SyncBoardError(message=str(e), error_code=ErrorCode.ERROR_SYNC_BOARD)
+                )
         if not self._get_syncboard_is_alive():
             self._syncboard_is_alive = False
             logger.warning("EvoCamera._initialise: SyncBoard is not alive.")
@@ -1442,10 +1465,12 @@ class EvoCamerav2(EvoCamera):
             logger.error(msg=f"EvoCamera._set_channel: SyncBoard is not alive.")
 
     def finalise(self):
+        logger.warning("Shutting down camera, ASI tiger, and sync board.")
+        self.syncboard.finalise()
         if self._is_multi_threaded:
             self.tiger.stop()
             self.tiger.join()
-        self.syncboard.finalise()
+
         self._tiger_is_alive = False
         self._syncboard_is_alive = False
 

@@ -235,6 +235,7 @@ class EvoGUI(QMainWindow):
             self.stop_strategy_event.set()
             self.start_strategy_event.set()
             self.shutdown_event.set()
+            time.sleep(5)  # This is needed, otherwise, peripherals are not shut down properly
             logger.debug("closing threads")
             for panel in self.panels:
                 panel.close_threads()

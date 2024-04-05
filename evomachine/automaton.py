@@ -790,8 +790,10 @@ class Automaton:
             if self.is_initialised():
                 logger.info("Automaton.run: finalising strategy.")
                 self._finalise_process()
-        logger.info("Automaton.run: shutting down.")
+        logger.info("Automaton.run: Shutting down.")
         self._dmd.finalise()
+        self.cam.finalise()
+        time.sleep(2)
 
     def set_strategy(self, strategy: AbstractStrategy):
         self._strategy = strategy

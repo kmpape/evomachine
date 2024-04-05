@@ -24,7 +24,8 @@ MAX_BYTE_SIZE = 65482
 NUM_CHUNKS = 97
 CHUNK_ROWS = int(DMD_WIDTH_HEIGHT[0] / NUM_CHUNKS)
 ARR_TYPE = np.uint8
-EM_DMD_PROGRAM_PATH = EVOMACHINE_DIR.parent.parent / "em_dmd_window/Release/evomachine_dmd_window"
+EM_DMD_PROGRAM_PATH = EVOMACHINE_DIR.resolve().parent.parent / "em_dmd_window/Release/evomachine_dmd_window"
+# /home/hslab/workspace_python/evomachine_v0/evomachine/scripts/../evomachine.
 # TODO make test version that opens on the same screen
 
 
@@ -126,7 +127,7 @@ class DMDControl:
         def read_output(pipe):
             for line in iter(pipe.readline, b''):
                 print(line.decode('utf-8').strip())
-        self._process = subprocess.Popen([str(EM_DMD_PROGRAM_PATH)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self._process = subprocess.Popen([str(EM_DMD_PROGRAM_PATH.resolve())], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         time.sleep(1)
         # self._output_thread = Thread(target=read_output, args=(self._process.stdout,), daemon=True)
         # self._output_thread.start()
@@ -197,8 +198,7 @@ class DMDControl:
                         self._connect_socket()
                         if self._connection_test():
                             self._is_initialised = True
-                            # self.display_none()
-                            logging.info(f"DMD: initialised with size={DMD_WIDTH_HEIGHT}.")
+                            logger.info(f"DMD: initialised with size={DMD_WIDTH_HEIGHT}.")
                         if not self._load_calibration_data():
                             logger.info("DMDControl.initialise: no calibration data loaded.")
                     except ConnectionError as e:

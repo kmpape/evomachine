@@ -65,6 +65,8 @@ def create_automaton_process(
 
 
 if __name__ == '__main__':
+    print(f"Launching evomachine GUI from {EVOMACHINE_DIR}.")
+
     # Provide strategy that will be loaded by GUI
     save_path: str = "/media/hslab/Data/ImageData/DEFAULT"
     if not os.path.exists(save_path):
