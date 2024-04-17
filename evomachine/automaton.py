@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import delta
 from delta.config import Config
+from delta.rt import PositionRT
 
 from evomachine.acquisition import AbstractCamera, EvoCamera
 from evomachine.commands import AutomatonCommand, CommandFactory
@@ -24,7 +25,7 @@ if USE_DMD_SOCKET:
 else:
     from evomachine.dmd import DMDControl
 from evomachine.exceptions import ErrorCode, ErrorContainer, ConfigError
-from evomachine.positionrt import PositionRT
+# from evomachine.positionrt import PositionRT
 from evomachine.strategy import AbstractStrategy
 from evomachine.utils import EvoCroppingBox, normalise_frame, rotation_correction
 from evomachine.evotypes import AutomatonCommandType, DMDCalibConfigType, DMDDirType, ImageConfigType, \
