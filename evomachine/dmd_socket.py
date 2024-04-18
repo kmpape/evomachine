@@ -33,7 +33,7 @@ class DMDControl:
     DEFAULT_LINE_WIDTH: int = 5
     "Line width used for calibration and displaying lines. Use odd values."
 
-    def __init__(self):
+    def __init__(self, debug_mode: bool = False):
         """
         Class for communicating with the DMD. After calling initialise(), communicate with the DMD using following
         functions:
@@ -99,6 +99,10 @@ class DMDControl:
         "Path to calibration file."
         self._homography_mat: Optional[np.ndarray] = None
         "Homography matrix for mapping image to DMD coordinates."
+        self.debug_mode: bool = debug_mode
+        "Flag to set test environment that does not use the actual DMD window."
+        if self.debug_mode:
+            logger.warning(f"DMDControl: debug mode is ON.")
 
     def _load_calibration_data(self, filepath: Optional[Path] = None) -> bool:
         if filepath is None:
@@ -124,6 +128,8 @@ class DMDControl:
         return True
 
     def _launch_dmd_window(self):
+        if self.debug_mode:
+            return
         def read_output(pipe):
             for line in iter(pipe.readline, b''):
                 print(line.decode('utf-8').strip())
@@ -141,6 +147,8 @@ class DMDControl:
         ----------
         img: np.ndarray     Image must be of ARR_TYPE and of size DMD_WIDTH_HEIGHT.
         """
+        if self.debug_mode:
+            return
         self.s.sendall(img.transpose().tobytes())
 
     def _connect_socket(self):
@@ -148,6 +156,8 @@ class DMDControl:
         This function opens a socket. Note that after calling s.close(), e.g. after a restart, re-opening a socket throws
         an error. The error is therefore caught once.
         """
+        if self.debug_mode:
+            return
         try:
             self.s.connect((HOST, PORT))
         except OSError as e:
@@ -159,6 +169,8 @@ class DMDControl:
         """
         Hard-coded enumeration test required after launching the C program.
         """
+        if self.debug_mode:
+            return
         try:
             test_arr = np.zeros(DMD_WIDTH_HEIGHT, dtype=np.uint8)  # ROW MAJOR FORMAT
             for i in range(DMD_WIDTH_HEIGHT[0]):
@@ -177,6 +189,10 @@ class DMDControl:
         return int(np.round(point_dmd[0][0][1])), int(np.round(point_dmd[0][0][0]))
 
     def initialise(self, is_test: bool = False):
+        logger.info(f"DMDControl.initialise: initialising DMD (debug_mode={self.debug_mode})")
+        if self.debug_mode:
+            self._is_initialised = True
+            return
         try:
             self._launch_dmd_window()
         except Exception as e:
@@ -228,9 +244,10 @@ class DMDControl:
         """
         Closes connection with the C program and the program itself.
         """
-        if not self._is_initialised:
-            logger.warning("DMDControl.finalise: DMD not initialised.")
+        if self.debug_mode:
             return
+        if not self._is_initialised:
+            logger.warning("DMDControl.finalise: DMD not initialised. Attempting to close connection anyway.")
         # self._output_thread.join()
         self.s.close()
         time.sleep(0.5)
@@ -288,6 +305,28 @@ class DMDControl:
             return max(0, at_pos+1-int(line_width/2)), min(length, at_pos+int(line_width/2))
         else:
             return max(0, at_pos-int(line_width/2)), min(length, at_pos+int(line_width/2))
+
+    def display_checkerboard(
+            self,
+            square_size: int | None = None,
+    ):
+        """
+        Display a checkerboard with squares of size square_size.
+
+        Parameters
+        ----------
+        square_size: int             Thickness of line (see _make_half_line_width)
+
+        """
+        if not square_size:
+            square_size = DMDControl.DEFAULT_LINE_WIDTH
+        img = self.get_zero_array()
+        for i in range(0, img.shape[0], square_size * 2):
+            img[i:i + square_size, :] = 255
+        for j in range(square_size, img.shape[1], square_size * 2):
+            img[:, j:j + square_size] = 255
+        self.display_image(img)
+
 
     def display_circle(
             self,

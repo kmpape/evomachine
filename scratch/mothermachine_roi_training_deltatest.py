@@ -25,13 +25,14 @@ import delta.utils as utils
 
 
 # Load config
+home_folder = os.path.expanduser("~") + "/"
 config = DEFAULT_CONFIG_MOTHERMACHINE
 savefile = EVOMACHINE_DIR.parent / "delta_models/delta_roi_test.hdf5"
-standard_model = "/home/lady5906/.cache/delta/models/unet_momachambers_seg.hdf5"
+standard_model = home_folder + ".cache/delta/models/unet_momachambers_seg.hdf5"
 epochs = 3
 steps_per_epoch = 30
 patience = 50
-training_set = "/home/lady5906/workspace_python/chambers/ImageData/deltatest"
+training_set = home_folder + "workspace_python/chambers/ImageData/deltatest"
 
 # Data generator parameters:
 data_gen_args = dict(
@@ -56,11 +57,12 @@ ds_train, ds_val = load_training_dataset_seg(
     crop=False,
     kw_data_aug=data_gen_args,
     validation_split=0.05,
+    stack=False,
     multiply=None,
 )
 
 # Define model:
-model = unet_seg(input_size=config.target_size_rois + (1,), pretrained_weights=standard_model)
+model = unet_seg(input_size=config.target_size_rois + (1,)) # , pretrained_weights=standard_model)
 model.summary()
 
 # Callbacks:
@@ -75,12 +77,11 @@ early_stopping = EarlyStopping(
 print("Starting training")
 model.fit(
     ds_train,
-    steps_per_epoch=steps_per_epoch,
+    # steps_per_epoch=steps_per_epoch,
     epochs=epochs,
     validation_data=ds_val,
     callbacks=[model_checkpoint, early_stopping],
 )
-
 print("Training finished")
 
 

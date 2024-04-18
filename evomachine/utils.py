@@ -15,6 +15,7 @@ import delta.utils
 pd.set_option('display.max_columns', None)
 pd.set_option('display.expand_frame_repr', False)
 
+
 # Data Class to hold rotation parameters
 @dataclass
 class RotationParameters:
@@ -22,6 +23,7 @@ class RotationParameters:
     min_exposure: float = 0.05
     max_exposure: float = 0.1
     hough_threshold: float = 0.7
+
 
 def rotation_correction(img: np.ndarray, params: RotationParameters = RotationParameters()) -> float:
     """

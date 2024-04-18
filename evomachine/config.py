@@ -56,6 +56,8 @@ class ConfigImageProcessor:
     "Apply ROI segmentation to overlapping image portions with size of ROI segmentation model."
     use_track_RT: bool = False
     "Use special tracking function for tracking in trenches."
+    use_roi_moma: bool = True
+    "Use ROI ID function for mother machines."
     image_processing_verbosity: int = 0
     "Lowest verbosity is 0."
 
@@ -88,7 +90,7 @@ class ConfigImageProcessorFactory:
     def default_config(channels: Optional[List[LEDType]] = None) -> ConfigImageProcessor:
         default_channels = [LEDType.LED_405_NM, LEDType.LED_450_NM, LEDType.LED_505_NM, LEDType.LED_538_NM]
         return ConfigImageProcessor(
-            cfg_delta=delta.config.DEFAULT_CONFIG_MOTHERMACHINE,
+            cfg_delta=delta.config.Config.default("mothermachine"),
             channels=default_channels if channels is None else channels,
             channel_seg=LEDType.LED_450_NM,
             channel_rot=LEDType.LED_450_NM,

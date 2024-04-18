@@ -215,6 +215,27 @@ class DMDControl:
     def display_none(self, update_display: Optional[bool] = True):
         self.display_full(update_display=update_display, color=DMDColor.BLACK)
 
+    def display_checkerboard(
+            self,
+            square_size: int | None = None,
+    ):
+        """
+        Display a checkerboard with squares of size square_size.
+
+        Parameters
+        ----------
+        square_size: int             Thickness of line (see _make_half_line_width)
+
+        """
+        if not square_size:
+            square_size = DMDControl.DEFAULT_LINE_WIDTH
+        img = self.get_zero_array()
+        for i in range(0, img.shape[0], square_size * 2):
+            img[i:i + square_size, :] = 255
+        for j in range(square_size, img.shape[1], square_size * 2):
+            img[:, j:j + square_size] = 255
+        self.display_image(img)
+
     def display_circle(
             self,
             row: int,

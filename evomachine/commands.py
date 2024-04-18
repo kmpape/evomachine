@@ -347,11 +347,17 @@ class CommandFactory:
         )
 
     @staticmethod
-    def command_roi_data(fov_id: int, rotation: float, roi_boxes: list[DeltaCroppingBox]) -> AutomatonCommand:
+    def command_roi_data(
+            fov_id: int,
+            rotation: float,
+            roi_boxes: list[DeltaCroppingBox],
+            cols_s_e: tuple[tuple[int, int] | None, tuple[int, int] | None, tuple[int, int] | None, tuple[int, int] | None],
+    ) -> AutomatonCommand:
         command_args = {
             'fov_id': fov_id,
             'rotation': rotation,
             'roi_boxes': roi_boxes,
+            'cols_s_e': cols_s_e,
         }
         return AutomatonCommand(
             command_type=AutomatonCommandType.ROI_DATA,

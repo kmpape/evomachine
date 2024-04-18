@@ -441,7 +441,7 @@ class TestCamera(AbstractCamera):
             self,
             cfg_camera: ConfigCamera,
             filenames: List[Union[str, Path]],
-            pos_to_filename: Optional[Union[Dict[int, Union[Path, str]], None]] = None,
+            pos_to_filename: Optional[Union[Dict[int, int], None]] = None,
             cropping_indices: Optional[Union[None, Tuple[Tuple[int, int], Tuple[int, int]]]] = None,
     ):
         super().__init__(cfg_camera=cfg_camera)
@@ -454,8 +454,13 @@ class TestCamera(AbstractCamera):
         "Cyclic indices."
         self._cfg_focus: ConfigFocus = self.cfg.focus.copy()
         "Settings for CRISP autofocus. Required for GUI interaction."
-        self.pos_to_filename: Union[Dict[int, Union[Path, str]], None] = pos_to_filename
+        self.pos_to_filename: Union[Dict[int, int], None] = pos_to_filename
         "Optional dictionary mapping from unique position numbers (0,1,2,...) to filename."
+        if self.pos_to_filename is not None:
+            self.set_pos_id_to_coordinate(
+                pos_id_to_coordinate={i: {'X': 0, 'Y': 0, 'Z': 0} for i in pos_to_filename.keys()},
+                use_autofocus=True,
+            )
         self._led_channel_keys: Dict[LEDType, Union[str, None]] = {
             LEDType.LED_405_NM: "X",
             LEDType.LED_450_NM: "Y",
@@ -468,17 +473,7 @@ class TestCamera(AbstractCamera):
             cropping_indices if cropping_indices else None
         "Optional cropping indices applied to all images. If provided, must be of the form ((xmin, xmax), (ymin, ymax))"
         self._current_led_channel: LEDType = LEDType.NO_LED
-
         self._next_filename_index: int = next(self.indices)
-
-        if self.pos_to_filename is not None:
-            if len(pos_to_filename) != len(filenames):
-                self.pos_to_filename = None
-                raise ConfigError("TestCamera.__init__: if providing pos_to_filename, "
-                                  "then it must have the same length as filenames.",
-                                  ErrorCode.ERROR_TEST_CAMERA_CONFIG)
-            self.pos_to_filename = dict(sorted(self.pos_to_filename.items()))  # warning in pycharm is a bug
-            self.filenames = list(self.pos_to_filename.values())
         self._current_pos: Coordinate = Coordinate(0, 0, 0)
         self.focus_curr_pos: Dict[str, float] = {}
 
@@ -492,9 +487,9 @@ class TestCamera(AbstractCamera):
         logger.info("TestCamera._move_stage_to_pos: moving to pos={}".format(i_pos))
         if self.pos_to_filename is not None:
             if i_pos not in self.pos_to_filename:
-                raise EvoMachineError("TestCamera._move_stage_to_pos: i_pos not in pos_to_filename.",
+                raise EvoMachineError(f"TestCamera._move_stage_to_pos: i_pos={i_pos} not in pos_to_filename.",
                                       ErrorCode.ERROR_TEST_CAMERA_CONFIG)
-            self._next_filename_index = i_pos
+            self._next_filename_index = self.pos_to_filename[i_pos]
         else:
             self.increment_filename_index()
         return True
@@ -745,11 +740,11 @@ class TestCamera(AbstractCamera):
     def set_pos_id_to_coordinate(self, pos_id_to_coordinate: Dict[int, Any], use_autofocus: bool) -> bool:
         for i_pos, coord in pos_id_to_coordinate.items():
             if (not use_autofocus) and (not coord.has_z()):
-                logger.warning(f"EvoCamera.set_pos_id_to_coordinate: Position {i_pos} is missing Z "
+                logger.warning(f"TestCamera.set_pos_id_to_coordinate: Position {i_pos} is missing Z "
                                f"coordinate ({coord}). Position list not initialised.")
                 return False
             if self.coordinate_is_out_of_bounds(coord):
-                logger.warning(f"EvoCamera.set_pos_id_to_coordinate: Position {i_pos} is out of bounds. "
+                logger.warning(f"TestCamera.set_pos_id_to_coordinate: Position {i_pos} is out of bounds. "
                                f"coordinate ({coord}). Position list not initialised.")
                 return False
         self._pos_id_to_coordinate = {key: val for key, val in pos_id_to_coordinate.items()}

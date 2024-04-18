@@ -38,7 +38,7 @@ class DMDWorker(EvoWorkerTemplate):
         for i, button in self.buttons.items():
             if i == i_active:
                 button.setStyleSheet("background-color: green;")
-            elif i in [DMDModes.DISPLAY_NONE.value, DMDModes.DISPLAY_FULL.value]:
+            elif i in [DMDModes.DISPLAY_NONE.value, DMDModes.DISPLAY_FULL.value, DMDModes.DISPLAY_CHECKERBOARD.value]:
                 button.setStyleSheet("background-color: red;")
 
     @pyqtSlot()
@@ -140,7 +140,10 @@ class DMDPanel(EvoPanelTemplate):
             font=SMALL,
             mode=i,
             stylesheet="QPushButton {background-color: red;}",
-        ) for i, txt in zip([DMDModes.DISPLAY_NONE.value, DMDModes.DISPLAY_FULL.value], ["NONE", "FULL"])}
+        ) for i, txt in zip(
+            [DMDModes.DISPLAY_NONE.value, DMDModes.DISPLAY_FULL.value, DMDModes.DISPLAY_CHECKERBOARD.value],
+            ["NONE", "FULL", "GRID"],
+        )}
         self.dmd_buttons[DMDModes.DISPLAY_FULL.value].setStyleSheet("background-color: green;")
         self.dmd_init_button = self.make_button(
             text="Initialise",
@@ -188,8 +191,13 @@ class DMDPanel(EvoPanelTemplate):
         self.threads.append(thread)
 
     def set_dmd(self, mode: int):
+        func_dict = {
+            DMDModes.DISPLAY_NONE.value: 'self._dmd.display_none',
+            DMDModes.DISPLAY_FULL.value: 'self._dmd.display_full',
+            DMDModes.DISPLAY_CHECKERBOARD.value: 'self._dmd.display_checkerboard',
+        }
         self.queue_manager.request(
-            req_str='self._dmd.display_none' if mode == DMDModes.DISPLAY_NONE.value else 'self._dmd.display_full',
+            req_str=func_dict[mode],
             kwargs_dict={},
             callback=self.show_dmd_done,
         )

@@ -7,6 +7,7 @@ import pickle
 import queue
 import skimage
 import time
+import tensorrt  # noqa
 import tensorflow as tf
 import traceback
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -53,10 +54,8 @@ class Automaton:
             queue_timeout: float = 0,
             run_timeout: float = 0,
     ):
-        # FIXME temporary switch
-        assert not use_seg
-        self.use_seg = False
-
+        self.use_seg = use_seg
+        "Temporary switch to disable image processing."
         self._cfg: ConfigImageProcessor = cfg_processor
         "Delta configuration object for image segmentation."
         self._channel_to_index: Dict[LEDType, int] = self._cfg.channel_to_index
@@ -80,7 +79,7 @@ class Automaton:
         self._all_frames: List[np.ndarray] = []
         "List indexed by i_pos w. image array: prev/current x channels x pxl_vert x pxl_horiz."
         self._ref_frames: List[np.ndarray] = []
-        "List indexed by i_pos w. reference image array: channels x pxl_vert x pxl_horiz."
+        "List indexed by i_pos w. reference image array: channels x pxl_vert x pxl_horiz. In camera format."
         self._use_autofocus: bool = False
         "If true, only X & Y coordinates are used in the position list."
         self._fov_list_is_initialised: bool = False
@@ -251,6 +250,8 @@ class Automaton:
             which: Optional[int] = None,
             rotation: Optional[float] = None,
             roi_boxes: Optional[Union[None, List[delta.utils.CroppingBox]]] = None,
+            cols_s_e: tuple[tuple[int, int] | None, tuple[int, int] | None,
+                            tuple[int, int] | None, tuple[int, int] | None] = (None, None, None, None),
     ):
         if not self._fov_list_is_initialised or not self._reference_frames_is_initialised:
             logging.warning("Automaton.initialise_position_processor: position list is not initialised.")
@@ -258,23 +259,29 @@ class Automaton:
                               error_code=ErrorCode.ERROR_DEVICE_CONFIG)
         self._create_position_processor(which=which)
         if which is None:
-            logger.info("Automaton.initialise_position_processor: initialising all position processors.")
+            logger.info(f"Automaton.initialise_position_processor: "
+                        f"initialising all position processors (use_seg={self.use_seg}).")
             for i in range(len(self._pos_processor)):
                 logger.debug(f"Automaton.initialise_position_processor: initialising position processor {i}.")
                 if self.use_seg:
                     if rotation is None:
-                        rotation = rotation_correction(
+                        this_rotation = rotation_correction(
                             img=self._ref_frames[i][self._channel_to_index[self._cfg.channel_rot], :, :],
                         )
+                    else:
+                        this_rotation = rotation
+                    logger.info(f"Automaton.initialise_position_processor: Rotating pos {i} "
+                                f"by {this_rotation} degrees.")
                     self._pos_processor[i].initialise(
                         reference=normalise_frame(self._ref_frames[i]),  # TODO need to crop frames
                         channel_rot=self._channel_to_index[self._cfg.channel_rot],
                         channel_roi=self._channel_to_index[self._cfg.channel_roi],
-                        rotate=rotation,
+                        rotate=this_rotation,
                         roi_boxes=roi_boxes,
                         seg_model=self.seg_model,
                         tracking_model=self.tracking_model,
                         roi_model=self.roi_model,
+                        cols_s_e=cols_s_e,
                     )
                     self._position_processors_is_initialised[i] = True
                     self.fill_queue(
@@ -283,9 +290,11 @@ class Automaton:
                             fov_id=i,
                             rotation=self._pos_processor[i].rotate,
                             roi_boxes=self._pos_processor[i].roi_boxes,
+                            cols_s_e=self._pos_processor[i].cols_s_e,
                         ),
                         logging_level=logging.INFO,
                     )
+                    logger.info(f"Automaton.initialise_position_processor: Initialised pos {i}.")
                 else:
                     self._position_processors_is_initialised[i] = True
                     self.fill_queue(
@@ -294,6 +303,7 @@ class Automaton:
                             fov_id=i,
                             rotation=0,
                             roi_boxes=[],
+                            cols_s_e=(None, None, None, None),
                         ),
                         logging_level=logging.INFO,
                     )
@@ -303,32 +313,44 @@ class Automaton:
             logger.info(f"Automaton.initialise_position_processor: initialising position processor {which}.")
             if self.use_seg:
                 if rotation is None:
-                    rotation = rotation_correction(
+                    this_rotation = rotation_correction(
                         img=self._ref_frames[which][self._channel_to_index[self._cfg.channel_rot], :, :],
                     )
+                else:
+                    this_rotation = rotation
+                logger.info(f"Automaton.initialise_position_processor: Rotating pos {which} "
+                            f"by {this_rotation} degrees.")
                 self._pos_processor[which].initialise(
                     reference=normalise_frame(self._ref_frames[which]),  # TODO need to crop frames
                     channel_rot=self._channel_to_index[self._cfg.channel_rot],
                     channel_roi=self._channel_to_index[self._cfg.channel_roi],
-                    rotate=rotation,
+                    rotate=this_rotation,
                     roi_boxes=roi_boxes,
                     seg_model=self.seg_model,
                     tracking_model=self.tracking_model,
                     roi_model=self.roi_model,
+                    cols_s_e=cols_s_e,
                 )
                 self.fill_queue(
                     queue_data_type=AutomatonCommandType.ROI_DATA,
                     queue_data=CommandFactory.command_roi_data(
                         fov_id=which,
                         rotation=self._pos_processor[which].rotate,
-                        roi_boxes=self._pos_processor[which].roi_boxes
+                        roi_boxes=self._pos_processor[which].roi_boxes,
+                        cols_s_e=self._pos_processor[which].cols_s_e,
                     ),
                     logging_level=logging.INFO,
                 )
+                logger.info(f"Automaton.initialise_position_processor: Initialised pos {which}.")
             else:
                 self.fill_queue(
                     queue_data_type=AutomatonCommandType.ROI_DATA,
-                    queue_data=CommandFactory.command_roi_data(fov_id=which, rotation=0, roi_boxes=[]),
+                    queue_data=CommandFactory.command_roi_data(
+                        fov_id=which,
+                        rotation=0,
+                        roi_boxes=[],
+                        cols_s_e=(None, None, None, None),
+                    ),
                     logging_level=logging.INFO,
                 )
             self._position_processors_is_initialised[which] = True
@@ -475,7 +497,7 @@ class Automaton:
             raise ConfigError("Automaton.initialise_fov_focus: Devices not initialised.", ErrorCode.ERROR_CONFIG)
         self.set_cam_live_mode(False)
         logger.info(f"Automaton.initialise_reference_frames: "
-                    f"Imaging {len(self._fovs.keys())} on {self._channel_to_index.keys()}.")
+                    f"Imaging {len(self._fovs.keys())} FoVs on {self._channel_to_index.keys()}.")
         for i_fov in self._fovs.keys():
             self.cam.move_to_pos(i_pos=i_fov)
             for channel_type, ind in self._channel_to_index.items():
@@ -512,32 +534,23 @@ class Automaton:
             logger.debug("Creating position procesors.")
             self._pos_processor = []
             for pos_id, fov_ind in self._pos_to_fov_index.items():
-                box = self._cropping_boxes[pos_id][fov_ind]
-                pos_image_cfg = ImageConfigType(
-                    pxl_horiz=box.shape[1], pxl_vert=box.shape[0], pxl_dtype=self.cam.cfg.image.pxl_dtype,
-                )
                 self._pos_processor.append(
                     PositionRT(
                         position_nb=pos_id,
                         config=self._cfg.cfg_delta,
-                        processor_config=self._cfg,
-                        image_config=pos_image_cfg,
+                        use_track_moma=self._cfg.use_track_RT,
+                        use_roi_moma=self._cfg.use_roi_moma,
                     )
                 )
         else:
             if (which >= len(self._pos_processor)) or (which not in self._pos_to_fov):
                 raise ConfigError(message=f"Cannot recreate processor {which}.",
                                   error_code=ErrorCode.ERROR_NOT_INITIALISED)
-            fov_ind = self._pos_to_fov[which]
-            box = self._cropping_boxes[which][fov_ind]
-            pos_image_cfg = ImageConfigType(
-                pxl_horiz=box.shape[1], pxl_vert=box.shape[0], pxl_dtype=self.cam.cfg.image.pxl_dtype,
-            )
             self._pos_processor[which] = PositionRT(
                     position_nb=which,
                     config=self._cfg.cfg_delta,
-                    processor_config=self._cfg,
-                    image_config=pos_image_cfg,
+                    use_track_moma=self._cfg.use_track_RT,
+                    use_roi_moma=self._cfg.use_roi_moma,
             )
 
     def increment_pos(self) -> None:
@@ -548,7 +561,7 @@ class Automaton:
     def override_parameter(self, fov_id: int, pos_id: int, param_name: str, param_value: Any):
         logger.info(f"Automaton.override_parameter: setting {param_name} to {param_value} for "
                     f"FoV {fov_id} and pos {pos_id}.")
-        avail: List[str] = ["z_pos", "rotation"]
+        avail: List[str] = ["z_pos", "rotation", "cols_s_e"]
         if param_name not in avail:
             raise ConfigError(f"Automaton.override_parameter: {param_name} is not an available override. {avail}",
                               ErrorCode.ERROR_DEVICE_CONFIG)
@@ -573,6 +586,33 @@ class Automaton:
             logger.info(f"Automaton.override_parameter: changing rotation from {self._pos_processor[pos_id].rotate} "
                         f"to {param_value}.")
             self._pos_processor[pos_id].rotate = float(param_value)
+            self._pos_processor[pos_id].initialise(
+                reference=normalise_frame(self._ref_frames[pos_id]),  # TODO need to crop frames
+                channel_rot=self._channel_to_index[self._cfg.channel_rot],
+                channel_roi=self._channel_to_index[self._cfg.channel_roi],
+                rotate=self._pos_processor[pos_id].rotate,
+                seg_model=self.seg_model,
+                tracking_model=self.tracking_model,
+                roi_model=self.roi_model,
+            )
+        elif param_name == "cols_s_e":
+            new_cols_s_e = (
+                self._pos_processor[pos_id].cols_s_e[i] if p is None else p for i, p in enumerate(param_value)
+            )
+            logger.info(f"Automaton.override_parameter: changing column positions "
+                        f"from {self._pos_processor[pos_id].cols_s_e} "
+                        f"to {new_cols_s_e}.")
+            self._pos_processor[pos_id].cols_s_e = new_cols_s_e
+            self._pos_processor[pos_id].initialise(
+                reference=normalise_frame(self._ref_frames[pos_id]),  # TODO need to crop frames
+                channel_rot=self._channel_to_index[self._cfg.channel_rot],
+                channel_roi=self._channel_to_index[self._cfg.channel_roi],
+                rotate=self._pos_processor[pos_id].rotate,
+                seg_model=self.seg_model,
+                tracking_model=self.tracking_model,
+                roi_model=self.roi_model,
+                cols_s_e=self._pos_processor[pos_id].cols_s_e,
+            )
 
     def _gui_process(self):
         # logger.debug("Polling _gui_to_automaton_q and filling _automaton_to_gui_q")
@@ -817,22 +857,23 @@ class Automaton:
             brightness = [brightness for _ in channels]
         for i, channel in enumerate(channels):
             i_chan = self._channel_to_index[channel]
-            self._all_frames_raw[self._curr_fov_id][0, i_chan, :, :] = self._all_frames_raw[self._curr_fov_id][1, i_chan, :, :]
-            self._all_frames[self._curr_fov_id][0, i_chan, :, :] = self._all_frames[self._curr_fov_id][1, i_chan, :, :]
+            fov_id = self._curr_fov_id
+            self._all_frames_raw[fov_id][0, i_chan, :, :] = self._all_frames_raw[fov_id][1, i_chan, :, :]
+            self._all_frames[fov_id][0, i_chan, :, :] = self._all_frames[fov_id][1, i_chan, :, :]
 
-            self._all_frames_raw[self._curr_fov_id][1, i_chan, :, :] = self.cam.get_frame(
+            self._all_frames_raw[fov_id][1, i_chan, :, :] = self.cam.get_frame(
                 i_chan=channel,
                 brightness=brightness[i],
                 normalise=False,
             )
-            if self._pos_processor[self._curr_fov_id].rotate is not None:
+            if self._pos_processor[fov_id].rotate is not None:
                 # TODO this should only be done once. Already rotated in preprocess image
-                self._all_frames[self._curr_fov_id][1, i_chan, :, :] = normalise_frame(
+                self._all_frames[fov_id][1, i_chan, :, :] = normalise_frame(
                     skimage.transform.rotate(
-                        self._all_frames_raw[self._curr_fov_id][1, i_chan, :, :],
-                        self._pos_processor[self._curr_fov_id].rotate,
+                        self._all_frames_raw[fov_id][1, i_chan, :, :],
+                        self._pos_processor[fov_id].rotate,
                         resize=True,
-                    )
+                    )  # TODO use delta affine transform and store transformation matrix in position
                 )
             else:
                 self._all_frames[self._curr_fov_id][1, i_chan, :, :] = normalise_frame(
@@ -841,7 +882,7 @@ class Automaton:
 
     def _process_position(self):
         self._pos_processor[self._curr_fov_id].process_new_frame(
-            new_frame=self._all_frames[self._curr_fov_id][1, :, :, :],
+            new_frame=normalise_frame(self._all_frames_raw[self._curr_fov_id][1, :, :, :]),
             seg_model=self.seg_model,
             tracking_model=self.tracking_model,
         )
