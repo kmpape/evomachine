@@ -82,7 +82,7 @@ class LEDPanel(EvoPanelTemplate):
             stylesheet="QPushButton {background-color: red;}",
         ) for led in self.led_channels}
         self.led_textinputs = {led: self.make_lineedit(
-            text="29",
+            text="29.0",
             func=self.set_led,
             param=led,
         ) for led in self.led_channels}
@@ -116,7 +116,7 @@ class LEDPanel(EvoPanelTemplate):
 
     def set_led(self, i_channel: LEDType):
         try:
-            brightness = int(self.led_textinputs[i_channel].text())
+            brightness = float(self.led_textinputs[i_channel].text())
         except ValueError:
             logger.warning(f"Could not parse brightness {self.led_textinputs[i_channel]}. Defaulting to 50.")
             brightness = 50

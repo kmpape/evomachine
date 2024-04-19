@@ -146,7 +146,7 @@ class AbstractCamera:
             self,
             i_chan: Union[LEDType, None],
             normalise: bool = False,
-            brightness: int = 100,
+            brightness: float = 100,
             block: bool = False,
             reset_led: bool = True,
     ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
@@ -398,7 +398,7 @@ class AbstractCamera:
     def _set_exposure(self, exposure_time: Union[int, None] = None):
         raise NotImplementedError()
 
-    def set_led(self, i_chan: LEDType, brightness: int = 100, block: bool = False):
+    def set_led(self, i_chan: LEDType, brightness: float = 100, block: bool = False):
         raise NotImplementedError()
 
     def set_pos_id_to_coordinate(self, pos_id_to_coordinate: Dict[int, Any], use_autofocus: bool) -> bool:
@@ -426,7 +426,7 @@ class AbstractCamera:
     def _take_frame(
             self,
             i_chan: Optional[LEDType] = None,
-            brightness: int = 100,
+            brightness: float = 100,
             block: bool = False,
             reset_led: bool = True,
     ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
@@ -505,7 +505,7 @@ class TestCamera(AbstractCamera):
     def _take_frame(
             self,
             i_chan: Optional[LEDType] = None,
-            brightness: int = 100,
+            brightness: float = 100,
             block: bool = False,
             reset_led: bool = True,
     ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
@@ -732,7 +732,7 @@ class TestCamera(AbstractCamera):
         logger.info(f"TestCamera._set_exposure={exposure_time}.")
         return
 
-    def set_led(self, i_chan: LEDType, brightness: int = 100, block: bool = False):
+    def set_led(self, i_chan: LEDType, brightness: float = 100, block: bool = False):
         self._current_led_channel = i_chan
         logger.info(f"TestCamera.set_led={i_chan}, brightness={brightness}, block={block}.")
         return
@@ -930,7 +930,7 @@ class EvoCamera(AbstractCamera):
     def _take_frame(
             self,
             i_chan: Optional[LEDType] = None,
-            brightness: int = 100,
+            brightness: float = 100,
             block: bool = False,
             reset_led: bool = True,
     ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
@@ -1164,11 +1164,12 @@ class EvoCamera(AbstractCamera):
         self._pos_id_to_coordinate = {key: val for key, val in pos_id_to_coordinate.items()}
         return True
 
-    def set_led(self, i_chan: LEDType, brightness: int = 100, block: bool = False):
+    def set_led(self, i_chan: LEDType, brightness: float = 100, block: bool = False):
         if i_chan not in self._led_channel_keys.keys():
             logger.error(msg=f"EvoCamera._set_channel: i_chan={i_chan} not in channels={self._led_channel_keys.keys()}.")
             return
         if self._tiger_is_alive:
+            brightness = int(brightness)
             led_settings = {val: (brightness if ((key == i_chan) and (i_chan != LEDType.NO_LED)) else 0)
                             for key, val in self._led_channel_keys.items()}
             if (0 <= brightness <= 100) or (i_chan != LEDType.NO_LED):
@@ -1373,13 +1374,13 @@ class EvoCamerav2(EvoCamera):
                     asitiger.tigercontroller.TigerController.from_serial_port(port=self._tiger_port)
         except Exception as e:
             self._tiger_is_alive = False
-            logger.warning(f"EvoCamera._initialise: Error connecting to Tiger on port {self._tiger_port}: {e}.")
+            logger.warning(f"EvoCamerav2._initialise: Error connecting to Tiger on port {self._tiger_port}: {e}.")
             self.error_container.add_error(
                 new_error=TigerError(message=str(e), error_code=ErrorCode.ERROR_TIGER_SERIAL_CONNECTION)
             )
         if not self._get_tiger_is_alive():
             self._tiger_is_alive = False
-            logger.warning("EvoCamera._initialise: Tiger is not alive.")
+            logger.warning("EvoCamerav2._initialise: Tiger is not alive.")
             self.error_container.add_error(
                 new_error=TigerError(message="Tiger is not alive.", error_code=ErrorCode.ERROR_TIGER_NOT_ALIVE)
             )
@@ -1392,7 +1393,7 @@ class EvoCamerav2(EvoCamera):
             self._mmc_is_alive = True
         except Exception as e:
             self._mmc_is_alive = False
-            logger.warning(f"EvoCamera._initialise: Error connecting to MMC: {e}.")
+            logger.warning(f"EvoCamerav2._initialise: Error connecting to MMC: {e}.")
             self.error_container.add_error(
                 new_error=CameraError(message=str(e), error_code=ErrorCode.ERROR_MMC_NOT_ALIVE)
             )
@@ -1401,11 +1402,11 @@ class EvoCamerav2(EvoCamera):
             self.syncboard: SyncBoardController = SyncBoardController.from_serial_port(port=self._syncboard_port)
             self.syncboard.initialise()
             if not self.syncboard.is_initialised():
-                raise ConfigError("EvoCamera._initialise: Unable to initialise SyncBoard.")
+                raise ConfigError("EvoCamerav2._initialise: Unable to initialise SyncBoard.")
             self._syncboard_is_alive = True
         except Exception as e:
             self._syncboard_is_alive = False
-            logger.warning(f"EvoCamera._initialise: Error connecting to SyncBoard on port {self._syncboard_port}: {e}.")
+            logger.warning(f"EvoCamerav2._initialise: Error connecting to SyncBoard on port {self._syncboard_port}: {e}.")
             self.error_container.add_error(
                 new_error=SyncBoardError(message=str(e), error_code=ErrorCode.ERROR_SYNC_BOARD)
             )
@@ -1413,24 +1414,25 @@ class EvoCamerav2(EvoCamera):
             if ('ttyACM1' in self._syncboard_port) or ('ttyACM0' in self._syncboard_port):
                 self._syncboard_port = self._syncboard_port.replace('1', '0') if 'ttyACM1' in self._syncboard_port \
                     else self._syncboard_port.replace('1', '0')
-                logger.warning(f"EvoCamera._initialise: Re-trying on port {self._syncboard_port}.")
+                logger.warning(f"EvoCamerav2._initialise: Re-trying on port {self._syncboard_port}.")
                 try:
                     self.syncboard: SyncBoardController = SyncBoardController.from_serial_port(port=self._syncboard_port)
                     self.syncboard.initialise()
                     if not self.syncboard.is_initialised():
-                        raise ConfigError("EvoCamera._initialise: Unable to initialise SyncBoard.")
+                        raise ConfigError("EvoCamerav2._initialise: Unable to initialise SyncBoard.",
+                                          error_code=ErrorCode.ERROR_SYNC_BOARD)
                     self._syncboard_is_alive = True
-                    logger.info(f"EvoCamera._initialise: Connected to SyncBoard on port {self._syncboard_port}.")
+                    logger.info(f"EvoCamerav2._initialise: Connected to SyncBoard on port {self._syncboard_port}.")
                 except Exception as e:
                     self._syncboard_is_alive = False
                     logger.warning(
-                        f"EvoCamera._initialise: Error connecting to SyncBoard on port {self._syncboard_port}: {e}.")
+                        f"EvoCamerav2._initialise: Error connecting to SyncBoard on port {self._syncboard_port}: {e}.")
                     self.error_container.add_error(
                         new_error=SyncBoardError(message=str(e), error_code=ErrorCode.ERROR_SYNC_BOARD)
                     )
         if not self._get_syncboard_is_alive():
             self._syncboard_is_alive = False
-            logger.warning("EvoCamera._initialise: SyncBoard is not alive.")
+            logger.warning("EvoCamerav2._initialise: SyncBoard is not alive.")
             self.error_container.add_error(
                 new_error=SyncBoardError(message="SyncBoard is not alive.", error_code=ErrorCode.ERROR_SYNC_BOARD)
             )
@@ -1442,7 +1444,7 @@ class EvoCamerav2(EvoCamera):
 
         return self._mmc_is_alive and self._tiger_is_alive and self._syncboard_is_alive
 
-    def set_led(self, i_chan: LEDType, brightness: int = 100, block: bool = False):
+    def set_led(self, i_chan: LEDType, brightness: float = 100, block: bool = False):
         if i_chan not in self._led_channel_keys.keys():
             logger.error(msg=f"EvoCamera._set_channel: i_chan={i_chan} not in channels={self._led_channel_keys.keys()}.")
             return
@@ -1450,12 +1452,13 @@ class EvoCamerav2(EvoCamera):
             if i_chan == LEDType.NO_LED:
                 self.syncboard.disable_led()
                 return
-
             if (0 < brightness <= 100) or (i_chan != LEDType.NO_LED):
                 is_good_brightness_value = True
             else:
                 is_good_brightness_value = False
             if is_good_brightness_value:
+                if self.current_channel != LEDType.NO_LED:
+                    self.syncboard.disable_led(led_id=self._led_channel_keys[self.current_channel])
                 self.syncboard.enable_led(led_id=self._led_channel_keys[i_chan], intensity=float(brightness)/100.0)
                 self.current_channel = i_chan
                 self._current_led_brightness = 0 if i_chan == LEDType.NO_LED else brightness

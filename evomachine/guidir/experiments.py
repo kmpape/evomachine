@@ -1,4 +1,5 @@
 import copy
+import cv2
 
 import matplotlib.pyplot as plt
 from multiprocessing import Event
@@ -9,6 +10,7 @@ from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
 from PyQt5.QtWidgets import QWidget, QPushButton, QDialog, QComboBox, QLabel, QGridLayout, QCheckBox
 
 import delta.utils
+from delta.utils import CroppingBox as DeltaCroppingBox
 
 from evomachine.acquisition import AbstractCamera
 from evomachine.commands import AutomatonCommand, AutomatonCommandType
@@ -559,7 +561,11 @@ class ExperimentPanel(EvoPanelTemplate):
         #     'roi_boxes': roi_boxes,
         # }
         self.signal_set_button_color.emit([3], "green")
-        self.roi_data[data.command_args['fov_id']] = {'rotation': data.command_args['rotation']}
+        self.roi_data[data.command_args['fov_id']] = {
+            'rotation': data.command_args['rotation'],
+            'roi_boxes': data.command_args['roi_boxes'],
+            'cols_s_e': data.command_args['cols_s_e'],
+        }
 
     def show_focus_curves(self):
         if self.use_autofocus:
@@ -797,13 +803,19 @@ class PositionDialog(QDialog):
         self.rot_data = copy.deepcopy(self.ref_data)
         for i in range(len(self.rot_data)):
             for j in range(self.rot_data[i].shape[0]):
-                self.rot_data[i][j, :, :] = delta.utils.imrotate(self.rot_data[i][j, :, :], self.rotations[i])
+                self.rot_data[i][j, :, :] = delta.imgops.affine_transform(
+                    image=self.rot_data[i][j, :, :],
+                    angle=self.rotations[i],
+                    order=1,
+                    border_mode=cv2.BORDER_CONSTANT,
+                )
         self.rot_plot = ChannelPlotter(
             img=self.rot_data[self.curr_fov],
             channel_to_index=self.channel_to_index,
             height=6,
             width=6,
             title_prefix="Rotated - ",
+            roi_boxes=self.roi_data[self.curr_fov]['roi_boxes']
         )
 
         self.layout = QGridLayout()
@@ -835,8 +847,8 @@ class PositionDialog(QDialog):
     def update_display(self):
         self.curr_fov = self.combo_box.currentIndex()
         self.signal_update_fov_id.emit(self.curr_fov)
-        self.orig_plot.update_image(self.ref_data[self.curr_fov])
-        self.rot_plot.update_image(self.rot_data[self.curr_fov])
+        self.orig_plot.update_image(self.ref_data[self.curr_fov], [])
+        self.rot_plot.update_image(self.rot_data[self.curr_fov], self.roi_data[self.curr_fov]['roi_boxes'])
 
     def update_override(self, param: str):
         logger.debug(f"Updating override for {param}.")
@@ -879,9 +891,13 @@ class PositionDialog(QDialog):
         self.overrides[self.curr_fov][param_name] = None
         if param_name == 'rotation':
             for j in range(self.rot_data[fov_id].shape[0]):
-                self.rot_data[fov_id][j, :, :] = delta.utils.imrotate(self.rot_data[fov_id][j, :, :],
-                                                                      self.actives[fov_id][param_name])
-                self.rot_plot.update_image(self.rot_data[fov_id])
+                self.rot_data[fov_id][j, :, :] = delta.imgops.affine_transform(
+                    image=self.rot_data[fov_id][j, :, :],
+                    angle=self.actives[fov_id][param_name],
+                    order=1,
+                    border_mode=cv2.BORDER_CONSTANT,
+                )
+                self.rot_plot.update_image(self.rot_data[fov_id], self.roi_data[self.curr_fov]['roi_boxes'])
         elif param_name == 'z_pos':
             self.fovs[self.fov_id].z = float(param_value)
         self.signal_update_active.emit(param_name, param_value)

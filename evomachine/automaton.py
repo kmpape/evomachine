@@ -321,7 +321,7 @@ class Automaton:
                 logger.info(f"Automaton.initialise_position_processor: Rotating pos {which} "
                             f"by {this_rotation} degrees.")
                 self._pos_processor[which].initialise(
-                    reference=normalise_frame(self._ref_frames[which]),  # TODO need to crop frames
+                    reference=normalise_frame(self._ref_frames[which]),
                     channel_rot=self._channel_to_index[self._cfg.channel_rot],
                     channel_roi=self._channel_to_index[self._cfg.channel_roi],
                     rotate=this_rotation,

@@ -17,6 +17,8 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
 )
 
+from delta.utils import CroppingBox as DeltaCroppingBox
+
 from evomachine.commands import AutomatonCommand
 from evomachine.coordinates import Coordinate
 from evomachine.evotypes import AutomatonCommandType, LEDType
@@ -201,26 +203,34 @@ class ChannelWorker(EvoWorkerTemplate):
             img: np.ndarray,
             title: str,
             font_size: int = 8,
+            roi_boxes: list[DeltaCroppingBox] | None = None,
     ):
 
         super().__init__()
         self.canvas = canvas
         self.ax = ax
         self.font_size = font_size
-        self.update_plot(img, title)
+        self.update_plot(img, title, roi_boxes)
 
-    @pyqtSlot(np.ndarray, str)
-    def update_plot(self, img: np.ndarray, title: str):
+    @pyqtSlot(np.ndarray, str, list[DeltaCroppingBox])
+    def update_plot(self, img: np.ndarray, title: str, roi_boxes: list[DeltaCroppingBox]):
         self.ax.clear()
         self.ax.imshow(img, cmap='gray')
         self.ax.set_title(title, fontsize=self.font_size)
         self.ax.tick_params(axis='both', labelsize=self.font_size)
+        if self.roi_boxes is not None:
+            for i, box in enumerate(self.roi_boxes):
+                width = box.xbr - box.xtl
+                height = box.ybr - box.ytl
+                rect = Rectangle((box.xtl, box.ytl), width, height, edgecolor='red', facecolor='red', alpha=0.1)
+                _ = self.ax.add_patch(rect)
+                _ = self.ax.text((box.xbr + box.xtl) * 0.5, (box.ybr + box.ytl) * 0.5, str(i), color='blue', fontsize=6)
         self.canvas.draw()
 
 
 class ChannelPlotter(QWidget):
     FONT_SIZE = 8
-    signal_worker_update = pyqtSignal(np.ndarray, str)
+    signal_worker_update = pyqtSignal(np.ndarray, str, list[DeltaCroppingBox])
 
     def __init__(
             self,
@@ -229,11 +239,13 @@ class ChannelPlotter(QWidget):
             width: int = 8,
             height: int = 8,
             title_prefix: str = "",
+            roi_boxes: list[DeltaCroppingBox] | None = None,
     ):
         super().__init__()
         self.img = img
         self.channel_to_index = channel_to_index
         self.title_prefix = title_prefix
+        self.roi_boxes = roi_boxes
 
         self.curr_channel = list(self.channel_to_index.keys())[0]
 
@@ -244,6 +256,13 @@ class ChannelPlotter(QWidget):
         self.title = self.title_prefix + f" {self.curr_channel}"
         self.ax.set_title(self.title, fontsize=self.FONT_SIZE)
         self.ax.tick_params(axis='both', labelsize=self.FONT_SIZE)
+        if self.roi_boxes is not None:
+            for i, box in enumerate(self.roi_boxes):
+                width = box.xbr - box.xtl
+                height = box.ybr - box.ytl
+                rect = Rectangle((box.xtl, box.ytl), width, height, edgecolor='red', facecolor='red', alpha=0.1)
+                _ = self.ax.add_patch(rect)
+                _ = self.ax.text((box.xbr + box.xtl) * 0.5, (box.ybr + box.ytl) * 0.5, str(i), color='blue', fontsize=6)
         self.fig.tight_layout(pad=5)
         self.canvas = FigureCanvas(self.fig)
         self.canvas.setStyleSheet(EVO_STYLE)
@@ -264,7 +283,8 @@ class ChannelPlotter(QWidget):
             ax=self.ax,
             img=self.img[self.channel_to_index[self.curr_channel], :, :],
             title=self.title,
-            font_size=self.FONT_SIZE
+            font_size=self.FONT_SIZE,
+            roi_boxes=self.roi_boxes,
         )
         self.signal_worker_update.connect(self.worker.update_plot)
         self.thread = QThread()
@@ -274,17 +294,26 @@ class ChannelPlotter(QWidget):
     def update_plot(self, index):
         self.curr_channel = self._channels[self.channel_combo_box.currentIndex()]
         self.title = self.title_prefix + f" {self.curr_channel}"
-        self.signal_worker_update.emit(self.img[self.channel_to_index[self.curr_channel], :, :], self.title)
+        self.signal_worker_update.emit(
+            self.img[self.channel_to_index[self.curr_channel], :, :],
+            self.title,
+            self.roi_boxes,
+        )
         # self.ax.clear()
         # self.ax.imshow(self.img[self.channel_to_index[self.curr_channel], :, :], cmap='gray')
         # self.ax.set_title(self.title_prefix + f" {self.curr_channel}", fontsize=self.FONT_SIZE)
         # self.ax.tick_params(axis='both', labelsize=self.FONT_SIZE)
         # self.canvas.draw()
 
-    def update_image(self, img: np.ndarray):
+    def update_image(self, img: np.ndarray, roi_boxes: list[DeltaCroppingBox] | None):
         self.img = img
         self.curr_channel = self._channels[self.channel_combo_box.currentIndex()]
-        self.signal_worker_update.emit(self.img[self.channel_to_index[self.curr_channel], :, :], self.title)
+        self.roi_boxes = roi_boxes
+        self.signal_worker_update.emit(
+            self.img[self.channel_to_index[self.curr_channel], :, :],
+            self.title,
+            self.roi_boxes,
+        )
         # self.img = img
         # self.update_plot(0)
 
