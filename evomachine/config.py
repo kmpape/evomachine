@@ -25,7 +25,7 @@ USE_SYNC_BOARD: bool = True
 # EVO_FORMATTER = logging.Formatter('--->\n%(asctime)s - %(name)s - %(levelname)s - %(message)s\n<---')
 EVO_FORMATTER = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
 EVO_LOGGING_LEVEL = logging.INFO
-EVO_GUI_LOGGING_LEVEL = logging.DEBUG
+EVO_GUI_LOGGING_LEVEL = logging.INFO
 
 
 def get_logger(name: str, is_gui: bool = False) -> logging.Logger:
@@ -45,7 +45,7 @@ class ConfigImageProcessor:
     cfg_delta: delta.config.Config
     "Delta configuration object."
     channels: List[LEDType]
-    "List of channels to be imaged. Used for taking reference frames."
+    "List of channels to be imaged. Used for taking reference frames. Do not include any UV here."
     channel_seg: LEDType
     "Channel used for segmentation."
     channel_rot: LEDType
@@ -88,7 +88,7 @@ class ConfigImageProcessor:
 class ConfigImageProcessorFactory:
     @staticmethod
     def default_config(channels: Optional[List[LEDType]] = None) -> ConfigImageProcessor:
-        default_channels = [LEDType.LED_405_NM, LEDType.LED_450_NM, LEDType.LED_505_NM, LEDType.LED_538_NM]
+        default_channels = [LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_560_NM, LEDType.LED_625_NM]
         return ConfigImageProcessor(
             cfg_delta=delta.config.Config.default("mothermachine"),
             channels=default_channels if channels is None else channels,
@@ -189,10 +189,10 @@ class ConfigCRISPFactory:
     @staticmethod
     def default_config() -> ConfigCRISP:
         return ConfigCRISP(
-            led_intensity=95,
-            loop_gain=5,
+            led_intensity=100,
+            loop_gain=15,
             averaging=0,
-            update_rate=100,
+            update_rate=5,
             lock_range=0.025,
         )
 
@@ -207,6 +207,8 @@ class ConfigFocus:
     "Relative range for Z-movement of stage in 1/10 μm, e.g., stage will move current_position+-rel_range."
     step_size: int
     "Step size for Z-movement of stage in 1/10 μm, e.g., step_size=1 -> stage moves in 0.1 μm."
+    brightness: float
+    "Brightness value in (1,29) for LED brightness during focus."
 
     algorithm: FocusAlgorithmType = FocusAlgorithmType.STEEL
     "Algorithm used to focus. See FocusAlgorithmType for available algorithms."
@@ -224,6 +226,8 @@ class ConfigFocus:
             return FocusAlgorithmType.from_string(attr_value_str)
         elif attr_name == 'focus_channel':
             return LEDType(int(attr_value_str))
+        elif attr_name == 'brightness':
+            return float(attr_value_str)
         else:
             return int(attr_value_str)
 
@@ -238,6 +242,9 @@ class ConfigFocus:
             return isinstance(attr_value, int) and (attr_value > 0) and (attr_value <= self.rel_range)
         elif attr_name == 'algorithm':
             return isinstance(attr_value, FocusAlgorithmType)
+        elif attr_name == 'brightness':
+            return (isinstance(attr_value, float) or isinstance(attr_value, int))\
+                and (attr_value >= 0) and (attr_value <= 29)
         elif attr_name == 'user_input':
             return isinstance(attr_value, bool)
         else:
@@ -252,6 +259,8 @@ class ConfigFocus:
             raise TypeError(f"focus_channel must be a led type.")
         if not self.attr_is_valid('exposure_time', self.exposure_time):
             raise TypeError(f"exposure_time must be an int in [0.01, Inf]. Provided {self.exposure_time}.")
+        if not self.attr_is_valid('brightness', self.brightness):
+            raise TypeError(f"brightness must be an int or float in [0, 29]. Provided {self.brightness}.")
         if not self.attr_is_valid('algorithm', self.algorithm):
             raise TypeError(f"algorithm must be an instance of FocusAlgorithmType. Provided {self.algorithm}.")
 
@@ -259,6 +268,7 @@ class ConfigFocus:
         return ConfigFocus(
             exposure_time=self.exposure_time,
             focus_channel=self.focus_channel,
+            brightness=self.brightness,
             rel_range=self.rel_range,
             step_size=self.step_size,
             algorithm=self.algorithm,
@@ -268,6 +278,7 @@ class ConfigFocus:
     def __str__(self):
         attributes = [
             f"- exposure_time={self.exposure_time} ms",
+            f"- brightness={self.brightness}",
             f"- focus_channel={self.focus_channel} ({LEDType.get_name(self.focus_channel)})",
             f"- rel_range={self.rel_range / 10} μm",
             f"- step_size={self.step_size / 10} μm",
@@ -280,8 +291,9 @@ class ConfigFocusFactory:
     @staticmethod
     def default_config() -> ConfigFocus:
         return ConfigFocus(
-            exposure_time=1000,
+            exposure_time=100,
             focus_channel=LEDType.LED_450_NM,
+            brightness=15,
             rel_range=50,
             step_size=10,
         )

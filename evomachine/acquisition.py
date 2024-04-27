@@ -146,7 +146,7 @@ class AbstractCamera:
             self,
             i_chan: Union[LEDType, None],
             normalise: bool = False,
-            brightness: float = 100,
+            brightness: float = 29,
             block: bool = False,
             reset_led: bool = True,
     ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
@@ -232,11 +232,11 @@ class AbstractCamera:
     def move_to(self, coordinate: Union[Dict[str, int], Coordinate], block: Optional[bool] = False):
         raise NotImplementedError()
 
-    def move_to_pos(self, i_pos: int) -> None:
+    def move_to_pos(self, i_pos: int, block: bool = True) -> None:
         if i_pos not in self._pos_id_to_coordinate:
             raise StageError("Position index {} out of range".format(i_pos),
                              ErrorCode.ERROR_STAGE_COORDINATES)
-        success = self._move_stage_to_pos(i_pos=i_pos)
+        success = self._move_stage_to_pos(i_pos=i_pos, block=block)
         if not success:
             raise StageError("Fault moving to position={}.".format(i_pos), ErrorCode.ERROR_STAGE_MOVEMENT)
         self._curr_pos = i_pos
@@ -339,7 +339,7 @@ class AbstractCamera:
                 f"software_focus: Focus not initialised or initialisation failed. Check log. Aborting focus."
             )
             return
-        self.set_led(i_chan=cfg_focus.focus_channel)
+        self.set_led(i_chan=cfg_focus.focus_channel, brightness=cfg_focus.brightness)
         for ipos in range(len(self.focus_Z_coords)):
             self.software_focus_step(ipos=ipos)
         self.software_focus_finalise()
@@ -398,7 +398,7 @@ class AbstractCamera:
     def _set_exposure(self, exposure_time: Union[int, None] = None):
         raise NotImplementedError()
 
-    def set_led(self, i_chan: LEDType, brightness: float = 100, block: bool = False):
+    def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False):
         raise NotImplementedError()
 
     def set_pos_id_to_coordinate(self, pos_id_to_coordinate: Dict[int, Any], use_autofocus: bool) -> bool:
@@ -413,6 +413,7 @@ class AbstractCamera:
     def _move_stage_to_pos(
             self,
             i_pos: int,
+            block: bool = True,
     ) -> bool:
         raise NotImplementedError()
 
@@ -426,7 +427,7 @@ class AbstractCamera:
     def _take_frame(
             self,
             i_chan: Optional[LEDType] = None,
-            brightness: float = 100,
+            brightness: float = 29,
             block: bool = False,
             reset_led: bool = True,
     ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
@@ -483,8 +484,9 @@ class TestCamera(AbstractCamera):
     def _move_stage_to_pos(
             self,
             i_pos: int,
+            block: bool = True,
     ) -> bool:
-        logger.info("TestCamera._move_stage_to_pos: moving to pos={}".format(i_pos))
+        logger.info("TestCamera._move_stage_to_pos: moving to pos={} (block={})".format(i_pos, block))
         if self.pos_to_filename is not None:
             if i_pos not in self.pos_to_filename:
                 raise EvoMachineError(f"TestCamera._move_stage_to_pos: i_pos={i_pos} not in pos_to_filename.",
@@ -505,7 +507,7 @@ class TestCamera(AbstractCamera):
     def _take_frame(
             self,
             i_chan: Optional[LEDType] = None,
-            brightness: float = 100,
+            brightness: float = 29,
             block: bool = False,
             reset_led: bool = True,
     ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
@@ -536,7 +538,7 @@ class TestCamera(AbstractCamera):
             i_pos if i_pos is not None else "",
             pos['X'],
             pos['Y'],
-            pos['Z'],
+            pos['Z'] if 'Z' in pos else "auto",
             datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f")
         )
 
@@ -732,7 +734,7 @@ class TestCamera(AbstractCamera):
         logger.info(f"TestCamera._set_exposure={exposure_time}.")
         return
 
-    def set_led(self, i_chan: LEDType, brightness: float = 100, block: bool = False):
+    def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False):
         self._current_led_channel = i_chan
         logger.info(f"TestCamera.set_led={i_chan}, brightness={brightness}, block={block}.")
         return
@@ -912,16 +914,20 @@ class EvoCamera(AbstractCamera):
     def _move_stage_to_pos(
             self,
             i_pos: int,
+            block: bool = True,
     ) -> bool:
-        return self._move_stage_to_coord(self._pos_id_to_coordinate[i_pos].to_dict())
+        return self._move_stage_to_coord(self._pos_id_to_coordinate[i_pos].to_dict(), block=block)
 
     def _move_stage_to_coord(
             self,
             coordinates: Dict[str, int],
+            block: bool = True,
     ) -> bool:
         answer = None
         if self._tiger_is_alive:
             answer = self.tiger.move(coordinates=coordinates)
+            if block:
+                self.tiger.wait_until_idle(card_address_crisp=self.card_address_crisp)
         else:
             logger.error(msg=f"EvoCamera._move_stage_to_coord: Tiger is not alive. "
                              f"Check ASI Tiger box and serial connection.")
@@ -930,7 +936,7 @@ class EvoCamera(AbstractCamera):
     def _take_frame(
             self,
             i_chan: Optional[LEDType] = None,
-            brightness: float = 100,
+            brightness: float = 29,
             block: bool = False,
             reset_led: bool = True,
     ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
@@ -1037,6 +1043,8 @@ class EvoCamera(AbstractCamera):
             return False
         self.autofocus_unlock()
         time.sleep(cfg_crisp.pause_short)
+        # self.tiger.crisp_reset_offset(card_address=self.card_address_crisp)
+        time.sleep(cfg_crisp.pause_short)
         self.tiger.crisp_get_set_objective_na(card_address=self.card_address_crisp, value=self.cfg.objective.na)
         time.sleep(cfg_crisp.pause_short)
         self.tiger.crisp_get_set_led_intensity(card_address=self.card_address_crisp, value=cfg_crisp.led_intensity)
@@ -1096,7 +1104,7 @@ class EvoCamera(AbstractCamera):
             i_pos if i_pos is not None else "",
             pos['X'],
             pos['Y'],
-            pos['Z'],
+            pos['Z'] if 'Z' in pos else "auto",
             datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f")
         )
 
@@ -1164,7 +1172,7 @@ class EvoCamera(AbstractCamera):
         self._pos_id_to_coordinate = {key: val for key, val in pos_id_to_coordinate.items()}
         return True
 
-    def set_led(self, i_chan: LEDType, brightness: float = 100, block: bool = False):
+    def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False):
         if i_chan not in self._led_channel_keys.keys():
             logger.error(msg=f"EvoCamera._set_channel: i_chan={i_chan} not in channels={self._led_channel_keys.keys()}.")
             return
@@ -1347,7 +1355,7 @@ class EvoCamerav2(EvoCamera):
             self,
             cfg_camera: ConfigCamera,
             tiger_port: str = "/dev/ttyUSB0",  # TODO move this to config
-            syncboard_port: str = "/dev/ttyACM0",  # TODO move this to config
+            syncboard_port: str = "/dev/ttyACM1",  # TODO move this to config
     ):
         super().__init__(cfg_camera=cfg_camera, tiger_port=tiger_port)
         self.syncboard: Optional[SyncBoardController] = None
@@ -1444,7 +1452,7 @@ class EvoCamerav2(EvoCamera):
 
         return self._mmc_is_alive and self._tiger_is_alive and self._syncboard_is_alive
 
-    def set_led(self, i_chan: LEDType, brightness: float = 100, block: bool = False):
+    def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False):
         if i_chan not in self._led_channel_keys.keys():
             logger.error(msg=f"EvoCamera._set_channel: i_chan={i_chan} not in channels={self._led_channel_keys.keys()}.")
             return
@@ -1452,7 +1460,7 @@ class EvoCamerav2(EvoCamera):
             if i_chan == LEDType.NO_LED:
                 self.syncboard.disable_led()
                 return
-            if (0 < brightness <= 100) or (i_chan != LEDType.NO_LED):
+            if (0 < brightness <= 29) or (i_chan != LEDType.NO_LED):
                 is_good_brightness_value = True
             else:
                 is_good_brightness_value = False
@@ -1463,7 +1471,7 @@ class EvoCamerav2(EvoCamera):
                 self.current_channel = i_chan
                 self._current_led_brightness = 0 if i_chan == LEDType.NO_LED else brightness
             else:
-                logger.error(msg=f"Cannot set brightness: {brightness} is out of range [0, 100]. LED not set.")
+                logger.error(msg=f"Cannot set brightness: {brightness} is out of range [0, 29]. LED not set.")
         else:
             logger.error(msg=f"EvoCamera._set_channel: SyncBoard is not alive.")
 

@@ -9,7 +9,7 @@ from matplotlib.patches import Rectangle
 
 import numpy as np
 from PyQt5.QtGui import QIntValidator
-from typing import Any, Dict, Tuple, Union
+from typing import Any, Dict, Tuple, Union, List
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QTimer, Qt, QThread
 from PyQt5.QtWidgets import (
     QWidget, QLineEdit, QPushButton, QComboBox,
@@ -212,7 +212,7 @@ class ChannelWorker(EvoWorkerTemplate):
         self.font_size = font_size
         self.update_plot(img, title, roi_boxes)
 
-    @pyqtSlot(np.ndarray, str, list[DeltaCroppingBox])
+    @pyqtSlot(np.ndarray, str, list)
     def update_plot(self, img: np.ndarray, title: str, roi_boxes: list[DeltaCroppingBox]):
         self.ax.clear()
         self.ax.imshow(img, cmap='gray')
@@ -230,7 +230,7 @@ class ChannelWorker(EvoWorkerTemplate):
 
 class ChannelPlotter(QWidget):
     FONT_SIZE = 8
-    signal_worker_update = pyqtSignal(np.ndarray, str, list[DeltaCroppingBox])
+    signal_worker_update = pyqtSignal(np.ndarray, str, list)
 
     def __init__(
             self,

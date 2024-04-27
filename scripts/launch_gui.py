@@ -25,6 +25,7 @@ from evomachine.guidir.newgui import EvoGUI
 from evomachine.guidir.queuemanager import QueueManager
 from evomachine.strategy import AbstractStrategy, BasicStrategy   # TODO add dropdown in GUI
 from strategies.strategy_2024_03_07 import JessStrategy
+from strategies.strategy_2024_04_25 import UVTestingStrategy
 
 
 def create_automaton_process(
@@ -68,14 +69,14 @@ if __name__ == '__main__':
     print(f"Launching evomachine GUI from {EVOMACHINE_DIR}.")
 
     # Provide strategy that will be loaded by GUI
-    save_path: str = "/media/hslab/Data/ImageData/DEFAULT"
+    save_path: str = "/media/hslab/Data/ImageData/Idris/2024-04-27"
     if not os.path.exists(save_path):
         current_folder = os.path.dirname(os.path.abspath(__file__))
         save_path = os.path.join(current_folder, "DEFAULT")
         os.makedirs(save_path, exist_ok=True)
 
     # Provide strategy that will be loaded by GUI
-    strategy: AbstractStrategy = BasicStrategy(save_path=save_path)
+    strategy: AbstractStrategy = UVTestingStrategy()
 
     # Create configurations (modify if needed)
     is_oil_objective = False

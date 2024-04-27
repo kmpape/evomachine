@@ -194,7 +194,7 @@ class DMDPanel(EvoPanelTemplate):
         func_dict = {
             DMDModes.DISPLAY_NONE.value: 'self._dmd.display_none',
             DMDModes.DISPLAY_FULL.value: 'self._dmd.display_full',
-            DMDModes.DISPLAY_CHECKERBOARD.value: 'self._dmd.display_checkerboard',
+            DMDModes.DISPLAY_CHECKERBOARD.value: 'self._dmd.display_half', #self._dmd.display_checkerboard',
         }
         self.queue_manager.request(
             req_str=func_dict[mode],

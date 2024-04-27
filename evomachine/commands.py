@@ -42,7 +42,7 @@ class AutomatonCommand:
     "Data collected after executing the command."
     command_execution_time: Union[float, None] = None
     "Time at which the command was created. Produced via time.time()."
-    fov_id: Union[int, None] = None
+    fov_id: int | None = None
     "Field of view ID. Used for commands sent to GUI."
 
     @staticmethod
@@ -96,9 +96,9 @@ class CommandFactory:
     def command_image(
             self,
             channels: List[LEDType],
-            exposure_time: Union[int, None],
+            exposure_time: int | None,
             segment: bool,
-            brightness: Union[int, List[int]] = 100,
+            brightness: int | float | list[int | float] = 100,
             save: bool = False,
     ) -> AutomatonCommand:
         """
@@ -171,7 +171,7 @@ class CommandFactory:
             command_creation_time=time(),
         )
 
-    def command_move(self, fov_id: Union[int, None]) -> AutomatonCommand:
+    def command_move(self, fov_id: int | None) -> AutomatonCommand:
         """
         Create a command for moving the stage.
 
@@ -201,7 +201,7 @@ class CommandFactory:
             channel: LEDType,
             image: np.ndarray[(int, int), np.uint8],
             duration: Union[float, int],
-            brightness: int = 100
+            brightness: int = 29,
     ) -> AutomatonCommand:
         """
 
@@ -228,7 +228,7 @@ class CommandFactory:
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument image ({type(image)}).")
         if not (isinstance(duration, float) or isinstance(duration, int)):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument duration ({type(duration)}).")
-        if (not isinstance(brightness, int)) or not (0 <= brightness <= 100):
+        if (not isinstance(brightness, int)) or not (0 <= brightness <= 29):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type or range for argument brightness.")
         return AutomatonCommand(
             command_type=AutomatonCommandType.PROJECT,
@@ -256,17 +256,29 @@ class CommandFactory:
             command_creation_time=time(),
         )
 
-    def command_wait(self, duration: float) -> AutomatonCommand:
+    def command_wait(
+            self,
+            duration: float,
+            set_live_mode: bool = False,
+            channel: LEDType = LEDType.LED_450_NM,
+            brightness: int | float = 10,
+    ) -> AutomatonCommand:
         """
 
         Parameters
         ----------
-            duration (float) : Time to wait in SECONDS.
-
+        duration: float
+            Time to wait in SECONDS.
+        set_live_mode: bool
+            MM live mode will be enabled before start of waiting time and disabled afterwards.
+        channel: LEDType
+            Channel to set if set_live_mode=True.
+        brightness: int | float
+            Brightness level in [0,100] to be applied if set_live_mode=True.
 
         Returns in AbstractStrategy.callback
         ------------------------------------
-            command_data : Always returns None.
+        command_data : Always returns None.
 
         Returns
         -------
@@ -274,7 +286,9 @@ class CommandFactory:
         """
         return AutomatonCommand(
             command_type=AutomatonCommandType.WAIT,
-            command_args=duration,
+            command_args={
+                'duration': duration, 'set_live_mode': set_live_mode, 'channel': channel, 'brightness': brightness
+            },
             command_id=self.get_next_id(),
             command_creation_time=time(),
         )

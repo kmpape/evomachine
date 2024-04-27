@@ -144,10 +144,12 @@ class AbstractStrategy(ABC):
         # Max one MOVE command
         # TODO channel NO_LED should give false
         # TODO should only have one command_type per list (?)
-        if len([cmd for cmd in command_list if cmd.command_type == AutomatonCommandType.MOVE]) > 1:
-            return False
-        else:
-            return True
+        # if len([cmd for cmd in command_list if cmd.command_type == AutomatonCommandType.MOVE]) > 1:
+        #     return False
+        # else:
+        #     return True
+        # TODO figure out why I resctricted this to one move command per list? I do not see why
+        return True
 
     def test_strategy(self):
         """

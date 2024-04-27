@@ -359,6 +359,7 @@ class ExperimentPanel(EvoPanelTemplate):
         self.strategy_label = self.make_label(text="???", font=SMALL)
         self._automaton_is_initialised: bool = False
         self.start_button = self.make_button(text="Start", func=self.start_acquisition, font=SMALL)
+        #  self.pause_button = self.make_button(text="Pause", func=self.pause_acquisition, font=SMALL)
         self.stop_button = self.make_button(text="Stop", func=self.stop_acquisition, font=SMALL)
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
@@ -533,16 +534,22 @@ class ExperimentPanel(EvoPanelTemplate):
             return
         logger.info("ExperimentPanel._start_acquisition: Starting acquisition.")
         self.stop_strategy_event.clear()
+        self.stop_event.clear()
         self.start_strategy_event.set()
         self.start_button.setStyleSheet("background-color: green;")
 
+    def pause_acquisition(self):
+        # TODO
+        logger.info("ExperimentPanel.pause_acquisition: Pausing acquisition.")
+        self.stop_event.set()
+
     def stop_acquisition(self):
-        logger.info("ExperimentPanel.stop_acquisition: Stopping acquisition.")
+        logger.info("ExperimentPanel.stop_acquisition: Ending acquisition.")
         self.start_strategy_event.clear()
         self.stop_strategy_event.set()
-        self.start_button.setStyleSheet("background-color: lightgray;")
+        self.start_button.setStyleSheet("background-color: green;")
         self.start_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
+        # self.stop_button.setEnabled(False)
 
     def read_focus_data(self, data: AutomatonCommand):
         if not self.use_autofocus:

@@ -202,13 +202,17 @@ class DMDControl:
             return
         monitors = screeninfo.get_monitors()
         mon_info = "\n".join(m.__str__() for m in monitors)
-        has_two_monitors = len(monitors) == 2
+        # TODO removed all screeninfo checks after switching DMD to X Screen 1 (not recognised by screeninfo)
+        # has_two_monitors = len(monitors) == 2
+        has_two_monitors = True
         if (not is_test) and has_two_monitors:
-            has_one_primary = any(m.is_primary for m in monitors) and any(not m.is_primary for m in monitors)
+            # has_one_primary = any(m.is_primary for m in monitors) and any(not m.is_primary for m in monitors)
+            has_one_primary = True
             if has_one_primary:
                 mon_dmd = [m for m in monitors if (not m.is_primary)][0]
-                is_correct_size = all(x1 == x2
-                                      for (x1, x2) in zip(DMD_WIDTH_HEIGHT, (mon_dmd.width, mon_dmd.height)))
+                # is_correct_size = all(x1 == x2
+                #                       for (x1, x2) in zip(DMD_WIDTH_HEIGHT, (mon_dmd.width, mon_dmd.height)))
+                is_correct_size = True
                 if is_correct_size:
                     try:
                         self._connect_socket()
@@ -306,6 +310,28 @@ class DMDControl:
         else:
             return max(0, at_pos-int(line_width/2)), min(length, at_pos+int(line_width/2))
 
+    def display_calibration_image(self, lw: int = 5):
+        img = self.get_zero_array()
+        mid_row, mid_col = img.shape[0]//2, img.shape[1]//2
+        cv2.line(img, (mid_col, 0), (mid_col, img.shape[0]), 255, lw)
+        cv2.line(img, (0, mid_row), (img.shape[1], mid_row), 255, lw)
+        box_sizes = [5, 10, 20, 40, 80, 160, 320]
+        box_sizes_rev = box_sizes[::-1]
+        shift = 20
+        for idx, box_size in enumerate(box_sizes):
+            start_x = mid_col - shift - box_size
+            start_y = mid_row + shift * (idx+1) + sum(box_sizes[:idx+1])
+            cv2.rectangle(img, (start_x, start_y), (start_x + box_size, start_y + box_size), 255, -1)
+            start_y = mid_row - shift * (idx+1) - sum(box_sizes[:idx+1])
+            cv2.rectangle(img, (start_x, start_y), (start_x + box_size, start_y + box_size), 255, -1)
+        for idx, box_size in enumerate(box_sizes_rev):
+            start_x = mid_col + shift
+            start_y = mid_row + shift * (idx+1) + sum(box_sizes_rev[:idx+1])
+            cv2.rectangle(img, (start_x, start_y), (start_x + box_size, start_y + box_size), 255, -1)
+            start_y = mid_row - shift * (idx+1) - sum(box_sizes_rev[:idx+1])
+            cv2.rectangle(img, (start_x, start_y), (start_x + box_size, start_y + box_size), 255, -1)
+        self.display_image(img)
+
     def display_checkerboard(
             self,
             square_size: int | None = None,
@@ -327,7 +353,6 @@ class DMDControl:
             img[:, j:j + square_size] = 255
         self.display_image(img)
 
-
     def display_circle(
             self,
             row: int,
@@ -336,6 +361,11 @@ class DMDControl:
     ):
         img = self.get_zero_array()
         cv2.circle(img, (col, row), radius, color=255, thickness=-1)
+        self.display_image(img)
+
+    def display_half(self):
+        img = self.get_zero_array()
+        img[img.shape[0]//4:img.shape[0]*3//4, :] = 255
         self.display_image(img)
 
     def display_line_vert(

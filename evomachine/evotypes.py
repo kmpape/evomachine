@@ -144,7 +144,7 @@ class DMDCalibConfigType:
 
 class DMDCalibConfigTypeFactory:
     @staticmethod
-    def default(channel: LEDType = LEDType.LED_505_NM) -> DMDCalibConfigType:
+    def default(channel: LEDType = LEDType.LED_515_NM) -> DMDCalibConfigType:
         """
         This configuration should be used together with a fluorescent slide.
 
@@ -158,17 +158,16 @@ class DMDCalibConfigTypeFactory:
         """
         return DMDCalibConfigType(
             channel=channel,
-            brightness=100,
-            exposure=100,
+            brightness=1,  # 100
+            exposure=10,  # 100
             line_width=10,
-            step=400,
+            step=100,  # 400
             delay=0.5,
-            start_row=750,
-            end_row=2250,
+            start_row=500,  # 750
+            end_row=2500,  # 2250
             start_col=80,
             end_col=1550,
         )
-
 
 
 @dataclass
