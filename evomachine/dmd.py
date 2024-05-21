@@ -99,6 +99,8 @@ class DMDControl:
         "Path to calibration file."
         self._homography_mat: Optional[np.ndarray] = None
         "Homography matrix for mapping image to DMD coordinates."
+        self._is_full_display: bool = False
+        "Internal flag queried through is_full_display() that is set to True when displaying a full white screen."
 
         # self.initialise()  # TODO remove this
 
@@ -185,7 +187,11 @@ class DMDControl:
     def close_window():
         pygame.quit()
 
-    def display_image(self, img: np.ndarray[(int, int), int], update_display: Optional[bool] = True):
+    def display_image(
+            self,
+            img: np.ndarray[(int, int), int],
+            update_display: Optional[bool] = True,
+    ):
         if not self._dmd_is_alive:
             logger.error(f"DMDControl.display_image: DMD not initialised. Try running DMDControl.initialise.")
             return
@@ -199,18 +205,23 @@ class DMDControl:
             return
         if update_display:
             pygame.display.update()
+        self._is_display_full = False
 
     def display_full(
             self,
             update_display: Optional[bool] = True,
             color: Optional[DMDColor] = DMDColor.WHITE,
+            force_display: bool = False,
     ):
+        if not force_display and self.is_display_full():
+            return
         if not self._dmd_is_alive:
             logger.error(f"DMDControl.display_full: DMD not initialised. Try running DMDControl.initialise.")
             return
         self.surface.fill(color.value)
         if update_display:
             pygame.display.update()
+        self._is_display_full = color == DMDColor.WHITE
 
     def display_none(self, update_display: Optional[bool] = True):
         self.display_full(update_display=update_display, color=DMDColor.BLACK)
@@ -269,6 +280,7 @@ class DMDControl:
         )
         if update_display:
             pygame.display.update()
+        self._is_display_full = False
 
     def display_line_horiz(
             self,
@@ -330,4 +342,52 @@ class DMDControl:
     @staticmethod
     def get_zero_array():
         return np.zeros(DMD_WIDTH_HEIGHT, dtype=np.uint8)
+
+    def is_display_full(self) -> bool:
+        return self._is_display_full
+
+    def img_to_dmd_coords(self, img_row: int, img_col: int) -> tuple[int, int]:
+        """
+        Transform coordinates on the camera to coordinates on the DMD.
+
+        Parameters
+        ----------
+        img_row : int
+            Camera Y coordinate.
+        img_col : int
+            Camera X coordinate.
+        Returns
+        -------
+        dmd_row_col : tuple[int, int]
+            DMD coordinates as (row, col).
+        """
+        point_cam = np.array([[[img_col, img_row]]]).astype(float)
+        point_dmd = cv2.perspectiveTransform(point_cam, self._homography_mat)
+        return int(np.round(point_dmd[0][0][1])), int(np.round(point_dmd[0][0][0]))
+
+    def img_to_dmd_array(self, img: np.array) -> np.array:
+        """
+        Transform a 3200 x 3200 camera pattern to a DMD pattern.
+
+        Example: Project a square of size 100 in the top left corner of your image
+
+        pattern_img = self.get_zero_array((3200, 3200))
+        pattern_img[0:101, 0:101] = 255
+        pattern_dmd = self.img_to_dmd_array(pattern_img)
+        self.display_image(pattern_dmd)
+
+        Parameters
+        ----------
+        img : np.ndarray
+            2D image array.
+        Returns
+        -------
+        dmd_img : np.ndarray
+            2D image array to be displayed on the DMD using display_image().
+        """
+        if img.shape != (3200, 3200):
+            logger.error(f"img_to_dmd_array: Expected image of shape (3200,3200) but received {img.shape}.")
+            return self.get_zero_array()
+        return cv2.warpPerspective(img, self._homography_mat, self.width_height_DMD[::-1]).astype(img.dtype)
+
 

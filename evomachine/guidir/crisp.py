@@ -155,7 +155,7 @@ class CRISPPanel(EvoPanelTemplate):
                           self.make_lineedit(text=str(int(self.cfg_crisp.loop_gain)),
                                              func=self.update_param, param='loop_gain')],
             'objective_na': [self.make_label(text="NA (0,Inf)", font=SMALL),
-                             self.make_lineedit(text=str(float(self.camera_config.objective.na)),
+                             self.make_lineedit(text=str(float(self.cfg_crisp.objective_na)),
                                                 func=self.update_param, param='objective_na')],
             'update_rate': [self.make_label(text="Update rate [ms]]", font=SMALL),
                             self.make_lineedit(text=str(int(self.cfg_crisp.update_rate)),

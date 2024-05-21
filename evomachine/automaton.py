@@ -1,5 +1,4 @@
 import copy
-from enum import auto, Enum
 import logging
 from multiprocessing import Event, Queue
 import numpy as np
@@ -13,24 +12,22 @@ import traceback
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import delta
-from delta.config import Config
 from delta.rt import PositionRT
 
 from evomachine.acquisition import AbstractCamera, EvoCamera
 from evomachine.commands import AutomatonCommand, CommandFactory
 from evomachine.config import ConfigFocus, ConfigImageProcessor, EVO_GUI_LOGGING_LEVEL, get_logger, EVOMACHINE_DIR,\
     USE_DMD_SOCKET
-from evomachine.coordinates import Coordinate, CoordinateFactory
+from evomachine.coordinates import Coordinate
 if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMDControl
 else:
     from evomachine.dmd import DMDControl
 from evomachine.exceptions import ErrorCode, ErrorContainer, ConfigError
-# from evomachine.positionrt import PositionRT
 from evomachine.strategy import AbstractStrategy
 from evomachine.utils import EvoCroppingBox, normalise_frame, rotation_correction
-from evomachine.evotypes import AutomatonCommandType, DMDCalibConfigType, DMDDirType, ImageConfigType, \
-    LEDType, FocusAlgorithmType
+from evomachine.evotypes import AutomatonCommandType, DMDCalibConfigType, LEDType, FocusAlgorithmType, \
+    FocusStatusType, FilterWheelType
 
 
 logger = get_logger(name=__name__)
@@ -54,7 +51,7 @@ class Automaton:
             queue_timeout: float = 0,
             run_timeout: float = 0,
     ):
-        self.use_seg = False
+        self.use_seg = True
         "Temporary switch to disable image processing."
         self._cfg: ConfigImageProcessor = cfg_processor
         "Delta configuration object for image segmentation."
@@ -92,12 +89,19 @@ class Automaton:
         "Set to true after initialise_reference_frames."
         self._strategy_is_initialised: bool = False
         "Set to true after _initialise_strategy."
+        self._num_refocus: int = 0
+        "Counter for refocusing after loosing autofocus. See ConfigImageProcessor for max_refocus_trials."
 
-        self.seg_model: Optional[tf.keras.Model] = self._cfg.cfg_delta.model("seg") if self.use_seg else None
+        if self.use_seg:
+            self.roi_model = delta.model.unet_rois(input_size=(*self._cfg.cfg_delta.target_size_rois, 1))  # noqa
+            logger.info(f"Automaton: Loading model with weights from {self._cfg.cfg_delta.model_file_rois}")
+            self.roi_model.load_weights(self._cfg.cfg_delta.model_file_rois)
+        else:
+            self.roi_model = None
+        self.seg_model: Optional[tf.keras.Model] = None
         "Delta segmentation model."
-        self.tracking_model: Optional[tf.keras.Model] = self._cfg.cfg_delta.model("track") if self.use_seg else None
+        self.tracking_model: Optional[tf.keras.Model] = None
         "Delta tracking model."
-        self.roi_model: Optional[tf.keras.Model] = self._cfg.cfg_delta.model("rois") if self.use_seg else None
 
         self._fovs: Dict[int, Coordinate] = {}
         "Dictionary containing coordinates of field of views."
@@ -154,6 +158,14 @@ class Automaton:
 
         self._strategy: AbstractStrategy = strategy
         "Strategy object defining actions taken at each timestep."
+
+    def act_on_halt(self):
+        """
+        This is called whenever the strategy loop is interrupted.
+        """
+        self.cam.autofocus_unlock()
+        self.cam.disable_led()
+        self._dmd.display_full()
 
     def check_status(self):
         if len(self.error_container) > 0:
@@ -228,7 +240,7 @@ class Automaton:
         if not isinstance(self.cam, EvoCamera):
             logger.warning(f"Automaton.set_mmc_live_mode: Camera is not of type EvoCamera.")
             return
-        self.cam.studio.live().set_live_mode(status)
+        self.cam.studio.live().set_live_mode(status)  # noqa
         self._mmc_live_mode_is_on = status
 
     def initialise_devices(self):
@@ -252,78 +264,29 @@ class Automaton:
             which: Optional[int] = None,
             rotation: Optional[float] = None,
             roi_boxes: Optional[Union[None, List[delta.utils.CroppingBox]]] = None,
-            cols_s_e: tuple[tuple[int, int] | None, tuple[int, int] | None,
-                            tuple[int, int] | None, tuple[int, int] | None] = (None, None, None, None),
     ):
         if not self._fov_list_is_initialised or not self._reference_frames_is_initialised:
             logging.warning("Automaton.initialise_position_processor: position list is not initialised.")
             raise ConfigError(message="Automaton.initialise_position_processor: position list is not initialised.",
                               error_code=ErrorCode.ERROR_DEVICE_CONFIG)
         self._create_position_processor(which=which)
-        if which is None:
-            logger.info(f"Automaton.initialise_position_processor: "
-                        f"initialising all position processors (use_seg={self.use_seg}).")
-            for i in range(len(self._pos_processor)):
-                logger.debug(f"Automaton.initialise_position_processor: initialising position processor {i}.")
-                if self.use_seg:
-                    if rotation is None:
-                        this_rotation = rotation_correction(
-                            img=self._ref_frames[i][self._channel_to_index[self._cfg.channel_rot], :, :],
-                        )
-                    else:
-                        this_rotation = rotation
-                    logger.info(f"Automaton.initialise_position_processor: Rotating pos {i} "
-                                f"by {this_rotation} degrees.")
-                    self._pos_processor[i].initialise(
-                        reference=normalise_frame(self._ref_frames[i]),  # TODO need to crop frames
-                        channel_rot=self._channel_to_index[self._cfg.channel_rot],
-                        channel_roi=self._channel_to_index[self._cfg.channel_roi],
-                        rotate=this_rotation,
-                        roi_boxes=roi_boxes,
-                        seg_model=self.seg_model,
-                        tracking_model=self.tracking_model,
-                        roi_model=self.roi_model,
-                        cols_s_e=cols_s_e,
-                    )
-                    self._position_processors_is_initialised[i] = True
-                    self.fill_queue(
-                        queue_data_type=AutomatonCommandType.ROI_DATA,
-                        queue_data=CommandFactory.command_roi_data(
-                            fov_id=i,
-                            rotation=self._pos_processor[i].rotate,
-                            roi_boxes=self._pos_processor[i].roi_boxes,
-                            cols_s_e=self._pos_processor[i].cols_s_e,
-                        ),
-                        logging_level=logging.INFO,
-                    )
-                    logger.info(f"Automaton.initialise_position_processor: Initialised pos {i}.")
-                else:
-                    self._position_processors_is_initialised[i] = True
-                    self.fill_queue(
-                        queue_data_type=AutomatonCommandType.ROI_DATA,
-                        queue_data=CommandFactory.command_roi_data(
-                            fov_id=i,
-                            rotation=0,
-                            roi_boxes=[],
-                            cols_s_e=(None, None, None, None),
-                        ),
-                        logging_level=logging.INFO,
-                    )
-            self._pos_to_roi = {i_pos: [i_roi for i_roi in range(len(self._pos_processor[i_pos].rois))]
-                                for i_pos in range(len(self._pos_processor))}
-        else:
-            logger.info(f"Automaton.initialise_position_processor: initialising position processor {which}.")
+        position_list = list(range(len(self._pos_processor))) if which is None else [which]
+        logger.info(f"Automaton.initialise_position_processors: "
+                    f"initialising position processors (use_seg={self.use_seg}): {position_list}.")
+        for i_pos in position_list:
+            logger.debug(f"Automaton.initialise_position_processor: initialising position processor {i_pos}.")
             if self.use_seg:
                 if rotation is None:
                     this_rotation = rotation_correction(
-                        img=self._ref_frames[which][self._channel_to_index[self._cfg.channel_rot], :, :],
+                        img=self._ref_frames[i_pos][self._channel_to_index[self._cfg.channel_rot], :, :],
                     )
                 else:
                     this_rotation = rotation
-                logger.info(f"Automaton.initialise_position_processor: Rotating pos {which} "
+                logger.info(f"Automaton.initialise_position_processor: Rotating pos {i_pos} "
                             f"by {this_rotation} degrees.")
-                self._pos_processor[which].initialise(
-                    reference=normalise_frame(self._ref_frames[which]),
+
+                self._pos_processor[i_pos].initialise(
+                    reference=self._ref_frames[i_pos],  #  normalise_frame(self._ref_frames[i_pos]),  # TODO need to crop frames
                     channel_rot=self._channel_to_index[self._cfg.channel_rot],
                     channel_roi=self._channel_to_index[self._cfg.channel_roi],
                     rotate=this_rotation,
@@ -331,33 +294,34 @@ class Automaton:
                     seg_model=self.seg_model,
                     tracking_model=self.tracking_model,
                     roi_model=self.roi_model,
-                    cols_s_e=cols_s_e,
                 )
+                if not self._pos_processor[i_pos].roi_boxes:
+                    logger.warning(f"Initialised position {i_pos} but found no RoIs.")
+                else:
+                    logger.info(f"Found {len(self._pos_processor[i_pos].roi_boxes)} RoIs for position {i_pos}.")
+                self._position_processors_is_initialised[i_pos] = True
                 self.fill_queue(
                     queue_data_type=AutomatonCommandType.ROI_DATA,
                     queue_data=CommandFactory.command_roi_data(
-                        fov_id=which,
-                        rotation=self._pos_processor[which].rotate,
-                        roi_boxes=self._pos_processor[which].roi_boxes,
-                        cols_s_e=self._pos_processor[which].cols_s_e,
+                        fov_id=i_pos,
+                        rotation=self._pos_processor[i_pos].rotate,
+                        roi_boxes=self._pos_processor[i_pos].roi_boxes,
                     ),
                     logging_level=logging.INFO,
                 )
-                logger.info(f"Automaton.initialise_position_processor: Initialised pos {which}.")
+                logger.info(f"Automaton.initialise_position_processor: Initialised position {i_pos}.")
             else:
+                self._position_processors_is_initialised[i_pos] = True
                 self.fill_queue(
                     queue_data_type=AutomatonCommandType.ROI_DATA,
                     queue_data=CommandFactory.command_roi_data(
-                        fov_id=which,
+                        fov_id=i_pos,
                         rotation=0,
                         roi_boxes=[],
-                        cols_s_e=(None, None, None, None),
                     ),
                     logging_level=logging.INFO,
                 )
-            self._position_processors_is_initialised[which] = True
-            self._pos_to_roi[which] = [i_roi for i_roi in range(len(self._pos_processor[which].rois))]
-            logger.info(f"Automaton.initialise_position_processor: finished initialisation.")
+            self._pos_to_roi[i_pos] = [i_roi for i_roi in range(len(self._pos_processor[i_pos].rois))]
 
     def initialise_field_of_view_list(
             self,
@@ -471,15 +435,7 @@ class Automaton:
                     logger.warning("Automaton.initialise_position_list: stopping initialisation.")
                     return
                 self.cam.move_to(coordinate=coord, block=True)
-                self.cam.software_focus(
-                    cfg_focus=cfg_focus,
-                    user_input_override=True,
-                    countdown_override=True,
-                    cropping_box=None,
-                )
-                self.focus_curves[i_fov] = (self.cam.focus_Z_coords, self.cam.focus_scores)
-                self.focus_prev_stack[:, :, i_fov] = self.cam.focus_prev_image
-                self.focus_stack[:, :, i_fov] = self.cam.get_software_focus_z_frame()
+                self._run_software_focus(cfg_focus=cfg_focus, curr_fov_id=i_fov)
                 coord.z = self.cam.get_software_focus_z_coord()
 
         cmd = CommandFactory.command_focus_data(
@@ -493,6 +449,17 @@ class Automaton:
 
         self.cam.disable_led()
         self._focus_is_initialised = True
+
+    def _run_software_focus(self, cfg_focus: ConfigFocus, curr_fov_id: int):
+        self.cam.software_focus(
+            cfg_focus=cfg_focus,
+            user_input_override=True,
+            countdown_override=True,
+            cropping_box=None,
+        )
+        self.focus_curves[curr_fov_id] = (self.cam.focus_Z_coords, self.cam.focus_scores)
+        self.focus_prev_stack[:, :, curr_fov_id] = self.cam.focus_prev_image
+        self.focus_stack[:, :, curr_fov_id] = self.cam.get_software_focus_z_frame()
 
     def initialise_reference_frames(self):
         if not self.devices_is_initialised():
@@ -508,7 +475,7 @@ class Automaton:
             self.increment_pos()
         self.cam.reset_counter()
         self._reference_frames_is_initialised = True
-        norm_frames = [normalise_frame(frame) for frame in self._ref_frames]
+        norm_frames = {i_fov: normalise_frame(frame) for i_fov, frame in zip(self._fovs.keys(), self._ref_frames)}
         cmd = CommandFactory.command_ref_data(ref_frames=norm_frames)
         self.fill_queue(queue_data_type=AutomatonCommandType.REF_DATA, queue_data=cmd, logging_level=logging.INFO)
         self.cam.disable_led()
@@ -543,7 +510,6 @@ class Automaton:
                         position_nb=pos_id,
                         config=self._cfg.cfg_delta,
                         use_track_moma=self._cfg.use_track_RT,
-                        use_roi_moma=self._cfg.use_roi_moma,
                     )
                 )
         else:
@@ -554,13 +520,65 @@ class Automaton:
                     position_nb=which,
                     config=self._cfg.cfg_delta,
                     use_track_moma=self._cfg.use_track_RT,
-                    use_roi_moma=self._cfg.use_roi_moma,
             )
 
     def increment_pos(self) -> None:
         self._curr_period = ((self._curr_period + 1) if (self._curr_fov_id + 1 == len(self._fovs))
                              else self._curr_period)
         self._curr_fov_id = (self._curr_fov_id + 1) % len(self._fovs)
+
+    def manage_autofocus(self, curr_fov_id: int, debug_mode: bool = True) -> None:
+        """
+        Checks the autofocus status and refocuses if the autofocus is lost and self._cfg.refocus is True. Throws an
+        error if the software focus fails.
+        """
+        if not self._use_autofocus:
+            logger.warning(f"manage_autofocus: no autofocus to manage as autofocus is disabled.")
+            return
+        if debug_mode:
+            curr_pos = self.cam.get_coordinates(['Z'])
+            logger.info(f"manage_autofocus: At FoV ID {curr_fov_id} and coordinate {curr_pos}.")
+        is_locked = self.cam.autofocus_is_locked()
+        if not is_locked:
+            logger.warning(f"manage_autofocus: lost autofocus lock on fov_id={curr_fov_id}.")
+            max_num_trials_reached = False
+            if self._cfg.refocus:
+                if self._num_refocus < self._cfg.max_refocus_trials:
+                    max_num_trials_reached = True
+                    logger.error(f"manage_autofocus: Max. number ({self._cfg.max_refocus_trials}) of refocusing trials "
+                                 f"reached. Halting execution.")
+                    self.shutdown()
+                else:
+                    self._num_refocus += 1
+                    self.cam.autofocus_unlock()  # just to be sure
+                    self._run_software_focus(cfg_focus=self.cam.cfg.focus, curr_fov_id=curr_fov_id)
+                    if self.cam.get_software_focus_status() == FocusStatusType.IN_FOCUS:
+                        is_success = self.cam.autofocus_initialise()
+                        if is_success:
+                            self.cam.autofocus_lock()
+                            logger.info(f"manage_autofocus: successfully refocused and locked autofocus.")
+                        else:
+                            logger.error(f"manage_autofocus: Error initialising autofocus. Halting execution.")
+                            self.shutdown()
+                    else:
+                        logger.error(f"manage_autofocus: Received bad FocusStatusType="
+                                     f"{self.cam.get_software_focus_status()}. Halting execution.")
+                        self.shutdown()
+            else:
+                logger.warning(f"manage_autofocus: Refocusing disabled. Halting execution.")
+                self.shutdown()
+            self.fill_queue(
+                queue_data_type=AutomatonCommandType.AUTOFOCUS_DATA,
+                queue_data=CommandFactory.command_autofocus(
+                    is_locked=self.cam.autofocus_is_locked(),
+                    refocusing=self._cfg.refocus,
+                    max_num_trials_reached=max_num_trials_reached,
+                    software_focus_status=self.cam.get_software_focus_status(),
+                ),
+                logging_level=logging.ERROR,
+            )
+        else:
+            logger.debug(f"manage_autofocus: autofocus is locked.")
 
     def override_parameter(self, fov_id: int, pos_id: int, param_name: str, param_value: Any):
         logger.info(f"Automaton.override_parameter: setting {param_name} to {param_value} for "
@@ -573,7 +591,8 @@ class Automaton:
             raise ConfigError(f"Automaton.override_parameter: {fov_id} is not a valid FoV id. {self._fovs.keys()}",
                               ErrorCode.ERROR_DEVICE_CONFIG)
         if pos_id not in self._pos_to_fov.keys():
-            raise ConfigError(f"Automaton.override_parameter: {pos_id} is not a valid position id. {self._pos_to_fov.keys()}",
+            raise ConfigError(f"Automaton.override_parameter: {pos_id} is not a valid position id. "
+                              f"{self._pos_to_fov.keys()}",
                               ErrorCode.ERROR_DEVICE_CONFIG)
         if param_name == "z_pos":
             if self._use_autofocus:
@@ -598,24 +617,6 @@ class Automaton:
                 seg_model=self.seg_model,
                 tracking_model=self.tracking_model,
                 roi_model=self.roi_model,
-            )
-        elif param_name == "cols_s_e":
-            new_cols_s_e = (
-                self._pos_processor[pos_id].cols_s_e[i] if p is None else p for i, p in enumerate(param_value)
-            )
-            logger.info(f"Automaton.override_parameter: changing column positions "
-                        f"from {self._pos_processor[pos_id].cols_s_e} "
-                        f"to {new_cols_s_e}.")
-            self._pos_processor[pos_id].cols_s_e = new_cols_s_e
-            self._pos_processor[pos_id].initialise(
-                reference=normalise_frame(self._ref_frames[pos_id]),  # TODO need to crop frames
-                channel_rot=self._channel_to_index[self._cfg.channel_rot],
-                channel_roi=self._channel_to_index[self._cfg.channel_roi],
-                rotate=self._pos_processor[pos_id].rotate,
-                seg_model=self.seg_model,
-                tracking_model=self.tracking_model,
-                roi_model=self.roi_model,
-                cols_s_e=self._pos_processor[pos_id].cols_s_e,
             )
 
     def _gui_process(self):
@@ -668,6 +669,7 @@ class Automaton:
 
             if cmd.command_type == AutomatonCommandType.MOVE:
                 self._move_to_pos(pos_id=cmd.command_args)
+                self.manage_autofocus(curr_fov_id=self._curr_fov_id)
 
             elif cmd.command_type == AutomatonCommandType.LIVE_MODE:
                 self.set_cam_live_mode(cmd.command_args)
@@ -687,7 +689,7 @@ class Automaton:
                 return
 
             elif cmd.command_type == AutomatonCommandType.IMAGE:
-                if self._mmc_live_mode_is_on:
+                if self._mmc_live_mode_is_on:  # noqa
                     logger.warning("Automaton._process: Camera live mode is on for IMAGE. Disabling.")
                     self.set_cam_live_mode(False)
                 self._dmd.display_full()
@@ -706,9 +708,9 @@ class Automaton:
                         {roi_id: None for roi_id in range(len(self._pos_processor[self._curr_fov_id].rois))}
                     )
                 if cmd.command_args['save']:
-                    for i_chan in cmd.command_args['channels']:
+                    for i_chan, channel_index in zip(cmd.command_args['channels'], channels_int):
                         self.cam.save_frame(
-                            frame=self._all_frames_raw[self._curr_fov_id][1, i_chan.value, :, :],
+                            frame=self._all_frames_raw[self._curr_fov_id][1, channel_index, :, :],
                             i_channel=i_chan,
                             i_pos=self._curr_fov_id,
                         )
@@ -777,26 +779,28 @@ class Automaton:
                 return
 
             elif cmd.command_type == AutomatonCommandType.IMAGE:
-                if self._mmc_live_mode_is_on:
-                    logger.warning("Automaton._finalise_process: Camera live mode is on for IMAGE. Disabling.")
+                if self._mmc_live_mode_is_on:  # noqa
+                    logger.warning("Automaton._process: Camera live mode is on for IMAGE. Disabling.")
                     self.set_cam_live_mode(False)
                 self._dmd.display_full()
+                time.sleep(0.5)  # TODO
                 if self.cam.get_exposure() != cmd.command_args['exposure_time']:
                     self.cam.set_exposure(exposure_time=cmd.command_args['exposure_time'])
                 self._take_image(channels=cmd.command_args['channels'], brightness=cmd.command_args['brightness'])
-                if not cmd.command_args['segment']:
-                    channels_int = [self._channel_to_index[c] for c in cmd.command_args['channels']]
-                    cmd.command_data = self._all_frames[self._curr_fov_id][1, channels_int, :, :]
-                else:
+                self.cam.disable_led()
+                channels_int = [self._channel_to_index[c] for c in cmd.command_args['channels']]
+                cmd.command_data = [self._all_frames[self._curr_fov_id][1, channels_int, :, :]]
+                if cmd.command_args['segment']:
                     # TODO make sure segmentation channel is in cmd.command_args['channels']
                     self._process_position()
                     # TODO fill with segmentation data
-                    cmd.command_data = {roi_id: None
-                                        for roi_id in range(len(self._pos_processor[self._curr_fov_id].rois))}
+                    cmd.command_data.append(
+                        {roi_id: None for roi_id in range(len(self._pos_processor[self._curr_fov_id].rois))}
+                    )
                 if cmd.command_args['save']:
-                    for i_chan in cmd.command_args['channels']:
+                    for i_chan, channel_index in zip(cmd.command_args['channels'], channels_int):
                         self.cam.save_frame(
-                            frame=self._all_frames_raw[self._curr_fov_id][1, i_chan.value, :, :],
+                            frame=self._all_frames_raw[self._curr_fov_id][1, channel_index, :, :],
                             i_channel=i_chan,
                             i_pos=self._curr_fov_id,
                         )
@@ -843,7 +847,12 @@ class Automaton:
             has_stopped = True
             while (not self.strategy_has_started()) and (not self.has_shutdown()):
                 while (not self.stopped()) and (not self.strategy_has_started()) and (not self.has_shutdown()):
-                    self._gui_process()
+                    try:
+                        self._gui_process()
+                    except Exception as e:
+                        logger.error(f"Automaton.run: Shutting down. Exception during GUI process: {e}.")
+                        traceback.print_exc()
+                        self.shutdown()
                     if self.run_timeout > 0:
                         self.sleep(duration=self.run_timeout)
                 if has_stopped:
@@ -867,10 +876,16 @@ class Automaton:
                 self._move_to_pos(pos_id=self._curr_fov_id)
                 self._dmd.display_full()  # FIXME temporary statement
 
+            self._num_refocus = 0
             has_stopped = True
             while (not self.strategy_has_stopped()) and (not self.has_shutdown()):
                 while (not self.stopped()) and (not self.strategy_has_stopped()):
-                    self._process()
+                    try:
+                        self._process()
+                    except Exception as e:
+                        logger.error(f"Automaton.run: Shutting down. Exception during GUI process: {e}.")
+                        traceback.print_exc()
+                        self.shutdown()
                     if self.run_timeout > 0:
                         self.sleep(duration=self.run_timeout)
                 if has_stopped:
@@ -881,6 +896,7 @@ class Automaton:
             if self.is_initialised():
                 logger.info("Automaton.run: finalising strategy.")
                 self._finalise_process()
+                self.act_on_halt()
         logger.info("Automaton.run: Shutting down.")
         self._dmd.finalise()
         self.cam.finalise()
@@ -953,8 +969,9 @@ class Automaton:
         return self._strategy.name()
 
     def is_initialised(self):
-        return self.devices_is_initialised() and self._strategy_is_initialised and self._reference_frames_is_initialised \
-            and self._fov_list_is_initialised and all(self._position_processors_is_initialised)
+        return self.devices_is_initialised() and self._strategy_is_initialised and \
+            self._reference_frames_is_initialised and self._fov_list_is_initialised and \
+            all(self._position_processors_is_initialised)
 
     def reset(self):
         self._fov_list_is_initialised = False
@@ -1024,7 +1041,7 @@ class Automaton:
         return self._start_strategy_event.is_set()
 
     def stop_strategy(self):
-        return self._stop_strategy_event.set()
+        self._stop_strategy_event.set()
 
     def strategy_has_stopped(self) -> bool:
         return self._stop_strategy_event.is_set()
@@ -1033,6 +1050,7 @@ class Automaton:
         return self._stop_event.is_set()
 
     def shutdown(self):
+        self.act_on_halt()
         self._stop_strategy_event.set()
         self._start_strategy_event.set()
         self._stop_event.set()
@@ -1044,46 +1062,85 @@ class Automaton:
     def dmd_calibrate(
             self,
             cfg: DMDCalibConfigType,
-            filename: Optional[str] = None
-    ) -> List[Tuple[Tuple[int, int], Tuple[int, int]]]:
+            filename: str | None = None
+    ) -> list[tuple[tuple[int, int], tuple[int, int]]]:
+        """
+        Calibrates DMD by scanning DMD coordinates and measuring CAM coordinates (on image). See DMDCAlibConfigType for
+        parameters. Note that this routine hard-codes some points that MUST be within the image. Change if needed.
+
+        Parameters
+        ----------
+        cfg : DMDCalibConfigType
+            Calibration parameters.
+        filename : str
+            Filename for saving calibration. Uses and overwrites default file otherwise.
+
+        Returns
+        -------
+        results : [((row, col), (img_row_max.argmax(), img_col_max.argmax()), (img_row_max.max(), img_col_max.max()))]
+            Calibration values with row/col DMD coordinates and remaining coordinates are CAM coordinates.
+        """
         if not self.devices_is_initialised():
             logging.error("Automaton.dmd_calibrate: Devices not initialised. Returning.")
             return []
         if filename is None:
             filename = str(EVOMACHINE_DIR / "dmd_calibration_data.pkl")
         logger.info(f"Starting DMD calibration with config {cfg} and filename {filename}.")
+
+        # Build grid to scan
+        if cfg.end_col >= self._dmd.width_height_DMD[0] or cfg.end_col >= self._dmd.width_height_DMD[1]:
+            logger.error(f"dmd_calibrate: Invalid row or column ranges for config: {cfg}")
+        col_range = np.arange(cfg.start_col, cfg.end_col + cfg.step, cfg.step, dtype=np.dtype('int'))
+        row_range = np.arange(cfg.start_row, cfg.end_row + cfg.step, cfg.step, dtype=np.dtype('int'))
+        if col_range[-1] == self._dmd.width_height_DMD[1]:
+            col_range[-1] -= 1
+        if row_range[-1] == self._dmd.width_height_DMD[0]:
+            row_range[-1] -= 1
+        cols, rows = np.meshgrid(col_range, row_range)
+
+        # Set camera configuration
         self.cam.set_exposure(exposure_time=cfg.exposure)
         if isinstance(self.cam, EvoCamera):
             self.set_cam_live_mode(False)
-
-        col_range = np.arange(cfg.start_col, cfg.end_col, cfg.step)
-        row_range = np.arange(cfg.start_row, cfg.end_row, cfg.step)
-        cols, rows = np.meshgrid(col_range, row_range)
-
-        results = []
-
         self.cam.set_led(i_chan=cfg.channel, brightness=cfg.brightness)
+        self.cam.set_filter_wheel(FilterWheelType.NO_FILTER)
 
-        # Get an intensity level for a point that is in the FoV
-        self._dmd.display_circle(
-            row=self._dmd.width_height_DMD[0]//2,
-            col=self._dmd.width_height_DMD[1]//2,
-            radius=cfg.line_width
-        )
-        test_img = self.cam.get_frame(
-            i_chan=None,
-            normalise=False
-        )
-        max_intensity = test_img.max()
-        avg_intensity = test_img.mean()
-        logger.info(f"Test point gives max_intensity={max_intensity} and avg_intensity={avg_intensity}.")
+        # Get minimum intensity for points to be considered
+        max_intensity = 0
+        for i_row in range(3):
+            for i_col in range(3):
+                if self.stopped():
+                    logger.warning("dmd_calibrate: Stop event encountered. Aborting DMD calibration.")
+                    return []
+                row = (self._dmd.width_height_DMD[0] * (i_row + 1)) // 4
+                col = (self._dmd.width_height_DMD[1] * (i_col + 1)) // 4
+                self._dmd.display_circle(row=row, col=col, radius=cfg.line_width)  # these points should be on screen
+                self.sleep(cfg.delay)
+                test_img = self.cam.get_frame(i_chan=None, normalise=False)
+                max_intensity += test_img.max()  # noqa
+                logger.debug(f"Init image ({row}, {col}): {test_img.max()}")  # noqa
+        max_intensity = float(max_intensity) / 9
+        self._dmd.display_circle(row=0, col=0, radius=cfg.line_width)
+        self.sleep(cfg.delay)
+        test_img_none = self.cam.get_frame(i_chan=None, normalise=False)
+        max_intensity_none = test_img_none.max()  # noqa
+        if max_intensity_none >= 0.9*max_intensity:
+            logger.error(f"dmd_calibrate: max off-screen intensity is high. off_screen={max_intensity} > "
+                         f"0.9*on_screen={0.9*max_intensity}. "
+                         f"Please verify. Aborting calibration.")
+            return []
+        min_intensity = max_intensity_none + 0.5 * (max_intensity - max_intensity_none)
+        logger.info(f"dmd_calibrate: Max. on-screen intensity={max_intensity}, "
+                    f"max off-screen intensity={max_intensity_none} => min req. intensity={min_intensity}.")
 
+        # Get calibration points
+        results = []
         for i, (col, row) in enumerate(zip(cols.flatten(), rows.flatten())):
             if i % 50 == 0:
-                logger.info(f"At {i} of {len(cols.flatten())}")
+                logger.info(f"At {i+1} of {len(cols.flatten())}")
             if self.stopped():
-                logger.warning("Aborting DMD calibration.")
-                return ()
+                logger.warning("dmd_calibrate: Stop event encountered. Aborting DMD calibration.")
+                return []
             if not USE_DMD_SOCKET:
                 self._dmd.display_none(update_display=False)
             self._dmd.display_circle(row=row, col=col, radius=cfg.line_width)
@@ -1092,14 +1149,18 @@ class Automaton:
                 i_chan=None,
                 normalise=False
             )
-            img_col_max = img.max(axis=0)
-            img_row_max = img.max(axis=1)
-            logger.info(f"Point (row={row}, col={col}) gives max_intensity={img.max()} and avg_intensity={img.mean()}.")
+            img_max = img.max()  # noqa
+            img_col_max = img.max(axis=0)  # noqa
+            img_row_max = img.max(axis=1)  # noqa
+            if img_max >= min_intensity:
+                results.append(((row, col),
+                                (img_row_max.argmax(), img_col_max.argmax()),
+                                (img_row_max.max(), img_col_max.max())))
+            else:
+                logger.debug(f"dmd_calibrate: DMD point (r{row},c{col}) off screen with intensity "
+                             f"{img_max} < {min_intensity}.")
 
-            results.append(((row, col),
-                            (img_row_max.argmax(), img_col_max.argmax()),
-                            (img_row_max.max(), img_col_max.max())))
-
+        self.cam.set_filter_wheel(FilterWheelType.FILTER)
         self.cam.disable_led()
         self._dmd.display_none()
 
@@ -1108,6 +1169,8 @@ class Automaton:
         if filename is not None:
             with open(filename, 'wb') as file:
                 pickle.dump(results, file)
+
+        logger.info(f"dmd_calibrate: Saved calibration data under {filename}.")
 
         return results
 

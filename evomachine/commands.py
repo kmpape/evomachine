@@ -14,7 +14,7 @@ if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMD_WIDTH_HEIGHT
 else:
     from evomachine.dmd import DMD_WIDTH_HEIGHT
-from evomachine.evotypes import AutomatonCommandType, LEDType
+from evomachine.evotypes import AutomatonCommandType, FocusStatusType, LEDType
 from evomachine.utils import EvoCroppingBox
 
 
@@ -98,7 +98,7 @@ class CommandFactory:
             channels: List[LEDType],
             exposure_time: int | None,
             segment: bool,
-            brightness: int | float | list[int | float] = 100,
+            brightness: int | float | list[int | float] = 10,
             save: bool = False,
     ) -> AutomatonCommand:
         """
@@ -201,7 +201,7 @@ class CommandFactory:
             channel: LEDType,
             image: np.ndarray[(int, int), np.uint8],
             duration: Union[float, int],
-            brightness: int = 29,
+            brightness: int | float = 29,
     ) -> AutomatonCommand:
         """
 
@@ -228,7 +228,7 @@ class CommandFactory:
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument image ({type(image)}).")
         if not (isinstance(duration, float) or isinstance(duration, int)):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument duration ({type(duration)}).")
-        if (not isinstance(brightness, int)) or not (0 <= brightness <= 29):
+        if not (isinstance(brightness, int) or not isinstance(brightness, float)) or not (0 <= brightness <= 29):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type or range for argument brightness.")
         return AutomatonCommand(
             command_type=AutomatonCommandType.PROJECT,
@@ -261,7 +261,7 @@ class CommandFactory:
             duration: float,
             set_live_mode: bool = False,
             channel: LEDType = LEDType.LED_450_NM,
-            brightness: int | float = 10,
+            brightness: int | float = 10,   # TODO this must be divided by 100 in automaton
     ) -> AutomatonCommand:
         """
 
@@ -293,7 +293,7 @@ class CommandFactory:
             command_creation_time=time(),
         )
 
-    def reset(self):
+    def reset(self) -> None:
         self._command_id_counter = -1
 
     # Methods below used by Automaton for GUI communication
@@ -305,7 +305,7 @@ class CommandFactory:
             focus_prev_stack: np.ndarray,
             focus_prev_z_coords: np.ndarray,
             fovs: Dict[int, Coordinate],
-    ):
+    ) -> AutomatonCommand:
         command_args = {
             'focus_curves': focus_curves,
             'focus_stack': focus_stack,
@@ -326,7 +326,7 @@ class CommandFactory:
             cropping_boxes: Dict[int, List[EvoCroppingBox]],
             fov_to_pos: Dict[int, List[int]],
             pos_to_fov_index: Dict[int, int]
-    ):
+    ) -> AutomatonCommand:
         command_args = {
             'fovs': fovs,
             'cropping_boxes': cropping_boxes,
@@ -341,9 +341,28 @@ class CommandFactory:
         )
 
     @staticmethod
+    def command_autofocus(
+            is_locked: bool,
+            refocusing: bool,
+            max_num_trials_reached: bool,
+            software_focus_status: FocusStatusType,
+    ) -> AutomatonCommand:
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.AUTOFOCUS_DATA,
+            command_args={
+                'is_locked': is_locked,
+                'refocusing': refocusing,
+                'max_num_trials_reached': max_num_trials_reached,
+                'software_focus_status': software_focus_status,
+            },
+            command_id=-1,
+            command_creation_time=time(),
+        )
+
+    @staticmethod
     def command_info_text(
             text: str,
-    ):
+    ) -> AutomatonCommand:
         return AutomatonCommand(
             command_type=AutomatonCommandType.INFO_TEXT,
             command_args={'text': text},
@@ -352,7 +371,7 @@ class CommandFactory:
         )
 
     @staticmethod
-    def command_ref_data(ref_frames: List[np.ndarray]) -> AutomatonCommand:
+    def command_ref_data(ref_frames: dict[int, np.ndarray]) -> AutomatonCommand:
         return AutomatonCommand(
             command_type=AutomatonCommandType.REF_DATA,
             command_args=ref_frames,
@@ -365,13 +384,11 @@ class CommandFactory:
             fov_id: int,
             rotation: float,
             roi_boxes: list[DeltaCroppingBox],
-            cols_s_e: tuple[tuple[int, int] | None, tuple[int, int] | None, tuple[int, int] | None, tuple[int, int] | None],
     ) -> AutomatonCommand:
         command_args = {
             'fov_id': fov_id,
             'rotation': rotation,
             'roi_boxes': roi_boxes,
-            'cols_s_e': cols_s_e,
         }
         return AutomatonCommand(
             command_type=AutomatonCommandType.ROI_DATA,
@@ -380,5 +397,3 @@ class CommandFactory:
             command_creation_time=time(),
             fov_id=fov_id,
         )
-
-

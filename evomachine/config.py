@@ -1,12 +1,9 @@
-import copy
 from dataclasses import dataclass
-from enum import Enum, auto
+from datetime import datetime
 import logging
-import numpy as np
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
-# from delta import utils
 import delta
 
 from evomachine.exceptions import ConfigError, ErrorCode
@@ -27,15 +24,28 @@ EVO_FORMATTER = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(me
 EVO_LOGGING_LEVEL = logging.INFO
 EVO_GUI_LOGGING_LEVEL = logging.INFO
 
+consolidated_logger = logging.getLogger('consolidated_logger')
+consolidated_logger.setLevel(EVO_LOGGING_LEVEL)
+
+# Add a file handler for consolidated logging
+filename = "evom_{}.log".format(datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f"))
+file_handler = RotatingFileHandler(f"/media/hslab/Data/Logs/{filename}", maxBytes=1000000, backupCount=20)
+file_handler.setFormatter(EVO_FORMATTER)
+file_handler.setLevel(logging.INFO)
+
 
 def get_logger(name: str, is_gui: bool = False) -> logging.Logger:
+    global file_handler
     logger = logging.getLogger(name)
     for handler in logger.handlers:
         logger.removeHandler(handler)
     logger.setLevel(EVO_LOGGING_LEVEL if not is_gui else EVO_GUI_LOGGING_LEVEL)
-    handler = logging.StreamHandler()
-    handler.setFormatter(EVO_FORMATTER)
-    logger.addHandler(handler)
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(EVO_FORMATTER)
+    logger.addHandler(stream_handler)
+    logger.addHandler(file_handler)
+
     logger.propagate = False
     return logger
 
@@ -44,7 +54,7 @@ def get_logger(name: str, is_gui: bool = False) -> logging.Logger:
 class ConfigImageProcessor:
     cfg_delta: delta.config.Config
     "Delta configuration object."
-    channels: List[LEDType]
+    channels: list[LEDType]
     "List of channels to be imaged. Used for taking reference frames. Do not include any UV here."
     channel_seg: LEDType
     "Channel used for segmentation."
@@ -58,11 +68,20 @@ class ConfigImageProcessor:
     "Use special tracking function for tracking in trenches."
     use_roi_moma: bool = True
     "Use ROI ID function for mother machines."
+    delta_roi_preprocess_target_size: tuple[int, int] = (2048, 2048)
+    "Size of microscope images just before being input to DeLTA."
     image_processing_verbosity: int = 0
     "Lowest verbosity is 0."
+    refocus: bool = False
+    "Refocus after autofocus loss."
+    max_refocus_trials: int = 1
+    "Maximum number of refocusing trials before stopping execution."
+
+    def copy(self):
+        return ConfigImageProcessor(**self.__dict__)
 
     @property
-    def channel_to_index(self) -> Dict[LEDType, int]:
+    def channel_to_index(self) -> dict[LEDType, int]:
         return {c: i for i, c in enumerate(self.channels)}
 
     def __post_init__(self):
@@ -83,14 +102,40 @@ class ConfigImageProcessor:
             raise TypeError("use_track_RT must be a boolean.")
         if not isinstance(self.image_processing_verbosity, int) or self.image_processing_verbosity < 0:
             raise TypeError("image_processing_verbosity must be an integer >= 0.")
+        if self.refocus and self.max_refocus_trials < 1:
+            raise TypeError(f"Refocus is True but max_refocus_trials={self.max_refocus_trials}")
+
+    def __str__(self):
+        s = ["ConfigImageProcessor"]
+        for k, v in self.__dict__.items():
+            if k == 'cfg_delta':
+                tmp = str(v)
+                v = tmp.replace("\n", "\n\t")
+            s.append(f" ├─ {k}: {v}")
+        return "\n".join(s)
 
 
 class ConfigImageProcessorFactory:
     @staticmethod
-    def default_config(channels: Optional[List[LEDType]] = None) -> ConfigImageProcessor:
+    def default_delta_config() -> delta.config.Config:
+        config = delta.config.Config.default("mothermachine")
+        config.target_size_rois = (1024, 1024)
+        config.tolerable_resizing_rois = 0
+        config.model_file_rois = Path("/home/hslab/workspace_python/delta3.0/de-lta-rt/"
+                                      "evomodels/evo_roi_2024-05-08.keras")
+        return config
+
+    @staticmethod
+    def default_config(channels: list[LEDType] | None = None) -> ConfigImageProcessor:
         default_channels = [LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_560_NM, LEDType.LED_625_NM]
+        cfg_delta = delta.config.Config.default("mothermachine")
+        cfg_delta.whole_frame_drift = True
+        cfg_delta.target_size_rois = (1024, 1024)
+        cfg_delta.tolerable_resizing_rois = 0
+        cfg_delta.model_file_rois = Path("/home/hslab/workspace_python/delta3.0/de-lta-rt/"
+                                         "evomodels/evo_roi_2024-05-08.keras")  # TODO relative paths
         return ConfigImageProcessor(
-            cfg_delta=delta.config.Config.default("mothermachine"),
+            cfg_delta=cfg_delta,
             channels=default_channels if channels is None else channels,
             channel_seg=LEDType.LED_450_NM,
             channel_rot=LEDType.LED_450_NM,
@@ -110,20 +155,22 @@ class ConfigCRISP:
     "Adjust to change the responsiveness of CRISP."
     update_rate: int
     "The time in ms to wait between updates to the CRISP trajectory."
+    objective_na: float
+    "NA of the objective used to calculate dither steps. Can be different from the actual objective NA."
 
-    user_input: Optional[bool] = True
+    user_input: bool | None = True
     "Ask for user input before configuring and locking CRISP autofocus."
-    min_snr: Optional[int] = 2
+    min_snr: int | None = 2
     "Minimum acceptable signal to noise ratio measured during calibration."
-    min_error: Optional[int] = 100
+    min_error: int | None = 100
     "Minimum acceptable absolute error measured during calibration."
-    pause_long: Optional[int] = 5
+    pause_long: int | None = 5
     "Value of long pause in s between CRISP configuration steps."
-    pause_short: Optional[int] = 1
+    pause_short: int | None = 1
     "Value of short pause in s between CRISP configuration steps."
 
     @staticmethod
-    def get_attr_from_str(attr_name: str, attr_value_str: str) -> Union[int, float, bool, None]:
+    def get_attr_from_str(attr_name: str, attr_value_str: str) -> int | float | bool | None:
         if attr_name == 'lock_range' or attr_name == 'objective_na':
             return float(attr_value_str)
         else:
@@ -159,47 +206,31 @@ class ConfigCRISP:
             raise TypeError(f"lock_range may lead to objective crashing into the sample. Provided {self.lock_range}.")
 
     def __str__(self):
-        attributes = [
-            f"- led_intensity={self.led_intensity}",
-            f"- loop_gain={self.loop_gain}",
-            f"- averaging={self.averaging}",
-            f"- update_rate={self.update_rate}",
-            f"- lock_range={self.lock_range:.3f}",
-            f"- min_snr={self.min_snr}",
-            f"- min_error={self.min_error}",
-        ]
-        return "\n".join(attributes)
+        s = ["ConfigCRISP"]
+        for k, v in self.__dict__.items():
+            s.append(f" ├─ {k}: {v}")
+        return "\n".join(s)
 
     def copy(self):
-        return ConfigCRISP(
-            led_intensity=self.led_intensity,
-            loop_gain=self.loop_gain,
-            averaging=self.averaging,
-            update_rate=self.update_rate,
-            lock_range=self.lock_range,
-            user_input=self.user_input,
-            min_snr=self.min_snr,
-            min_error=self.min_error,
-            pause_long=self.pause_long,
-            pause_short=self.pause_short,
-        )
+        return ConfigCRISP(**self.__dict__)
 
 
 class ConfigCRISPFactory:
     @staticmethod
     def default_config() -> ConfigCRISP:
         return ConfigCRISP(
-            led_intensity=100,
-            loop_gain=15,
+            led_intensity=70,
+            loop_gain=10,
             averaging=0,
-            update_rate=5,
-            lock_range=0.025,
+            update_rate=1,
+            objective_na=0.65,
+            lock_range=0.25,
         )
 
 
 @dataclass
 class ConfigFocus:
-    exposure_time: Union[float, int]
+    exposure_time: float | int
     "Exposure time for focusing in ms."
     focus_channel: LEDType
     "LED channel to use while scanning. See LEDType for available channels."
@@ -212,12 +243,12 @@ class ConfigFocus:
 
     algorithm: FocusAlgorithmType = FocusAlgorithmType.STEEL
     "Algorithm used to focus. See FocusAlgorithmType for available algorithms."
-    user_input: Optional[bool] = True
+    user_input: bool | None = True
     "Ask for user input before configuring and starting software focus."
 
     @staticmethod
     def get_attr_from_str(attr_name: str, attr_value_str: str) \
-            -> Union[int, float, bool, FocusAlgorithmType, None, LEDType]:
+            -> int | float | bool | FocusAlgorithmType | LEDType | None:
         if attr_name == 'exposure_time':
             return float(attr_value_str)
         elif attr_name == 'user_input':
@@ -265,26 +296,13 @@ class ConfigFocus:
             raise TypeError(f"algorithm must be an instance of FocusAlgorithmType. Provided {self.algorithm}.")
 
     def copy(self):
-        return ConfigFocus(
-            exposure_time=self.exposure_time,
-            focus_channel=self.focus_channel,
-            brightness=self.brightness,
-            rel_range=self.rel_range,
-            step_size=self.step_size,
-            algorithm=self.algorithm,
-            user_input=self.user_input,
-        )
+        return ConfigFocus(**self.__dict__)
 
     def __str__(self):
-        attributes = [
-            f"- exposure_time={self.exposure_time} ms",
-            f"- brightness={self.brightness}",
-            f"- focus_channel={self.focus_channel} ({LEDType.get_name(self.focus_channel)})",
-            f"- rel_range={self.rel_range / 10} μm",
-            f"- step_size={self.step_size / 10} μm",
-            f"- algorithm={self.algorithm.value} ({FocusAlgorithmType.get_name(self.algorithm.value)})",
-        ]
-        return "\n".join(attributes)
+        s = ["ConfigFocus"]
+        for k, v in self.__dict__.items():
+            s.append(f" ├─ {k}: {v}")
+        return "\n".join(s)
 
 
 class ConfigFocusFactory:
@@ -294,8 +312,8 @@ class ConfigFocusFactory:
             exposure_time=100,
             focus_channel=LEDType.LED_450_NM,
             brightness=15,
-            rel_range=50,
-            step_size=10,
+            rel_range=500,
+            step_size=50,
         )
 
 
@@ -309,18 +327,21 @@ class ConfigCamera:
     "Focus configuration. See ConfigFocus."
     autofocus: ConfigCRISP
     "Autofocus configuration. See ConfigCRISP."
-    leds: List[LEDType]
+    leds: list[LEDType]
     "Available LED channels. See LEDType."
-    filters: List[FilterWheelType]
+    filters: list[FilterWheelType]
     "Available filter wheels. See FilterWheelType."
     path_to_save: Path
     "Path to save images."
-    default_exposure_time: Union[float, int] = 1000
+    default_exposure_time: float | int = 100
     "Default exposure time in ms."
     default_focus_channel_id: int = 0
     "Default LED channel index in self.leds."
     cam_pxl_size: float = 6.5
     "Pixel size of camera in μm."
+
+    def copy(self):
+        return ConfigCamera(**self.__dict__)
 
     @property
     def pxl_size(self) -> float:
@@ -358,7 +379,7 @@ class ConfigCamera:
 
 class ConfigCameraFactory:
     @staticmethod
-    def get_available_leds() -> List[LEDType]:
+    def get_available_leds() -> list[LEDType]:
         if USE_SYNC_BOARD:
             return [LEDType.NO_LED, LEDType.LED_385_NM, LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_560_NM,
                     LEDType.LED_625_NM]
@@ -366,7 +387,7 @@ class ConfigCameraFactory:
             return [LEDType.NO_LED, LEDType.LED_405_NM, LEDType.LED_450_NM, LEDType.LED_505_NM, LEDType.LED_538_NM]
 
     @staticmethod
-    def default_oil_config(path_to_save: Optional[Path] = None) -> ConfigCamera:
+    def default_oil_config(path_to_save: Path | None = None) -> ConfigCamera:
         return ConfigCamera(
             objective=ObjectiveConfigTypeFactory.default_oil(),
             image=ImageConfigTypeFactory.pv_cam(),
@@ -378,7 +399,7 @@ class ConfigCameraFactory:
         )
 
     @staticmethod
-    def default_air_config(path_to_save: Optional[Path] = None) -> ConfigCamera:
+    def default_air_config(path_to_save: Path | None = None) -> ConfigCamera:
         return ConfigCamera(
             objective=ObjectiveConfigTypeFactory.default_air(),
             image=ImageConfigTypeFactory.pv_cam(),

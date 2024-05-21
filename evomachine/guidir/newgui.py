@@ -130,6 +130,8 @@ class EvoGUI(QMainWindow):
             stop_strategy_event=stop_strategy_event,
             stop_event=stop_event,
             shutdown_event=shutdown_event,
+            width=10,
+            height=10,
         )
         self.panels.append(self.fig_panel)
 
@@ -194,31 +196,32 @@ class EvoGUI(QMainWindow):
         self.panels.append(self.crisp_panel)
 
         # Connect Signals
-        self.fig_panel.worker.cropping_box_drawn.connect(self.exp_panel.update_cropping_boxes)
+        # self.fig_panel.worker.cropping_box_drawn.connect(self.exp_panel.update_cropping_boxes)
         self.led_panel.signal_set_led.connect(self.fig_panel.update_led)
 
         # Main Layout
         main_layout = QGridLayout()
 
-        r, c = 0, 0
-        main_layout.addWidget(self.pos_panel.widget, r, c, 2, 5)
+        r, c, w, h = 0, 0, 3, 2
+        main_layout.addWidget(self.pos_panel.widget, r, c, h, w)
         r, c = r+2, c
-        main_layout.addWidget(self.led_panel.widget, r, c, 2, 5)
+        main_layout.addWidget(self.led_panel.widget, r, c, h, w)
         r, c = r+2, c
-        main_layout.addWidget(self.dmd_panel.widget, r, c, 2, 5)
+        main_layout.addWidget(self.dmd_panel.widget, r, c, h, w)
         r, c = r+2, c
-        main_layout.addWidget(self.crisp_panel.widget, r, c, 2, 5)
+        main_layout.addWidget(self.crisp_panel.widget, r, c, h, w)
 
-        r, c = 0, 5
-        main_layout.addWidget(self.fig_panel.widget, r, c, 10, 4)
+        r, c, w, h = 0, 5, 10, 10
+        main_layout.addWidget(self.fig_panel.widget, r, c, h, w)
 
-        r, c = 0, c+4
-        main_layout.addWidget(self.exp_panel.widget, 0, 9, 4, 4)
+        r, c, w, h = 0, c+w, 3, None
+        main_layout.addWidget(self.exp_panel.widget, r, c, 4, w)
         r, c = r+4, c
-        main_layout.addWidget(self.fw_panel.widget, 4, 9, 2, 5)
+        main_layout.addWidget(self.fw_panel.widget, r, c, 2, w)
         r, c = r+2, c
-        main_layout.addWidget(self.focus_panel.widget, 6, 9, 3, 5)
+        main_layout.addWidget(self.focus_panel.widget, r, c, 3, w)
 
+        central_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         central_widget.setLayout(main_layout)
 
         self.setStyleSheet(EVO_STYLE)

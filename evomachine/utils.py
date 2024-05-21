@@ -1,19 +1,23 @@
 from dataclasses import dataclass
 import numpy as np
 import pandas as pd
+import serial.tools.list_ports
 import skimage
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import delta.utils
 
-# from evomachine.config import get_logger
-#
-#
-# logger = get_logger(name=__name__)
-
 pd.set_option('display.max_columns', None)
 pd.set_option('display.expand_frame_repr', False)
+
+
+def list_serial_ports(starts_with: str | None = None) -> list[str]:
+    ports = serial.tools.list_ports.comports()
+    if starts_with is not None:
+        return [port.device for port in ports if port.device.startswith(starts_with)]
+    else:
+        return [port.device for port in ports]
 
 
 # Data Class to hold rotation parameters
@@ -95,6 +99,7 @@ def normalise_frame(
             for c in channels:
                 norm_frame[c, :, :] = norm_frame[c, :, :] / f
     return norm_frame
+
 
 @dataclass
 class EvoCroppingBox:

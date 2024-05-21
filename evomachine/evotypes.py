@@ -61,14 +61,16 @@ class AutomatonCommandType(EvoType):
     PROCESS_DATA = auto()
     REF_DATA = auto()
     ROI_DATA = auto()
+    AUTOFOCUS_DATA = auto()
 
 
-# class AutomatonQueueDataType(EvoType):
-#     FOCUS_DATA = auto()
-#     FOCUS_FRAMES = auto()
-#     INFO_TEXT = auto()
-#     PROCESS_DATA = auto()
-#     PROCESSOR_INIT_DATA = auto()
+class FocusStatusType(EvoType):
+    IN_FOCUS = auto()
+    BAD_FOCUS_CURVE = auto()
+    OUT_OF_RANGE = auto()
+    DEVICE_ERROR = auto()
+    NO_IMAGE = auto()
+    UNKNOWN = auto()
 
 
 class AxisType(EvoType):
@@ -116,24 +118,24 @@ class DMDDirType(EvoType):
 class DMDCalibConfigType:
     channel: LEDType
     "LED type for calibration."
-    brightness: int
+    brightness: float | int
     "Brightness of LED."
-    exposure: Union[float, int]
+    exposure: float | int
     "Exposure time for calibration in milliseconds."
     line_width: int
     "Thickness of calibration lines."
     step: int
     "Step size for calibration in pixels."
-    delay: Union[int, float]
-    "Delay between calbriation steps in seconds."
+    delay: float | int
+    "Delay between calibration steps in seconds."
     start_row: int
-    "Start index for rows (DMD coordinates)."
+    "Start index for rows (DMD coordinates). Should be off-camera-screen."
     end_row: int
-    "End index for rows (DMD coordinates)."
+    "End index for rows (DMD coordinates). Should be off-camera-screen."
     start_col: int
-    "Start index for columns (DMD coordinates)."
+    "Start index for columns (DMD coordinates). Should be off-camera-screen."
     end_col: int
-    "End index for columns (DMD coordinates)."
+    "End index for columns (DMD coordinates). Should be off-camera-screen."
 
     def __post_init__(self):
         if not ((0 <= self.start_row) and (self.start_row < self.end_row) and (self.end_row < 2716)):
@@ -144,29 +146,29 @@ class DMDCalibConfigType:
 
 class DMDCalibConfigTypeFactory:
     @staticmethod
-    def default(channel: LEDType = LEDType.LED_515_NM) -> DMDCalibConfigType:
+    def default(channel: LEDType = LEDType.LED_450_NM) -> DMDCalibConfigType:
         """
         This configuration should be used together with a fluorescent slide.
 
         Parameters
         ----------
-        channel: LEDType
+        channel : LEDType
             Use this to override default channel.
         Returns
         -------
-        cfg: DMDCalibConfigType
+        cfg : DMDCalibConfigType
         """
         return DMDCalibConfigType(
             channel=channel,
-            brightness=1,  # 100
-            exposure=10,  # 100
-            line_width=10,
-            step=100,  # 400
+            brightness=0.4,  # 100
+            exposure=50,  # 100
+            line_width=1,
+            step=50,  # 400
             delay=0.5,
-            start_row=500,  # 750
-            end_row=2500,  # 2250
-            start_col=80,
-            end_col=1550,
+            start_row=500,  # should be off-screen
+            end_row=2200,  # 2500,  # 2250
+            start_col=0,
+            end_col=1599,
         )
 
 

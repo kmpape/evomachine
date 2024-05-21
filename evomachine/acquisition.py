@@ -18,9 +18,9 @@ from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, get_logger
 from evomachine.coordinates import Coordinate
 from evomachine.exceptions import CameraError, ConfigError, ErrorCode, ErrorContainer, \
     EvoMachineError, StageError, TigerError, SyncBoardError
-from evomachine.software_focus import get_focus_score
-from evomachine.utils import EvoCroppingBox
-from evomachine.evotypes import FilterWheelType, FocusAlgorithmType, ImageConfigType, LEDType
+from evomachine.software_focus import get_focus_score, get_focus_score_is_good
+from evomachine.utils import EvoCroppingBox, list_serial_ports
+from evomachine.evotypes import FilterWheelType, FocusAlgorithmType, ImageConfigType, LEDType, FocusStatusType
 
 
 logger = get_logger(name=__name__)
@@ -67,8 +67,27 @@ class AbstractCamera:
         "Initialised in software_focus. LED channel before last start of focus routine."
         self._focus_is_initialised: bool = False
         "Changes to True after initialisation and to False after finalisation."
+        self._focus_status: FocusStatusType = FocusStatusType.UNKNOWN
+        "Flag can be queries through get_focus_status() and is set during software_focus()."
 
-    def autofocus_initialise(self, this_cfg_crisp: Optional[ConfigCRISP] = None, user_input: Optional[bool] = True):
+    def autofocus_initialise(
+            self,
+            this_cfg_crisp: Optional[ConfigCRISP] = None,
+            user_input: Optional[bool] = True
+    ) -> bool:
+        """
+
+        Parameters
+        ----------
+        this_cfg_crisp : ConfigCRISP
+            Provide ConfigCRISP to override self.cfg.autofocus
+        user_input : bool
+            Ask for user input to lock autofocus. Otherwise, autofocus is NOT locked.
+        Returns
+        -------
+        success : bool
+            True if initialisation was successful.
+        """
         raise NotImplementedError()
 
     def autofocus_disable(self):
@@ -93,8 +112,13 @@ class AbstractCamera:
         return self._is_initialised
 
     def initialise(self):
+        """
+        Initialise devices. Sets is_initialised() flag to true if successful. Also, automatically sets the filter wheel.
+        """
         self.reset_counter()
         self._is_initialised = self._initialise()
+        if self._is_initialised:
+            self.set_filter_wheel(FilterWheelType.FILTER)
 
     def check_status(self):
         if len(self.error_container) > 0:
@@ -131,6 +155,9 @@ class AbstractCamera:
             return None
         focus_best_position = np.argmax(self.focus_scores)
         return self.focus_stack[:, :, focus_best_position]
+
+    def get_software_focus_status(self) -> FocusStatusType:
+        return self._focus_status
 
     def get_default_filename(self) -> str:
         return self.get_filename(i_pos=None)
@@ -258,11 +285,11 @@ class AbstractCamera:
         -------
         Either a 2D or a 3D numpy array depending on colormap argument.
         """
-        norm = plt.Normalize(vmin=frame.min(), vmax=frame.max())
+        norm = plt.Normalize(vmin=frame.min(), vmax=frame.max())  # noqa
         if (colormap is None) or (isinstance(colormap, bool) and not colormap):
             return norm(frame)
         elif isinstance(colormap, bool) and colormap:
-            return plt.cm.jet(norm(frame))
+            return plt.cm.jet(norm(frame))  # noqa
         else:
             return colormap(norm(frame))
 
@@ -341,7 +368,12 @@ class AbstractCamera:
             return
         self.set_led(i_chan=cfg_focus.focus_channel, brightness=cfg_focus.brightness)
         for ipos in range(len(self.focus_Z_coords)):
-            self.software_focus_step(ipos=ipos)
+            success = self.software_focus_step(ipos=ipos)
+            if not success:
+                logger.error(
+                    f"Error during software focus step. Check log. Aborting focus."
+                )
+                return
         self.software_focus_finalise()
 
     def software_focus_finalise(self):
@@ -386,7 +418,7 @@ class AbstractCamera:
     def software_focus_is_initialised(self) -> bool:
         return self._focus_is_initialised
 
-    def software_focus_step(self, ipos: int):
+    def software_focus_step(self, ipos: int) -> bool:
         raise NotImplementedError()
 
     def set_exposure(self, exposure_time: Union[int, None] = None):
@@ -567,9 +599,14 @@ class TestCamera(AbstractCamera):
         logger.info("TestCamera.disable_live_mode.")
         return
 
-    def autofocus_initialise(self, this_cfg_crisp: Optional[ConfigCRISP] = None, user_input: Optional[bool] = True):
+    def autofocus_initialise(
+            self,
+            this_cfg_crisp: Optional[ConfigCRISP] = None,
+            user_input: Optional[bool] = True,
+    ) -> bool:
         logger.info("TestCamera.autofocus_initialise.")
-        self._autofocus_is_locked = True
+        self._autofocus_is_locked = False
+        return True
 
     def autofocus_disable(self):
         logger.info("TestCamera.autofocus_disable.")
@@ -593,6 +630,7 @@ class TestCamera(AbstractCamera):
 
     def software_focus_finalise(self):
         logger.info("TestCamera.software_focus_finalise.")
+        self._focus_status = FocusStatusType.IN_FOCUS
         return
 
     def software_focus_is_valid_range(self) -> bool:
@@ -653,7 +691,7 @@ class TestCamera(AbstractCamera):
         self.focus_prev_image = self.get_frame(i_chan=self._cfg_focus.focus_channel).astype(np.float64)
         self._focus_is_initialised = True
 
-    def software_focus_step(self, ipos: int):
+    def software_focus_step(self, ipos: int) -> bool:
         logger.info(f"TestCamera.software_focus_step at pos_z={ipos}.")
         z_coord = self.focus_Z_coords[ipos]
         self.move_to(coordinate={'Z': z_coord}, block=True)
@@ -665,14 +703,14 @@ class TestCamera(AbstractCamera):
         )
         if image_raw is None:
             logger.warning("EvoCamera.software_focus: self._take_frame returned None. Aborting...")
-            return
+            return False
         else:
             self.focus_stack[:, :, ipos] = image_raw
         self.focus_scores[ipos] = get_focus_score(
             img=self.focus_cropping_box.crop(self.focus_stack[:, :, ipos]),
             algorithm=self._cfg_focus.algorithm,
         )
-        return
+        return True
 
     def move_home(self, block: Optional[bool] = False):
         self._current_pos = Coordinate(0, 0, 0)
@@ -901,7 +939,7 @@ class EvoCamera(AbstractCamera):
         self.set_led(i_chan=LEDType.NO_LED)
 
     def disable_live_mode(self):
-        self.studio.live().set_live_mode(False)
+        self.studio.live().set_live_mode(False)  # noqa
 
     def _move_fov(self, x_or_y: str, sign: int, multiplier: Optional[float] = 1.0, block: Optional[bool] = False):
         pos = self.tiger.where([x_or_y.upper()])
@@ -948,11 +986,11 @@ class EvoCamera(AbstractCamera):
             self._last_frame_channel = i_chan
             self.set_led(i_chan=i_chan, brightness=brightness, block=block)
         try:
-            self.mmc.snap_image()
+            self.mmc.snap_image()  # noqa
         except Exception as e:
             logger.warning(f"EvoCamera._take_frame: Received exception:\n{e}\nHave you disabled MM live mode?")
             return None
-        tagged_image = self.mmc.get_tagged_image()
+        tagged_image = self.mmc.get_tagged_image()  # noqa
         pixels = np.reshape(
             tagged_image.pix,
             newshape=[tagged_image.tags['Height'], tagged_image.tags['Width']]
@@ -966,10 +1004,14 @@ class EvoCamera(AbstractCamera):
             coordinate.to_dict() if isinstance(coordinate, Coordinate) else coordinate
         )
 
-    def autofocus_initialise(self, this_cfg_crisp: Optional[ConfigCRISP] = None, user_input: Optional[bool] = True):
+    def autofocus_initialise(
+            self,
+            this_cfg_crisp: Optional[ConfigCRISP] = None,
+            user_input: Optional[bool] = True,
+    ) -> bool:
         if not self._tiger_is_alive:
             logger.error(f"EvoCamera.autofocus_initialise: Device not alive.")
-            return
+            return False
 
         cfg_crisp = this_cfg_crisp if this_cfg_crisp else self.cfg.autofocus
         ask_user = cfg_crisp.user_input and user_input
@@ -980,11 +1022,12 @@ class EvoCamera(AbstractCamera):
                 logger.info("CRISP: Proceeding with configuring and setting up CRISP autofocus.")
             else:
                 logger.info("CRISP: Aborting CRISP configuration.")
-                return
+                return False
         is_configured = self.autofocus_configure(this_cfg_crisp=cfg_crisp)
         if not is_configured:
-            return
+            return False
 
+        is_success = True
         logger.info("CRISP: Setting IDLE status.")
         self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.IDLE)
         logger.info("CRISP: Resetting offsets.")
@@ -995,15 +1038,20 @@ class EvoCamera(AbstractCamera):
         time.sleep(cfg_crisp.pause_long)
         val = self.tiger.crisp_get_snr(card_address=self.card_address_crisp)
         if val < cfg_crisp.min_snr:
+            is_success = False
             logger.warning(f"EvoCamera.autofocus: Low SNR = {val:.2d}. Increase CRISP LED intensity and repeat.")
         logger.info("CRISP: Setting DITHER status.")
         self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.DITHER)
         time.sleep(cfg_crisp.pause_long)
         val = self.tiger.crisp_get_err(card_address=self.card_address_crisp)
         if np.abs(val) < cfg_crisp.min_error:
+            is_success = False
             logger.warning(f"EvoCamera.autofocus: Low error = {val}. Check ASI guide.")
         logger.info("CRISP: Setting SET_GAIN status.")
         self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.SET_GAIN)
+        time.sleep(cfg_crisp.pause_short)
+        logger.info("CRISP: Setting UNLOCK status.")
+        self.autofocus_unlock()
         time.sleep(cfg_crisp.pause_short)
 
         do_lock = False
@@ -1013,12 +1061,12 @@ class EvoCamera(AbstractCamera):
         if do_lock:
             logger.info("CRISP: Setting LOCK status.")
             self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.LOCK)
-        else:
-            logger.info("CRISP: Setting UNLOCK status.")
-            self.autofocus_unlock()
         time.sleep(cfg_crisp.pause_short)
         curr_state = self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=None)
         logger.info(f"CRISP: Finalising autofocus. Current state is {curr_state}.")
+        if not is_success:
+            logger.warning(f"autofocus_initialise: initialisation was not successful.")
+        return is_success
 
     def autofocus_disable(self):
         if not self._tiger_is_alive:
@@ -1045,7 +1093,7 @@ class EvoCamera(AbstractCamera):
         time.sleep(cfg_crisp.pause_short)
         # self.tiger.crisp_reset_offset(card_address=self.card_address_crisp)
         time.sleep(cfg_crisp.pause_short)
-        self.tiger.crisp_get_set_objective_na(card_address=self.card_address_crisp, value=self.cfg.objective.na)
+        self.tiger.crisp_get_set_objective_na(card_address=self.card_address_crisp, value=cfg_crisp.objective_na)
         time.sleep(cfg_crisp.pause_short)
         self.tiger.crisp_get_set_led_intensity(card_address=self.card_address_crisp, value=cfg_crisp.led_intensity)
         time.sleep(cfg_crisp.pause_short)
@@ -1063,6 +1111,7 @@ class EvoCamera(AbstractCamera):
             averaging=self.tiger.crisp_get_set_num_avg(card_address=self.card_address_crisp, value=None),
             update_rate=self.tiger.crisp_get_set_update_rate(card_address=self.card_address_crisp, value=None),
             lock_range=self.tiger.crisp_get_set_lock_range(card_address=self.card_address_crisp, value=None),
+            objective_na=self.tiger.crisp_get_set_objective_na(card_address=self.card_address_crisp, value=None),
             min_snr=cfg_crisp.min_snr,
             min_error=cfg_crisp.min_error,
         )
@@ -1150,7 +1199,7 @@ class EvoCamera(AbstractCamera):
 
     def _set_exposure(self, exposure_time: Union[int, None] = None):
         if self._mmc_is_alive:
-            self.mmc.set_exposure(exposure_time)
+            self.mmc.set_exposure(exposure_time)  # noqa
         else:
             logger.warning("EvoCamera._set_exposure: cannot set exposure as MMC is not alive.")
             # TODO raise error?
@@ -1212,6 +1261,8 @@ class EvoCamera(AbstractCamera):
 
     def software_focus_finalise(self):
         self._focus_is_initialised = False
+        self._focus_status = FocusStatusType.IN_FOCUS if get_focus_score_is_good(self.focus_scores) \
+            else FocusStatusType.BAD_FOCUS_CURVE
         focus_best_coordinate = self.get_software_focus_z_coord()
         if focus_best_coordinate is None or self.coordinate_is_out_of_bounds({'Z': focus_best_coordinate}):
             logger.error(f"EvoCamera.software_focus_finalise: invalid z coordinate {focus_best_coordinate}.")
@@ -1239,6 +1290,7 @@ class EvoCamera(AbstractCamera):
         if not all([self._mmc_is_alive, self._tiger_is_alive]):
             logger.error(f"EvoCamera.software_focus: Device(s) not alive. "
                          f"Tiger={self._tiger_is_alive}, MMC={self._mmc_is_alive}.")
+            self._focus_status = FocusStatusType.DEVICE_ERROR
             return
         # Assign optional arguments
         if cropping_box is None:
@@ -1261,6 +1313,7 @@ class EvoCamera(AbstractCamera):
         )
         if not self.software_focus_is_valid_range():
             self._focus_is_initialised = False
+            self._focus_status = FocusStatusType.OUT_OF_RANGE
             return
         if user_input_override:
             if not countdown_override:
@@ -1302,7 +1355,7 @@ class EvoCamera(AbstractCamera):
         ).astype(np.float64)
         self._focus_is_initialised = True
 
-    def software_focus_step(self, ipos: int):
+    def software_focus_step(self, ipos: int) -> bool:
         z_coord = self.focus_Z_coords[ipos]
         self.move_to(coordinate={'Z': z_coord}, block=True)
         image_raw = self.display_save_frame(
@@ -1313,13 +1366,15 @@ class EvoCamera(AbstractCamera):
         )
         if image_raw is None:
             logger.warning("EvoCamera.software_focus: self._take_frame returned None. Aborting...")
-            return
+            self._focus_status = FocusStatusType.NO_IMAGE
+            return False
         else:
             self.focus_stack[:, :, ipos] = image_raw
         self.focus_scores[ipos] = get_focus_score(
             img=self.focus_cropping_box.crop(self.focus_stack[:, :, ipos]),
             algorithm=self._cfg_focus.algorithm,
         )
+        return True
 
     def zero_coordinates(self):
         self.tiger.zero()
@@ -1327,7 +1382,8 @@ class EvoCamera(AbstractCamera):
 
 class EvoCamerav2(EvoCamera):
     """
-    EvoMachine acquisition class.
+    EvoMachine acquisition class. This class overrides some methods of EvoCamera as it uses the syncboard for LED
+    control instead of the ASI Tiger Box.
 
     Orientation is "Left on camera == left on stage":
 
@@ -1358,9 +1414,13 @@ class EvoCamerav2(EvoCamera):
             syncboard_port: str = "/dev/ttyACM1",  # TODO move this to config
     ):
         super().__init__(cfg_camera=cfg_camera, tiger_port=tiger_port)
+
         self.syncboard: Optional[SyncBoardController] = None
+        "Object to control sync board functions such as LEDs"
         self._syncboard_port: str = syncboard_port
+        "Expected sync board serial port. If not found, the code will look for patterns like /dev/ttyACMX"
         self._syncboard_is_alive: bool = False
+        "Set to true once successfully connected. Flag is not automatically updated on connection loss."
         self._led_channel_keys: Dict[LEDType, Union[int, None]] = {
             LEDType.LED_385_NM: 7,
             LEDType.LED_450_NM: 1,
@@ -1369,6 +1429,7 @@ class EvoCamerav2(EvoCamera):
             LEDType.LED_625_NM: 4,
             LEDType.NO_LED: None,
         }
+        "Map from LEDType to channel ID on sync board (hard-coded)."
 
     def _initialise(self) -> bool:
         """ Initialises EvoCamera objects with peripherals. Tests connections and sets is_alive flags. """
@@ -1410,19 +1471,28 @@ class EvoCamerav2(EvoCamera):
             self.syncboard: SyncBoardController = SyncBoardController.from_serial_port(port=self._syncboard_port)
             self.syncboard.initialise()
             if not self.syncboard.is_initialised():
-                raise ConfigError("EvoCamerav2._initialise: Unable to initialise SyncBoard.")
+                raise ConfigError("EvoCamerav2._initialise: Unable to initialise SyncBoard.",
+                                  error_code=ErrorCode.ERROR_SYNC_BOARD)
             self._syncboard_is_alive = True
         except Exception as e:
             self._syncboard_is_alive = False
-            logger.warning(f"EvoCamerav2._initialise: Error connecting to SyncBoard on port {self._syncboard_port}: {e}.")
+            logger.debug(f"EvoCamerav2._initialise: Error connecting to SyncBoard on port {self._syncboard_port}: {e}.")
             self.error_container.add_error(
                 new_error=SyncBoardError(message=str(e), error_code=ErrorCode.ERROR_SYNC_BOARD)
             )
             # Retry on different ports
-            if ('ttyACM1' in self._syncboard_port) or ('ttyACM0' in self._syncboard_port):
-                self._syncboard_port = self._syncboard_port.replace('1', '0') if 'ttyACM1' in self._syncboard_port \
-                    else self._syncboard_port.replace('1', '0')
-                logger.warning(f"EvoCamerav2._initialise: Re-trying on port {self._syncboard_port}.")
+            possible_ports = list_serial_ports(starts_with="/dev/ttyACM")
+            if not possible_ports:
+                logger.warning(f"EvoCamerav2._initialise: Unable to initialise SyncBoard. No ports starting with "
+                               f"/dev/ttyACM found. Please check the connection, or change the port in "
+                               f"acquisition.EvoCamerav2.__init__ and restart.")
+            elif len(possible_ports) > 1:
+                logger.warning(f"EvoCamerav2._initialise: Found multiple ports matching the pattern /dev/ttyACMX: "
+                               f"{possible_ports}. Please let me know which port I should connect to by specifying "
+                               f"the correct one in acquisition.EvoCamerav2.__init__ and restart.")
+            else:
+                self._syncboard_port = possible_ports[0]
+                logger.debug(f"EvoCamerav2._initialise: Re-trying on port {self._syncboard_port}.")
                 try:
                     self.syncboard: SyncBoardController = SyncBoardController.from_serial_port(port=self._syncboard_port)
                     self.syncboard.initialise()
@@ -1477,7 +1547,8 @@ class EvoCamerav2(EvoCamera):
 
     def _finalise(self):
         logger.warning("Shutting down camera, ASI tiger, and sync board.")
-        self.syncboard.finalise()
+        if self.syncboard is not None:
+            self.syncboard.finalise()
         if self._is_multi_threaded:
             self.tiger.stop()
             self.tiger.join()

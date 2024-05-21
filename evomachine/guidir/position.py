@@ -284,7 +284,8 @@ class PositionPanel(EvoPanelTemplate):
         self.request_move_to_coord.emit(self.fovs[self.curr_fov])
 
     def update_current_fov(self):
-        self.curr_fov = None if self.fov_combo_box.currentText() == "None" else int(self.fov_combo_box.currentText())
+        self.curr_fov = None if self.fov_combo_box.currentText() in ["None", ""] \
+            else int(self.fov_combo_box.currentText())
 
     def update_fovs(self, cmd: AutomatonCommand):
         logger.debug(f"Position: Updating FoVs: {cmd.command_args['fovs']}.")

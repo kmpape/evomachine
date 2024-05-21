@@ -1,8 +1,10 @@
-import os
+import datetime
 from multiprocessing import Event, Lock, Process, Queue
+import os
 from pathlib import Path
 import sys
 import threading
+
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QIcon
 
@@ -11,24 +13,19 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'de-lta-rt'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'sync_board'))
 
-from evomachine.acquisition import TestCamera, EvoCamera, EvoCamerav2  # noqa
-from evomachine.automaton import Automaton  # noqa
+from evomachine.acquisition import TestCamera
+from evomachine.automaton import Automaton
 from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, ConfigImageProcessorFactory, \
-    EVOMACHINE_DIR, USE_DMD_SOCKET, USE_SYNC_BOARD  # noqa
+    EVOMACHINE_DIR, USE_DMD_SOCKET, USE_SYNC_BOARD
 if USE_DMD_SOCKET:
-    from evomachine.dmd_socket import DMDControl  # noqa
+    from evomachine.dmd_socket import DMDControl
 else:
-    from evomachine.dmd import DMDControl  # noqa
-    import pygame  # noqa
+    from evomachine.dmd import DMDControl
+    import pygame
 
-from evomachine.guidir.newgui import EvoGUI  # noqa
-from evomachine.guidir.queuemanager import QueueManager  # noqa
-from evomachine.strategy import AbstractStrategy, BasicStrategy   # TODO add dropdown in GUI  # noqa
-from strategies.strategy_2024_03_07 import JessStrategy  # noqa
-from strategies.strategy_2024_04_25 import UVTestingStrategy  # noqa
-from strategies.strategy_2024_04_30 import UVTestingStrategyv2  # noqa
-from strategies.strategy_2024_05_01 import UVTestingStrategyv3  # noqa
-from strategies.strategy_2024_05_10 import UVTestingStrategyv4  # noqa
+from evomachine.guidir.newgui import EvoGUI
+from evomachine.guidir.queuemanager import QueueManager
+from evomachine.strategy import AbstractStrategy, BasicStrategy
 
 
 def create_automaton_process(
@@ -43,10 +40,24 @@ def create_automaton_process(
         automaton_to_gui_queue: Queue,
         strategy: AbstractStrategy,
 ):
-    if USE_SYNC_BOARD:
-        cam = EvoCamerav2(cfg_camera=camera_config)
-    else:
-        cam = EvoCamera(cfg_camera=camera_config)
+    def get_position(filename):
+        parts = filename.split('_')
+        position_str = parts[1][1:]
+        return int(position_str)
+
+    def get_time(filename):
+        parts = filename.split('_')
+        time_str = parts[-2] + '_' + parts[-1].split('.')[0] + '.' + parts[-1].split('.')[1]
+        return datetime.datetime.strptime(time_str, '%Y-%m-%d_%H:%M:%S.%f')
+
+    folder_path = str(EVOMACHINE_DIR.parent / "data")
+    filenames = [filename for filename in os.listdir(folder_path) if filename.lower().endswith('.tiff')]
+    filenames = sorted(filenames, key=lambda x: (get_position(x), get_time(x)))
+    pos_to_filename = {get_position(filename): index for index, filename in enumerate(filenames)}
+    filenames = [str(EVOMACHINE_DIR.parent / "data") + "/" + f for f in filenames]
+    print(filenames)
+    cam = TestCamera(cfg_camera=camera_config, filenames=filenames, pos_to_filename=pos_to_filename)
+
     if not USE_DMD_SOCKET:
         pygame.init()
     dmd = DMDControl()
@@ -69,17 +80,16 @@ def create_automaton_process(
 
 
 if __name__ == '__main__':
-    print(f"Launching evomachine GUI from {EVOMACHINE_DIR}.")
+    print(f"Launching evomachine GUI (Testcamera) from {EVOMACHINE_DIR}.")
 
     # Provide strategy that will be loaded by GUI
-    save_path: str = "/media/hslab/Data/ImageData/Idris/2024-05-17-d"
+    save_path: str = "/media/hslab/Data/ImageData/DEFAULT"
     if not os.path.exists(save_path):
         current_folder = os.path.dirname(os.path.abspath(__file__))
         save_path = os.path.join(current_folder, "DEFAULT")
         os.makedirs(save_path, exist_ok=True)
 
     # Provide strategy that will be loaded by GUI
-    # strategy: AbstractStrategy = UVTestingStrategyv4()
     strategy: AbstractStrategy = BasicStrategy(save_path=save_path)
 
     # Create configurations (modify if needed)
@@ -87,12 +97,11 @@ if __name__ == '__main__':
     camera_config: ConfigCamera = ConfigCameraFactory.default_air_config()
     camera_config.path_to_save = Path(save_path)
     processor_config: ConfigImageProcessor = ConfigImageProcessorFactory.default_config()
-    processor_config.cfg_delta.whole_frame_drift = True  # FIXME set to False. Temporary until ROI ID works.
 
     # DO NOT MODIFY ANYTHING BELOW THIS LINE -----------------------------------
 
     # Test strategy and do not launch if test fails
-    if not strategy.test_strategy():  # noqa
+    if not strategy.test_strategy():
         print("Strategy test not passed. Cannot launch GUI.")
         sys.exit(1)
 

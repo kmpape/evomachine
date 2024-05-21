@@ -8,6 +8,9 @@ from evomachine.evotypes import FocusAlgorithmType
 
 DEFAULT_SQUARED_GRAD_THRESHOLD = 0.1
 
+def get_focus_score_is_good(focus_curve: np.array) -> bool:  # noqa
+    return True
+
 
 def get_focus_score(img: np.array, algorithm: FocusAlgorithmType, threshold: Optional[float] = None) -> float:
     if algorithm == FocusAlgorithmType.LAPLACIAN_VAR:

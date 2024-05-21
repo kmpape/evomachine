@@ -36,46 +36,46 @@ class AbstractStrategy(ABC):
     """
 
     def __init__(self):
-        self.field_of_views: Dict[int, Coordinate] = {}
+        self.field_of_views: dict[int, Coordinate] = {}
         "Dictionary indexed by fov_id with FoV coordinates."
-        self.positions: Dict[int, List[int]] = {}
+        self.positions: dict[int, list[int]] = {}
         "Dictionary indexed by fov_id with pos IDs."
-        self.region_of_interests: Dict[int, List[int]] = {}
+        self.region_of_interests: dict[int, list[int]] = {}
         "Dictionary indexed by pos_id with RoI IDs."
-        self.path_to_save: Union[Path, None] = None
+        self.path_to_save: Path | None = None
         "Path to save images. If None, Automaton will use path in ConfigDevice. If Path, extracted after initialise()."
         self.command_factory: CommandFactory = CommandFactory()
         "Factory object to create AutomatonCommands."
-        self.config_camera: Union[None, ConfigCamera] = None
+        self.config_camera: ConfigCamera | None = None
         "Camera configuration object."
 
     @abstractmethod
-    def _initialise(self) -> List[AutomatonCommand]:
+    def _initialise(self) -> list[AutomatonCommand]:
         pass
 
     def initialise(
             self,
-            field_of_views: Dict[int, Coordinate],
-            positions: Dict[int, List[int]],
-            region_of_interests: Dict[int, List[int]],
+            field_of_views: dict[int, Coordinate],
+            positions: dict[int, list[int]],
+            region_of_interests: dict[int, list[int]],
             config_camera: ConfigCamera,
-    ) -> List[AutomatonCommand]:
+    ) -> list[AutomatonCommand]:
         """
         Initialise the strategy.
 
         Available properties:
         ---------------------
-        field_of_views : Dict[int, Coordinate]
+        field_of_views : dict[int, Coordinate]
             Dictionary with fov_id as key and Coordinate as value.
-        positions: Dict[int, List[int]]
+        positions: dict[int, list[int]]
             Dictionary with fov_id as key and list of pos_id as value.
-        region_of_interests: Dict[int, List[int]]
+        region_of_interests: dict[int, list[int]]
             Dictionary with pos_id as key and list of roi_id as value.
         config_camera: ConfigCamera
             Object defining camera configuration.
         Returns
         -------
-        List[AutomatonCommand]
+        list[AutomatonCommand]
             List of commands to be executed by the automaton.
         """
         self.field_of_views = field_of_views
@@ -92,17 +92,17 @@ class AbstractStrategy(ABC):
     def _callback(
             self,
             fov_id: int,
-            data: List[AutomatonCommand],
-            errors: List[EvoMachineError],
-    ) -> List[AutomatonCommand]:
+            data: list[AutomatonCommand],
+            errors: list[EvoMachineError],
+    ) -> list[AutomatonCommand]:
         pass
 
     def callback(
             self,
             fov_id: int,  # TODO need to consider several move commands passed or allow for one only
-            data: List[AutomatonCommand],
-            errors: List[EvoMachineError],
-    ) -> List[AutomatonCommand]:
+            data: list[AutomatonCommand],
+            errors: list[EvoMachineError],
+    ) -> list[AutomatonCommand]:
         """
         Callback function for the strategy. This function is called by the
         automaton when new data is available.
@@ -112,9 +112,9 @@ class AbstractStrategy(ABC):
         ----------
         `fov_id` : int
             The id of the current field of view.
-        `data` : List[AutomatonCommand]
+        `data` : list[AutomatonCommand]
             List of AutomatonCommand.
-        `errors` : List[EvoMachineError]
+        `errors` : list[EvoMachineError]
             List of errors that occurred during execution.
         """
         new_command_list = self._callback(fov_id=fov_id, data=data, errors=errors)
@@ -124,14 +124,14 @@ class AbstractStrategy(ABC):
         return new_command_list
 
     @abstractmethod
-    def finalise(self) -> List[AutomatonCommand]:
+    def finalise(self) -> list[AutomatonCommand]:
         """
         Finalise strategy and potentially save data. Provide a last list of commands to be executed. Note that
         callback will not be called after finalise.
 
         Returns
         -------
-        List[AutomatonCommand]
+        list[AutomatonCommand]
             List of commands to be executed by the automaton.
         """
         pass
@@ -140,7 +140,7 @@ class AbstractStrategy(ABC):
         return self.__class__.__name__
 
     @staticmethod
-    def is_valid_command_list(command_list: List[AutomatonCommand]):
+    def is_valid_command_list(command_list: list[AutomatonCommand]):   # noqa
         # Max one MOVE command
         # TODO channel NO_LED should give false
         # TODO should only have one command_type per list (?)
@@ -158,10 +158,32 @@ class AbstractStrategy(ABC):
         TODO this should be more elaborate and directly use Automaton._process with a TestCamera
         TODO image processing not included yet
         """
+        def check_cmd_list(_cmd_list: list[AutomatonCommand], _curr_pos_id: int) -> list[AutomatonCommand]:
+            for cmd in _cmd_list:
+                cmd.command_data = None
+                if cmd.command_type == AutomatonCommandType.MOVE:
+                    fov_id = cmd.command_args
+                    is_valid_move = (fov_id in self.field_of_views) or (fov_id == -1) or (fov_id is None)
+                    if not is_valid_move:
+                        raise KeyError(f"fov_id {fov_id} is invalid for {self.field_of_views}")
+                    if not (fov_id is None or fov_id == -1):
+                        _curr_pos_id = fov_id
+                elif cmd.command_type == AutomatonCommandType.WAIT:
+                    if not cmd.command_args['duration'] >= 0:
+                        raise KeyError(f"invalid wait command arguments {cmd.command_args}")
+                elif cmd.command_type == AutomatonCommandType.IMAGE:
+                    im_shape = (len(cmd.command_args['channels']), *cfg_camera.image.shape)
+                    rand_img = (np.random.rand(*im_shape) * 65535).astype(np.uint16)
+                    rand_img_norm = normalise_frame(rand_img)
+                    cmd.command_data = rand_img_norm
+                cmd.command_execution_time = time.time()
+                cmd.fov_id = _curr_pos_id
+            return _cmd_list
+
         logger.info("AbstractStrategy: Testing strategy. Ignore following messages. -------------->")
-        field_of_views: Dict[int, Coordinate] = {0: Coordinate(0, 0, 0), 1: Coordinate(1000, 0, 0)}
-        positions: Dict[int, List[int]] = {0: [0], 1: [1]}
-        region_of_interests: Dict[int, List[int]] = {0: [0], 1: [0]}
+        field_of_views: dict[int, Coordinate] = {0: Coordinate(0, 0, 0), 1: Coordinate(1000, 0, 0)}
+        positions: dict[int, list[int]] = {0: [0], 1: [1]}
+        region_of_interests: dict[int, list[int]] = {0: [0], 1: [0]}
         cfg_camera: ConfigCamera = ConfigCameraFactory.default_air_config()
         curr_pos_id: int = 0
         try:
@@ -175,38 +197,10 @@ class AbstractStrategy(ABC):
                 if not self.path_to_save.exists():
                     raise ConfigError(f"AbstractStrategy.test_strategy: path_to_save provided by strategy is invalid "
                                       f"({self.path_to_save}).", ErrorCode.ERROR_DEVICE_CONFIG)
-            for cmd in cmd_list:
-                cmd.command_data = None
-                if cmd.command_type == AutomatonCommandType.MOVE:
-                    fov_id = cmd.command_args
-                    is_valid_move = (fov_id in self.field_of_views) or (fov_id == -1) or (fov_id is None)
-                    if not is_valid_move:
-                        raise KeyError(f"fov_id {fov_id} is invalid for {self.field_of_views}")
-                    if not (fov_id is None or fov_id == -1):
-                        curr_pos_id = fov_id
-                elif cmd.command_type == AutomatonCommandType.WAIT:
-                    if not cmd.command_args >= 0:
-                        raise KeyError(f"invalid wait command arguments {cmd.command_args}")
-                elif cmd.command_type == AutomatonCommandType.IMAGE:
-                    im_shape = (len(cmd.command_args['channels']), *cfg_camera.image.shape)
-                    rand_img = (np.random.rand(*im_shape) * 65535).astype(np.uint16)
-                    rand_img_norm = normalise_frame(rand_img)
-                    cmd.command_data = rand_img_norm
-                cmd.command_execution_time = time.time()
-                cmd.fov_id = curr_pos_id
-
-            self.callback(fov_id=curr_pos_id, data=cmd_list, errors=[])
-            cmd_list = self.finalise()
-            for cmd in cmd_list:
-                cmd.command_data = None
-                if cmd.command_type == AutomatonCommandType.MOVE:
-                    fov_id = cmd.command_args
-                    is_valid_move = (fov_id in self.field_of_views) or (fov_id == -1) or (fov_id is None)
-                    if not is_valid_move:
-                        raise KeyError(f"fov_id {fov_id} is invalid for {self.field_of_views}")
-                elif cmd.command_type == AutomatonCommandType.WAIT:
-                    if not cmd.command_args >= 0:
-                        raise KeyError(f"invalid wait command arguments {cmd.command_args}")
+            cmd_list = check_cmd_list(_cmd_list=cmd_list, _curr_pos_id=curr_pos_id)
+            cmd_list = self.callback(fov_id=curr_pos_id, data=cmd_list, errors=[])
+            _ = check_cmd_list(_cmd_list=cmd_list, _curr_pos_id=curr_pos_id)
+            _ = check_cmd_list(_cmd_list=self.finalise(), _curr_pos_id=curr_pos_id)
             logger.info("AbstractStrategy: Strategy successfully tested. Stop ignoring messages. <--------------")
             return True
         except Exception as e:
@@ -222,15 +216,15 @@ class NoStrategy(AbstractStrategy):
     def _callback(
             self,
             fov_id: int,
-            data: List[AutomatonCommand],
-            errors: List[EvoMachineError],
-    ) -> List[AutomatonCommand]:
+            data: list[AutomatonCommand],
+            errors: list[EvoMachineError],
+    ) -> list[AutomatonCommand]:
         return []
 
-    def _initialise(self) -> List[AutomatonCommand]:
+    def _initialise(self) -> list[AutomatonCommand]:
         return []
 
-    def finalise(self) -> List[AutomatonCommand]:
+    def finalise(self) -> list[AutomatonCommand]:
         return []
 
 
@@ -240,51 +234,60 @@ class BasicStrategy(AbstractStrategy):
     def __init__(self, save_path: str):
         super().__init__()
         self.path_to_save = Path(save_path)
-        self.imaging_interval: int = 60*10  # seconds
-        self.imaging_channels: List[LEDType] = [LEDType.LED_450_NM]  # GFP
-        self.exposure_time: int = 1000  # milliseconds
-        self.num_fovs: Union[int, None] = None
+        self.imaging_interval: int = 60*3  # seconds
+        self.imaging_channels: list[LEDType] = [LEDType.LED_450_NM]  # GFP
+        self.exposure_time: int = 100  # milliseconds
+        self.num_fovs: int | None = None
 
-    def _initialise(self) -> List[AutomatonCommand]:
+    def _initialise(self) -> list[AutomatonCommand]:
         """
         Initialise the strategy.
 
         Available properties:
         ----------
-        field_of_views : Dict[int, Coordinate]
+        field_of_views : dict[int, Coordinate]
             Dictionary with fov_id as key and Coordinate as value.
-        positions: Dict[int, List[int]]
+        positions: dict[int, list[int]]
             Dictionary with fov_id as key and list of pos_id as value.
-        region_of_interests: Dict[int, List[int]]
+        region_of_interests: dict[int, list[int]]
             Dictionary with pos_id as key and list of roi_id as value.
         config_camera: ConfigCamera
             Object defining camera configuration.
         Returns
         -------
-        List[AutomatonCommand]
+        list[AutomatonCommand]
             List of commands to be executed by the automaton.
         """
         # Create commands for first iteration
         self.num_fovs = len(self.field_of_views)
-        cmd_move = self.command_factory.command_move(fov_id=0)
-        cmd_live_mode_off = self.command_factory.command_live_mode(status=False)
-        cmd_image = self.command_factory.command_image(
-            channels=self.imaging_channels,
-            exposure_time=self.exposure_time,
-            segment=False,
-            save=True,
-        )
-        cmd_live_mode_on = self.command_factory.command_live_mode(status=True)
-        cmd_wait = self.command_factory.command_wait(duration=self.imaging_interval/self.num_fovs)
+        cmd_list = []
+        for i in range(len(self.field_of_views)):
+            cmd_move = self.command_factory.command_move(fov_id=i)
+            cmd_list.append(cmd_move)
+            cmd_image = self.command_factory.command_image(
+                channels=self.imaging_channels,
+                exposure_time=self.exposure_time,
+                segment=False,
+                save=True,
+            )
+            cmd_list.append(cmd_image)
+            cmd_wait = self.command_factory.command_wait(
+                duration=self.imaging_interval/self.num_fovs,
+                set_live_mode=False,
+                channel=LEDType.LED_450_NM,
+                brightness=10,
+            )
+            cmd_list.append(cmd_wait)
+
         logger.info(f"Initialised strategy with {self.imaging_interval}s imaging interval and {self.num_fovs} FoVs.")
-        return [cmd_move, cmd_live_mode_off, cmd_image, cmd_live_mode_on, cmd_wait]
+        return cmd_list
 
     def _callback(
             self,
             fov_id: int,
-            data: List[AutomatonCommand],
-            errors: List[EvoMachineError],
-    ) -> List[AutomatonCommand]:
+            data: list[AutomatonCommand],
+            errors: list[EvoMachineError],
+    ) -> list[AutomatonCommand]:
         """
         Callback function for the strategy. This function is called by the
         automaton when new data is available.
@@ -294,9 +297,9 @@ class BasicStrategy(AbstractStrategy):
         ----------
         `fov_id` : int
             The id of the current field of view.
-        `data` : List[AutomatonCommand]
+        `data` : list[AutomatonCommand]
             List of AutomatonCommand.
-        `errors` : List[EvoMachineError]
+        `errors` : list[EvoMachineError]
             List of errors that occurred during execution.
         """
 
@@ -305,26 +308,35 @@ class BasicStrategy(AbstractStrategy):
             '    \n'.join(str(d) for d in data),
             errors,
         ))
-        cmd_move = self.command_factory.command_move(fov_id=-1)
-        cmd_live_mode_off = self.command_factory.command_live_mode(status=False)
-        cmd_image = self.command_factory.command_image(
-            channels=self.imaging_channels,
-            exposure_time=self.exposure_time,
-            segment=False,
-            save=True,
-        )
-        cmd_live_mode_on = self.command_factory.command_live_mode(status=True)
-        cmd_wait = self.command_factory.command_wait(duration=self.imaging_interval/self.num_fovs)
-        return [cmd_move, cmd_live_mode_off, cmd_image, cmd_live_mode_on, cmd_wait]
+        cmd_list = []
+        for i in range(len(self.field_of_views)):
+            cmd_move = self.command_factory.command_move(fov_id=i)
+            cmd_list.append(cmd_move)
+            cmd_image = self.command_factory.command_image(
+                channels=self.imaging_channels,
+                exposure_time=self.exposure_time,
+                segment=False,
+                save=True,
+            )
+            cmd_list.append(cmd_image)
+            cmd_wait = self.command_factory.command_wait(
+                duration=self.imaging_interval/self.num_fovs,
+                set_live_mode=False,
+                channel=LEDType.LED_450_NM,
+                brightness=10,
+            )
+            cmd_list.append(cmd_wait)
+        return cmd_list
 
-    def finalise(self) -> List[AutomatonCommand]:
+    def finalise(self) -> list[AutomatonCommand]:
         """
-        Finalise strategy and potentially save data. Provide a last list of commands to be executed. Note that
-        callback will not be called after finalise.
+        Finalise strategy and potentially save data. Provide a last list of commands to be executed. Note:
+        - Callback will not be called again after finalise
+        - The WAIT command is disabled in finalise and will have no effect
 
         Returns
         -------
-        List[AutomatonCommand]
+        list[AutomatonCommand]
             List of commands to be executed by the automaton.
         """
         logger.info("Finalising strategy.")
@@ -332,7 +344,7 @@ class BasicStrategy(AbstractStrategy):
         return [cmd_live_mode_on]
 
 
-def get_all_strategies() -> List[Tuple[Type[AbstractStrategy], str]]:
+def get_all_strategies() -> list[tuple[Type[AbstractStrategy], str]]:
     subclasses = []
     current_module = sys.modules[__name__]
     for name, obj in inspect.getmembers(current_module):

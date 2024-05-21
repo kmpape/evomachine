@@ -326,6 +326,7 @@ class EvoWorkerTemplate(QObject):
     def is_disabled(self) -> bool:
         return self._disable
 
+    @pyqtSlot(dict, str)
     def set_labels(self, labels: Dict[int, Dict[str, Union[QLabel, QLineEdit]]], text: Optional[str] = "?"):
         for _dict in labels.values():
             for label_or_edit in _dict.values():

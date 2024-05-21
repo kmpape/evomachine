@@ -182,19 +182,22 @@ class DMDPanel(EvoPanelTemplate):
         self.dmd_buttons[max(list(self.dmd_buttons.keys()))+1] = self.dmd_calib_curves_button
         self.worker = DMDWorker(buttons=self.dmd_buttons)
         self.signal_set_dmd.connect(self.worker.set_dmd_states)
-        self.signal_dmd.connect(self.worker.dmd_click_start)
-        self.signal_dmd_done.connect(self.worker.dmd_click_stop)
+        # TODO this seems to bug on repeated clicks
+        # self.signal_dmd.connect(self.worker.dmd_click_start)
+        # self.signal_dmd_done.connect(self.worker.dmd_click_stop)
         self.workers.append(self.worker)
         thread = EvoGUIThread()
         self.worker.moveToThread(thread)
         thread.start()
         self.threads.append(thread)
 
+        self.get_preloaded_calibration()
+
     def set_dmd(self, mode: int):
         func_dict = {
             DMDModes.DISPLAY_NONE.value: 'self._dmd.display_none',
             DMDModes.DISPLAY_FULL.value: 'self._dmd.display_full',
-            DMDModes.DISPLAY_CHECKERBOARD.value: 'self._dmd.display_half', #self._dmd.display_checkerboard',
+            DMDModes.DISPLAY_CHECKERBOARD.value: 'self._dmd.display_calibration_image',
         }
         self.queue_manager.request(
             req_str=func_dict[mode],
@@ -220,8 +223,16 @@ class DMDPanel(EvoPanelTemplate):
         )
         self.signal_dmd.emit()
 
+    def get_preloaded_calibration(self):
+        self.queue_manager.request(
+            req_str='self._dmd.get_calibration_data',
+            kwargs_dict={},
+            callback=self.update_calibration,
+        )
+
     def update_calibration(self, data: Tuple[Dict[str, List[int]], Dict[str, np.ndarray], Dict[str, np.ndarray]]):
         self.calib_data = data
+        self.dmd_calib_curves_button.setEnabled(True)
         self.signal_dmd_done.emit()
 
     def finalise_dmd(self):
@@ -237,8 +248,8 @@ class DMDPanel(EvoPanelTemplate):
 
     def show_calibration(self):
         logger.debug("Showing calibration data.")
-        if self.calib_data is None:
-            logger.error("exp_show_curve: missing data. Returning.")
+        if self.calib_data is None or not self.calib_data:
+            logger.error("show_calibration: missing data. Returning.")
             return
 
         data = self.calib_data

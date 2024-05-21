@@ -63,7 +63,7 @@ class QueueManager:
         if self._request_lock is not None:
             logger.debug(f"Locking _requests for answer {request_id} with response {data} and callback"
                          f" {self._requests[request_id][0].__qualname__ if self._requests[request_id][0] else None}")
-            if self._requests[request_id][0] is not None:
+            if self._requests[request_id][0] is not None:  # noqa
                 if self.use_threading:
                     if self._requests[request_id][1] is None:
                         threading.Thread(target=self._requests[request_id][0], args=(data,)).start()
@@ -81,7 +81,7 @@ class QueueManager:
             finally:
                 self._request_lock.release()
         else:
-            if self._requests[request_id][0] is not None:
+            if self._requests[request_id][0] is not None:  # noqa
                 if self.use_threading:
                     if self._requests[request_id][1] is None:
                         threading.Thread(target=self._requests[request_id][0], args=(data,)).start()
@@ -133,7 +133,8 @@ class QueueManager:
                      f"{callback.__qualname__ if callback else None}")
         if self.strategy_started():
             logger.warning(f"Received request {req_id} with {req_str} and {kwargs_dict} while strategy is running.")
-            raise RuntimeError(f"Received request {req_id} with {req_str} and {kwargs_dict} while strategy is running.")
+            # raise RuntimeError(f"Received request {req_id} with {req_str} and {kwargs_dict} while strategy is running.")
+            return
         if self._request_lock is not None:
             logger.debug(f"Locking _requests for {req_id} with {req_str}, {kwargs_dict} and callback "
                          f"{callback.__qualname__ if callback else None}")
@@ -155,7 +156,6 @@ class QueueManager:
     def run(self):
         while not self.has_shutdown():
             while not self.stopped():
-                # logger.debug("Polling _automaton_to_gui_q")
                 while not self._automaton_to_gui_q.empty():
                     try:
                         request_id, data = self._automaton_to_gui_q.get(block=True, timeout=self.queue_timeout)
@@ -168,7 +168,6 @@ class QueueManager:
                         self._answer(request_id=request_id, data=data)
                     except queue.Empty:
                         pass
-                # logger.debug("Polling _process_q")
                 while not self._process_q.empty():
                     try:
                         # Note: This queue is also filled when strategy is NOT running.
