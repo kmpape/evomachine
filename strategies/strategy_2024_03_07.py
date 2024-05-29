@@ -6,7 +6,8 @@ import threading
 from typing import Dict, List, Tuple, Type, Union
 
 from evomachine.commands import AutomatonCommand
-from evomachine.config import get_logger, ConfigCameraFactory, ConfigImageProcessorFactory, USE_DMD_SOCKET
+from evomachine.config import get_logger, ConfigCameraFactory, ConfigImageProcessorFactory, USE_DMD_SOCKET, \
+    ConfigImageProcessor
 if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMD_WIDTH_HEIGHT
 else:
@@ -30,8 +31,8 @@ class JessStrategy(AbstractStrategy):
     half. The strategy images every <imaging_interval> seconds and saves the images. Additionally, the strategy saves
     the time at which the changes happened and saves them in a pickle file.
     """
-    def __init__(self):
-        super().__init__()
+    def __init__(self, cfg: ConfigImageProcessor):
+        super().__init__(cfg=cfg)
         self.path_to_save = Path("/media/hslab/Data/ImageData/Idris/2024-03-14")
 
         self.exposure_time: int = 2000  # in ms

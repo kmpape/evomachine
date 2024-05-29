@@ -53,23 +53,34 @@ def get_logger(name: str, is_gui: bool = False) -> logging.Logger:
 @dataclass
 class ConfigImageProcessor:
     cfg_delta: delta.config.Config
-    "Delta configuration object."
+    "Delta configuration object. Contains paths to RoI ID, segmentation, and tracking models."
     channels: list[LEDType]
-    "List of channels to be imaged. Used for taking reference frames. Do not include any UV here."
+    "List of channels to be imaged. Used for taking reference frames. Do not include any UV here. The list must " \
+    "include channel_seg, channel_rot, and channel_roi. Moreover, the first channel in the list must be channel_seg."  # noqa
     channel_seg: LEDType
     "Channel used for segmentation."
     channel_rot: LEDType
-    "Channel used for rotation identification."
+    "Channel used for rotation identification and drift correction."
     channel_roi: LEDType
     "Channel used for region-of-interest identification."
-    crop_out_ROI: bool = True
-    "Apply ROI segmentation to overlapping image portions with size of ROI segmentation model."
+    preproc_enabled: bool = True
+    "Enable image preprocessing."
+    roi_enabled: bool = True
+    "Enable ROI identification (preproc_enabled must be true)."
+    roi_min_area: int | None = 3000
+    "Min. area of RoIs to be considered in pixels (original image size). Operation is not applied if None."
+    roi_max_area: int | None = 7000
+    "Max. area of RoIs to be considered in pixels (original image size). Operation is not applied if None."
+    seg_enabled: bool = False
+    "Enable image segmentation (preproc_enabled must be true)."
+    track_enabled: bool = False
+    "Enable tracking (preproc_enabled and seg_enabled must be true)."
+    lineage_enabled: bool = False
+    "Enable lineage computations(preproc_enabled, seg_enabled, and track_enabled must be true)."
     use_track_RT: bool = False
     "Use special tracking function for tracking in trenches."
-    use_roi_moma: bool = True
-    "Use ROI ID function for mother machines."
     delta_roi_preprocess_target_size: tuple[int, int] = (2048, 2048)
-    "Size of microscope images just before being input to DeLTA."
+    "Size of microscope images just before being input to DeLTA. This can be different from cfg_delta.target_size_rois."
     image_processing_verbosity: int = 0
     "Lowest verbosity is 0."
     refocus: bool = False
@@ -90,28 +101,46 @@ class ConfigImageProcessor:
         if not (isinstance(self.channels, list) and all(isinstance(channel, LEDType) for channel in self.channels))\
                 or len(self.channels) == 0 or LEDType.NO_LED in self.channels:
             raise ConfigError("Invalid channel list.", ErrorCode.ERROR_CONFIG)
-        if not isinstance(self.channel_seg, LEDType) or self.channel_seg not in self.channels:
-            raise TypeError("channel_seg must be a LEDType object in channels.")
+        if not isinstance(self.channel_seg, LEDType) or self.channel_seg != self.channels[0]:
+            raise TypeError("channel_seg must be a LEDType object in channels and equal to channels[0].")
         if not isinstance(self.channel_rot, LEDType) or self.channel_rot not in self.channels:
             raise TypeError("channel_rot must be a LEDType object in channels.")
         if not isinstance(self.channel_roi, LEDType) or self.channel_roi not in self.channels:
             raise TypeError("channel_roi must be a LEDType object in channels.")
-        if not isinstance(self.crop_out_ROI, bool):
-            raise TypeError("crop_out_ROI must be a boolean.")
         if not isinstance(self.use_track_RT, bool):
             raise TypeError("use_track_RT must be a boolean.")
         if not isinstance(self.image_processing_verbosity, int) or self.image_processing_verbosity < 0:
             raise TypeError("image_processing_verbosity must be an integer >= 0.")
         if self.refocus and self.max_refocus_trials < 1:
             raise TypeError(f"Refocus is True but max_refocus_trials={self.max_refocus_trials}")
+        if not isinstance(self.preproc_enabled, bool):
+            raise TypeError("preproc_enabled must be a boolean.")
+        if not isinstance(self.roi_enabled, bool):
+            raise TypeError("preproc_enabled must be a boolean.")
+        if not isinstance(self.seg_enabled, bool):
+            raise TypeError("preproc_enabled must be a boolean.")
+        if not isinstance(self.track_enabled, bool):
+            raise TypeError("preproc_enabled must be a boolean.")
+        if not isinstance(self.lineage_enabled, bool):
+            raise TypeError("lineage_enabled must be a boolean.")
+        if self.seg_enabled and not self.preproc_enabled:
+            raise TypeError("preproc_enabled must be true if seg_enabled is true.")
+        if self.track_enabled and ((not self.preproc_enabled) or (not self.seg_enabled)):
+            print(f"self.track_enabled = {self.track_enabled} self.preproc_enabled = {self.preproc_enabled} self.seg_enabled = {self.seg_enabled}")
+            raise TypeError("preproc_enabled and seg_enabled must be true if track_enabled is true.")
+        if self.lineage_enabled and ((not self.preproc_enabled) or (not self.seg_enabled) or (not self.track_enabled)):
+            raise TypeError("preproc_enabled and seg_enabled must be true if track_enabled is true.")
 
     def __str__(self):
         s = ["ConfigImageProcessor"]
-        for k, v in self.__dict__.items():
+        for i, (k, v) in enumerate(self.__dict__.items()):
             if k == 'cfg_delta':
                 tmp = str(v)
                 v = tmp.replace("\n", "\n\t")
-            s.append(f" ├─ {k}: {v}")
+            if i < len(self.__dict__)-1:
+                s.append(f" ├─ {k}: {v}")
+            else:
+                s.append(f" └─ {k}: {v}")
         return "\n".join(s)
 
 
@@ -185,7 +214,7 @@ class ConfigCRISP:
         elif attr_name == 'loop_gain':
             return isinstance(attr_value, int) and (attr_value >= 1) and (attr_value <= 100)
         elif attr_name == 'lock_range':
-            return isinstance(attr_value, float) and (attr_value > 0) and (attr_value < 0.5)
+            return isinstance(attr_value, float) and (attr_value > 0) and (attr_value < 1)
         elif attr_name == 'objective_na':
             return isinstance(attr_value, float) and (attr_value > 0) and (attr_value < 10.0)
         elif attr_name == 'update_rate':
@@ -207,8 +236,11 @@ class ConfigCRISP:
 
     def __str__(self):
         s = ["ConfigCRISP"]
-        for k, v in self.__dict__.items():
-            s.append(f" ├─ {k}: {v}")
+        for i, (k, v) in enumerate(self.__dict__.items()):
+            if i < len(self.__dict__) - 1:
+                s.append(f" ├─ {k}: {v}")
+            else:
+                s.append(f" └─ {k}: {v}")
         return "\n".join(s)
 
     def copy(self):
@@ -220,11 +252,11 @@ class ConfigCRISPFactory:
     def default_config() -> ConfigCRISP:
         return ConfigCRISP(
             led_intensity=70,
-            loop_gain=10,
+            loop_gain=15,
             averaging=0,
             update_rate=1,
             objective_na=0.65,
-            lock_range=0.25,
+            lock_range=0.5,
         )
 
 
@@ -300,8 +332,11 @@ class ConfigFocus:
 
     def __str__(self):
         s = ["ConfigFocus"]
-        for k, v in self.__dict__.items():
-            s.append(f" ├─ {k}: {v}")
+        for i, (k, v) in enumerate(self.__dict__.items()):
+            if i < len(self.__dict__) - 1:
+                s.append(f" ├─ {k}: {v}")
+            else:
+                s.append(f" └─ {k}: {v}")
         return "\n".join(s)
 
 

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from enum import Enum, auto
 import numpy as np
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from evomachine.exceptions import ConfigError, ErrorCode
 
@@ -50,6 +50,7 @@ class AutomatonCommandType(EvoType):
     IMAGE = auto()
     MOVE = auto()
     PROJECT = auto()
+    PROJECT_ROI = auto()
     WAIT = auto()
     STOP = auto()
     LIVE_MODE = auto()
@@ -143,6 +144,15 @@ class DMDCalibConfigType:
         if not ((0 <= self.start_col) and (self.start_col < self.end_col) and (self.end_col < 1600)):
             raise ValueError("Indices must be within DMD boundaries.")
 
+    def __str__(self):
+        s = ["DMDCalibConfigType"]
+        for i, (k, v) in enumerate(self.__dict__.items()):
+            if i < len(self.__dict__) - 1:
+                s.append(f" ├─ {k}: {v}")
+            else:
+                s.append(f" └─ {k}: {v}")
+        return "\n".join(s)
+
 
 class DMDCalibConfigTypeFactory:
     @staticmethod
@@ -193,6 +203,15 @@ class ImageConfigType:
         if not isinstance(self.pxl_dtype, np.dtype):
             raise ConfigError(error_code=ErrorCode.ERROR_IMAGE_CONFIG, message=f"Invalid pxl_dtype: {self.pxl_dtype}")
 
+    def __str__(self):
+        s = ["ImageConfigType"]
+        for i, (k, v) in enumerate(self.__dict__.items()):
+            if i < len(self.__dict__) - 1:
+                s.append(f" ├─ {k}: {v}")
+            else:
+                s.append(f" └─ {k}: {v}")
+        return "\n".join(s)
+
 
 class ImageConfigTypeFactory:
     @staticmethod
@@ -218,6 +237,15 @@ class ObjectiveConfigType:
             raise ConfigError(error_code=ErrorCode.ERROR, message=f"Invalid numerical_aperture: {self.na}")
         if not isinstance(self.mag, int) or not self.mag > 0:
             raise ConfigError(error_code=ErrorCode.ERROR, message=f"Invalid magnification: {self.mag}")
+
+    def __str__(self):
+        s = ["ObjectiveConfigType"]
+        for i, (k, v) in enumerate(self.__dict__.items()):
+            if i < len(self.__dict__) - 1:
+                s.append(f" ├─ {k}: {v}")
+            else:
+                s.append(f" └─ {k}: {v}")
+        return "\n".join(s)
 
 
 class ObjectiveConfigTypeFactory:

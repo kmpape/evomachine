@@ -17,6 +17,8 @@ import screeninfo
 from evomachine.config import get_logger, EVOMACHINE_DIR
 from evomachine.exceptions import DMDError, ErrorCode, ErrorContainer
 
+from delta.utils import CroppingBox
+
 logger = get_logger(name=__name__)
 
 
@@ -47,7 +49,7 @@ class DMDControl:
     DEFAULT_LINE_WIDTH: int = 5
     "Line width used for calibration and displaying lines. Use odd values."
 
-    def __init__(self):
+    def __init__(self, debug_mode: bool = False):
         """
 
         _____________________________________________________
@@ -99,13 +101,13 @@ class DMDControl:
         "Path to calibration file."
         self._homography_mat: Optional[np.ndarray] = None
         "Homography matrix for mapping image to DMD coordinates."
-        self._is_full_display: bool = False
+        self._is_display_full: bool = False
         "Internal flag queried through is_full_display() that is set to True when displaying a full white screen."
+        self.debug_mode: bool = debug_mode
+        "Flag to set test environment or use DMD functions without displaying on the actual DMD window."
 
-        # self.initialise()  # TODO remove this
-
-    def _load_calibration_data(self, filepath: Optional[Path] = None) -> bool:
-        if filepath is None:
+    def _load_calibration_data(self, filepath: Path | None = None) -> bool:
+        if filepath is None:  # noqa
             filepath = self._calib_file
         if not filepath.exists():
             logger.error(f"DMDControl._load_calibration_data: file {filepath} not found.")
@@ -119,7 +121,7 @@ class DMDControl:
         self._homography_mat, _ = cv2.findHomography(srcPoints=cam_points, dstPoints=dmd_points)
 
         points_cam = np.array([[[0, 0], [3199, 3199]]], dtype=np.float32)
-        points_dmd = cv2.perspectiveTransform(points_cam.reshape(-1, 1, 2), self._homography_mat)
+        points_dmd = cv2.perspectiveTransform(points_cam.reshape(-1, 1, 2), self._homography_mat)  # noqa
         logger.info(f"DMDControl._load_calibration_data: mapping point ("
                     f"{int(points_cam[0][0][0])},{int(points_cam[0][0][1])}) to "
                     f"{int(points_dmd[0][0][0])},{int(points_dmd[0][0][1])}) and "
@@ -130,6 +132,11 @@ class DMDControl:
     def initialise(self, is_test: bool = False):
         if self._dmd_is_alive:
             logger.warning("DMDControl.initialise: DMD already initialised.")
+            return
+        if self.debug_mode:
+            if not self._load_calibration_data():
+                logger.info("DMDControl.initialise: no calibration data loaded.")
+            self._dmd_is_alive = True
             return
         monitors = screeninfo.get_monitors()
         mon_info = "\n".join(m.__str__() for m in monitors)
@@ -177,6 +184,8 @@ class DMDControl:
         return self._dmd_is_alive
 
     def finalise(self):
+        if self.debug_mode:
+            return
         if not self._dmd_is_alive:
             logger.warning("DMDControl.finalise: DMD not initialised.")
             return
@@ -192,6 +201,8 @@ class DMDControl:
             img: np.ndarray[(int, int), int],
             update_display: Optional[bool] = True,
     ):
+        if self.debug_mode:
+            return
         if not self._dmd_is_alive:
             logger.error(f"DMDControl.display_image: DMD not initialised. Try running DMDControl.initialise.")
             return
@@ -213,6 +224,8 @@ class DMDControl:
             color: Optional[DMDColor] = DMDColor.WHITE,
             force_display: bool = False,
     ):
+        if self.debug_mode:
+            return
         if not force_display and self.is_display_full():
             return
         if not self._dmd_is_alive:
@@ -254,7 +267,7 @@ class DMDControl:
             radius: int = 1,
     ):
         img = np.zeros(self.width_height_DMD, dtype=np.uint8)
-        cv2.circle(img, (col, row), radius, color=255, thickness=-1)
+        cv2.circle(img, (col, row), radius, color=255, thickness=-1)  # noqa
         img = np.repeat(img[:, :, np.newaxis], 3, axis=2)
         self.display_image(img=img)
 
@@ -266,6 +279,8 @@ class DMDControl:
             update_display: Optional[bool] = True,
             color: Optional[DMDColor] = DMDColor.WHITE,
     ):
+        if self.debug_mode:
+            return
         if not self._dmd_is_alive:
             logger.error(f"DMDControl.display_line: DMD not initialised. Try running DMDControl.initialise.")
             return
@@ -325,7 +340,7 @@ class DMDControl:
             img_fraction: Optional[float] = 0.5,
             path_to_font: Optional[str] = "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
     ):
-        image_pil = Image.fromarray(np.transpose(np.zeros(self.width_height_DMD, dtype=np.uint8)))
+        image_pil = Image.fromarray(np.transpose(np.zeros(self.width_height_DMD, dtype=np.uint8)))  # noqa
         img_height, img_width = self.width_height_DMD
         font_size = 2
         font = ImageFont.truetype(path_to_font, font_size)
@@ -346,7 +361,7 @@ class DMDControl:
     def is_display_full(self) -> bool:
         return self._is_display_full
 
-    def img_to_dmd_coords(self, img_row: int, img_col: int) -> tuple[int, int]:
+    def img_to_dmd_coords(self, img_row: int, img_col: int) -> tuple[int, int] | None:
         """
         Transform coordinates on the camera to coordinates on the DMD.
 
@@ -361,11 +376,14 @@ class DMDControl:
         dmd_row_col : tuple[int, int]
             DMD coordinates as (row, col).
         """
+        if self._homography_mat is None:
+            logger.error(f"img_to_dmd_coords: no calibration data provided.")
+            return None
         point_cam = np.array([[[img_col, img_row]]]).astype(float)
         point_dmd = cv2.perspectiveTransform(point_cam, self._homography_mat)
         return int(np.round(point_dmd[0][0][1])), int(np.round(point_dmd[0][0][0]))
 
-    def img_to_dmd_array(self, img: np.array) -> np.array:
+    def img_to_dmd_array(self, img: np.array) -> np.ndarray | None:
         """
         Transform a 3200 x 3200 camera pattern to a DMD pattern.
 
@@ -385,9 +403,29 @@ class DMDControl:
         dmd_img : np.ndarray
             2D image array to be displayed on the DMD using display_image().
         """
+        if self._homography_mat is None:
+            logger.error(f"img_to_dmd_coords: no calibration data provided.")
+            return None
         if img.shape != (3200, 3200):
             logger.error(f"img_to_dmd_array: Expected image of shape (3200,3200) but received {img.shape}.")
             return self.get_zero_array()
         return cv2.warpPerspective(img, self._homography_mat, self.width_height_DMD[::-1]).astype(img.dtype)
 
+    def pattern_from_roi_boxes(self, boxes: list[CroppingBox]) -> np.ndarray:
+        """
+        Creates a pattern from a list of cropping boxes (Image coordinates) and returns a warped DMD pattern.
 
+        Parameters
+        ----------
+        boxes : list[CroppingBox]
+            Cropping boxes to display pattern on.
+
+        Returns
+        -------
+        warped_image : np.ndarray
+            Warped image ready to be projected via DMD.
+        """
+        cam_img = self.get_zero_array()
+        for b in boxes:
+            cam_img[b.ytl: b.ybr+1, b.xtl: b.xbr+1] = 255
+        return self.img_to_dmd_array(cam_img)

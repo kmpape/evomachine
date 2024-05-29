@@ -155,6 +155,7 @@ class PositionPanel(EvoPanelTemplate):
             stop_strategy_event: Event,
             stop_event: Event,
             shutdown_event: Event,
+            signal_init_crisp_values: pyqtSignal | None = None
     ):
         super().__init__(
             queue_manager=queue_manager,
@@ -165,6 +166,7 @@ class PositionPanel(EvoPanelTemplate):
             stop_event=stop_event,
             shutdown_event=shutdown_event,
         )
+        self.signal_init_crisp_values = signal_init_crisp_values
 
         self.data_curr_pos.connect(self.update_position_str)
 

@@ -164,10 +164,24 @@ class AbstractCamera:
 
     def get_filename(
             self,
-            i_pos: Optional[int] = None,
-            i_channel: Optional[LEDType] = None,
+            i_pos: int | None = None,
+            i_channel: LEDType | None = None,
     ) -> str:
         return "evom_pos{:02d}_{}".format(self._curr_pos, datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f"))
+
+    @staticmethod
+    def add_filename_suffix(filename: str, filename_suffix: str) -> str:
+        if '.' not in filename:
+            filename = filename + filename_suffix
+        else:
+            last_period_index = filename.rfind(".")
+            stem = filename[:last_period_index]
+            extension = filename[last_period_index + 1:]
+            if extension.isalpha():
+                filename = f"{stem}{filename_suffix}.{extension}"
+            else:
+                filename = f"{stem}.{extension}{filename_suffix}"
+        return filename
 
     def get_frame(
             self,
@@ -303,11 +317,12 @@ class AbstractCamera:
 
     def save_frame(
             self,
-            frame: np.ndarray[(int, int), 'ImageConfigType.pxl_dtype'],
-            path_to_save: Optional[Union[Path, str, bool]] = True,
-            filename: Optional[Union[str, None]] = None,
-            i_pos: Optional[int] = None,
-            i_channel: Optional[LEDType] = None,
+            frame: np.ndarray,
+            path_to_save: Path | str | bool = True,
+            filename: str | None = None,
+            filename_suffix: str | None = None,
+            i_pos: int | None = None,
+            i_channel: LEDType | None = None,
     ) -> None:
         """
         Image is saved under path_to_save / filename. See arguments for different options. If provided, checks whether
@@ -315,16 +330,27 @@ class AbstractCamera:
 
         Parameters
         ----------
-        frame           Image to save (numpy array)
-        path_to_save    Can be Path/str or bool. If Path/str, path is used. If True, path taken from cfg_device.
-        filename        Can be str or None. If None, default filename used from get_filename().
-
+        frame : np.ndarray
+            Image to save.
+        path_to_save : Path | str | bool
+            If bool and true, uses cfg.path_to_save. Returns on bool and false.
+        filename : str | None
+            Uses a get_filename() if None. Note: this method can be overwritten by child classes.
+        filename_suffix : str | None
+            Adds a suffic to the filename stem if not None.
+        i_pos : int | None,
+            Use i_pos for get_filename().
+        i_channel : LEDType | None
+            Use i_channel for get_filename().
         Returns
         -------
 
         """
         if not filename:
             filename = self.get_filename(i_pos=i_pos, i_channel=i_channel)
+
+        if filename_suffix is not None:
+            filename = self.add_filename_suffix(filename=filename, filename_suffix=filename_suffix)
 
         if isinstance(path_to_save, str):
             path_to_save = Path(path_to_save)
@@ -1547,6 +1573,7 @@ class EvoCamerav2(EvoCamera):
 
     def _finalise(self):
         logger.warning("Shutting down camera, ASI tiger, and sync board.")
+        self.autofocus_unlock()
         if self.syncboard is not None:
             self.syncboard.finalise()
         if self._is_multi_threaded:

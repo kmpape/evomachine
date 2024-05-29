@@ -29,6 +29,7 @@ from strategies.strategy_2024_04_25 import UVTestingStrategy  # noqa
 from strategies.strategy_2024_04_30 import UVTestingStrategyv2  # noqa
 from strategies.strategy_2024_05_01 import UVTestingStrategyv3  # noqa
 from strategies.strategy_2024_05_10 import UVTestingStrategyv4  # noqa
+from strategies.strategy_2024_05_28 import UVTestingStrategyv5  # noqa
 
 
 def create_automaton_process(
@@ -62,7 +63,6 @@ def create_automaton_process(
         process_q=process_queue,
         gui_to_automaton_q=gui_to_automaton_queue,
         automaton_to_gui_q=automaton_to_gui_queue,
-        use_seg=False,
         run_timeout=0,
     )
     automaton.run()
@@ -72,22 +72,22 @@ if __name__ == '__main__':
     print(f"Launching evomachine GUI from {EVOMACHINE_DIR}.")
 
     # Provide strategy that will be loaded by GUI
-    save_path: str = "/media/hslab/Data/ImageData/Idris/2024-05-17-d"
+    save_path: str = "/media/hslab/Data/ImageData/Idris/2024-05-29"
     if not os.path.exists(save_path):
         current_folder = os.path.dirname(os.path.abspath(__file__))
         save_path = os.path.join(current_folder, "DEFAULT")
         os.makedirs(save_path, exist_ok=True)
-
-    # Provide strategy that will be loaded by GUI
-    # strategy: AbstractStrategy = UVTestingStrategyv4()
-    strategy: AbstractStrategy = BasicStrategy(save_path=save_path)
 
     # Create configurations (modify if needed)
     is_oil_objective = False
     camera_config: ConfigCamera = ConfigCameraFactory.default_air_config()
     camera_config.path_to_save = Path(save_path)
     processor_config: ConfigImageProcessor = ConfigImageProcessorFactory.default_config()
-    processor_config.cfg_delta.whole_frame_drift = True  # FIXME set to False. Temporary until ROI ID works.
+    processor_config.cfg_delta.whole_frame_drift = True
+
+    # Provide strategy that will be loaded by GUI
+    strategy: AbstractStrategy = UVTestingStrategyv5(cfg=processor_config)
+    # strategy: AbstractStrategy = BasicStrategy(cfg=processor_config, save_path=save_path)
 
     # DO NOT MODIFY ANYTHING BELOW THIS LINE -----------------------------------
 

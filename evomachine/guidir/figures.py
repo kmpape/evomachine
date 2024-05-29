@@ -564,7 +564,7 @@ class ImagePlotter(EvoPanelTemplate):
             self.savepath_value.setText(str(self.current_savepath))
 
     def read_roi_data(self, data: AutomatonCommand):
-        logger.info(f"ImagePlotter.read_roi_data: Received ROI data: {data.command_args['roi_boxes']}.")
+        logger.debug(f"ImagePlotter.read_roi_data: Received ROI data: {data.command_args['roi_boxes']}.")
         if not data.command_args['fov_id'] in self.roi_data:
             logger.warning(f"ImagePlotter.read_roi_data: fov_id {data.command_args['fov_id']} not in {self.roi_data.keys()}")
             return
@@ -697,7 +697,6 @@ class ImagePlotter(EvoPanelTemplate):
         else:
             fov_index = int(self.fov_combo_box.currentText())
         if fov_index in self.roi_data and self.roi_data[fov_index]:
-            logger.info("Displaying roi boxes.")
             boxes = self.roi_data[fov_index]['roi_boxes']
         else:
             boxes = [EvoCroppingBox.none_box()]

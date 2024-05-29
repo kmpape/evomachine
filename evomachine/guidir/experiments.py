@@ -108,6 +108,10 @@ class ExperimentWorker(EvoWorkerTemplate):
         return coordinates
 
     def initialise_automaton_focus(self, data: Any = None, is_init_all: bool = False, use_autofocus: bool = False):
+        if isinstance(data, Exception):
+            logger.error(f"initialise_automaton_focus: Exception encountered. Aborting.")
+            self.enable_disable_next_buttons(None, [0, 8], [1, 2, 3, 4, 5, 6, 7])
+            return
         if not is_init_all:
             self.queue_manager.request(
                 req_str='self.initialise_fov_focus',
@@ -126,6 +130,7 @@ class ExperimentWorker(EvoWorkerTemplate):
     def initialise_automaton_image_processors(self, data: Any = None, is_init_all: bool = False):
         if isinstance(data, Exception):
             logger.error("ExperimentWorker.initialise_automaton_image_processors: received exception. Returning.")
+            self.enable_disable_next_buttons(None, [0, 1, 2, 8], [3, 4, 5])
             return
         logger.debug("ExperimentWorker.initialise_automaton_image_processors: Requesting initialisation of IP.")
         if not is_init_all:
@@ -145,6 +150,7 @@ class ExperimentWorker(EvoWorkerTemplate):
     def initialise_automaton_references(self, data: Any = None, is_init_all: bool = False):
         if isinstance(data, Exception):
             logger.error("ExperimentWorker.initialise_automaton_references: received exception. Returning.")
+            self.enable_disable_next_buttons(None, [0, 1], [2, 3, 4, 5])
             return
         logger.debug("ExperimentWorker.initialise_automaton_references: Requesting initialisation of references.")
         if not is_init_all:

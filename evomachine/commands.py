@@ -8,7 +8,7 @@ import numpy as np
 
 from delta.utils import CroppingBox as DeltaCroppingBox
 
-from evomachine.config import EVO_FORMATTER, get_logger, USE_DMD_SOCKET
+from evomachine.config import EVO_FORMATTER, get_logger, USE_DMD_SOCKET, ConfigImageProcessor
 from evomachine.coordinates import Coordinate
 if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMD_WIDTH_HEIGHT
@@ -69,8 +69,20 @@ class CommandFactory:
     match the type and ID of the initial command. The data will be stored in command_id and the field
     command_execution_time will contain the time just after executing the command.
     """
-    def __init__(self):
+    def __init__(self, cfg: ConfigImageProcessor):
+        self._cfg: ConfigImageProcessor = cfg
+        "Image processor config used for checking channels of imaging commands."
         self._command_id_counter: int = -1
+        "Command ID generator. First ID is 0. Does not care for overflow."
+        self._pos_to_roi: dict[int, list[int]] = {}
+        "Dictionary mapping position_id to roi_ids set in update_region_of_interests. Used to check commands."
+
+    def get_next_id(self):
+        self._command_id_counter += 1
+        return self._command_id_counter
+
+    def update_region_of_interests(self, region_of_interests: dict[int, list[int]]):
+        self._pos_to_roi = region_of_interests
 
     def command_from_template(self, template: AutomatonCommand) -> AutomatonCommand:
         """
@@ -89,13 +101,9 @@ class CommandFactory:
         template.command_execution_time = None
         return template
 
-    def get_next_id(self):
-        self._command_id_counter += 1
-        return self._command_id_counter
-
     def command_image(
             self,
-            channels: List[LEDType],
+            channels: list[LEDType],
             exposure_time: int | None,
             segment: bool,
             brightness: int | float | list[int | float] = 10,
@@ -106,20 +114,24 @@ class CommandFactory:
 
         Parameters
         ----------
-        channels        : List of LED channels.
+        channels        : List of LED channels. If the ConfigImageProcessor has preprocessing enabled, channels must
+                          contain ConfigImageProcessor.channel_rot. If the command specifies segment=True, channels must
+                          contain ConfigImageProcessor.channel_seg.
         exposure_time   : If None, uses default exposure, otherwise, in MILLISECONDS.
-        segment         : Segments image and tracks cells if True.
-        brightness      : Brightness as value in [0,100].
+        segment         : Segments image and tracks cells if True. See channels for channel requirements. If segment is
+                          True, and ConfigImageProcessor.preproc_enabled is False, this function throws an exception.
+        brightness      : Brightness as value in [0,29].
         save            : Save image(s). Uses ConfigDevice.path_to_save passed to Automaton.
 
         Returns in AbstractStrategy.callback
         ------------------------------------
         command_data: List[Any]
-            command_data[0]: 3D int16 numpy array (normalised & rotated images) with 1st dimension = len(channels)
-            command_data[1]: Provided if segment is True. A dictionary with ROI IDs as keys and a delta.Lineage object
-                             as values. In case of a mothermachine experiment, the ROIs will be the trenches in
-                             the corresponding FoV. Otherwise, the single key will be 0 and the Lineage object will
-                             correspond to all cells in the current FoV.
+        # TODO
+        command_data[0]: 3D int16 numpy array (normalised & rotated images) with 1st dimension = len(channels)
+        command_data[1]: Provided if segment is True. A dictionary with ROI IDs as keys and a delta.Lineage object
+                         as values. In case of a mothermachine experiment, the ROIs will be the trenches in
+                         the corresponding FoV. Otherwise, the single key will be 0 and the Lineage object will
+                         correspond to all cells in the current FoV.
 
         Returns
         -------
@@ -131,6 +143,14 @@ class CommandFactory:
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument exposure_time ({type(exposure_time)}).")
         if not isinstance(segment, bool):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument segment ({type(segment)}).")
+        if self._cfg.preproc_enabled:
+            if self._cfg.channel_rot not in channels:
+                raise TypeError(f"If preproc_enabled, channels={channels} must contain {self._cfg.channel_rot}.")
+            if segment:
+                if self._cfg.channel_seg not in channels:
+                    raise TypeError(f"channel_seg={self._cfg.channel_seg} not in channels={channels} for segment=True.")
+        if segment and not self._cfg.preproc_enabled:
+            raise TypeError(f"segment=True but preproc_enabled=False.")
         if not ((isinstance(brightness, int) and 0 <= brightness <= 100) or
                 (isinstance(brightness, list) and
                  all(0 <= b <= 100 for b in brightness) and len(brightness) == len(channels))):
@@ -200,10 +220,11 @@ class CommandFactory:
             self,
             channel: LEDType,
             image: np.ndarray[(int, int), np.uint8],
-            duration: Union[float, int],
+            duration: int | float,
             brightness: int | float = 29,
     ) -> AutomatonCommand:
         """
+        Projects a pattern onto the current FoV.
 
         Parameters
         ----------
@@ -233,6 +254,65 @@ class CommandFactory:
         return AutomatonCommand(
             command_type=AutomatonCommandType.PROJECT,
             command_args={'channel': channel, 'image': image, 'duration': duration, 'brightness': brightness},
+            command_id=self.get_next_id(),
+            command_creation_time=time(),
+        )
+
+    def command_project_roi(
+            self,
+            channel: LEDType,
+            pos_id: int,
+            roi_ids: list[int],
+            duration: int | float,
+            brightness: int | float = 29,
+            fill_x: float = 1.0,
+            fill_y: float = 1.0,
+    ) -> AutomatonCommand:
+        """
+        Projects a pattern built from the specified RoI boxes onto the current FoV. NOTE: The automaton will NOT move to
+        the provided pos_id. A MOVE command to the corresponding pos_id / fov_id must be provided first.
+
+        Parameters
+        ----------
+        channel         : LED channel.
+        pos_id          : Position ID to obtain the RoI boxes from.
+        roi_ids         : List of roi_ids to build the pattern. Must correspond to the roi_ids of pos_id.
+        duration        : Duration of the projection in SECONDS.
+        brightness      : Brightness as value in [0,100].
+        fill_x          : Determines the percentage of the RoI boxes filled (in X/horizontal/column direction).
+        fill_y          : Determines the percentage of the RoI boxes filled (in Y/vertical/row direction).
+
+        Returns in AbstractStrategy.callback
+        ------------------------------------
+        command_data : Always returns True.
+
+        Returns
+        -------
+        command: AutomatonCommand
+        -------
+
+        """
+        if not isinstance(channel, LEDType):
+            raise TypeError(f"AutomatonCommandFactory.command_project_roi: Wrong type for argument channel "
+                            f"({type(channel)}).")
+        if not (isinstance(pos_id, int) and (pos_id in self._pos_to_roi.keys())):
+            raise TypeError(f"AutomatonCommandFactory.command_project_roi: pos_id={pos_id} does not exist.")
+        if not (all(isinstance(r, int) and (r in self._pos_to_roi[pos_id]) for r in roi_ids)):
+            raise TypeError(f"AutomatonCommandFactory.command_project_roi: roi_ids do not exist for pos_id={pos_id}.")
+        if not (isinstance(duration, float) or isinstance(duration, int)):
+            raise TypeError(f"AutomatonCommandFactory.command_project_roi: Wrong type for argument duration "
+                            f"({type(duration)}).")
+        if not (isinstance(brightness, int) or isinstance(brightness, float)) or not (0 <= brightness <= 29):
+            raise TypeError(f"AutomatonCommandFactory.command_project_roi: Wrong type or range for argument "
+                            f"brightness.")
+        if not isinstance(fill_x, float) or not (0 <= fill_x):
+            raise TypeError(f"AutomatonCommandFactory.command_project_roi: Wrong type or range for argument fill_x.")
+        if not isinstance(fill_y, float) or not (0 <= fill_y):
+            raise TypeError(f"AutomatonCommandFactory.command_project_roi: Wrong type or range for argument fill_y.")
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.PROJECT_ROI,
+            command_args={'channel': channel, 'pos_id': pos_id, 'roi_ids': roi_ids, 'duration': duration,
+                          'brightness': brightness, 'fill_x': fill_x, 'fill_y': fill_y},
             command_id=self.get_next_id(),
             command_creation_time=time(),
         )

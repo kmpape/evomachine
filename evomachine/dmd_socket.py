@@ -14,9 +14,12 @@ from threading import Thread
 from evomachine.config import get_logger, EVOMACHINE_DIR
 from evomachine.exceptions import DMDError, ErrorCode, ErrorContainer
 
+from delta.utils import CroppingBox
+
 logger = get_logger(name=__name__)
 
 
+# NOTE: If modified, these parameters must also be modified in the C code.
 DMD_WIDTH_HEIGHT = (2716, 1600)  # Provide images with img.shape == DMD_WIDTH_HEIGHT
 PORT = 12345
 HOST = '127.0.0.1'
@@ -89,27 +92,27 @@ class DMDControl:
         "Socket to connect with C program."
         self.default_line_width: int = 5
         "Line width used for calibration and displaying lines. Use odd values."
-        self._process: Union[subprocess.Popen, None] = None
+        self._process: subprocess.Popen | None = None
         "Process for C program."
-        self._output_thread: Union[Thread, None] = None
+        self._output_thread: Thread | None = None
         "Thread to display output from C program."
-        self._calib_data: Optional[List[Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]]] = None
+        self._calib_data: list[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] | None = None
         "List containing calibration data."
         self._calib_file: Path = EVOMACHINE_DIR / 'dmd_calibration_data.pkl'
         "Path to calibration file."
-        self._homography_mat: Optional[np.ndarray] = None
+        self._homography_mat: np.ndarray | None = None
         "Homography matrix for mapping image to DMD coordinates."
+        self._homography_mat_inv: np.ndarray | None = None
+        "Homography matrix for mapping DMD to image coordinates."
         self.debug_mode: bool = debug_mode
-        "Flag to set test environment that does not use the actual DMD window."
-        self.width_height_DMD: Tuple[int, int] = DMD_WIDTH_HEIGHT
+        "Flag to set test environment or use DMD functions without displaying on the actual DMD window."
+        self.width_height_DMD: tuple[int, int] = DMD_WIDTH_HEIGHT
         "Size of DMD."
         self._is_full_display: bool = False
         "Internal flag queried through is_full_display() that is set to True when displaying a full white screen."
-        if self.debug_mode:
-            logger.warning(f"DMDControl: debug mode is ON.")
 
     def _load_calibration_data(self, filepath: Optional[Path] = None) -> bool:
-        if filepath is None:
+        if filepath is None:  # noqa
             filepath = self._calib_file
         if not filepath.exists():
             logger.error(f"DMDControl._load_calibration_data: file {filepath} not found.")
@@ -121,9 +124,10 @@ class DMDControl:
         dmd_points = np.array([(c_dmd, r_dmd) for ((r_dmd, c_dmd), _, _) in self._calib_data])
         cam_points = np.array([(c_cam, r_cam) for (_, (r_cam, c_cam), _) in self._calib_data])
         self._homography_mat, _ = cv2.findHomography(srcPoints=cam_points, dstPoints=dmd_points)
+        self._homography_mat_inv, _ = cv2.findHomography(srcPoints=dmd_points, dstPoints=cam_points)
 
         points_cam = np.array([[[0, 0], [3199, 3199]]], dtype=np.float32)
-        points_dmd = cv2.perspectiveTransform(points_cam.reshape(-1, 1, 2), self._homography_mat)
+        points_dmd = cv2.perspectiveTransform(points_cam.reshape(-1, 1, 2), self._homography_mat)   # noqa
         logger.info(f"DMDControl._load_calibration_data: mapping point "
                     f"({int(points_cam[0][0][0])},{int(points_cam[0][0][1])}) to "
                     f"({int(points_dmd[0][0][0])},{int(points_dmd[0][0][1])}) and "
@@ -134,13 +138,12 @@ class DMDControl:
     def _launch_dmd_window(self):
         if self.debug_mode:
             return
-        def read_output(pipe):
-            for line in iter(pipe.readline, b''):
-                print(line.decode('utf-8').strip())
-        self._process = subprocess.Popen([str(EM_DMD_PROGRAM_PATH.resolve())], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self._process = subprocess.Popen(
+            [str(EM_DMD_PROGRAM_PATH.resolve())],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
         time.sleep(1)
-        # self._output_thread = Thread(target=read_output, args=(self._process.stdout,), daemon=True)
-        # self._output_thread.start()
 
     def _send_image(self, img: np.ndarray):
         """
@@ -157,8 +160,8 @@ class DMDControl:
 
     def _connect_socket(self):
         """
-        This function opens a socket. Note that after calling s.close(), e.g. after a restart, re-opening a socket throws
-        an error. The error is therefore caught once.
+        This function opens a socket. Note that after calling s.close(), e.g. after a restart, re-opening a socket
+        throws an error. The error is therefore caught once.
         """
         if self.debug_mode:
             return
@@ -174,7 +177,7 @@ class DMDControl:
         Hard-coded enumeration test required after launching the C program.
         """
         if self.debug_mode:
-            return
+            return True
         try:
             test_arr = np.zeros(DMD_WIDTH_HEIGHT, dtype=np.uint8)  # ROW MAJOR FORMAT
             for i in range(DMD_WIDTH_HEIGHT[0]):
@@ -190,7 +193,7 @@ class DMDControl:
     def get_calibration_data(self) -> list[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]]:
         return self._calib_data
 
-    def img_to_dmd_coords(self, img_row: int, img_col: int) -> tuple[int, int]:
+    def img_to_dmd_coords(self, img_row: int, img_col: int) -> tuple[int, int] | None:
         """
         Transform coordinates on the camera to coordinates on the DMD.
 
@@ -205,11 +208,14 @@ class DMDControl:
         dmd_row_col : tuple[int, int]
             DMD coordinates as (row, col).
         """
+        if self._homography_mat is None:
+            logger.error(f"img_to_dmd_coords: no calibration data provided.")
+            return None
         point_cam = np.array([[[img_col, img_row]]]).astype(float)
         point_dmd = cv2.perspectiveTransform(point_cam, self._homography_mat)
         return int(np.round(point_dmd[0][0][1])), int(np.round(point_dmd[0][0][0]))
 
-    def img_to_dmd_array(self, img: np.array) -> np.array:
+    def img_to_dmd_array(self, img: np.array) -> np.ndarray | None:
         """
         Transform a 3200 x 3200 camera pattern to a DMD pattern.
 
@@ -229,14 +235,89 @@ class DMDControl:
         dmd_img : np.ndarray
             2D image array to be displayed on the DMD using display_image().
         """
+        if self._homography_mat is None:
+            logger.error(f"img_to_dmd_array: no calibration data provided.")
+            return None
         if img.shape != (3200, 3200):
             logger.error(f"img_to_dmd_array: Expected image of shape (3200,3200) but received {img.shape}.")
-            return self.get_zero_array()
+            return None
         return cv2.warpPerspective(img, self._homography_mat, self.width_height_DMD[::-1]).astype(img.dtype)
+
+    def dmd_to_img_coords(self, img_row: int, img_col: int) -> tuple[int, int] | None:
+        """
+        Transform coordinates on the DMD to coordinates on the camera. Note that DMD coordinates lying outside of the
+        camera display will yield coordinates outside of the range [0, 3200).
+
+        Parameters
+        ----------
+        img_row : int
+            DMD Y coordinate.
+        img_col : int
+            DMD X coordinate.
+        Returns
+        -------
+        cam_row_col : tuple[int, int]
+            Camera coordinates as (row, col).
+        """
+        if self._homography_mat_inv is None:
+            logger.error(f"dmd_to_img_coords: no calibration data provided.")
+            return None
+        point_dmd = np.array([[[img_col, img_row]]]).astype(float)
+        point_cam = cv2.perspectiveTransform(point_dmd, self._homography_mat_inv)
+        return int(np.round(point_cam[0][0][1])), int(np.round(point_cam[0][0][0]))
+
+    def dmd_to_img_array(self, img: np.array) -> np.ndarray | None:
+        """
+        Transform a width_height_DMD DMD pattern to a camera pattern.
+
+        Parameters
+        ----------
+        img : np.ndarray
+            2D image array of size width_height_DMD.
+        Returns
+        -------
+        cam_img : np.ndarray
+            3200 x 3200 camera array.
+        """
+        if self._homography_mat_inv is None:
+            logger.error(f"dmd_to_img_array: no calibration data provided.")
+            return None
+        if img.shape != self.width_height_DMD:
+            logger.error(f"dmd_to_img_array: Expected image of shape {self.width_height_DMD} but received {img.shape}.")
+            return None
+        return cv2.warpPerspective(img, self._homography_mat_inv, (3200, 3200)).astype(img.dtype)
+
+    def pattern_from_roi_boxes(self, boxes: list[CroppingBox], fill_x: float = 1.0, fill_y: float = 1.0) -> np.ndarray:
+        """
+        Creates a pattern from a list of cropping boxes (Image coordinates) and returns a warped DMD pattern.
+
+        Parameters
+        ----------
+        boxes : list[CroppingBox]
+            Cropping boxes to display pattern on.
+        fill_x : float
+            If fill_x=1.0, the entire cropping box is filled in horizontal direction. If 0.0 < fill_x < 1.0, it fills
+            a fill percentage of the cropping box.
+        fill_y : float
+            Same as fill_x but in vertical direction.
+
+        Returns
+        -------
+        warped_image : np.ndarray
+            Warped image ready to be projected via DMD.
+        """
+        cam_img = self.get_zero_array(img_size=(3200, 3200))
+        for b in boxes:
+            shift_x = int(np.round(0.5 * (1-fill_x) * (b.xbr - b.xtl), 0))
+            shift_y = int(np.round(0.5 * (1-fill_y) * (b.ybr - b.ytl), 0))
+            cam_img[b.ytl+shift_y: b.ybr+1-shift_y, b.xtl+shift_x: b.xbr+1-shift_x] = 255
+        return self.img_to_dmd_array(cam_img)
 
     def initialise(self, is_test: bool = False):
         logger.info(f"DMDControl.initialise: initialising DMD (debug_mode={self.debug_mode})")
         if self.debug_mode:
+            if not self._load_calibration_data():
+                logger.info("DMDControl.initialise: no calibration data loaded.")
             self._is_initialised = True
             return
         try:
@@ -371,20 +452,20 @@ class DMDControl:
     def display_calibration_image(self, lw: int = 5):
         img = self.get_zero_array()
         mid_row, mid_col = img.shape[0]//2, img.shape[1]//2
-        cv2.line(img, (mid_col, 0), (mid_col, img.shape[0]), 255, lw)
-        cv2.line(img, (0, mid_row), (img.shape[1], mid_row), 255, lw)
+        cv2.line(img, (mid_col, 0), (mid_col, img.shape[0]), 255, lw)  # noqa
+        cv2.line(img, (0, mid_row), (img.shape[1], mid_row), 255, lw)  # noqa
         box_sizes = [5, 10, 20, 40, 80, 160, 320]
         box_sizes_rev = box_sizes[::-1]
         shift = 20
         for idx, box_size in enumerate(box_sizes):
             start_x = mid_col - shift - box_size
-            start_y = mid_row + shift * (idx+1) + sum(box_sizes[:idx+1])
+            start_y = mid_row + shift * (idx+1) + sum(box_sizes[:idx+1])  # noqa
             cv2.rectangle(img, (start_x, start_y), (start_x + box_size, start_y + box_size), 255, -1)
             start_y = mid_row - shift * (idx+1) - sum(box_sizes[:idx+1])
             cv2.rectangle(img, (start_x, start_y), (start_x + box_size, start_y + box_size), 255, -1)
         for idx, box_size in enumerate(box_sizes_rev):
             start_x = mid_col + shift
-            start_y = mid_row + shift * (idx+1) + sum(box_sizes_rev[:idx+1])
+            start_y = mid_row + shift * (idx+1) + sum(box_sizes_rev[:idx+1])  # noqa
             cv2.rectangle(img, (start_x, start_y), (start_x + box_size, start_y + box_size), 255, -1)
             start_y = mid_row - shift * (idx+1) - sum(box_sizes_rev[:idx+1])
             cv2.rectangle(img, (start_x, start_y), (start_x + box_size, start_y + box_size), 255, -1)
@@ -418,7 +499,7 @@ class DMDControl:
             radius: int = 1,
     ):
         img = self.get_zero_array()
-        cv2.circle(img, (col, row), radius, color=255, thickness=-1)
+        cv2.circle(img, (col, row), radius, color=255, thickness=-1)  # noqa
         self.display_image(img)
 
     def display_half(self):
@@ -538,6 +619,3 @@ class DMDControl:
             img_size = DMD_WIDTH_HEIGHT
         img = self._make_text(text=text, img_fraction=img_fraction, path_to_font=path_to_font, img_size=img_size)
         self.display_image(img=img)
-
-    def warp_image_to_dmd(self, img: np.ndarray) -> np.ndarray:
-        return cv2.warpPerspective(img, self._homography_mat, DMD_WIDTH_HEIGHT)
