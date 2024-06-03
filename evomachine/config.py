@@ -156,7 +156,7 @@ class ConfigImageProcessorFactory:
 
     @staticmethod
     def default_config(channels: list[LEDType] | None = None) -> ConfigImageProcessor:
-        default_channels = [LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_560_NM, LEDType.LED_625_NM]
+        default_channels = [LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_565_NM, LEDType.LED_645_NM]
         cfg_delta = delta.config.Config.default("mothermachine")
         cfg_delta.whole_frame_drift = True
         cfg_delta.target_size_rois = (1024, 1024)
@@ -416,8 +416,8 @@ class ConfigCameraFactory:
     @staticmethod
     def get_available_leds() -> list[LEDType]:
         if USE_SYNC_BOARD:
-            return [LEDType.NO_LED, LEDType.LED_385_NM, LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_560_NM,
-                    LEDType.LED_625_NM]
+            return [LEDType.NO_LED, LEDType.LED_385_NM, LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_565_NM,
+                    LEDType.LED_645_NM]
         else:
             return [LEDType.NO_LED, LEDType.LED_405_NM, LEDType.LED_450_NM, LEDType.LED_505_NM, LEDType.LED_538_NM]
 

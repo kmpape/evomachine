@@ -226,6 +226,10 @@ class ExperimentWorker(EvoWorkerTemplate):
         if isinstance(data, Exception):
             logger.error("ExperimentWorker.enable_after_init_all: received exception. Returning.")
             return
+        self.queue_manager.request(
+            req_str='self.save_state',
+            kwargs_dict={'filename_suffix': 'GUI'},
+        )
         self.signal_enable_button.emit([4, 6, 7])
         self.signal_set_button_color.emit([0, 1, 2, 3], "green")
         self.signal_set_button_color.emit([8], "lightgray")

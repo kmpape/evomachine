@@ -95,8 +95,8 @@ class LEDType(EvoType):
     LED_385_NM = 0
     LED_450_NM = 1
     LED_515_NM = 2
-    LED_560_NM = 3
-    LED_625_NM = 4
+    LED_565_NM = 3
+    LED_645_NM = 4
 
     # OLD LEDs
     LED_405_NM = 5

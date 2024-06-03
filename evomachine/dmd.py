@@ -4,6 +4,7 @@ import logging
 import os
 from pathlib import Path
 from PIL import Image, ImageFont, ImageDraw
+import skimage
 import subprocess
 import sys
 from typing import List, Optional, Union, Tuple
@@ -23,6 +24,7 @@ logger = get_logger(name=__name__)
 
 
 DMD_WIDTH_HEIGHT = (2716, 1600)  # Provide images with img.shape == DMD_WIDTH_HEIGHT
+CAM_WIDTH_HEIGHT = (3200, 3200)
 
 class DMDColor(Enum):
     BLACK = (0, 0, 0)
@@ -44,8 +46,8 @@ class DMDColor(Enum):
 
 
 class DMDControl:
-    # FIXME any DMD call from outside of the main thread yields to a crash
-
+    EXTENSIONS = ['png', 'tiff', 'tif']
+    "Accepted file extensions for loading images."
     DEFAULT_LINE_WIDTH: int = 5
     "Line width used for calibration and displaying lines. Use odd values."
 
@@ -90,7 +92,9 @@ class DMDControl:
         self.offset_DMD: Tuple[int, int] = (0, 0)
         "Offset to display PyGame window. Set in initialise."
         self.width_height_DMD: Tuple[int, int] = DMD_WIDTH_HEIGHT
-        "Size of DMD. Double-checked in initialise."
+        "Size of DMD."
+        self.width_height_CAM: tuple[int, int] = CAM_WIDTH_HEIGHT
+        "Size of camera."
         self.surface: Union[None, pygame.surface] = None
         "PyGame object to display images. Initialised in initialise."
         self.default_line_width: int = 5
@@ -429,3 +433,29 @@ class DMDControl:
         for b in boxes:
             cam_img[b.ytl: b.ybr+1, b.xtl: b.xbr+1] = 255
         return self.img_to_dmd_array(cam_img)
+
+    def load_image(self, filename: str):
+        if not os.path.exists(filename):  # noqa
+            raise FileNotFoundError(f"load_image: Provided filename {filename} does not exist.")
+        if not filename.split('.')[-1].lower() in self.EXTENSIONS:
+            raise TypeError(f"load_image: File type {filename.split('.')[-1].lower()} not supported. "
+                            f"Supported file types: {self.EXTENSIONS}.")
+        img = skimage.io.imread(filename)
+        if img.ndim == 2:
+            if img.dtype != np.uint8:
+                img = img.astype(np.float32)
+                img = (img - np.min(img)) / (np.max(img) - np.min(img))
+                img = (img * 255).astype(np.uint8)
+        elif img.ndim == 3:
+            logger.info("load_image: Converting image using rgb2gray.")
+            img = skimage.color.rgb2gray(img)
+            img = (img * 255).astype(np.uint8)
+        else:
+            raise ValueError(f"load_image: Unsupported image format: {img}")
+        if img.shape == self.width_height_CAM:
+            logger.info("load_image: Mapping image using img_to_dmd_array.")
+            img = self.img_to_dmd_array(img)
+        elif img.shape != self.width_height_DMD:
+            raise ValueError(f"load_image: Provided image {img.shape} is not of size {self.width_height_CAM} or "
+                             f"{self.width_height_DMD}")
+        self.display_image(img=img)

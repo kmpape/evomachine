@@ -37,7 +37,7 @@ class mCherry_GFP_Identify(AbstractStrategy):
 
         # Imaging properties
         self.exposure_time: int = 100  # in ms
-        self.imaging_channel: list[LEDType] = [LEDType.LED_450_NM, LEDType.LED_560_NM]
+        self.imaging_channel: list[LEDType] = [LEDType.LED_450_NM, LEDType.LED_565_NM]
         self.imaging_interval: float = 10*60  # in seconds
         self.imaging_brightness: float = 15
 

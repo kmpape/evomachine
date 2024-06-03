@@ -16,8 +16,8 @@ led_channel_keys: dict[LEDType, int | None] = {
     LEDType.LED_385_NM: 7,
     LEDType.LED_450_NM: 1,
     LEDType.LED_515_NM: 2,
-    LEDType.LED_560_NM: 3,
-    LEDType.LED_625_NM: 4,
+    LEDType.LED_565_NM: 3,
+    LEDType.LED_645_NM: 4,
     LEDType.NO_LED: None,
 }
 

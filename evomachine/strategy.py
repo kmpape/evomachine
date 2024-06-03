@@ -103,6 +103,7 @@ class AbstractStrategy(ABC):
             positions: dict[int, list[int]],
             region_of_interests: dict[int, list[int]],
             config_camera: ConfigCamera,
+            pos_processors: list[PositionRT],
     ) -> list[AutomatonCommand]:
         """
         Initialise the strategy. Note that initialise will be called several times, and it therefore MUST reset
@@ -121,10 +122,10 @@ class AbstractStrategy(ABC):
             NOTE: pos_id and fov_id are unique, e.g. positions = {0: [0, 1], 1: [2, 3], ...}
         region_of_interests: dict[int, list[int]]
             Dictionary with pos_id as key and list of roi_id as value.
-        pos_processors: list[PositionRT]
-            List of position processors to access lineages etc. Access via pos_processors[pos_id].
         config_camera: ConfigCamera
             Object defining camera configuration.
+        pos_processors: list[PositionRT]
+            List of position processors to access lineages etc. Access via pos_processors[pos_id].
         Returns
         -------
         list[AutomatonCommand]
@@ -136,6 +137,8 @@ class AbstractStrategy(ABC):
         self.region_of_interests = region_of_interests
         self.command_factory.update_region_of_interests(region_of_interests=region_of_interests)
         self.config_camera = config_camera
+        self.pos_processors = pos_processors
+        self.dmd.initialise()  # Load calibration data
         new_command_list = self._initialise()
         if not self.is_valid_command_list(new_command_list):
             raise StrategyError(message=f"AbstractStrategy.callback: invalid command list ({new_command_list}).",
@@ -260,6 +263,7 @@ class AbstractStrategy(ABC):
                 positions=positions,
                 region_of_interests=region_of_interests,
                 config_camera=cfg_camera,
+                pos_processors=[],
             )
             if self.path_to_save is not None:
                 if not self.path_to_save.exists():

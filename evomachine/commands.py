@@ -108,6 +108,7 @@ class CommandFactory:
             segment: bool,
             brightness: int | float | list[int | float] = 10,
             save: bool = False,
+            pattern: np.ndarray | None = None,
     ) -> AutomatonCommand:
         """
         Create a command for taking an image.
@@ -122,6 +123,8 @@ class CommandFactory:
                           True, and ConfigImageProcessor.preproc_enabled is False, this function throws an exception.
         brightness      : Brightness as value in [0,29].
         save            : Save image(s). Uses ConfigDevice.path_to_save passed to Automaton.
+        pattern         : An optional pattern of size width_height_DMD (see DMDControl) that will be displayed using
+                          dmd.display_image(). If None, the DMD is set via dmd.display_full().
 
         Returns in AbstractStrategy.callback
         ------------------------------------
@@ -159,7 +162,7 @@ class CommandFactory:
             brightness = [brightness for _ in channels]
         command_args = {
             'channels': channels, 'exposure_time': exposure_time, 'segment': segment, 'brightness': brightness,
-            'save': save
+            'save': save, 'pattern': pattern,
         }
         return AutomatonCommand(
             command_type=AutomatonCommandType.IMAGE,

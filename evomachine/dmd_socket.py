@@ -1,10 +1,12 @@
 import cv2
 import logging
 import numpy as np
+import os
 from pathlib import Path
 import pickle as pkl
 from PIL import Image, ImageFont, ImageDraw
 import screeninfo
+import skimage
 import subprocess
 import socket
 import time
@@ -20,7 +22,8 @@ logger = get_logger(name=__name__)
 
 
 # NOTE: If modified, these parameters must also be modified in the C code.
-DMD_WIDTH_HEIGHT = (2716, 1600)  # Provide images with img.shape == DMD_WIDTH_HEIGHT
+DMD_WIDTH_HEIGHT = (2716, 1600)
+CAM_WIDTH_HEIGHT = (3200, 3200)
 PORT = 12345
 HOST = '127.0.0.1'
 MAX_BYTE_SIZE = 65482
@@ -35,6 +38,8 @@ EM_DMD_PROGRAM_PATH = EVOMACHINE_DIR.resolve().parent.parent / "em_dmd_window/Re
 class DMDControl:
     DEFAULT_LINE_WIDTH: int = 5
     "Line width used for calibration and displaying lines. Use odd values."
+    EXTENSIONS = ['png', 'tiff', 'tif']
+    "Accepted file extensions for loading images."
 
     def __init__(self, debug_mode: bool = False):
         """
@@ -108,8 +113,12 @@ class DMDControl:
         "Flag to set test environment or use DMD functions without displaying on the actual DMD window."
         self.width_height_DMD: tuple[int, int] = DMD_WIDTH_HEIGHT
         "Size of DMD."
+        self.width_height_CAM: tuple[int, int] = CAM_WIDTH_HEIGHT
+        "Size of camera."
         self._is_full_display: bool = False
         "Internal flag queried through is_full_display() that is set to True when displaying a full white screen."
+        self._loaded_img: np.ndarray | None = None
+        "Image loaded through load_image."
 
     def _load_calibration_data(self, filepath: Optional[Path] = None) -> bool:
         if filepath is None:  # noqa
@@ -217,11 +226,11 @@ class DMDControl:
 
     def img_to_dmd_array(self, img: np.array) -> np.ndarray | None:
         """
-        Transform a 3200 x 3200 camera pattern to a DMD pattern.
+        Transform a camera pattern of size width_height_CAM to a DMD pattern of size width_height_DMD.
 
         Example: Project a square of size 100 in the top left corner of your image
 
-        pattern_img = self.get_zero_array((3200, 3200))
+        pattern_img = self.get_zero_array(width_height_CAM)
         pattern_img[0:101, 0:101] = 255
         pattern_dmd = self.img_to_dmd_array(pattern_img)
         self.display_image(pattern_dmd)
@@ -238,8 +247,8 @@ class DMDControl:
         if self._homography_mat is None:
             logger.error(f"img_to_dmd_array: no calibration data provided.")
             return None
-        if img.shape != (3200, 3200):
-            logger.error(f"img_to_dmd_array: Expected image of shape (3200,3200) but received {img.shape}.")
+        if img.shape != self.width_height_CAM:
+            logger.error(f"img_to_dmd_array: Expected image of shape {self.width_height_CAM} but received {img.shape}.")
             return None
         return cv2.warpPerspective(img, self._homography_mat, self.width_height_DMD[::-1]).astype(img.dtype)
 
@@ -285,7 +294,7 @@ class DMDControl:
         if img.shape != self.width_height_DMD:
             logger.error(f"dmd_to_img_array: Expected image of shape {self.width_height_DMD} but received {img.shape}.")
             return None
-        return cv2.warpPerspective(img, self._homography_mat_inv, (3200, 3200)).astype(img.dtype)
+        return cv2.warpPerspective(img, self._homography_mat_inv, self.width_height_CAM).astype(img.dtype)
 
     def pattern_from_roi_boxes(self, boxes: list[CroppingBox], fill_x: float = 1.0, fill_y: float = 1.0) -> np.ndarray:
         """
@@ -306,20 +315,26 @@ class DMDControl:
         warped_image : np.ndarray
             Warped image ready to be projected via DMD.
         """
-        cam_img = self.get_zero_array(img_size=(3200, 3200))
+        cam_img = self.get_zero_array(img_size=self.width_height_CAM)
         for b in boxes:
             shift_x = int(np.round(0.5 * (1-fill_x) * (b.xbr - b.xtl), 0))
             shift_y = int(np.round(0.5 * (1-fill_y) * (b.ybr - b.ytl), 0))
-            cam_img[b.ytl+shift_y: b.ybr+1-shift_y, b.xtl+shift_x: b.xbr+1-shift_x] = 255
+            start_row = max(b.ytl+shift_y, 0)
+            end_row = min(b.ybr+1-shift_y, cam_img.shape[0]-1)
+            start_col = max(b.xtl+shift_x, 0)
+            end_col = min(b.xbr+1-shift_x, cam_img.shape[1]-1)
+            cam_img[start_row: end_row, start_col: end_col] = 255
         return self.img_to_dmd_array(cam_img)
 
     def initialise(self, is_test: bool = False):
-        logger.info(f"DMDControl.initialise: initialising DMD (debug_mode={self.debug_mode})")
         if self.debug_mode:
+            logger.debug(f"DMDControl.initialise: initialising DMD (debug_mode={self.debug_mode})")
             if not self._load_calibration_data():
                 logger.info("DMDControl.initialise: no calibration data loaded.")
             self._is_initialised = True
             return
+        else:
+            logger.info(f"DMDControl.initialise: initialising DMD.")
         try:
             self._launch_dmd_window()
         except Exception as e:
@@ -619,3 +634,37 @@ class DMDControl:
             img_size = DMD_WIDTH_HEIGHT
         img = self._make_text(text=text, img_fraction=img_fraction, path_to_font=path_to_font, img_size=img_size)
         self.display_image(img=img)
+
+    def display_loaded_image(self):
+        if self._loaded_img is None:
+            logger.error(f"display_loaded_image: No image loaded. Use load_image to load an image.")
+            return
+        self.display_image(img=self._loaded_img)
+
+    def load_image(self, filename: str, display_image: bool = True):
+        if not os.path.exists(filename):  # noqa
+            raise FileNotFoundError(f"load_image: Provided filename {filename} does not exist.")
+        if not filename.split('.')[-1].lower() in self.EXTENSIONS:
+            raise TypeError(f"load_image: File type {filename.split('.')[-1].lower()} not supported. "
+                            f"Supported file types: {self.EXTENSIONS}.")
+        img = skimage.io.imread(filename)
+        if img.ndim == 2:
+            if img.dtype != np.uint8:
+                img = img.astype(np.float32)
+                img = (img - np.min(img)) / (np.max(img) - np.min(img))
+                img = (img * 255).astype(np.uint8)
+        elif img.ndim == 3:
+            logger.info("load_image: Converting image using rgb2gray.")
+            img = skimage.color.rgb2gray(img)
+            img = (img * 255).astype(np.uint8)
+        else:
+            raise ValueError(f"load_image: Unsupported image format: {img}")
+        if img.shape == self.width_height_CAM:
+            logger.info("load_image: Mapping image using img_to_dmd_array.")
+            img = self.img_to_dmd_array(img)
+        elif img.shape != self.width_height_DMD:
+            raise ValueError(f"load_image: Provided image {img.shape} is not of size {self.width_height_CAM} or "
+                             f"{self.width_height_DMD}")
+        self._loaded_img = img
+        if display_image:
+            self.display_image(img=img)

@@ -38,7 +38,7 @@ class DMD_UV_select(AbstractStrategy):
 
         # Imaging properties
         self.exposure_time: int = 100  # in ms
-        self.imaging_channels: list[LEDType] = [LEDType.LED_450_NM, LEDType.LED_560_NM]  # mCherry GFP, correct format for multiple??
+        self.imaging_channels: list[LEDType] = [LEDType.LED_450_NM, LEDType.LED_565_NM]  # mCherry GFP, correct format for multiple??
         self.imaging_interval: float = 10*60  # in seconds
         self.imaging_brightness: float = 15
 

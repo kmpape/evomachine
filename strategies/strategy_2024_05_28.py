@@ -31,7 +31,7 @@ class UVTestingStrategyv5(AbstractStrategy):
     """
     def __init__(self, cfg: ConfigImageProcessor):
         super().__init__(cfg=cfg)
-        self.path_to_save = Path("/media/hslab/Data/ImageData/Idris/2024-05-29")
+        self.path_to_save = Path("/media/hslab/Data/ImageData/Idris/2024-06-01")
 
         # Imaging properties
         self.exposure_time: int = 100  # in ms
@@ -89,13 +89,13 @@ class UVTestingStrategyv5(AbstractStrategy):
             logger.warning(f"Received {len(self.field_of_views)} FoVs, "
                            f"but expected at least {len(self.proj_times)} FoVs.")
         else:
-            logger.info(f"Initialise UVTestingStrategyv3.\n"
+            logger.info(f"Initialise UVTestingStrategyv5.\n"
                         f"proj_times={self.proj_times.values()}\n"
                         f"proj_brightness={self.proj_brightness.values()}\n"
                         f"proj_repeat={self.proj_repeat.values()}\n"
                         f"imaging_interval={self.imaging_interval}")
 
-        for i in range(min(len(self.field_of_views), len(self.proj_times))):  # TODO BUUUUUUG
+        for i in range(len(self.field_of_views)):
             move = self.command_factory.command_move(fov_id=i)
             cmd_list.append(move)
             image = self.command_factory.command_image(
@@ -141,7 +141,7 @@ class UVTestingStrategyv5(AbstractStrategy):
         ))
 
         cmd_list = []
-        for i in range(min(len(self.field_of_views), len(self.proj_times))):  # TODO BUUUUUUG
+        for i in range(len(self.field_of_views)):
             move = self.command_factory.command_move(fov_id=i)
             cmd_list.append(move)
             image = self.command_factory.command_image(
@@ -163,8 +163,7 @@ class UVTestingStrategyv5(AbstractStrategy):
                         )
                         cmd_list.append(project)
                 else:
-                    nth = i - self.proj_roi + 2  # project on every nth roi, starting from 2
-                    roi_ids = [j for j in self.region_of_interests[i] if j % nth == 0]
+                    roi_ids = [j for j in self.region_of_interests[i] if j % 2 == 0]
                     project_roi = self.command_factory.command_project_roi(
                         channel=self.proj_channel,
                         pos_id=i,

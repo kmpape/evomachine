@@ -33,6 +33,7 @@ from evomachine.utils import EvoCroppingBox
 
 logger = get_logger(name=__name__)
 
+CMAP = 'viridis'
 
 class FigureWindow(QWidget):
     def __init__(self, fig, title):
@@ -62,24 +63,35 @@ class ImageROIBoxes(EvoWorkerTemplate):
         self.fig = fig
         self.fov_id = fov_id
 
-    def draw_roi_boxes(self, roi_boxes: list[EvoCroppingBox | None]):
+    def draw_roi_boxes(self, roi_boxes: list[EvoCroppingBox | None], show_roi_id: bool):
         for i, box in enumerate(roi_boxes):
             if box is not None and ((isinstance(box, EvoCroppingBox) and not box.is_none) or
                                     isinstance(box, delta.utils.CroppingBox)):
                 color_str = 'yellow'
-                width = box.xbr - box.xtl
-                height = box.ybr - box.ytl
-                rect = Rectangle((box.xtl, box.ytl), width, height, edgecolor='black', facecolor=color_str, alpha=0.2,
-                                 linewidth=2)
+                w = box.xbr - box.xtl
+                h = box.ybr - box.ytl
+                rect = Rectangle((box.xtl, box.ytl), w, h, edgecolor='red', facecolor='none', alpha=1, linewidth=0.5)
                 self.ax.add_patch(rect)
+                if show_roi_id:
+                    # self.ax.text((box.xtl+box.xbr) * 0.5, (box.ytl+box.ybr) * 0.5, str(i), color='blue', fontsize=8)
+                    self.ax.text(box.xbr, box.ybr, str(i), color='red', fontsize=8, horizontalalignment='left',
+                                 verticalalignment='middle')
 
-    @pyqtSlot(np.ndarray, str, list)  # noqa
-    def update_plot(self, image_to_plot: np.ndarray, title: str, roi_boxes: list[EvoCroppingBox | None]):
+    @pyqtSlot(np.ndarray, str, list, bool, bool)  # noqa
+    def update_plot(
+            self,
+            image_to_plot: np.ndarray,
+            title: str,
+            roi_boxes: list[EvoCroppingBox | None],
+            show_roi_boxes: bool,
+            show_roi_id: bool,
+    ):
         self.ax.clear()
-        self.ax.imshow(image_to_plot, cmap='gray')
+        self.ax.imshow(image_to_plot, cmap=CMAP)
         self.ax.set_title(title, fontsize=self.FONT_SIZE)
         self.ax.tick_params(axis='both', labelsize=self.FONT_SIZE)
-        self.draw_roi_boxes(roi_boxes)
+        if show_roi_boxes:
+            self.draw_roi_boxes(roi_boxes=roi_boxes, show_roi_id=show_roi_id)
         self.canvas.draw()
 
 
@@ -227,7 +239,7 @@ class ImageCroppingBoxes(EvoWorkerTemplate):
     @pyqtSlot(np.ndarray, str)  # noqa
     def update_plot(self, image_to_plot: np.ndarray, title: str):
         self.ax.clear()
-        self.ax.imshow(image_to_plot, cmap='gray')
+        self.ax.imshow(image_to_plot, cmap=CMAP)
         self.ax.set_title(title, fontsize=self.FONT_SIZE)
         self.ax.tick_params(axis='both', labelsize=self.FONT_SIZE)
         self.canvas.draw()
@@ -254,7 +266,7 @@ class ChannelWorker(EvoWorkerTemplate):
     @pyqtSlot(np.ndarray, str, list)  # noqa
     def update_plot(self, img: np.ndarray, title: str, roi_boxes: list[DeltaCroppingBox]):
         self.ax.clear()
-        self.ax.imshow(img, cmap='gray')
+        self.ax.imshow(img, cmap=CMAP)
         self.ax.set_title(title, fontsize=self.font_size)
         self.ax.tick_params(axis='both', labelsize=self.font_size)
         if self.roi_boxes is not None:
@@ -291,7 +303,7 @@ class ChannelPlotter(QWidget):
         self.fig = Figure(figsize=(width, height))
         self.fig.patch.set_facecolor('#262626')
         self.ax = self.fig.add_subplot(111)
-        self.ax.imshow(self.img[self.channel_to_index[self.curr_channel], :, :], cmap='gray')
+        self.ax.imshow(self.img[self.channel_to_index[self.curr_channel], :, :], cmap=CMAP)
         self.title = self.title_prefix + f" {self.curr_channel}"
         self.ax.set_title(self.title, fontsize=self.FONT_SIZE)
         self.ax.tick_params(axis='both', labelsize=self.FONT_SIZE)
@@ -338,11 +350,6 @@ class ChannelPlotter(QWidget):
             self.title,
             self.roi_boxes,
         )
-        # self.ax.clear()
-        # self.ax.imshow(self.img[self.channel_to_index[self.curr_channel], :, :], cmap='gray')
-        # self.ax.set_title(self.title_prefix + f" {self.curr_channel}", fontsize=self.FONT_SIZE)
-        # self.ax.tick_params(axis='both', labelsize=self.FONT_SIZE)
-        # self.canvas.draw()
 
     def update_image(self, img: np.ndarray, roi_boxes: list[DeltaCroppingBox] | None):
         self.img = img
@@ -362,7 +369,7 @@ class ImagePlotter(EvoPanelTemplate):
     signal_clear = pyqtSignal(int)  # noqa
     signal_update_all_boxes = pyqtSignal()  # noqa
     signal_update_plot = pyqtSignal()  # noqa
-    signal_new_image = pyqtSignal(np.ndarray, str, list)  # noqa
+    signal_new_image = pyqtSignal(np.ndarray, str, list, bool, bool)  # noqa
 
     FONT_SIZE = 8
     NO_BOX = "xtl=None, xbr=None, ytl=None, ybr=None"
@@ -395,7 +402,7 @@ class ImagePlotter(EvoPanelTemplate):
         self.fig = Figure(figsize=(width, height))
         self.fig.patch.set_facecolor('#262626')
         self.ax = self.fig.add_subplot(111)
-        self.ax.imshow(np.zeros(self.camera_config.image.shape), cmap='gray')
+        self.ax.imshow(np.zeros(self.camera_config.image.shape), cmap=CMAP)
         self.ax.set_title("No Image", fontsize=self.FONT_SIZE)
         self.ax.tick_params(axis='both', labelsize=self.FONT_SIZE)
         self.fig.tight_layout(pad=5)
@@ -464,6 +471,13 @@ class ImagePlotter(EvoPanelTemplate):
         self.fov_combo_box.addItems(["None"])
         self.fov_combo_box.currentIndexChanged.connect(self.update_plot)  # noqa
 
+        self.show_roi_box: bool = True
+        self.roi_box_checkbox = self.make_checkbox(text="Show boxes", font=SMALL, set_true=self.show_roi_box,
+                                                   func=self.toggle_roi_box)
+        self.show_roi_id: bool = True
+        self.roi_id_checkbox = self.make_checkbox(text="Show IDs", font=SMALL, set_true=self.show_roi_id,
+                                                  func=self.toggle_roi_id)
+
         self.channel_combo_box = QComboBox()  # noqa
         self._channels = list(self.channel_to_index.keys())
         self.channel_combo_box.addItems([str(ch) for ch in self._channels])
@@ -491,6 +505,8 @@ class ImagePlotter(EvoPanelTemplate):
         self.layout.addWidget(self.fov_combo_box, rr, 1, 1, 1)
         self.layout.addWidget(self.make_label(f"Channel:", align=RIGHT), rr, 2, 1, 1)
         self.layout.addWidget(self.channel_combo_box, rr, 3, 1, 1)
+        self.layout.addWidget(self.roi_box_checkbox, rr, 4, 1, 1)
+        self.layout.addWidget(self.roi_id_checkbox, rr, 5, 1, 1)
 
         # self.worker.cropping_box_str.connect(self.update_cropping_label)
         # self.signal_clear.connect(self.worker.clear_selected_box)
@@ -514,6 +530,24 @@ class ImagePlotter(EvoPanelTemplate):
         queue_manager.register(self.update_image, AutomatonCommandType.REF_DATA)
         queue_manager.register(self.update_fovs, AutomatonCommandType.FOV_DATA)
         queue_manager.register(self.read_roi_data, AutomatonCommandType.ROI_DATA)
+
+    def toggle_roi_box(self, state):
+        old_state = self.show_roi_box
+        if state == Qt.Checked:
+            self.show_roi_box = True
+        else:
+            self.show_roi_box = False
+        if self.show_roi_box != old_state:
+            self.update_plot()
+
+    def toggle_roi_id(self, state):
+        old_state = self.show_roi_id
+        if state == Qt.Checked:
+            self.show_roi_id = True
+        else:
+            self.show_roi_id = False
+        if self.show_roi_id != old_state:
+            self.update_plot()
 
     def on_enter_pressed_exposure(self):
         self.current_exposure = int(self.exposure_edit.text())
@@ -683,7 +717,7 @@ class ImagePlotter(EvoPanelTemplate):
 
     def update_image_take_frame(self, data: np.ndarray, i_chan: LEDType):
         time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        self.signal_new_image.emit(data, f"{time_str}: Channel {i_chan}", [EvoCroppingBox.none_box()])
+        self.signal_new_image.emit(data, f"{time_str}: Channel {i_chan}", [EvoCroppingBox.none_box()], False, False)
         self.signal_update_all_boxes.emit()
         self.take_frame_button.setEnabled(True)
 
@@ -702,13 +736,8 @@ class ImagePlotter(EvoPanelTemplate):
             boxes = [EvoCroppingBox.none_box()]
         channel_index = self.channel_to_index[self._channels[self.channel_combo_box.currentIndex()]]
         image_to_plot = self.image_array[fov_index][channel_index, :, :]
-        # self.ax.clear()
-        # self.ax.imshow(image_to_plot, cmap='gray')
         title = f"{self.image_time_str}: FoV {fov_index} - Channel {list(self.channel_to_index.keys())[channel_index]}"
-        # self.ax.set_title(title, fontsize=self.FONT_SIZE)
-        # self.ax.tick_params(axis='both', labelsize=self.FONT_SIZE)
-        # self.canvas.draw()
-        self.signal_new_image.emit(image_to_plot, title, boxes)
+        self.signal_new_image.emit(image_to_plot, title, boxes, self.show_roi_box, self.show_roi_id)
 
 
 class FigureMultiWindow(QWidget):

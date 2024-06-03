@@ -557,6 +557,7 @@ class Automaton:
             positions=self._fov_to_pos,
             region_of_interests=self._pos_to_roi,
             config_camera=self.cam.cfg,
+            pos_processors=self._pos_processor,
         )
 
         # Grab configuration object overrides TODO
@@ -595,7 +596,7 @@ class Automaton:
                              else self._curr_period)
         self._curr_fov_id = (self._curr_fov_id + 1) % len(self._fovs)
 
-    def manage_autofocus(self, curr_fov_id: int, debug_mode: bool = True) -> None:
+    def manage_autofocus(self, curr_fov_id: int, debug_mode: bool = False) -> None:
         """
         Checks the autofocus status and refocuses if the autofocus is lost and self._cfg.refocus is True. Throws an
         error if the software focus fails.
@@ -772,7 +773,10 @@ class Automaton:
                 if self._mmc_live_mode_is_on:  # noqa
                     logger.warning("Automaton._process: Camera live mode is on for IMAGE. Disabling.")
                     self.set_cam_live_mode(False)
-                self._dmd.display_full()
+                if cmd.command_args['pattern'] is None:
+                    self._dmd.display_full()
+                else:
+                    self._dmd.display_image(img=cmd.command_args['pattern'])
                 time.sleep(0.5)  # TODO
                 if self.cam.get_exposure() != cmd.command_args['exposure_time']:
                     self.cam.set_exposure(exposure_time=cmd.command_args['exposure_time'])
@@ -1046,7 +1050,7 @@ class Automaton:
 
     def save_state(self, filename_suffix: str = ''):
         exclude = [
-            'cam', '_dmd', '_pos_processor', '_position_processors_is_initialised', 'roi_model',
+            'cam', '_dmd', '_position_processors_is_initialised', 'roi_model',
             'seg_model', 'tracking_model', '_use_delta', '_start_strategy_event', '_stop_strategy_event',
             '_stop_event', '_shutdown_event', '_process_q', '_gui_to_automaton_q', '_automaton_to_gui_q',
         ]
@@ -1061,9 +1065,12 @@ class Automaton:
         filename = self.cam.get_filename()
         for ending in ['.tiff', '.tif', '.png', '.jpg', '.jpeg']:
             if ending in filename:
-                filename.replace(ending, '')
+                filename = filename.replace(ending, '')
                 break
-        filename = str(self.cam.cfg.path_to_save) + '/' + filename + f'_automatonstate_{filename_suffix}.pkl'
+        if filename_suffix != '':
+            filename = str(self.cam.cfg.path_to_save) + '/' + filename + f'_automatonstate_{filename_suffix}.pkl'
+        else:
+            filename = str(self.cam.cfg.path_to_save) + '/' + filename + f'_automatonstate.pkl'
         logger.info(f"save_state: Saving state under {filename}")
         with open(filename, 'wb') as file:
             pickle.dump(to_save, file)

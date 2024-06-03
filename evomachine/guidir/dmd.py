@@ -38,7 +38,7 @@ class DMDWorker(EvoWorkerTemplate):
         for i, button in self.buttons.items():
             if i == i_active:
                 button.setStyleSheet("background-color: green;")
-            elif i in [DMDModes.DISPLAY_NONE.value, DMDModes.DISPLAY_FULL.value, DMDModes.DISPLAY_CHECKERBOARD.value]:
+            elif i in [DMDModes.DISPLAY_NONE.value, DMDModes.DISPLAY_FULL.value, DMDModes.DISPLAY_IMG.value]:
                 button.setStyleSheet("background-color: red;")
 
     @pyqtSlot()
@@ -112,6 +112,7 @@ class DMDPanel(EvoPanelTemplate):
     signal_set_dmd = pyqtSignal(int)
     signal_dmd = pyqtSignal()
     signal_dmd_done = pyqtSignal()
+    signal_filename = pyqtSignal(str)
 
     def __init__(
             self,
@@ -134,6 +135,13 @@ class DMDPanel(EvoPanelTemplate):
         )
         self.calib_config: DMDCalibConfigType = DMDCalibConfigTypeFactory.default()
         self.calib_data: Optional[List[Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]]] = None
+        self.filename: str | None = None
+        self.img_label = self.make_label(text=self.make_save_path_label(str(None)), font=SMALL)
+        self.img_load_button = self.make_button(
+            text="Load",
+            func=self.show_file_dialog,
+            font=SMALL,
+        )
         self.dmd_buttons = {i: self.make_button(
             text=txt,
             func=self.set_dmd,
@@ -141,8 +149,8 @@ class DMDPanel(EvoPanelTemplate):
             mode=i,
             stylesheet="QPushButton {background-color: red;}",
         ) for i, txt in zip(
-            [DMDModes.DISPLAY_NONE.value, DMDModes.DISPLAY_FULL.value, DMDModes.DISPLAY_CHECKERBOARD.value],
-            ["NONE", "FULL", "GRID"],
+            [DMDModes.DISPLAY_NONE.value, DMDModes.DISPLAY_FULL.value, DMDModes.DISPLAY_IMG.value],
+            ["NONE", "FULL", "IMG"],
         )}
         self.dmd_buttons[DMDModes.DISPLAY_FULL.value].setStyleSheet("background-color: green;")
         self.dmd_init_button = self.make_button(
@@ -170,9 +178,11 @@ class DMDPanel(EvoPanelTemplate):
         self.layout.addWidget(self.make_label(text="DMD Control", font=NORMAL), 0, 0, 1, 1, LEFT)
         _ = [self.layout.addWidget(button, i+1, 0, CENTER) for i, button in enumerate(self.dmd_buttons.values())]
         self.layout.addWidget(self.dmd_init_button, 1, 2, 1, 1, CENTER)
-        self.layout.addWidget(self.dmd_finalise_button, 2, 2, 1, 1, CENTER)
         self.layout.addWidget(self.dmd_calibrate_button, 1, 3, 1, 1, CENTER)
+        self.layout.addWidget(self.dmd_finalise_button, 2, 2, 1, 1, CENTER)
         self.layout.addWidget(self.dmd_calib_curves_button, 2, 3, 1, 1, CENTER)
+        self.layout.addWidget(self.img_load_button, 3, 2, 1, 1, CENTER)
+        self.layout.addWidget(self.img_label, 3, 3, 1, 1, CENTER)
         self.widget = QWidget()
         self.widget.setLayout(self.layout)
 
@@ -197,7 +207,7 @@ class DMDPanel(EvoPanelTemplate):
         func_dict = {
             DMDModes.DISPLAY_NONE.value: 'self._dmd.display_none',
             DMDModes.DISPLAY_FULL.value: 'self._dmd.display_full',
-            DMDModes.DISPLAY_CHECKERBOARD.value: 'self._dmd.display_calibration_image',
+            DMDModes.DISPLAY_IMG.value: 'self._dmd.display_loaded_image',
         }
         self.queue_manager.request(
             req_str=func_dict[mode],
@@ -206,6 +216,23 @@ class DMDPanel(EvoPanelTemplate):
         )
         self.signal_dmd.emit()
         self.signal_set_dmd.emit(mode)
+
+    def show_file_dialog(self):
+        file_dialog = QFileDialog(self)
+        self.filename, _ = file_dialog.getOpenFileName(self, 'Select File')
+        self.queue_manager.request(
+            req_str='self._dmd.load_image',
+            kwargs_dict={'filename': self.filename},
+            callback=self.show_img_loaded,
+        )
+
+    def show_img_loaded(self, data: Any):
+        if isinstance(data, Exception):
+            self.img_label.setText(self.make_save_path_label("None"))
+            self.filename = None
+        else:
+            self.img_label.setText(self.make_save_path_label(self.filename))
+            self.signal_set_dmd.emit(DMDModes.DISPLAY_IMG.value)
 
     def initialise_dmd(self):
         self.queue_manager.request(
@@ -277,3 +304,8 @@ class DMDPanel(EvoPanelTemplate):
             self.calib_config = dialog.cfg
         else:
             logger.info("Configuration not modified")
+
+    @staticmethod
+    def make_save_path_label(s: str) -> str:
+        max_len = 30
+        return "..." + s[len(s)-max_len+3:] if len(s) > max_len else s

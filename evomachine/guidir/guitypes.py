@@ -42,7 +42,7 @@ class Direction(Enum):
 class DMDModes(Enum):
     DISPLAY_NONE = 0
     DISPLAY_FULL = 1
-    DISPLAY_CHECKERBOARD = 2
+    DISPLAY_IMG = 2
 
 
 class DisplayMode(Enum):

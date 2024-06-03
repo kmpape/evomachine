@@ -3,6 +3,8 @@ from multiprocessing import Event, Lock, Process, Queue
 from pathlib import Path
 import sys
 import threading
+import time
+import traceback
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QIcon
 
@@ -30,6 +32,7 @@ from strategies.strategy_2024_04_30 import UVTestingStrategyv2  # noqa
 from strategies.strategy_2024_05_01 import UVTestingStrategyv3  # noqa
 from strategies.strategy_2024_05_10 import UVTestingStrategyv4  # noqa
 from strategies.strategy_2024_05_28 import UVTestingStrategyv5  # noqa
+from strategies.strategy_2024_05_31 import ROITestingStrategy  # noqa
 
 
 def create_automaton_process(
@@ -72,7 +75,7 @@ if __name__ == '__main__':
     print(f"Launching evomachine GUI from {EVOMACHINE_DIR}.")
 
     # Provide strategy that will be loaded by GUI
-    save_path: str = "/media/hslab/Data/ImageData/Idris/2024-05-29"
+    save_path: str = "/media/hslab/Data/ImageData/Idris/2024-06-01"
     if not os.path.exists(save_path):
         current_folder = os.path.dirname(os.path.abspath(__file__))
         save_path = os.path.join(current_folder, "DEFAULT")
@@ -88,6 +91,7 @@ if __name__ == '__main__':
     # Provide strategy that will be loaded by GUI
     strategy: AbstractStrategy = UVTestingStrategyv5(cfg=processor_config)
     # strategy: AbstractStrategy = BasicStrategy(cfg=processor_config, save_path=save_path)
+    # strategy: AbstractStrategy = ROITestingStrategy(cfg=processor_config)
 
     # DO NOT MODIFY ANYTHING BELOW THIS LINE -----------------------------------
 
@@ -157,5 +161,26 @@ if __name__ == '__main__':
     )
     icon = QIcon(str(EVOMACHINE_DIR / 'guidir/em_logo.jpg'))
     w.setWindowIcon(icon)
-    w.show()
-    sys.exit(app.exec_())
+
+    def exception_hook(exctype, value, traceback):
+        print(f"An unhandled exception occurred (type={exctype}): {value}\n{traceback}")
+        stop_event.set()
+        stop_strategy_event.set()
+        start_strategy_event.set()
+        shutdown_event.set()
+        time.sleep(5)
+        sys.exit()
+
+    sys.excepthook = exception_hook
+    try:
+        w.show()
+        sys.exit(app.exec_())
+    except Exception as e:
+        print(f"launch_gui: Exception occurred {e}.")
+        traceback.print_exc()
+        stop_event.set()
+        stop_strategy_event.set()
+        start_strategy_event.set()
+        shutdown_event.set()
+        time.sleep(5)
+        sys.exit()
