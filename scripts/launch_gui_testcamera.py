@@ -73,7 +73,6 @@ def create_automaton_process(
         process_q=process_queue,
         gui_to_automaton_q=gui_to_automaton_queue,
         automaton_to_gui_q=automaton_to_gui_queue,
-        use_seg=False,
         run_timeout=0,
     )
     automaton.run()
@@ -89,14 +88,14 @@ if __name__ == '__main__':
         save_path = os.path.join(current_folder, "DEFAULT")
         os.makedirs(save_path, exist_ok=True)
 
-    # Provide strategy that will be loaded by GUI
-    strategy: AbstractStrategy = BasicStrategy(save_path=save_path)
-
     # Create configurations (modify if needed)
     is_oil_objective = False
     camera_config: ConfigCamera = ConfigCameraFactory.default_air_config()
     camera_config.path_to_save = Path(save_path)
     processor_config: ConfigImageProcessor = ConfigImageProcessorFactory.default_config()
+
+    # Provide strategy that will be loaded by GUI
+    strategy: AbstractStrategy = BasicStrategy(save_path=save_path, cfg=processor_config)
 
     # DO NOT MODIFY ANYTHING BELOW THIS LINE -----------------------------------
 
