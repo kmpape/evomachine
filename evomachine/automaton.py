@@ -769,6 +769,40 @@ class Automaton:
                 cmd.command_execution_time = time.time()
                 return
 
+            elif cmd.command_type == AutomatonCommandType.TRIGGERED_ACQUISITION:
+                
+                """ Pseudo code for TRIGGERED_ACQUISITION
+                from pycromanager import Acquisition, multi_d_acquisition_events
+
+                def hook_fn(event):
+                    # Called after the acquisition has been started, so the 
+                    # camera has been configured to take images but has not
+                    # yet been triggered.
+
+                    TODO: Talk to the syncboard to start the trigger sequence
+
+                with Acquisition(
+                    directory="path/to/save", 
+                    name="acquisition name", 
+                    post_camera_hook_fn=hook_fn) as acq:
+                    
+                    
+                    
+                    
+                    Either generate the evens with multi_d
+                    events = multi_d_acquisition_events(num)
+                    or DIY
+                    https://pycro-manager.readthedocs.io/en/latest/application_notebooks/external_hardware_triggering_tutorial.html
+
+                    acq.acquire(events)
+                
+                
+                """
+
+                raise NotImplementedError("Automaton._process: TRIGGERED_ACQUISITION not implemented.")
+                
+            # At the core, this command calls self.mmc.snap_image() to take an image
+            # i.e. it is a single event.
             elif cmd.command_type == AutomatonCommandType.IMAGE:
                 if self._mmc_live_mode_is_on:  # noqa
                     logger.warning("Automaton._process: Camera live mode is on for IMAGE. Disabling.")
