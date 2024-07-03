@@ -8,11 +8,13 @@ from typing import Any, Dict, Iterator, List, Optional, Union, Tuple
 import matplotlib.pyplot as plt
 from pycromanager import Core, Studio
 import skimage
+from serial import SerialException
 
 from asitiger.command import CRISPState
 import asitiger.tigercontroller
 
 from syncboard.syncboardcontroller import SyncBoardController
+from KWR103Driver import KWR103
 
 from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, get_logger
 from evomachine.coordinates import Coordinate
@@ -459,6 +461,9 @@ class AbstractCamera:
     def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False):
         raise NotImplementedError()
 
+    def calibrate_magnet(self):
+        raise NotImplementedError()
+
     def set_pos_id_to_coordinate(self, pos_id_to_coordinate: Dict[int, Any], use_autofocus: bool) -> bool:
         raise NotImplementedError()
 
@@ -647,7 +652,7 @@ class TestCamera(AbstractCamera):
         return True
 
     def autofocus_lock(self):
-        logger.info("TestCamera.autofocus_unlock.")
+        logger.info("TestCamera.autofocus_lock.")
         self._autofocus_is_locked = True
 
     def autofocus_unlock(self):
@@ -883,7 +888,7 @@ class EvoCamera(AbstractCamera):
         self.card_address_fw: int = 8
         "Filter wheel card address on ASI tiger."
         self.filter_wheel_settings: Dict[FilterWheelType, int] = {
-            FilterWheelType.FILTER: 0, FilterWheelType.BLOCKING: 1, FilterWheelType.NO_FILTER: 2
+            FilterWheelType.FILTER: 1, FilterWheelType.BLOCKING: 0, FilterWheelType.NO_FILTER: 2
         }
         "Available filter wheels."
         self.card_address_crisp: int = 2
@@ -962,6 +967,7 @@ class EvoCamera(AbstractCamera):
             logger.error(msg=f"EvoCamera._set_filter_wheel: Tiger is not alive.")
 
     def disable_led(self):
+        logger.warning("EvoCamera.disable_led: Disabling LED.")
         self.set_led(i_chan=LEDType.NO_LED)
 
     def disable_live_mode(self):
@@ -1152,6 +1158,10 @@ class EvoCamera(AbstractCamera):
 
     def _finalise(self):
         logger.info(f"EvoCamera.finalise: Finalising EvoCamera.")
+
+        # Note: apparently this is all that is stopping the GUI from shutting completely,
+        #       so if the Tiger is not turned on, then the GUI quits faster and never shuts
+        #       down the syncboard.
         if self._is_multi_threaded:
             self.tiger.stop()
             self.tiger.join()
@@ -1437,7 +1447,7 @@ class EvoCamerav2(EvoCamera):
             self,
             cfg_camera: ConfigCamera,
             tiger_port: str = "/dev/ttyUSB0",  # TODO move this to config
-            syncboard_port: str = "/dev/ttyACM1",  # TODO move this to config
+            syncboard_port: str = "/dev/ttyACM0",  # TODO move this to config
     ):
         super().__init__(cfg_camera=cfg_camera, tiger_port=tiger_port)
 
@@ -1546,7 +1556,36 @@ class EvoCamerav2(EvoCamera):
         self.disable_led()
         self.set_exposure()
 
+        self.brightfield_connected = False
+        try:
+            self.brightfield_psu = KWR103("/dev/ttyACM1")
+            self.brightfield_psu.connect()
+            self.brightfield_connected = True
+            self.brightfield_psu.set_output(False)
+            self.brightfield_psu.set_current(1.0)
+            self.brightfield_psu.set_voltage(9.0)
+            logger.warning("EvoCamerav2._initialise: Connecting to PSU on /dev/ttyACM1 !! This is hardcoded (BAD)")
+        except SerialException:
+            logger.warning("EvoCamerav2._initialise: Brightfield not connected.")
+
         return self._mmc_is_alive and self._tiger_is_alive and self._syncboard_is_alive
+
+    def set_brightfield(self, i_chan: int, brightness: float = 50):
+        if i_chan == 0:
+            self.brightfield_psu.set_output(False)
+            return
+        if i_chan > 1:
+            raise NotImplementedError("EvoCamera.set_brightfield not implemented for i_chan > 1")
+
+        # map 0 -> 100 to 7V -> 9V
+        self.brightfield_psu.set_voltage(min(9.0, 7 + 2 * brightness / 100))
+        self.brightfield_psu.set_output(True)
+
+    def calibrate_magnet(self):
+        self.syncboard.calibrate_magnet()
+
+    def calibrate_hall(self, hall_id: int):
+        self.syncboard.calibrate_hall(hall_id)
 
     def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False):
         if i_chan not in self._led_channel_keys.keys():
@@ -1575,7 +1614,10 @@ class EvoCamerav2(EvoCamera):
         logger.warning("Shutting down camera, ASI tiger, and sync board.")
         self.autofocus_unlock()
         if self.syncboard is not None:
+            logger.warning("Syncboard detected, disabling")
             self.syncboard.finalise()
+        else:
+            logger.warning("Syncboard not detected, cannot disable")
         if self._is_multi_threaded:
             self.tiger.stop()
             self.tiger.join()

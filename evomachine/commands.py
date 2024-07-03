@@ -14,7 +14,7 @@ if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMD_WIDTH_HEIGHT
 else:
     from evomachine.dmd import DMD_WIDTH_HEIGHT
-from evomachine.evotypes import AutomatonCommandType, FocusStatusType, LEDType
+from evomachine.evotypes import AutomatonCommandType, FocusStatusType, LEDType, MagnetModeType
 from evomachine.utils import EvoCroppingBox
 
 
@@ -101,6 +101,55 @@ class CommandFactory:
         template.command_execution_time = None
         return template
 
+    def command_magnet(self, 
+                       enable = None,
+                       value: float = 0.0,
+                       mode: MagnetModeType = MagnetModeType.CURRENT_SET) -> AutomatonCommand:
+        """Sets the magnet either using current control or field, or switches it on or off entirely.
+        If enable is None, the magnet state is not changed.
+        If enable is True, the magnet is switched on.
+        If enable is False, the magnet is switched off.
+
+        Args:
+            enable (_type_, optional): _description_. Defaults to None.
+            value (float, optional): _description_. Defaults to 0.0.
+            mode (MagnetModeType, optional): _description_. Defaults to MagnetModeType.CURRENT_SET.
+
+        Returns:
+            AutomatonCommand: _description_
+        """
+        command_args = {'enable': enable, 'value': value, 'mode': mode}
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.MAGNET,
+            command_args=command_args,
+            command_id=self.get_next_id(),
+            command_creation_time=time(),
+        )
+        
+    def command_calibrate_magnet(self) -> AutomatonCommand:
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.CALIBRATE_MAGNET,
+            command_args=None,
+            command_id=self.get_next_id(),
+            command_creation_time=time(),
+        )
+
+    def command_calibrate_hall(self, hall_id: int) -> AutomatonCommand:
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.CALIBRATE_HALL,
+            command_args=hall_id,
+            command_id=self.get_next_id(),
+            command_creation_time=time(),
+        )
+        
+    def command_read_hall(self, hall_id: int) -> AutomatonCommand:
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.READ_HALL,
+            command_args=hall_id,
+            command_id=self.get_next_id(),
+            command_creation_time=time(),
+        )
+
     def command_image(
             self,
             channels: list[LEDType],
@@ -109,6 +158,8 @@ class CommandFactory:
             brightness: int | float | list[int | float] = 10,
             save: bool = False,
             pattern: np.ndarray | None = None,
+            force_led: bool = False,
+            reset_led: bool = True,
     ) -> AutomatonCommand:
         """
         Create a command for taking an image.
@@ -146,6 +197,12 @@ class CommandFactory:
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument exposure_time ({type(exposure_time)}).")
         if not isinstance(segment, bool):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument segment ({type(segment)}).")
+        if not isinstance(force_led, bool):
+            raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument force_led ({type(force_led)}).")
+        if not isinstance(reset_led, bool):
+            raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument reset_led ({type(reset_led)}).")
+        
+        
         if self._cfg.preproc_enabled:
             if self._cfg.channel_rot not in channels:
                 raise TypeError(f"If preproc_enabled, channels={channels} must contain {self._cfg.channel_rot}.")
@@ -162,7 +219,7 @@ class CommandFactory:
             brightness = [brightness for _ in channels]
         command_args = {
             'channels': channels, 'exposure_time': exposure_time, 'segment': segment, 'brightness': brightness,
-            'save': save, 'pattern': pattern,
+            'save': save, 'pattern': pattern, 'force_led': force_led, 'reset_led': reset_led,
         }
         return AutomatonCommand(
             command_type=AutomatonCommandType.IMAGE,

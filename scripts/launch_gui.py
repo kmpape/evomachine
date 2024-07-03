@@ -33,7 +33,7 @@ from strategies.strategy_2024_05_01 import UVTestingStrategyv3  # noqa
 from strategies.strategy_2024_05_10 import UVTestingStrategyv4  # noqa
 from strategies.strategy_2024_05_28 import UVTestingStrategyv5  # noqa
 from strategies.strategy_2024_05_31 import ROITestingStrategy  # noqa
-
+from strategies.strategy_MagnetOnOff import MagnetOnOffStrategy, PROCESSOR_CONFIG
 
 def create_automaton_process(
         camera_config: ConfigCamera,
@@ -75,7 +75,7 @@ if __name__ == '__main__':
     print(f"Launching evomachine GUI from {EVOMACHINE_DIR}.")
 
     # Provide strategy that will be loaded by GUI
-    save_path: str = "/media/hslab/Data/ImageData/Idris/2024-06-01"
+    save_path: str = "/media/hslab/Data/ImageData/Vicente/2024-06-25"
     if not os.path.exists(save_path):
         current_folder = os.path.dirname(os.path.abspath(__file__))
         save_path = os.path.join(current_folder, "DEFAULT")
@@ -85,14 +85,18 @@ if __name__ == '__main__':
     is_oil_objective = False
     camera_config: ConfigCamera = ConfigCameraFactory.default_air_config()
     camera_config.path_to_save = Path(save_path)
-    processor_config: ConfigImageProcessor = ConfigImageProcessorFactory.default_config()
-    processor_config.cfg_delta.whole_frame_drift = True
+    
+    # processor_config: ConfigImageProcessor = ConfigImageProcessorFactory.default_config()
+    # processor_config.cfg_delta.whole_frame_drift = True
+
+    processor_config = PROCESSOR_CONFIG
 
     # Provide strategy that will be loaded by GUI
-    strategy: AbstractStrategy = UVTestingStrategyv5(cfg=processor_config)
+    # strategy: AbstractStrategy = UVTestingStrategyv5(cfg=processor_config)
     # strategy: AbstractStrategy = BasicStrategy(cfg=processor_config, save_path=save_path)
     # strategy: AbstractStrategy = ROITestingStrategy(cfg=processor_config)
-
+    strategy: AbstractStrategy = MagnetOnOffStrategy(cfg=processor_config)
+    
     # DO NOT MODIFY ANYTHING BELOW THIS LINE -----------------------------------
 
     # Test strategy and do not launch if test fails

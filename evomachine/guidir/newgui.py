@@ -45,7 +45,7 @@ from evomachine.guidir.guitypes import Direction, DMDModes, DisplayMode, SMALL, 
 from evomachine.guidir.position import PositionPanel
 from evomachine.guidir.leds import LEDPanel
 from evomachine.guidir.queuemanager import QueueManager
-
+from evomachine.guidir.brightfield import BrightfieldPanel
 
 logger = get_logger(name=__name__, is_gui=True)
 
@@ -195,9 +195,23 @@ class EvoGUI(QMainWindow):
         )
         self.panels.append(self.crisp_panel)
 
+        # Brightfield Panel
+        self.brightfield_panel = BrightfieldPanel(
+            queue_manager=queue_manager,
+            camera_config=camera_config,
+            processor_config=processor_config,
+            start_strategy_event=start_strategy_event,
+            stop_strategy_event=stop_strategy_event,
+            stop_event=stop_event,
+            shutdown_event=shutdown_event,
+        )
+        self.panels.append(self.brightfield_panel)
+
         # Connect Signals
         # self.fig_panel.worker.cropping_box_drawn.connect(self.exp_panel.update_cropping_boxes)
         self.led_panel.signal_set_led.connect(self.fig_panel.update_led)
+
+        self.brightfield_panel.signal_set_brightfield.connect(self.fig_panel.update_brightfield)
 
         # Main Layout
         main_layout = QGridLayout()
@@ -210,6 +224,8 @@ class EvoGUI(QMainWindow):
         main_layout.addWidget(self.dmd_panel.widget, r, c, h, w)
         r, c = r+2, c
         main_layout.addWidget(self.crisp_panel.widget, r, c, h, w)
+        r, c = r+2, c
+        main_layout.addWidget(self.brightfield_panel.widget, r, c, h, w)
 
         r, c, w, h = 0, 5, 10, 10
         main_layout.addWidget(self.fig_panel.widget, r, c, h, w)

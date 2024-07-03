@@ -46,7 +46,16 @@ class EvoType(Enum):
         return str(self.name)
 
 
+class MagnetModeType(EvoType):
+    CURRENT_SET = auto()
+    FIELD_SET = auto()
+
 class AutomatonCommandType(EvoType):
+    MAGNET = auto()
+    CALIBRATE_MAGNET = auto()
+    CALIBRATE_HALL = auto()
+    READ_HALL = auto()
+    
     IMAGE = auto()
     MOVE = auto()
     PROJECT = auto()

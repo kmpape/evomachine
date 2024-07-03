@@ -31,7 +31,7 @@ class UVTestingStrategyv5(AbstractStrategy):
     """
     def __init__(self, cfg: ConfigImageProcessor):
         super().__init__(cfg=cfg)
-        self.path_to_save = Path("/media/hslab/Data/ImageData/Idris/2024-06-01")
+        self.path_to_save = Path("/media/hslab/Data/ImageData/Vicente/2024-06-25")
 
         # Imaging properties
         self.exposure_time: int = 100  # in ms

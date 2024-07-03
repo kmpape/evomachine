@@ -27,7 +27,7 @@ from evomachine.exceptions import ErrorCode, ErrorContainer, ConfigError
 from evomachine.strategy import AbstractStrategy
 from evomachine.utils import EvoCroppingBox, normalise_frame, rotation_correction
 from evomachine.evotypes import AutomatonCommandType, DMDCalibConfigType, LEDType, FocusAlgorithmType, \
-    FocusStatusType, FilterWheelType
+    FocusStatusType, FilterWheelType, MagnetModeType
 
 
 logger = get_logger(name=__name__)
@@ -780,8 +780,11 @@ class Automaton:
                 time.sleep(0.5)  # TODO
                 if self.cam.get_exposure() != cmd.command_args['exposure_time']:
                     self.cam.set_exposure(exposure_time=cmd.command_args['exposure_time'])
-                self._take_image(channels=cmd.command_args['channels'], brightness=cmd.command_args['brightness'])
-                self.cam.disable_led()
+                self._take_image(channels=cmd.command_args['channels'], 
+                                 brightness=cmd.command_args['brightness'],
+                                 reset_led=cmd.command_args['reset_led'],)
+                if cmd.command_args['force_led'] == False:
+                    self.cam.disable_led()
                 self._process_position(do_segment=cmd.command_args['segment'], channels=cmd.command_args['channels'])
                 channels_int = [self._channel_to_index[c] for c in cmd.command_args['channels']]
                 if self._cfg.preproc_enabled:  # TODO remove this as position_processors are made accessible to the strategy
@@ -837,6 +840,32 @@ class Automaton:
                 self.cam.set_led(i_chan=cmd.command_args['channel'], brightness=cmd.command_args['brightness'])
                 self.sleep(duration=cmd.command_args['duration'])  # TODO disable with timer
                 self.cam.disable_led()
+
+            elif cmd.command_type == AutomatonCommandType.MAGNET:
+                enable = cmd.command_args['enable']
+                value  = cmd.command_args['value']
+                mode   = cmd.command_args['mode']
+                
+                if enable is not None:
+                    self.cam.syncboard.enable_magnet(enable)
+                
+                if mode == MagnetModeType.CURRENT_SET:
+                    self.cam.syncboard.set_magnet_current(value)
+                elif mode == MagnetModeType.FIELD_SET:
+                    self.cam.syncboard.set_magnet_field(value)
+            
+                
+            elif cmd.command_type == AutomatonCommandType.CALIBRATE_MAGNET:
+                self.cam.syncboard.calibrate_magnet()
+
+            elif cmd.command_type == AutomatonCommandType.CALIBRATE_HALL:
+                hall_id = cmd.command_args
+                self.cam.syncboard.calibrate_hall(hall_id)
+
+            elif cmd.command_type == AutomatonCommandType.READ_HALL:
+                hall_id = cmd.command_args
+                value = self.cam.syncboard.read_hall(hall_id)
+                logger.info(f"Automaton._process: Hall sensor {hall_id} read value: {value}.")
 
             cmd.command_execution_time = time.time()
             cmd.fov_id = self._curr_fov_id
@@ -959,6 +988,7 @@ class Automaton:
             self,
             channels: list[LEDType] | None = None,
             brightness: int | float | list[int] | list[float] = 100,
+            reset_led: bool = True,
     ):
         if (channels is None) or not channels:
             channels = self._cfg.channels
@@ -974,6 +1004,7 @@ class Automaton:
                 i_chan=channel,
                 brightness=brightness[i],
                 normalise=False,
+                reset_led=reset_led,
             )
             if self._pos_processor[fov_id].rotate is not None:
                 # TODO this should only be done once. Already rotated in preprocess image
@@ -1072,8 +1103,12 @@ class Automaton:
         else:
             filename = str(self.cam.cfg.path_to_save) + '/' + filename + f'_automatonstate.pkl'
         logger.info(f"save_state: Saving state under {filename}")
-        with open(filename, 'wb') as file:
-            pickle.dump(to_save, file)
+        try:
+            with open(filename, 'wb') as file:
+                pickle.dump(to_save, file)
+        except Exception as e:
+            logger.warning(f"save_state: Error saving state: {e}.")
+            traceback.print_exc()
 
     def stop(self):
         self._stop_event.set()

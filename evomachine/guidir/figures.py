@@ -75,7 +75,7 @@ class ImageROIBoxes(EvoWorkerTemplate):
                 if show_roi_id:
                     # self.ax.text((box.xtl+box.xbr) * 0.5, (box.ytl+box.ybr) * 0.5, str(i), color='blue', fontsize=8)
                     self.ax.text(box.xbr, box.ybr, str(i), color='red', fontsize=8, horizontalalignment='left',
-                                 verticalalignment='middle')
+                                 verticalalignment='center')
 
     @pyqtSlot(np.ndarray, str, list, bool, bool)  # noqa
     def update_plot(
@@ -416,6 +416,8 @@ class ImagePlotter(EvoPanelTemplate):
         thread.start()
         self.threads.append(thread)
 
+        self.current_brightfield: int = 0
+
         self.current_led: LEDType = LEDType.NO_LED
         self.current_exposure: int = int(self.camera_config.default_exposure_time)
         self.current_normalise_frame: bool = True
@@ -692,6 +694,10 @@ class ImagePlotter(EvoPanelTemplate):
     @pyqtSlot(LEDType)  # noqa
     def update_led(self, led: LEDType):
         self.current_led = led
+
+    @pyqtSlot(int)
+    def update_brightfield(self, id: int):
+        self.current_brightfield = id
 
     @pyqtSlot(int, str)  # noqa
     def update_cropping_label(self, box_id: int, text: str):
