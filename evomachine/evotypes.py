@@ -50,6 +50,12 @@ class MagnetModeType(EvoType):
     CURRENT_SET = auto()
     FIELD_SET = auto()
 
+
+class ChamberOrientationType(EvoType):
+    HORIZONTAL = auto()
+    VERTICAL = auto()
+
+
 class AutomatonCommandType(EvoType):
     MAGNET = auto()
     CALIBRATE_MAGNET = auto()
@@ -63,6 +69,7 @@ class AutomatonCommandType(EvoType):
     WAIT = auto()
     STOP = auto()
     LIVE_MODE = auto()
+    SAVE_STATE = auto()
 
     # The types below are used by the GUI
     FOCUS_DATA = auto()
@@ -71,6 +78,7 @@ class AutomatonCommandType(EvoType):
     PROCESS_DATA = auto()
     REF_DATA = auto()
     ROI_DATA = auto()
+    SEG_DATA = auto()
     AUTOFOCUS_DATA = auto()
 
 

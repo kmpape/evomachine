@@ -159,7 +159,7 @@ class CommandFactory:
             save: bool = False,
             pattern: np.ndarray | None = None,
             force_led: bool = False,
-            reset_led: bool = True,
+            reset_led: bool = False,
     ) -> AutomatonCommand:
         """
         Create a command for taking an image.
@@ -176,16 +176,18 @@ class CommandFactory:
         save            : Save image(s). Uses ConfigDevice.path_to_save passed to Automaton.
         pattern         : An optional pattern of size width_height_DMD (see DMDControl) that will be displayed using
                           dmd.display_image(). If None, the DMD is set via dmd.display_full().
+        force_led       : TODO
+        reset_led       : TODO
 
         Returns in AbstractStrategy.callback
         ------------------------------------
-        command_data: List[Any]
+        command_data: Dictionary
         # TODO
-        command_data[0]: 3D int16 numpy array (normalised & rotated images) with 1st dimension = len(channels)
-        command_data[1]: Provided if segment is True. A dictionary with ROI IDs as keys and a delta.Lineage object
-                         as values. In case of a mothermachine experiment, the ROIs will be the trenches in
-                         the corresponding FoV. Otherwise, the single key will be 0 and the Lineage object will
-                         correspond to all cells in the current FoV.
+        command_data['img']: 3D int16 numpy array (normalised & rotated images) with 1st dimension = len(channels)
+        command_data['seg']: Provided if segment is True. A dictionary with ROI IDs as keys and a delta.Lineage object
+                             as values. In case of a mothermachine experiment, the ROIs will be the trenches in
+                             the corresponding FoV. Otherwise, the single key will be 0 and the Lineage object will
+                             correspond to all cells in the current FoV.
 
         Returns
         -------
@@ -201,8 +203,6 @@ class CommandFactory:
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument force_led ({type(force_led)}).")
         if not isinstance(reset_led, bool):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument reset_led ({type(reset_led)}).")
-        
-        
         if self._cfg.preproc_enabled:
             if self._cfg.channel_rot not in channels:
                 raise TypeError(f"If preproc_enabled, channels={channels} must contain {self._cfg.channel_rot}.")
@@ -377,6 +377,31 @@ class CommandFactory:
             command_creation_time=time(),
         )
 
+    def command_save_state(self, suffix: str = "") -> AutomatonCommand:
+        """
+        Save Automaton state.
+
+        Returns in AbstractStrategy.callback
+        ------------------------------------
+        command_data (bool)  : Always returns True.
+
+        Parameters
+        ----------
+        suffix : str    Appended to pickle filename.
+
+        Returns
+        -------
+        command: AutomatonCommand
+        """
+        if not isinstance(suffix, str):
+            raise TypeError(f"AutomatonCommandFactory.command_save_state: Wrong type or range for argument suffix.")
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.SAVE_STATE,
+            command_args=suffix,
+            command_id=self.get_next_id(),
+            command_creation_time=time(),
+        )
+
     def command_stop(self) -> AutomatonCommand:
         """
         Stop automaton. Note that AbstractStrategy.callback is not called anymore after this.
@@ -532,6 +557,23 @@ class CommandFactory:
         }
         return AutomatonCommand(
             command_type=AutomatonCommandType.ROI_DATA,
+            command_args=command_args,
+            command_id=-1,
+            command_creation_time=time(),
+            fov_id=fov_id,
+        )
+
+    @staticmethod
+    def command_seg_data(
+            fov_id: int,
+            seg_masks: dict[int, np.ndarray],
+    ) -> AutomatonCommand:
+        command_args = {
+            'fov_id': fov_id,
+            'seg_masks': seg_masks,
+        }
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.SEG_DATA,
             command_args=command_args,
             command_id=-1,
             command_creation_time=time(),

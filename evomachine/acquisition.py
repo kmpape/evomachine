@@ -364,7 +364,7 @@ class AbstractCamera:
             logger.warning(f"AbstractCamera.save_frame: Path {path_to_save} does not exist. "
                            f"Returning image without saving...")
             return
-        logger.info(f"Saving image {path_to_save / filename}.")
+        logger.debug(f"Saving image {path_to_save / filename}.")
         if '.tif' in filename:
             skimage.io.imsave(path_to_save / filename, frame, plugin="tifffile", check_contrast=False)
         else:
@@ -918,6 +918,7 @@ class EvoCamera(AbstractCamera):
             else:
                 self.tiger: asitiger.tigercontroller.TigerController = \
                     asitiger.tigercontroller.TigerController.from_serial_port(port=self._tiger_port)
+            logger.info(f"_initialise: tiger initialised on {self._tiger_port}.")
         except Exception as e:
             self._tiger_is_alive = False
             logger.warning(f"EvoCamera._initialise: Error connecting to Tiger on port {self._tiger_port}: {e}.")
@@ -937,6 +938,7 @@ class EvoCamera(AbstractCamera):
             self.mmc = Core()
             self.studio = Studio()
             self._mmc_is_alive = True
+            logger.info(f"_initialise: MMC initialised.")
         except Exception as e:
             self._mmc_is_alive = False
             logger.warning(f"EvoCamera._initialise: Error connecting to MMC: {e}.")
@@ -967,7 +969,6 @@ class EvoCamera(AbstractCamera):
             logger.error(msg=f"EvoCamera._set_filter_wheel: Tiger is not alive.")
 
     def disable_led(self):
-        logger.warning("EvoCamera.disable_led: Disabling LED.")
         self.set_led(i_chan=LEDType.NO_LED)
 
     def disable_live_mode(self):
@@ -1447,7 +1448,7 @@ class EvoCamerav2(EvoCamera):
             self,
             cfg_camera: ConfigCamera,
             tiger_port: str = "/dev/ttyUSB0",  # TODO move this to config
-            syncboard_port: str = "/dev/ttyACM0",  # TODO move this to config
+            syncboard_port: str = "/dev/syncboard",  # TODO move this to config
     ):
         super().__init__(cfg_camera=cfg_camera, tiger_port=tiger_port)
 
@@ -1477,6 +1478,7 @@ class EvoCamerav2(EvoCamera):
             else:
                 self.tiger: asitiger.tigercontroller.TigerController = \
                     asitiger.tigercontroller.TigerController.from_serial_port(port=self._tiger_port)
+            logger.info(f"_initialise: tiger initialised on {self._tiger_port}.")
         except Exception as e:
             self._tiger_is_alive = False
             logger.warning(f"EvoCamerav2._initialise: Error connecting to Tiger on port {self._tiger_port}: {e}.")
@@ -1496,6 +1498,7 @@ class EvoCamerav2(EvoCamera):
             self.mmc = Core()
             self.studio = Studio()
             self._mmc_is_alive = True
+            logger.info(f"_initialise: MMC initialised.")
         except Exception as e:
             self._mmc_is_alive = False
             logger.warning(f"EvoCamerav2._initialise: Error connecting to MMC: {e}.")
@@ -1510,6 +1513,7 @@ class EvoCamerav2(EvoCamera):
                 raise ConfigError("EvoCamerav2._initialise: Unable to initialise SyncBoard.",
                                   error_code=ErrorCode.ERROR_SYNC_BOARD)
             self._syncboard_is_alive = True
+            logger.info(f"_initialise: syncboard initialised on {self._syncboard_port}.")
         except Exception as e:
             self._syncboard_is_alive = False
             logger.debug(f"EvoCamerav2._initialise: Error connecting to SyncBoard on port {self._syncboard_port}: {e}.")
@@ -1536,6 +1540,7 @@ class EvoCamerav2(EvoCamera):
                         raise ConfigError("EvoCamerav2._initialise: Unable to initialise SyncBoard.",
                                           error_code=ErrorCode.ERROR_SYNC_BOARD)
                     self._syncboard_is_alive = True
+                    logger.info(f"_initialise: syncboard initialised on {self._syncboard_port}.")
                     logger.info(f"EvoCamerav2._initialise: Connected to SyncBoard on port {self._syncboard_port}.")
                 except Exception as e:
                     self._syncboard_is_alive = False
@@ -1557,16 +1562,16 @@ class EvoCamerav2(EvoCamera):
         self.set_exposure()
 
         self.brightfield_connected = False
-        try:
-            self.brightfield_psu = KWR103("/dev/ttyACM1")
-            self.brightfield_psu.connect()
-            self.brightfield_connected = True
-            self.brightfield_psu.set_output(False)
-            self.brightfield_psu.set_current(1.0)
-            self.brightfield_psu.set_voltage(9.0)
-            logger.warning("EvoCamerav2._initialise: Connecting to PSU on /dev/ttyACM1 !! This is hardcoded (BAD)")
-        except SerialException:
-            logger.warning("EvoCamerav2._initialise: Brightfield not connected.")
+        # try:
+        #     self.brightfield_psu = KWR103("/dev/ttyACM1")
+        #     self.brightfield_psu.connect()
+        #     self.brightfield_connected = True
+        #     self.brightfield_psu.set_output(False)
+        #     self.brightfield_psu.set_current(1.0)
+        #     self.brightfield_psu.set_voltage(9.0)
+        #     logger.warning("EvoCamerav2._initialise: Connecting to PSU on /dev/ttyACM1 !! This is hardcoded (BAD)")
+        # except SerialException:
+        #     logger.warning("EvoCamerav2._initialise: Brightfield not connected.")
 
         return self._mmc_is_alive and self._tiger_is_alive and self._syncboard_is_alive
 
@@ -1614,7 +1619,7 @@ class EvoCamerav2(EvoCamera):
         logger.warning("Shutting down camera, ASI tiger, and sync board.")
         self.autofocus_unlock()
         if self.syncboard is not None:
-            logger.warning("Syncboard detected, disabling")
+            logger.warning("Shutting down syncboard.")
             self.syncboard.finalise()
         else:
             logger.warning("Syncboard not detected, cannot disable")

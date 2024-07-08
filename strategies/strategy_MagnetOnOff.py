@@ -53,13 +53,18 @@ class MagnetOnOffStrategy(AbstractStrategy):
     def __init__(self, cfg: ConfigImageProcessor):
         super().__init__(cfg=cfg)
 
-        self.path_to_save = Path("/media/hslab/Data/ImageData/Gabi/"+datetime.today().strftime('%Y_%m_%d')+"/")
-        if not os.path.exists(self.path_to_save):
-            os.mkdir(self.path_to_save)
+        i = 0
+        while True:
+            self.path_to_save = Path("/media/hslab/Data/ImageData/Gabi/"+datetime.today().strftime('%Y_%m_%d')+f"/FMN_HEWL_{i:02d}/")
+            if not os.path.exists(self.path_to_save):
+                os.mkdir(self.path_to_save)
+                break
+            i += 1
 
         self.exposure_time: int = 80  # in ms
         self.imaging_channel: LEDType = LEDType.LED_450_NM
         self.imaging_interval: float = 200 / 1000  # in seconds
+        self.brightness = 29
 
         self.magnet_on = False
         self.images_taken = 0
@@ -105,7 +110,7 @@ class MagnetOnOffStrategy(AbstractStrategy):
             self.command_factory.command_magnet(
                 enable=True,
                 value=0.0,
-                mode=MagnetModeType.FIELD_SET
+                mode=MagnetModeType.CURRENT_SET
             ),
         ]
         
@@ -146,10 +151,15 @@ class MagnetOnOffStrategy(AbstractStrategy):
             self.images_taken = 0
             self.magnet_on = not self.magnet_on
         
+        if self.magnet_on:
+            value = 10.0
+        else:
+            value = 0.0
+            
         cmds = [
             self.command_factory.command_magnet(
-                enable=self.magnet_on,
-                value=5.0,
+                enable=True,
+                value=value,
                 mode=MagnetModeType.FIELD_SET
             ),
             self.command_factory.command_read_hall(
@@ -160,14 +170,14 @@ class MagnetOnOffStrategy(AbstractStrategy):
                 exposure_time=self.exposure_time,
                 segment=False,
                 save=True,
-                brightness=10,
+                brightness=self.brightness,
                 force_led=True,
                 reset_led=False,
             ),
             self.command_factory.command_wait(
                 duration=self.imaging_interval - self.exposure_time / 1000,
                 set_live_mode=False,
-                brightness=10,
+                brightness=self.brightness,
             )
         ]
         

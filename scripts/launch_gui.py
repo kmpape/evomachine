@@ -8,6 +8,7 @@ import traceback
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QIcon
 
+
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'asitiger'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'de-lta-rt'))
@@ -33,7 +34,8 @@ from strategies.strategy_2024_05_01 import UVTestingStrategyv3  # noqa
 from strategies.strategy_2024_05_10 import UVTestingStrategyv4  # noqa
 from strategies.strategy_2024_05_28 import UVTestingStrategyv5  # noqa
 from strategies.strategy_2024_05_31 import ROITestingStrategy  # noqa
-from strategies.strategy_MagnetOnOff import MagnetOnOffStrategy, PROCESSOR_CONFIG
+from strategies.strategy_MagnetOnOff import MagnetOnOffStrategy, PROCESSOR_CONFIG as MAGNET_PROCESSOR_CONFIG
+from strategies.strategy_GFP_image_noise import GFP_noise_strategy
 
 def create_automaton_process(
         camera_config: ConfigCamera,
@@ -75,7 +77,7 @@ if __name__ == '__main__':
     print(f"Launching evomachine GUI from {EVOMACHINE_DIR}.")
 
     # Provide strategy that will be loaded by GUI
-    save_path: str = "/media/hslab/Data/ImageData/Vicente/2024-06-25"
+    save_path: str = "/media/hslab/Data/ImageData/Idris/2024-07-04"
     if not os.path.exists(save_path):
         current_folder = os.path.dirname(os.path.abspath(__file__))
         save_path = os.path.join(current_folder, "DEFAULT")
@@ -89,13 +91,15 @@ if __name__ == '__main__':
     # processor_config: ConfigImageProcessor = ConfigImageProcessorFactory.default_config()
     # processor_config.cfg_delta.whole_frame_drift = True
 
-    processor_config = PROCESSOR_CONFIG
+    processor_config = MAGNET_PROCESSOR_CONFIG
+    # processor_config = ConfigImageProcessorFactory.default_config()
 
     # Provide strategy that will be loaded by GUI
     # strategy: AbstractStrategy = UVTestingStrategyv5(cfg=processor_config)
     # strategy: AbstractStrategy = BasicStrategy(cfg=processor_config, save_path=save_path)
     # strategy: AbstractStrategy = ROITestingStrategy(cfg=processor_config)
-    strategy: AbstractStrategy = MagnetOnOffStrategy(cfg=processor_config)
+    # strategy: AbstractStrategy = MagnetOnOffStrategy(cfg=processor_config)
+    strategy: AbstractStrategy = GFP_noise_strategy(cfg=processor_config)
     
     # DO NOT MODIFY ANYTHING BELOW THIS LINE -----------------------------------
 

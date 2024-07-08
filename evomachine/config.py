@@ -8,7 +8,7 @@ import delta
 
 from evomachine.exceptions import ConfigError, ErrorCode
 from evomachine.evotypes import FilterWheelType, FocusAlgorithmType, LEDType, ImageConfigType, ObjectiveConfigType, \
-    ImageConfigTypeFactory, ObjectiveConfigTypeFactory
+    ImageConfigTypeFactory, ObjectiveConfigTypeFactory, ChamberOrientationType
 
 # DeLTA lib install directory
 EVOMACHINE_DIR: Path = Path(__file__).parent
@@ -87,6 +87,8 @@ class ConfigImageProcessor:
     "Refocus after autofocus loss."
     max_refocus_trials: int = 1
     "Maximum number of refocusing trials before stopping execution."
+    chamber_orientation: ChamberOrientationType = ChamberOrientationType.HORIZONTAL
+    "Orientation of chambers."
 
     def copy(self):
         return ConfigImageProcessor(**self.__dict__)
@@ -146,15 +148,6 @@ class ConfigImageProcessor:
 
 class ConfigImageProcessorFactory:
     @staticmethod
-    def default_delta_config() -> delta.config.Config:
-        config = delta.config.Config.default("mothermachine")
-        config.target_size_rois = (1024, 1024)
-        config.tolerable_resizing_rois = 0
-        config.model_file_rois = Path("/home/hslab/workspace_python/delta3.0/de-lta-rt/"
-                                      "evomodels/evo_roi_2024-05-08.keras")
-        return config
-
-    @staticmethod
     def default_config(channels: list[LEDType] | None = None) -> ConfigImageProcessor:
         default_channels = [LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_565_NM, LEDType.LED_645_NM]
         cfg_delta = delta.config.Config.default("mothermachine")
@@ -163,12 +156,17 @@ class ConfigImageProcessorFactory:
         cfg_delta.tolerable_resizing_rois = 0
         cfg_delta.model_file_rois = Path("/home/hslab/workspace_python/delta3.0/de-lta-rt/"
                                          "evomodels/evo_roi_2024-05-08.keras")  # TODO relative paths
+        cfg_delta.target_size_seg = (250, 64)
+        cfg_delta.model_file_seg = Path("/home/hslab/workspace_python/delta3.0/de-lta-rt/"
+                                        "evomodels/evo_seg_2024-06-27.keras")  # TODO relative paths
         return ConfigImageProcessor(
             cfg_delta=cfg_delta,
             channels=default_channels if channels is None else channels,
             channel_seg=LEDType.LED_450_NM,
             channel_rot=LEDType.LED_450_NM,
             channel_roi=LEDType.LED_450_NM,
+            roi_enabled=True,
+            seg_enabled=True,
         )
 
 

@@ -27,7 +27,7 @@ import tensorrt
 # Set matplotlib loglevel
 plt.set_loglevel("warning")
 
-logging.basicConfig(level=logging.ERROR)
+logging.basicConfig(level=logging.INFO)
 
 # Disable numba debugging messages
 numba_logger = logging.getLogger('numba')

@@ -1,3 +1,4 @@
+import cv2
 import time
 from multiprocessing import Event
 from pathlib import Path
@@ -54,14 +55,22 @@ class ImageROIBoxes(EvoWorkerTemplate):
             canvas: FigureCanvas,
             ax: Axes,
             fig: Figure,
+            canvas_roi: FigureCanvas,
+            ax_roi: Axes,
+            fig_roi: Figure,
             fov_id: int = -1,
+            roi_size: tuple[int, int] = (200, 400),
             parent=None,
     ):
         super().__init__(parent)
         self.canvas = canvas
         self.ax = ax
         self.fig = fig
+        self.canvas_roi = canvas_roi
+        self.ax_roi = ax_roi
+        self.fig_roi = fig_roi
         self.fov_id = fov_id
+        self.roi_size = roi_size
 
     def draw_roi_boxes(self, roi_boxes: list[EvoCroppingBox | None], show_roi_id: bool):
         for i, box in enumerate(roi_boxes):
@@ -77,7 +86,20 @@ class ImageROIBoxes(EvoWorkerTemplate):
                     self.ax.text(box.xbr, box.ybr, str(i), color='red', fontsize=8, horizontalalignment='left',
                                  verticalalignment='center')
 
-    @pyqtSlot(np.ndarray, str, list, bool, bool)  # noqa
+    def update_roi_plot(
+            self,
+            roi_index: int,
+            image_to_plot: np.ndarray,
+            seg_mask: np.ndarray,
+    ):
+        self.ax_roi.clear()
+        self.ax_roi.imshow(image_to_plot, cmap=CMAP)
+        self.ax_roi.imshow(seg_mask, alpha=0.5)
+        self.ax_roi.set_title(f"RoI {roi_index}", fontsize=self.FONT_SIZE)
+        self.ax_roi.tick_params(axis='both', labelsize=self.FONT_SIZE)
+        self.canvas_roi.draw()
+
+    @pyqtSlot(np.ndarray, str, list, bool, bool, int, np.ndarray)  # noqa
     def update_plot(
             self,
             image_to_plot: np.ndarray,
@@ -85,6 +107,8 @@ class ImageROIBoxes(EvoWorkerTemplate):
             roi_boxes: list[EvoCroppingBox | None],
             show_roi_boxes: bool,
             show_roi_id: bool,
+            roi_index: int,
+            seg_mask: np.ndarray,
     ):
         self.ax.clear()
         self.ax.imshow(image_to_plot, cmap=CMAP)
@@ -92,6 +116,15 @@ class ImageROIBoxes(EvoWorkerTemplate):
         self.ax.tick_params(axis='both', labelsize=self.FONT_SIZE)
         if show_roi_boxes:
             self.draw_roi_boxes(roi_boxes=roi_boxes, show_roi_id=show_roi_id)
+        if seg_mask.shape != (0, 0):
+            roi_image = roi_boxes[roi_index].crop(image_to_plot)
+            roi_image_resized = cv2.resize(roi_image, self.roi_size[::-1], interpolation=cv2.INTER_LINEAR)
+            seg_mask_resized = cv2.resize(seg_mask, self.roi_size[::-1], interpolation=cv2.INTER_LINEAR)
+            self.update_roi_plot(
+                roi_index=roi_index,
+                image_to_plot=roi_image_resized,
+                seg_mask=seg_mask_resized,
+            )
         self.canvas.draw()
 
 
@@ -369,7 +402,7 @@ class ImagePlotter(EvoPanelTemplate):
     signal_clear = pyqtSignal(int)  # noqa
     signal_update_all_boxes = pyqtSignal()  # noqa
     signal_update_plot = pyqtSignal()  # noqa
-    signal_new_image = pyqtSignal(np.ndarray, str, list, bool, bool)  # noqa
+    signal_new_image = pyqtSignal(np.ndarray, str, list, bool, bool, int, np.ndarray)  # noqa
 
     FONT_SIZE = 8
     NO_BOX = "xtl=None, xbr=None, ytl=None, ybr=None"
@@ -397,8 +430,21 @@ class ImagePlotter(EvoPanelTemplate):
             shutdown_event=shutdown_event,
         )
 
+        self.channel_to_index: dict[LEDType, int] = self.processor_config.channel_to_index
+        "Dictionary mapping LEDChannel type to index in 3D image array."
         self.fovs: Dict[int, Coordinate] = {}
-        self.channel_to_index = self.processor_config.channel_to_index
+        "Dictionary mapping from FoV ID to Coordinate"
+        self.rois: Dict[int, list[int]] = {}
+        "Dictionary mapping from FoV ID to RoI IDs"
+        self.roi_data: dict[int, dict] = {}
+        "Dictionary mapping from RoI ID to various data. See read_roi_data and read_seg_data."
+        self.reference_array = {-1: np.zeros((len(self.channel_to_index), *self.camera_config.image.shape))}
+        "Dictionary mapping from FoV ID to reference images."
+        self.image_array = {-1: np.zeros((len(self.channel_to_index), *self.camera_config.image.shape))}
+        "Dictionary mapping from FoV ID to latest image."
+        self.image_time_str = "None"
+        "Time of latest image received."
+
         self.fig = Figure(figsize=(width, height))
         self.fig.patch.set_facecolor('#262626')
         self.ax = self.fig.add_subplot(111)
@@ -409,7 +455,21 @@ class ImagePlotter(EvoPanelTemplate):
         self.canvas = FigureCanvas(self.fig)
         self.canvas.setStyleSheet(EVO_STYLE)
 
-        self.worker = ImageROIBoxes(canvas=self.canvas, ax=self.ax, fig=self.fig)
+        self.fig_roi = Figure(figsize=(width, int(height/3)))
+        self.fig_roi.patch.set_facecolor('#262626')
+        self.ax_roi = self.fig_roi.add_subplot(111)
+        # TODO Seg Model Orientation below
+        roi_size = (500, 3000)
+        self.ax_roi.imshow(np.zeros(roi_size), cmap=CMAP)
+        self.ax_roi.set_title("No Image", fontsize=self.FONT_SIZE)
+        self.ax_roi.tick_params(axis='both', labelsize=self.FONT_SIZE)
+        self.fig_roi.tight_layout(pad=5)
+        self.canvas_roi = FigureCanvas(self.fig_roi)
+        self.canvas_roi.setStyleSheet(EVO_STYLE)
+
+        self.worker = ImageROIBoxes(canvas=self.canvas, ax=self.ax, fig=self.fig,
+                                    canvas_roi=self.canvas_roi, ax_roi=self.ax_roi, fig_roi=self.fig_roi,
+                                    roi_size=roi_size)
         self.workers.append(self.worker)
         thread = EvoGUIThread()
         self.worker.moveToThread(thread)
@@ -417,7 +477,6 @@ class ImagePlotter(EvoPanelTemplate):
         self.threads.append(thread)
 
         self.current_brightfield: int = 0
-
         self.current_led: LEDType = LEDType.NO_LED
         self.current_exposure: int = int(self.camera_config.default_exposure_time)
         self.current_normalise_frame: bool = True
@@ -471,7 +530,11 @@ class ImagePlotter(EvoPanelTemplate):
 
         self.fov_combo_box: QComboBox = QComboBox()  # noqa
         self.fov_combo_box.addItems(["None"])
-        self.fov_combo_box.currentIndexChanged.connect(self.update_plot)  # noqa
+        self.fov_combo_box.currentIndexChanged.connect(self.update_curr_fov)  # noqa
+
+        self.roi_combo_box: QComboBox = QComboBox()  # noqa
+        self.roi_combo_box.addItems(["None"])
+        self.roi_combo_box.currentIndexChanged.connect(self.update_plot)  # noqa
 
         self.show_roi_box: bool = True
         self.roi_box_checkbox = self.make_checkbox(text="Show boxes", font=SMALL, set_true=self.show_roi_box,
@@ -503,12 +566,18 @@ class ImagePlotter(EvoPanelTemplate):
 
         self.layout.addWidget(self.canvas, 4, 0, 7, 7)
         rr = 4 + 9
+        self.layout.addWidget(self.canvas_roi, rr, 0, 3, 7)
+        rr = rr + 4
+
         self.layout.addWidget(self.make_label(f"FoV:", align=RIGHT), rr, 0, 1, 1)
         self.layout.addWidget(self.fov_combo_box, rr, 1, 1, 1)
         self.layout.addWidget(self.make_label(f"Channel:", align=RIGHT), rr, 2, 1, 1)
         self.layout.addWidget(self.channel_combo_box, rr, 3, 1, 1)
         self.layout.addWidget(self.roi_box_checkbox, rr, 4, 1, 1)
         self.layout.addWidget(self.roi_id_checkbox, rr, 5, 1, 1)
+        rr = rr + 1
+        self.layout.addWidget(self.make_label(f"RoI:", align=RIGHT), rr, 0, 1, 1)
+        self.layout.addWidget(self.roi_combo_box, rr, 1, 1, 1)
 
         # self.worker.cropping_box_str.connect(self.update_cropping_label)
         # self.signal_clear.connect(self.worker.clear_selected_box)
@@ -519,7 +588,6 @@ class ImagePlotter(EvoPanelTemplate):
         self.signal_new_image.connect(self.worker.update_plot)
 
         self.roi_data: dict[int, dict] = {}
-
         self.reference_array = {-1: np.zeros((len(self.channel_to_index), *self.camera_config.image.shape))}
         self.image_array = {-1: np.zeros((len(self.channel_to_index), *self.camera_config.image.shape))}
         self.image_time_str = "None"
@@ -532,6 +600,7 @@ class ImagePlotter(EvoPanelTemplate):
         queue_manager.register(self.update_image, AutomatonCommandType.REF_DATA)
         queue_manager.register(self.update_fovs, AutomatonCommandType.FOV_DATA)
         queue_manager.register(self.read_roi_data, AutomatonCommandType.ROI_DATA)
+        queue_manager.register(self.read_seg_data, AutomatonCommandType.SEG_DATA)
 
     def toggle_roi_box(self, state):
         old_state = self.show_roi_box
@@ -608,6 +677,16 @@ class ImagePlotter(EvoPanelTemplate):
             'rotation': data.command_args['rotation'],
             'roi_boxes': data.command_args['roi_boxes'],
         }
+        self.rois[data.command_args['fov_id']] = list(range(len(data.command_args['roi_boxes'])))
+        self.update_curr_fov()
+        self.signal_update_plot.emit()
+
+    def read_seg_data(self, data: AutomatonCommand):
+        logger.debug(f"ImagePlotter.read_seg_data: Received SEG data for ROI: {data.command_args['fov_id']}.")
+        if not data.command_args['fov_id'] in self.roi_data:
+            logger.warning(f"ImagePlotter.read_roi_data: fov_id {data.command_args['fov_id']} not in {self.roi_data.keys()}")
+            return
+        self.roi_data[data.command_args['fov_id']]['seg_masks'] = data.command_args['seg_masks']
         self.signal_update_plot.emit()
 
     @pyqtSlot(int)  # noqa
@@ -685,19 +764,30 @@ class ImagePlotter(EvoPanelTemplate):
         logger.info(f"ImagePlotter.Updating FoVs: {cmd.command_args}")
         self.fovs = cmd.command_args['fovs']
         self.roi_data = {fov_id: {} for fov_id in self.fovs.keys()}
+        self.rois = {fov_id: [] for fov_id in self.fovs.keys()}
         for fov_id in self.fovs.keys():
             if fov_id not in self.image_array.keys():
                 self.image_array[fov_id] = np.zeros((len(self.channel_to_index), *self.camera_config.image.shape))
         self.fov_combo_box.clear()
         self.fov_combo_box.addItems([str(fov) for fov in self.fovs.keys()])
 
+    def update_roi_list(self, fov_index: int):
+        roi_ids = []
+        if fov_index in self.rois:
+            roi_ids = self.rois[fov_index]
+        self.roi_combo_box.clear()
+        if roi_ids:
+            self.roi_combo_box.addItems([str(roi) for roi in roi_ids])
+        else:
+            self.roi_combo_box.addItems(["None"])
+
     @pyqtSlot(LEDType)  # noqa
     def update_led(self, led: LEDType):
         self.current_led = led
 
     @pyqtSlot(int)
-    def update_brightfield(self, id: int):
-        self.current_brightfield = id
+    def update_brightfield(self, brightfield_id: int):
+        self.current_brightfield = brightfield_id
 
     @pyqtSlot(int, str)  # noqa
     def update_cropping_label(self, box_id: int, text: str):
@@ -714,8 +804,10 @@ class ImagePlotter(EvoPanelTemplate):
             channels_int = [self.channel_to_index[c] for c in cmd.command_args['channels']]
             if not fov_id in self.image_array.keys():
                 self.image_array[fov_id] = np.zeros((len(self.channel_to_index), *self.camera_config.image.shape))
-            self.image_array[fov_id][channels_int, :, :] = cmd.command_data
+            self.image_array[fov_id][channels_int, :, :] = cmd.command_data['img']
             self.image_time_str = cmd.get_exec_time()
+            if 'seg' in cmd.command_data:
+                self.roi_data[fov_id]['seg_masks'] = cmd.command_data['seg']
         elif cmd.command_type == AutomatonCommandType.REF_DATA:
             self.image_array = cmd.command_args
             self.image_time_str = cmd.get_exec_time()
@@ -723,27 +815,66 @@ class ImagePlotter(EvoPanelTemplate):
 
     def update_image_take_frame(self, data: np.ndarray, i_chan: LEDType):
         time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        self.signal_new_image.emit(data, f"{time_str}: Channel {i_chan}", [EvoCroppingBox.none_box()], False, False)
+        self.signal_new_image.emit(
+            data,
+            f"{time_str}: Channel {i_chan}",
+            [EvoCroppingBox.none_box()],
+            False,
+            False,
+            -1,
+            np.empty((0, 0))
+        )
         self.signal_update_all_boxes.emit()
         self.take_frame_button.setEnabled(True)
 
-    @pyqtSlot()  # noqa
-    def update_plot(self):
+    def get_curr_fov_id(self) -> int | None:
         if self.fov_combo_box.currentText() == "None":
-            fov_index = -1
+            return -1
         elif self.fov_combo_box.currentText() == "":
             logger.error("self.fov_combo_box.currentText() empty in upldate_plot. TODO")
-            return
+            return None
         else:
-            fov_index = int(self.fov_combo_box.currentText())
+            return int(self.fov_combo_box.currentText())
+
+    def get_curr_roi_id(self) -> int:
+        if self.roi_combo_box.currentText() == "None" or self.roi_combo_box.currentText() == "":
+            return -1
+        else:
+            return int(self.roi_combo_box.currentText())
+
+    def update_curr_fov(self):
+        fov_index = self.get_curr_fov_id()
+        if fov_index is None:
+            return
+        elif fov_index >= 0:
+            self.update_roi_list(fov_index=fov_index)
+        self.update_plot()
+
+    @pyqtSlot()  # noqa
+    def update_plot(self):
+        fov_index = self.get_curr_fov_id()
+        if fov_index is None:
+            logger.error("self.fov_combo_box.currentText() empty in upldate_plot. TODO")
+            return
+        roi_index = self.get_curr_roi_id()
+        boxes = [EvoCroppingBox.none_box()]
+        seg_mask = np.empty((0, 0))
         if fov_index in self.roi_data and self.roi_data[fov_index]:
             boxes = self.roi_data[fov_index]['roi_boxes']
-        else:
-            boxes = [EvoCroppingBox.none_box()]
+            if 'seg_masks' in self.roi_data[fov_index] and roi_index in self.roi_data[fov_index]['seg_masks']:
+                seg_mask = self.roi_data[fov_index]['seg_masks'][roi_index]
         channel_index = self.channel_to_index[self._channels[self.channel_combo_box.currentIndex()]]
         image_to_plot = self.image_array[fov_index][channel_index, :, :]
         title = f"{self.image_time_str}: FoV {fov_index} - Channel {list(self.channel_to_index.keys())[channel_index]}"
-        self.signal_new_image.emit(image_to_plot, title, boxes, self.show_roi_box, self.show_roi_id)
+        self.signal_new_image.emit(
+            image_to_plot,
+            title,
+            boxes,
+            self.show_roi_box,
+            self.show_roi_id,
+            roi_index,
+            seg_mask,
+        )
 
 
 class FigureMultiWindow(QWidget):

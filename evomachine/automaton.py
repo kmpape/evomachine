@@ -201,6 +201,7 @@ class Automaton:
         """
         This is called whenever the strategy loop is interrupted.
         """
+        logger.warning(f"act_on_halt: disabling autofocus and LEDS.")
         self.cam.autofocus_unlock()
         self.cam.disable_led()
         self._dmd.display_full()
@@ -365,6 +366,15 @@ class Automaton:
                     ),
                     logging_level=logging.INFO,
                 )
+                if self._cfg.seg_enabled:
+                    self.fill_queue(
+                        queue_data_type=AutomatonCommandType.SEG_DATA,
+                        queue_data=CommandFactory.command_seg_data(
+                            fov_id=i_pos,
+                            seg_masks=self._pos_processor[i_pos].get_seg(frame=1),
+                        ),
+                        logging_level=logging.INFO,
+                    )
                 logger.info(f"Automaton.initialise_position_processor: Initialised position {i_pos}.")
             else:
                 self._position_processors_is_initialised[i_pos] = True
@@ -752,6 +762,9 @@ class Automaton:
                 self._move_to_pos(pos_id=cmd.command_args)
                 self.manage_autofocus(curr_fov_id=self._curr_fov_id)
 
+            elif cmd.command_type == AutomatonCommandType.SAVE_STATE:
+                self.save_state(filename_suffix=cmd.command_args)
+
             elif cmd.command_type == AutomatonCommandType.LIVE_MODE:
                 self.set_cam_live_mode(cmd.command_args)
 
@@ -788,18 +801,15 @@ class Automaton:
                 self._process_position(do_segment=cmd.command_args['segment'], channels=cmd.command_args['channels'])
                 channels_int = [self._channel_to_index[c] for c in cmd.command_args['channels']]
                 if self._cfg.preproc_enabled:  # TODO remove this as position_processors are made accessible to the strategy
-                    cmd.command_data = [self._pos_processor[self._curr_fov_id].preproc_frame[channels_int, :, :]]
+                    cmd.command_data = {
+                        'img': [self._pos_processor[self._curr_fov_id].preproc_frame[channels_int, :, :]],
+                    }
                 else:
-                    cmd.command_data = [self._all_frames[self._curr_fov_id][1, channels_int, :, :]]
+                    cmd.command_data = {
+                        'img': [self._all_frames[self._curr_fov_id][1, channels_int, :, :]],
+                    }
                 if self._cfg.seg_enabled:
-                    cmd.command_data.append([roi.seg_stack for roi in self._pos_processor[self._curr_fov_id].rois])
-                # if cmd.command_args['segment']:
-                #     # TODO make sure segmentation channel is in cmd.command_args['channels']
-                #     self._process_position()
-                #     # TODO fill with segmentation data
-                #     cmd.command_data.append(
-                #         {roi_id: None for roi_id in range(len(self._pos_processor[self._curr_fov_id].rois))}
-                #     )
+                    cmd.command_data['seg'] = self._pos_processor[self._curr_fov_id].get_seg(frame=1)
                 if cmd.command_args['save']:
                     for i_chan, channel_index in zip(cmd.command_args['channels'], channels_int):
                         self.cam.save_frame(
@@ -843,18 +853,17 @@ class Automaton:
 
             elif cmd.command_type == AutomatonCommandType.MAGNET:
                 enable = cmd.command_args['enable']
-                value  = cmd.command_args['value']
-                mode   = cmd.command_args['mode']
+                value = cmd.command_args['value']
+                mode = cmd.command_args['mode']
                 
-                if enable is not None:
+                if enable is not None:  # TODO Fix bugs below
                     self.cam.syncboard.enable_magnet(enable)
                 
                 if mode == MagnetModeType.CURRENT_SET:
                     self.cam.syncboard.set_magnet_current(value)
                 elif mode == MagnetModeType.FIELD_SET:
                     self.cam.syncboard.set_magnet_field(value)
-            
-                
+
             elif cmd.command_type == AutomatonCommandType.CALIBRATE_MAGNET:
                 self.cam.syncboard.calibrate_magnet()
 
@@ -935,6 +944,7 @@ class Automaton:
                                       error_code=ErrorCode.ERROR_NOT_INITIALISED)
                 self.save_state(filename_suffix='initialise')
                 logger.info(f"Automaton.run: Starting strategy loop. Moving to fov {self._curr_fov_id}.")
+                self.cam.disable_led()
                 self._move_to_pos(pos_id=self._curr_fov_id)
                 self._dmd.display_full()  # FIXME temporary statement
 
@@ -962,13 +972,13 @@ class Automaton:
                 except Exception as e:
                     logger.error(f"Automaton.run: Exception during GUI process finalisation: {e}.")
                     traceback.print_exc()
+                    self.act_on_halt()
                 self.save_state(filename_suffix='finalise')
-                self.act_on_halt()
         logger.info("Automaton.run: Shutting down.")
         self._dmd.finalise()
         self.cam.finalise()
         self.cam.autofocus_unlock()
-        time.sleep(2)
+        time.sleep(3)
 
     def set_strategy(self, strategy: AbstractStrategy):
         self._strategy = strategy
@@ -988,7 +998,7 @@ class Automaton:
             self,
             channels: list[LEDType] | None = None,
             brightness: int | float | list[int] | list[float] = 100,
-            reset_led: bool = True,
+            reset_led: bool = False,
     ):
         if (channels is None) or not channels:
             channels = self._cfg.channels
@@ -1103,6 +1113,7 @@ class Automaton:
         else:
             filename = str(self.cam.cfg.path_to_save) + '/' + filename + f'_automatonstate.pkl'
         logger.info(f"save_state: Saving state under {filename}")
+        # TODO below should be covered by test strategy or another check at startup
         try:
             with open(filename, 'wb') as file:
                 pickle.dump(to_save, file)
@@ -1158,6 +1169,7 @@ class Automaton:
 
     def shutdown(self):
         self.act_on_halt()
+        self._dmd.finalise()
         self._stop_strategy_event.set()
         self._start_strategy_event.set()
         self._stop_event.set()

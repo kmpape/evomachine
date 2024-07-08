@@ -228,6 +228,7 @@ class AbstractStrategy(ABC):
 
         TODO this should be more elaborate and directly use Automaton._process with a TestCamera
         TODO image processing not included yet
+        TODO This should be moved to Automaton
         """
         def check_cmd_list(_cmd_list: list[AutomatonCommand], _curr_pos_id: int) -> list[AutomatonCommand]:
             for cmd in _cmd_list:
@@ -339,7 +340,7 @@ class BasicStrategy(AbstractStrategy):
             cmd_image = self.command_factory.command_image(
                 channels=self.imaging_channels,
                 exposure_time=self.exposure_time,
-                segment=False,
+                segment=True,
                 save=True,
             )
             cmd_list.append(cmd_image)
