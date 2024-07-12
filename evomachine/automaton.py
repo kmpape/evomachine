@@ -25,7 +25,7 @@ else:
     from evomachine.dmd import DMDControl
 from evomachine.exceptions import ErrorCode, ErrorContainer, ConfigError
 from evomachine.strategy import AbstractStrategy
-from evomachine.utils import EvoCroppingBox, normalise_frame, rotation_correction
+from evomachine.utils import EvoCroppingBox, normalise_frame, rotation_correction, multipos_rotation_correction
 from evomachine.evotypes import AutomatonCommandType, DMDCalibConfigType, LEDType, FocusAlgorithmType, \
     FocusStatusType, FilterWheelType, MagnetModeType
 
@@ -120,6 +120,8 @@ class Automaton:
         "Set to true after _initialise_strategy."
         self._num_refocus: int = 0
         "Counter for refocusing after loosing autofocus. See ConfigImageProcessor for max_refocus_trials."
+        self._multipos_rotation: float | None = None
+        "Rotation correction across all positions."
 
         self.roi_model: tf.keras.Model | None = None
         "Delta RoI ID model."
@@ -331,9 +333,13 @@ class Automaton:
             logger.debug(f"Automaton.initialise_position_processor: initialising position processor {i_pos}.")
             if self._cfg.preproc_enabled or self._cfg.roi_enabled or self._cfg.seg_enabled:
                 if rotation is None:
-                    this_rotation = rotation_correction(
-                        img=self._ref_frames[i_pos][self._channel_to_index[self._cfg.channel_rot], :, :],
-                    )
+                    if self._multipos_rotation is None:
+                        this_rotation = multipos_rotation_correction(
+                            imgs=[self._ref_frames[i][self._channel_to_index[self._cfg.channel_rot], :, :]
+                                  for i in list(range(len(self._pos_processor)))],
+                        )
+                    else:
+                        this_rotation = self._multipos_rotation
                 else:
                     this_rotation = rotation
                 logger.info(f"Automaton.initialise_position_processor: Rotating pos {i_pos} "
@@ -748,6 +754,11 @@ class Automaton:
                             logging.INFO)
             self.last_commands = self.next_commands
             self.next_commands = self._strategy.finalise()
+
+        # try:
+        #     logger.info(f"Automaton._process: Syncboard read: {self.cam.syncboard.connection.read_response(1)}")
+        # except Exception as e:
+        #     logger.warning(e)
 
         # Execute requested commands in the given order
         for cmd in self.next_commands:

@@ -6,7 +6,7 @@ from pathlib import Path
 from matplotlib.axes import Axes
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from matplotlib.patches import Rectangle
+from matplotlib.patches import Rectangle, Polygon
 
 import numpy as np
 from PyQt5.QtGui import QIntValidator
@@ -86,15 +86,22 @@ class ImageROIBoxes(EvoWorkerTemplate):
                     self.ax.text(box.xbr, box.ybr, str(i), color='red', fontsize=8, horizontalalignment='left',
                                  verticalalignment='center')
 
+    @staticmethod
+    def prep_contours(seg_mask: np.ndarray) -> list[Polygon]:
+        contours = delta.imgops.find_contours(seg_mask)
+        return [Polygon(cont[:, 0].tolist(), edgecolor='red', facecolor='none') for cont in contours]
+
     def update_roi_plot(
             self,
             roi_index: int,
             image_to_plot: np.ndarray,
             seg_mask: np.ndarray,
     ):
+        contours = self.prep_contours(seg_mask=seg_mask)
         self.ax_roi.clear()
         self.ax_roi.imshow(image_to_plot, cmap=CMAP)
-        self.ax_roi.imshow(seg_mask, alpha=0.5)
+        for cont in contours:
+            self.ax_roi.add_patch(cont)
         self.ax_roi.set_title(f"RoI {roi_index}", fontsize=self.FONT_SIZE)
         self.ax_roi.tick_params(axis='both', labelsize=self.FONT_SIZE)
         self.canvas_roi.draw()

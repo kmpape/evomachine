@@ -55,7 +55,6 @@ def create_automaton_process(
     filenames = sorted(filenames, key=lambda x: (get_position(x), get_time(x)))
     pos_to_filename = {get_position(filename): index for index, filename in enumerate(filenames)}
     filenames = [str(EVOMACHINE_DIR.parent / "data") + "/" + f for f in filenames]
-    print(filenames)
     cam = TestCamera(cfg_camera=camera_config, filenames=filenames, pos_to_filename=pos_to_filename)
 
     if not USE_DMD_SOCKET:

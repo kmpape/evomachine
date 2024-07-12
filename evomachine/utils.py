@@ -1,3 +1,4 @@
+from collections import Counter
 from dataclasses import dataclass
 import numpy as np
 import pandas as pd
@@ -29,6 +30,15 @@ class RotationParameters:
     hough_threshold: float = 0.7
 
 
+def multipos_rotation_correction(imgs: list[np.ndarray], params: RotationParameters = RotationParameters()) -> float:
+    rotations = [rotation_correction(img=img, params=params) for img in imgs]
+    rotations_counter = Counter([r for r in rotations if r is not None])
+    if not rotations_counter.most_common():
+        return 0.0
+    else:
+        return rotations_counter.most_common()[0][0]
+
+
 def rotation_correction(img: np.ndarray, params: RotationParameters = RotationParameters()) -> float:
     """
 
@@ -36,6 +46,8 @@ def rotation_correction(img: np.ndarray, params: RotationParameters = RotationPa
     ----------
     img: np.ndarray
         Image (2D) of any type.
+    params: RotationParameters
+        TODO
 
     Returns
     -------

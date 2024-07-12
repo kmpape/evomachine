@@ -541,6 +541,8 @@ class TestCamera(AbstractCamera):
         self._current_pos: Coordinate = Coordinate(0, 0, 0)
         self.focus_curr_pos: Dict[str, float] = {}
 
+        self.autofocus_lock()
+
     def increment_filename_index(self):
         self._next_filename_index = next(self.indices)
 
