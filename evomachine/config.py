@@ -154,11 +154,10 @@ class ConfigImageProcessorFactory:
         cfg_delta.whole_frame_drift = True
         cfg_delta.target_size_rois = (1024, 1024)
         cfg_delta.tolerable_resizing_rois = 0
-        cfg_delta.model_file_rois = Path("/home/hslab/workspace_python/delta3.0/de-lta-rt/"
-                                         "evomodels/evo_roi_2024-05-08.keras")  # TODO relative paths
+        cfg_delta.model_file_rois = EVOMACHINE_DIR.parent / "delta_models/evo_roi_2024-05-08.keras"
         cfg_delta.target_size_seg = (250, 64)
-        cfg_delta.model_file_seg = Path("/home/hslab/workspace_python/delta3.0/de-lta-rt/"
-                                        "evomodels/evo_seg_2024-06-27.keras")  # TODO relative paths
+        cfg_delta.model_file_seg = EVOMACHINE_DIR.parent / "delta_models/evo_seg_2024-06-27.keras"
+        # cfg_delta.model_file_track = EVOMACHINE_DIR.parent / "delta_models/unet_moma_track.hdf5"
         return ConfigImageProcessor(
             cfg_delta=cfg_delta,
             channels=default_channels if channels is None else channels,
