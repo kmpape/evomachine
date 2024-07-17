@@ -377,7 +377,7 @@ class Automaton:
                         queue_data_type=AutomatonCommandType.SEG_DATA,
                         queue_data=CommandFactory.command_seg_data(
                             fov_id=i_pos,
-                            seg_masks=self._pos_processor[i_pos].get_seg(frame=1),
+                            seg_masks=self._pos_processor[i_pos].get_seg(frame=0),
                         ),
                         logging_level=logging.INFO,
                     )
