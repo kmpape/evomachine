@@ -312,6 +312,10 @@ class Automaton:
         self._dmd.initialise()
         if not self._dmd.is_initialised():
             logger.error("Automaton.initialise_devices: DMD not initialised.")
+            while not self._dmd.is_initialised():
+                logger.warning("Retrying DMD initialisation in 5 seconds")
+                time.sleep(5)
+                self._dmd.initialise()
 
     def devices_is_initialised(self) -> bool:
         return self.cam.is_initialised() and self._dmd.is_initialised()
@@ -819,8 +823,10 @@ class Automaton:
                     cmd.command_data = {
                         'img': [self._all_frames[self._curr_fov_id][1, channels_int, :, :]],
                     }
-                if self._cfg.seg_enabled:
+                if self._cfg.seg_enabled and cmd.command_args['segment']:
                     cmd.command_data['seg'] = self._pos_processor[self._curr_fov_id].get_seg(frame=1)
+                if self._cfg.seg_enabled and cmd.command_args['segment'] and self._cfg.track_enabled:
+                    cmd.command_data['cells'] = [r.lineage.cells for r in self._pos_processor[self._curr_fov_id].rois]
                 if cmd.command_args['save']:
                     for i_chan, channel_index in zip(cmd.command_args['channels'], channels_int):
                         self.cam.save_frame(
