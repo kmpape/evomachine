@@ -112,7 +112,7 @@ class LEDPanel(EvoPanelTemplate):
         thread.start()
         self.threads.append(thread)
 
-        self.update_led(None, LEDType.NO_LED)
+        self.update_led(None, LEDType.NO_LED, 0.0)
 
     def set_led(self, i_channel: LEDType):
         try:
@@ -125,9 +125,15 @@ class LEDPanel(EvoPanelTemplate):
             req_str='self.cam.set_led',
             kwargs_dict={'i_chan': i_channel, 'brightness': brightness},
             callback=self.update_led,
-            callback_args=(i_channel,),
+            callback_args=(i_channel, brightness,),
         )
         self.current_led_id = i_channel
 
-    def update_led(self, data: Any, i_channel: LEDType):
+    def update_led(self, data: Any, i_channel: LEDType, brightness: float):
         self.signal_set_led.emit(i_channel)
+        # Note that code below will be misleading if ASITiger is used for LEDs as it has no max duration.
+        if brightness > 29:
+            timer = QTimer(self)
+            timer.setSingleShot(True)  # Ensures the timer only runs once
+            timer.timeout.connect(lambda: self.signal_set_led.emit(LEDType.NO_LED))
+            timer.start(3000)  # this number needs to match number in cam.set_led.

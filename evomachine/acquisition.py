@@ -192,9 +192,31 @@ class AbstractCamera:
             brightness: float = 29,
             block: bool = False,
             reset_led: bool = True,
+            disable_led: bool = False,
     ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
+        """
+
+        Parameters
+        ----------
+        i_chan:         LED channel.
+        normalise:      Return normalised image.
+        brightness:     Brightness value between 0 and 100.
+        block:          Wait for devices before returning.
+        reset_led:      Reset LED to previously set channel
+        disable_led:    Disable LED before returning. Overrides reset_led.
+
+        Returns
+        -------
+        frame:          Image if successful, otherwise None.
+        """
         self._step += 1
-        frame = self._take_frame(i_chan=i_chan, brightness=brightness, block=block, reset_led=reset_led)
+        frame = self._take_frame(
+            i_chan=i_chan,
+            brightness=brightness,
+            block=block,
+            reset_led=reset_led,
+            disable_led=disable_led,
+        )
         return self.normalise_frame(frame=frame) if (normalise and (frame is not None)) else frame
 
     def get_pos(self) -> int:
@@ -458,7 +480,7 @@ class AbstractCamera:
     def _set_exposure(self, exposure_time: Union[int, None] = None):
         raise NotImplementedError()
 
-    def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False):
+    def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False, duration: float | None = None):
         raise NotImplementedError()
 
     def calibrate_magnet(self):
@@ -493,6 +515,7 @@ class AbstractCamera:
             brightness: float = 29,
             block: bool = False,
             reset_led: bool = True,
+            disable_led: bool = False,
     ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
         raise NotImplementedError()
 
@@ -575,6 +598,7 @@ class TestCamera(AbstractCamera):
             brightness: float = 29,
             block: bool = False,
             reset_led: bool = True,
+            disable_led: bool = False,
     ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
         random_matrix = np.random.randint(0, 2 ** 6, size=self.cfg.image.shape, dtype=np.uint16)
         image = skimage.io.imread(self.filenames[self._next_filename_index]) + random_matrix
@@ -805,7 +829,7 @@ class TestCamera(AbstractCamera):
         logger.info(f"TestCamera._set_exposure={exposure_time}.")
         return
 
-    def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False):
+    def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False, duration: float | None = None):
         self._current_led_channel = i_chan
         logger.info(f"TestCamera.set_led={i_chan}, brightness={brightness}, block={block}.")
         return
@@ -1012,6 +1036,7 @@ class EvoCamera(AbstractCamera):
             brightness: float = 29,
             block: bool = False,
             reset_led: bool = True,
+            disable_led: bool = False,
     ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
         if not self._mmc_is_alive:
             logger.error(msg=f"EvoCamera._take_frame: MMC is not alive. Check Camera and Micro-Manager.")
@@ -1030,8 +1055,10 @@ class EvoCamera(AbstractCamera):
             tagged_image.pix,
             newshape=[tagged_image.tags['Height'], tagged_image.tags['Width']]
         )
-        if i_chan is not None and reset_led:
+        if i_chan is not None and reset_led and (not disable_led):
             self.set_led(i_chan=curr_channel, block=False)
+        if disable_led:
+            self.disable_led()
         return pixels
 
     def coordinate_is_out_of_bounds(self, coordinate: Union[Dict[str, float], Coordinate]) -> bool:
@@ -1260,7 +1287,7 @@ class EvoCamera(AbstractCamera):
         self._pos_id_to_coordinate = {key: val for key, val in pos_id_to_coordinate.items()}
         return True
 
-    def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False):
+    def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False, duration: float | None = None):
         if i_chan not in self._led_channel_keys.keys():
             logger.error(msg=f"EvoCamera._set_channel: i_chan={i_chan} not in channels={self._led_channel_keys.keys()}.")
             return
@@ -1594,7 +1621,7 @@ class EvoCamerav2(EvoCamera):
     def calibrate_hall(self, hall_id: int):
         self.syncboard.calibrate_hall(hall_id)
 
-    def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False):
+    def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False, duration: float | None = None):
         if i_chan not in self._led_channel_keys.keys():
             logger.error(msg=f"EvoCamera._set_channel: i_chan={i_chan} not in channels={self._led_channel_keys.keys()}.")
             return
@@ -1602,14 +1629,20 @@ class EvoCamerav2(EvoCamera):
             if i_chan == LEDType.NO_LED:
                 self.syncboard.disable_led()
                 return
-            if (0 < brightness <= 29) or (i_chan != LEDType.NO_LED):
+            if (0 < brightness <= 100) or (i_chan != LEDType.NO_LED):
                 is_good_brightness_value = True
             else:
                 is_good_brightness_value = False
             if is_good_brightness_value:
                 if self.current_channel != LEDType.NO_LED:
                     self.syncboard.disable_led(led_id=self._led_channel_keys[self.current_channel])
-                self.syncboard.enable_led(led_id=self._led_channel_keys[i_chan], intensity=float(brightness)/100.0)
+                if brightness > 29 and duration is None:
+                    duration = 3000
+                self.syncboard.enable_led(
+                    led_id=self._led_channel_keys[i_chan],
+                    intensity=float(brightness) / 100.0,
+                    duration=duration,
+                )
                 self.current_channel = i_chan
                 self._current_led_brightness = 0 if i_chan == LEDType.NO_LED else brightness
             else:

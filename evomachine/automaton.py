@@ -827,10 +827,12 @@ class Automaton:
                 time.sleep(0.5)  # TODO
                 if self.cam.get_exposure() != cmd.command_args['exposure_time']:
                     self.cam.set_exposure(exposure_time=cmd.command_args['exposure_time'])
-                self._take_image(channels=cmd.command_args['channels'], 
-                                 brightness=cmd.command_args['brightness'],
-                                 reset_led=cmd.command_args['reset_led'],)
-                if cmd.command_args['force_led'] == False:
+                self._take_image(
+                    channels=cmd.command_args['channels'],
+                    brightness=cmd.command_args['brightness'],
+                    reset_led=cmd.command_args['reset_led'],
+                )
+                if not cmd.command_args['force_led']:
                     self.cam.disable_led()
                 self._process_position(do_segment=cmd.command_args['segment'], channels=cmd.command_args['channels'])
                 channels_int = [self._channel_to_index[c] for c in cmd.command_args['channels']]
@@ -1035,6 +1037,7 @@ class Automaton:
             channels: list[LEDType] | None = None,
             brightness: int | float | list[int] | list[float] = 100,
             reset_led: bool = False,
+            disable_led: bool = False,
     ):
         if (channels is None) or not channels:
             channels = self._cfg.channels
@@ -1051,6 +1054,7 @@ class Automaton:
                 brightness=brightness[i],
                 normalise=False,
                 reset_led=reset_led,
+                disable_led=disable_led,
             )
             if self._pos_processor[fov_id].rotate is not None:
                 # TODO this should only be done once. Already rotated in preprocess image
