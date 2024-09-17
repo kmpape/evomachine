@@ -120,29 +120,34 @@ class DMDControl:
         self._loaded_img: np.ndarray | None = None
         "Image loaded through load_image."
 
-    def _load_calibration_data(self, filepath: Optional[Path] = None) -> bool:
-        if filepath is None:  # noqa
-            filepath = self._calib_file
-        if not filepath.exists():
-            logger.error(f"DMDControl._load_calibration_data: file {filepath} not found.")
-            return False
-        logger.info(f"DMDControl._load_calibration_data: loading calibration data from {filepath}.")
-        with open(str(filepath), 'rb') as f:
-            self._calib_data = pkl.load(f)
+        self._calib_data, self._homography_mat, self._homography_mat_inv = DMDControl.load_calibration_data(
+            filepath=self._calib_file,
+        )
 
-        dmd_points = np.array([(c_dmd, r_dmd) for ((r_dmd, c_dmd), _, _) in self._calib_data])
-        cam_points = np.array([(c_cam, r_cam) for (_, (r_cam, c_cam), _) in self._calib_data])
-        self._homography_mat, _ = cv2.findHomography(srcPoints=cam_points, dstPoints=dmd_points)
-        self._homography_mat_inv, _ = cv2.findHomography(srcPoints=dmd_points, dstPoints=cam_points)
+    @staticmethod
+    def load_calibration_data(
+            filepath: Path,
+    ) -> tuple[list, np.ndarray, np.ndarray] | tuple[None, None, None]:
+        if not filepath.exists():
+            logger.error(f"DMDControl.load_calibration_data: file {filepath} not found.")
+            return None, None, None
+        logger.info(f"DMDControl.load_calibration_data: loading calibration data from {filepath}.")
+        with open(str(filepath), 'rb') as f:
+            calib_data = pkl.load(f)
+
+        dmd_points = np.array([(c_dmd, r_dmd) for ((r_dmd, c_dmd), _, _) in calib_data])
+        cam_points = np.array([(c_cam, r_cam) for (_, (r_cam, c_cam), _) in calib_data])
+        homography_mat, _ = cv2.findHomography(srcPoints=cam_points, dstPoints=dmd_points)
+        homography_mat_inv, _ = cv2.findHomography(srcPoints=dmd_points, dstPoints=cam_points)
 
         points_cam = np.array([[[0, 0], [3199, 3199]]], dtype=np.float32)
         points_dmd = cv2.perspectiveTransform(points_cam.reshape(-1, 1, 2), self._homography_mat)   # noqa
-        logger.info(f"DMDControl._load_calibration_data: mapping point "
+        logger.info(f"DMDControl.load_calibration_data: mapping point "
                     f"({int(points_cam[0][0][0])},{int(points_cam[0][0][1])}) to "
                     f"({int(points_dmd[0][0][0])},{int(points_dmd[0][0][1])}) and "
                     f"({int(points_cam[0][1][0])},{int(points_cam[0][1][1])}) to "
                     f"({int(points_dmd[1][0][0])},{int(points_dmd[1][0][1])}).")
-        return True
+        return calib_data, homography_mat, homography_mat_inv
 
     def _launch_dmd_window(self):
         if self.debug_mode:
@@ -199,6 +204,11 @@ class DMDControl:
             self.error_container.add_error(new_error=DMDError(message=msg, error_code=ErrorCode.ERROR_SOCKET))
             return False
 
+    def calibrate(self, filepath: Path | None = None):
+        self._calib_data, self._homography_mat, self._homography_mat_inv = DMDControl.load_calibration_data(
+            filepath=self._calib_file if filepath is None else filepath,
+        )
+
     def get_calibration_data(self) -> list[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]]:
         return self._calib_data
 
@@ -217,9 +227,10 @@ class DMDControl:
         dmd_row_col : tuple[int, int]
             DMD coordinates as (row, col).
         """
-        if self._homography_mat is None:
-            logger.error(f"img_to_dmd_coords: no calibration data provided.")
-            return None
+        if self.is_calibrated():
+            msg = f"img_to_dmd_array: no calibration data provided."
+            logger.error(msg)
+            raise RuntimeError(msg)
         point_cam = np.array([[[img_col, img_row]]]).astype(float)
         point_dmd = cv2.perspectiveTransform(point_cam, self._homography_mat)
         return int(np.round(point_dmd[0][0][1])), int(np.round(point_dmd[0][0][0]))
@@ -244,12 +255,14 @@ class DMDControl:
         dmd_img : np.ndarray
             2D image array to be displayed on the DMD using display_image().
         """
-        if self._homography_mat is None:
-            logger.error(f"img_to_dmd_array: no calibration data provided.")
-            return None
+        if not self.is_calibrated():
+            msg = f"img_to_dmd_array: no calibration data provided."
+            logger.error(msg)
+            raise RuntimeError(msg)
         if img.shape != self.width_height_CAM:
-            logger.error(f"img_to_dmd_array: Expected image of shape {self.width_height_CAM} but received {img.shape}.")
-            return None
+            msg = f"img_to_dmd_array: Expected image of shape {self.width_height_CAM} but received {img.shape}."
+            logger.error(msg)
+            raise ValueError(msg)
         return cv2.warpPerspective(img, self._homography_mat, self.width_height_DMD[::-1]).astype(img.dtype)
 
     def dmd_to_img_coords(self, img_row: int, img_col: int) -> tuple[int, int] | None:
@@ -327,14 +340,20 @@ class DMDControl:
         return self.img_to_dmd_array(cam_img)
 
     def initialise(self, is_test: bool = False):
+        logger.info(f"DMDControl.initialise: initialising DMD.")
+
+        # Load homography matrix
+        if not self.is_calibrated():
+            self.calibrate()
+        if not self.is_calibrated():
+            logger.info("DMDControl.initialise: no calibration data loaded.")
+
         if self.debug_mode:
-            logger.debug(f"DMDControl.initialise: initialising DMD (debug_mode={self.debug_mode})")
-            if not self._load_calibration_data():
-                logger.info("DMDControl.initialise: no calibration data loaded.")
+            logger.debug(f"DMDControl.initialise: debug mode on.")
             self._is_initialised = True
             return
-        else:
-            logger.info(f"DMDControl.initialise: initialising DMD.")
+
+        # Launch C script with DMD window and socket
         try:
             self._launch_dmd_window()
         except Exception as e:
@@ -342,18 +361,16 @@ class DMDControl:
             logger.error(msg)
             self.error_container.add_error(new_error=DMDError(message=msg, error_code=ErrorCode.ERROR_SOCKET))
             return
+
+        # Launch Python socket
         monitors = screeninfo.get_monitors()
         mon_info = "\n".join(m.__str__() for m in monitors)
         # TODO removed all screeninfo checks after switching DMD to X Screen 1 (not recognised by screeninfo)
-        # has_two_monitors = len(monitors) == 2
         has_two_monitors = True
         if (not is_test) and has_two_monitors:
-            # has_one_primary = any(m.is_primary for m in monitors) and any(not m.is_primary for m in monitors)
             has_one_primary = True
             if has_one_primary:
                 mon_dmd = [m for m in monitors if (not m.is_primary)][0]
-                # is_correct_size = all(x1 == x2
-                #                       for (x1, x2) in zip(DMD_WIDTH_HEIGHT, (mon_dmd.width, mon_dmd.height)))
                 is_correct_size = True
                 if is_correct_size:
                     try:
@@ -361,8 +378,6 @@ class DMDControl:
                         if self._connection_test():
                             self._is_initialised = True
                             logger.info(f"DMD: initialised with size={DMD_WIDTH_HEIGHT}.")
-                        if not self._load_calibration_data():
-                            logger.info("DMDControl.initialise: no calibration data loaded.")
                     except ConnectionError as e:
                         msg = f"Error connection to DMD C socket: {e}"
                         logger.error(msg)
@@ -382,6 +397,9 @@ class DMDControl:
             # FIXME this is allowed for the TestCamera
             self._is_initialised = True
             self.error_container.add_error(new_error=DMDError(message=msg, error_code=ErrorCode.ERROR_MONITORS))
+
+    def is_calibrated(self) -> bool:
+        return self._homography_mat is not None
 
     def is_full_display(self) -> bool:
         return self._is_full_display
