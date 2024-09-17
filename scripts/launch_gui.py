@@ -37,6 +37,7 @@ from strategies.strategy_2024_05_31 import ROITestingStrategy  # noqa
 from strategies.strategy_MagnetOnOff import MagnetOnOffStrategy, PROCESSOR_CONFIG as MAGNET_PROCESSOR_CONFIG
 from strategies.strategy_GFP_image_noise import GFP_noise_strategy
 
+
 def create_automaton_process(
         camera_config: ConfigCamera,
         processor_config: ConfigImageProcessor,
@@ -77,7 +78,8 @@ if __name__ == '__main__':
     print(f"Launching evomachine GUI from {EVOMACHINE_DIR}.")
 
     # Provide strategy that will be loaded by GUI
-    save_path: str = "/media/hslab/Data/ImageData/Idris/2024-07-04"
+    # save_path: str = "/media/hslab/Data/ImageData/Idris/2024-07-04"
+    save_path =  "/home/hslab/Documents/Gabi/GUI_SaveDir"
     if not os.path.exists(save_path):
         current_folder = os.path.dirname(os.path.abspath(__file__))
         save_path = os.path.join(current_folder, "DEFAULT")

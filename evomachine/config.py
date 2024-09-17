@@ -10,7 +10,10 @@ from evomachine.exceptions import ConfigError, ErrorCode
 from evomachine.evotypes import FilterWheelType, FocusAlgorithmType, LEDType, ImageConfigType, ObjectiveConfigType, \
     ImageConfigTypeFactory, ObjectiveConfigTypeFactory, ChamberOrientationType
 
-# DeLTA lib install directory
+# Path to large data storage to store logs and files
+DATA_DIR = Path("/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo/images")
+
+# DeLTA/evomachine/asitiger/syncboard/dmdwindow lib install directory
 EVOMACHINE_DIR: Path = Path(__file__).parent
 
 # Switch between pygame dmd.py and dmd_socket.py
@@ -29,7 +32,7 @@ consolidated_logger.setLevel(EVO_LOGGING_LEVEL)
 
 # Add a file handler for consolidated logging
 filename = "evom_{}.log".format(datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f"))
-file_handler = RotatingFileHandler(f"/media/hslab/Data/Logs/{filename}", maxBytes=1000000, backupCount=20)
+file_handler = RotatingFileHandler(f"{DATA_DIR}/Logs/{filename}", maxBytes=1000000, backupCount=20)
 file_handler.setFormatter(EVO_FORMATTER)
 file_handler.setLevel(logging.INFO)
 
@@ -164,8 +167,9 @@ class ConfigImageProcessorFactory:
             channel_seg=LEDType.LED_450_NM,
             channel_rot=LEDType.LED_450_NM,
             channel_roi=LEDType.LED_450_NM,
-            roi_enabled=True,
-            seg_enabled=True,
+            roi_enabled=False,
+            seg_enabled=False,
+            preproc_enabled=False,
         )
 
 

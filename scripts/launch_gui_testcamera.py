@@ -16,7 +16,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'sync_board'))
 from evomachine.acquisition import TestCamera
 from evomachine.automaton import Automaton
 from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, ConfigImageProcessorFactory, \
-    EVOMACHINE_DIR, USE_DMD_SOCKET, USE_SYNC_BOARD
+    EVOMACHINE_DIR, USE_DMD_SOCKET, USE_SYNC_BOARD, DATA_DIR
 if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMDControl
 else:
@@ -26,6 +26,7 @@ else:
 from evomachine.guidir.newgui import EvoGUI
 from evomachine.guidir.queuemanager import QueueManager
 from evomachine.strategy import AbstractStrategy, BasicStrategy
+from strategies.strategy_UV_testing import UVStrategy
 
 
 def create_automaton_process(
@@ -81,7 +82,7 @@ if __name__ == '__main__':
     print(f"Launching evomachine GUI (Testcamera) from {EVOMACHINE_DIR}.")
 
     # Provide strategy that will be loaded by GUI
-    save_path: str = "/media/hslab/Data/ImageData/DEFAULT"
+    save_path: str = str(DATA_DIR)
     if not os.path.exists(save_path):
         current_folder = os.path.dirname(os.path.abspath(__file__))
         save_path = os.path.join(current_folder, "DEFAULT")
@@ -94,7 +95,8 @@ if __name__ == '__main__':
     processor_config: ConfigImageProcessor = ConfigImageProcessorFactory.default_config()
 
     # Provide strategy that will be loaded by GUI
-    strategy: AbstractStrategy = BasicStrategy(save_path=save_path, cfg=processor_config)
+    # strategy: AbstractStrategy = BasicStrategy(save_path=save_path, cfg=processor_config)
+    strategy: AbstractStrategy = UVStrategy(cfg=processor_config)
 
     # DO NOT MODIFY ANYTHING BELOW THIS LINE -----------------------------------
 
