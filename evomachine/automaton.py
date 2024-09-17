@@ -144,7 +144,9 @@ class Automaton:
         self._use_delta: bool = self._cfg.preproc_enabled or self._cfg.seg_enabled or self._cfg.roi_enabled
 
         self._fovs: Dict[int, Coordinate] = {}
-        "Dictionary containing coordinates of field of views."
+        "Dictionary containing coordinates of field of views. If AF is ON, Z coordinate is None."
+        self._fovs_full_coords: Dict[int, Coordinate] = {}
+        "Dictionary including Z coordinates. Initialised in initialise_reference_frames."
         self._cropping_boxes: Union[None, Dict[int, List[EvoCroppingBox]]] = None
         "List of cropping boxes applied to each FoV. One cropping box yields one position."
         self._fov_to_pos: Dict[int, List[int]] = {}
@@ -421,6 +423,7 @@ class Automaton:
                 logger.info("Automaton.initialise_field_of_view_list: Using autofocus.")
 
         self._fovs = field_of_views
+        self._fovs_full_coords = copy.deepcopy(field_of_views)
         if cropping_boxes is not None:
             if not field_of_views.keys() == cropping_boxes.keys():
                 raise ConfigError(f"Automaton.initialise_field_of_view_list: cropping box keys do not match "
@@ -549,6 +552,7 @@ class Automaton:
                     f"Imaging {len(self._fovs.keys())} FoVs on {self._channel_to_index.keys()}.")
         for i_fov in self._fovs.keys():
             self.cam.move_to_pos(i_pos=i_fov)
+            self._fovs_full_coords[i_fov].z = self.cam.get_coordinates(['Z'])['Z']
             for channel_type, ind in self._channel_to_index.items():
                 if not channel_type == LEDType.LED_385_NM:
                     self._ref_frames[i_fov][ind, :, :] = self.cam.get_frame(i_chan=channel_type)
@@ -616,17 +620,22 @@ class Automaton:
                              else self._curr_period)
         self._curr_fov_id = (self._curr_fov_id + 1) % len(self._fovs)
 
-    def manage_autofocus(self, curr_fov_id: int, debug_mode: bool = False) -> None:
+    def manage_autofocus(self, curr_fov_id: int, debug_mode: bool = True) -> None:
         """
         Checks the autofocus status and refocuses if the autofocus is lost and self._cfg.refocus is True. Throws an
         error if the software focus fails.
         """
+        if not self.is_initialised():
+            logger.error(f"manage_autofocus: Automaton not initialised. Returning.")
+            return
         if not self._use_autofocus:
             logger.warning(f"manage_autofocus: no autofocus to manage as autofocus is disabled.")
             return
+        old_z_coord = self._fovs_full_coords[curr_fov_id].z
         if debug_mode:
-            curr_pos = self.cam.get_coordinates(['Z'])
-            logger.info(f"manage_autofocus: At FoV ID {curr_fov_id} and coordinate {curr_pos}.")
+            curr_z_coord = self.cam.get_coordinates(['Z'])['Z']
+            logger.info(f"manage_autofocus: At FoV ID {curr_fov_id} and Z coordinate {curr_z_coord}."
+                        f"Previous recorded Z coordinate was {old_z_coord}.")
         is_locked = self.cam.autofocus_is_locked()
         if not is_locked:
             logger.warning(f"manage_autofocus: lost autofocus lock on fov_id={curr_fov_id}.")
@@ -639,13 +648,23 @@ class Automaton:
                     self.shutdown()
                 else:
                     self._num_refocus += 1
-                    self.cam.autofocus_unlock()  # just to be sure
+
+                    # Unlock autofocus to be sure
+                    self.cam.autofocus_unlock()
+
+                    # Move to previously recorded Z coordinate (X and Y should be current)
+                    self.cam.move_to(coordinate=self._fovs_full_coords[curr_fov_id], block=True)
+
+                    # Run software focus and lock autofocus if successful.
                     self._run_software_focus(cfg_focus=self.cam.cfg.focus, curr_fov_id=curr_fov_id)
                     if self.cam.get_software_focus_status() == FocusStatusType.IN_FOCUS:
                         is_success = self.cam.autofocus_initialise()
                         if is_success:
                             self.cam.autofocus_lock()
-                            logger.info(f"manage_autofocus: successfully refocused and locked autofocus.")
+                            self._fovs_full_coords[curr_fov_id].z = self.cam.get_coordinates(['Z'])['Z']
+                            logger.info(f"manage_autofocus: successfully refocused and locked autofocus. "
+                                        f"Old Z coordinate was {old_z_coord}. "
+                                        f"New is {self._fovs_full_coords[curr_fov_id].z}.")
                         else:
                             logger.error(f"manage_autofocus: Error initialising autofocus. Halting execution.")
                             self.shutdown()
