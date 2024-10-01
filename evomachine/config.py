@@ -86,9 +86,9 @@ class ConfigImageProcessor:
     "Size of microscope images just before being input to DeLTA. This can be different from cfg_delta.target_size_rois."
     image_processing_verbosity: int = 0
     "Lowest verbosity is 0."
-    refocus: bool = False
+    refocus: bool = True
     "Refocus after autofocus loss."
-    max_refocus_trials: int = 1
+    max_refocus_trials: int = 5
     "Maximum number of refocusing trials before stopping execution."
     chamber_orientation: ChamberOrientationType = ChamberOrientationType.HORIZONTAL
     "Orientation of chambers."
@@ -253,11 +253,11 @@ class ConfigCRISPFactory:
     def default_config() -> ConfigCRISP:
         return ConfigCRISP(
             led_intensity=70,
-            loop_gain=15,
-            averaging=0,
-            update_rate=1,
+            loop_gain=10,
+            averaging=5,
+            update_rate=10,
             objective_na=0.65,
-            lock_range=0.5,
+            lock_range=0.05,
         )
 
 
@@ -345,11 +345,11 @@ class ConfigFocusFactory:
     @staticmethod
     def default_config() -> ConfigFocus:
         return ConfigFocus(
-            exposure_time=100,
+            exposure_time=200,
             focus_channel=LEDType.LED_450_NM,
-            brightness=15,
-            rel_range=500,
-            step_size=50,
+            brightness=29,
+            rel_range=200,
+            step_size=10,
         )
 
 

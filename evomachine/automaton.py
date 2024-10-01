@@ -147,6 +147,8 @@ class Automaton:
         "Dictionary containing coordinates of field of views. If AF is ON, Z coordinate is None."
         self._fovs_full_coords: Dict[int, Coordinate] = {}
         "Dictionary including Z coordinates. Initialised in initialise_reference_frames."
+        self._fovs_coords_timeseries: dict[int, list[tuple[float, float, bool]]] = {}
+        "Dictionary indexed by FoV with a list (Z pos, time, autofocus_on), used in manage_autofocus."
         self._cropping_boxes: Union[None, Dict[int, List[EvoCroppingBox]]] = None
         "List of cropping boxes applied to each FoV. One cropping box yields one position."
         self._fov_to_pos: Dict[int, List[int]] = {}
@@ -534,6 +536,7 @@ class Automaton:
         logger.info(f"Automaton.initialise_fov_focus: initialisation done.")
 
     def _run_software_focus(self, cfg_focus: ConfigFocus, curr_fov_id: int):
+        self._dmd.display_full()
         self.cam.software_focus(
             cfg_focus=cfg_focus,
             user_input_override=True,
@@ -543,6 +546,7 @@ class Automaton:
         self.focus_curves[curr_fov_id] = (self.cam.focus_Z_coords, self.cam.focus_scores)
         self.focus_prev_stack[:, :, curr_fov_id] = self.cam.focus_prev_image
         self.focus_stack[:, :, curr_fov_id] = self.cam.get_software_focus_z_frame()
+        self._dmd.display_none()
 
     def initialise_reference_frames(self, save_references_frames: bool = True):
         if not self.devices_is_initialised():
@@ -634,31 +638,35 @@ class Automaton:
         old_z_coord = self._fovs_full_coords[curr_fov_id].z
         if debug_mode:
             curr_z_coord = self.cam.get_coordinates(['Z'])['Z']
-            logger.info(f"manage_autofocus: At FoV ID {curr_fov_id} and Z coordinate {curr_z_coord}."
+            logger.info(f"manage_autofocus: At FoV ID {curr_fov_id} and Z coordinate {curr_z_coord}. "
                         f"Previous recorded Z coordinate was {old_z_coord}.")
         is_locked = self.cam.autofocus_is_locked()
         if not is_locked:
             logger.warning(f"manage_autofocus: lost autofocus lock on fov_id={curr_fov_id}.")
             max_num_trials_reached = False
             if self._cfg.refocus:
-                if self._num_refocus < self._cfg.max_refocus_trials:
+                if self._num_refocus > self._cfg.max_refocus_trials:
                     max_num_trials_reached = True
                     logger.error(f"manage_autofocus: Max. number ({self._cfg.max_refocus_trials}) of refocusing trials "
                                  f"reached. Halting execution.")
                     self.shutdown()
                 else:
                     self._num_refocus += 1
+                    logger.info(f"manage_autofocus: refocusing at trial {self._num_refocus}.")
 
                     # Unlock autofocus to be sure
                     self.cam.autofocus_unlock()
 
                     # Move to previously recorded Z coordinate (X and Y should be current)
+                    logger.info(f"manage_autofocus: moving back to {self._fovs_full_coords[curr_fov_id]}.")
                     self.cam.move_to(coordinate=self._fovs_full_coords[curr_fov_id], block=True)
 
                     # Run software focus and lock autofocus if successful.
                     self._run_software_focus(cfg_focus=self.cam.cfg.focus, curr_fov_id=curr_fov_id)
                     if self.cam.get_software_focus_status() == FocusStatusType.IN_FOCUS:
-                        is_success = self.cam.autofocus_initialise()
+                        is_success = self.cam.autofocus_initialise(
+                            user_input=False,
+                        )
                         if is_success:
                             self.cam.autofocus_lock()
                             self._fovs_full_coords[curr_fov_id].z = self.cam.get_coordinates(['Z'])['Z']
@@ -687,6 +695,16 @@ class Automaton:
             )
         else:
             logger.debug(f"manage_autofocus: autofocus is locked.")
+
+        # Record data
+        # 1. Always record last Z coord
+        self._fovs_full_coords[curr_fov_id].z = self.cam.get_coordinates(['Z'])['Z']
+        # 2. Record timeseries for debugging
+        if curr_fov_id not in self._fovs_coords_timeseries.keys():
+            self._fovs_coords_timeseries[curr_fov_id] = []
+        self._fovs_coords_timeseries[curr_fov_id].append(
+            (self._fovs_full_coords[curr_fov_id].z, time.time(), is_locked)
+        )
 
     def override_parameter(self, fov_id: int, pos_id: int, param_name: str, param_value: Any):
         logger.info(f"Automaton.override_parameter: setting {param_name} to {param_value} for "

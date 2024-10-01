@@ -1394,6 +1394,12 @@ class EvoCamera(AbstractCamera):
                 for i in range(sleep_time, 0, -1):
                     logger.warning(f"ThreadSWFocus.run: Starting software focus in {i} s.")
                     time.sleep(1)
+            else:
+                logger.warning(f"ThreadSWFocus.run: Starting software autofocus configured as\n"
+                               f"{self._cfg_focus.__str__()}\nThis will move the stage up and down in the range "
+                               f"[{(self.focus_curr_pos['Z'] - self._cfg_focus.rel_range) / 10},"
+                               f"{(self.focus_curr_pos['Z'] + self._cfg_focus.rel_range) / 10}] μm"
+                               f" (current position = {self.focus_curr_pos['Z'] / 10} μm). ")
         else:
             user_input = input(f"EvoCamera.software_focus: Starting software autofocus configured as\n"
                                f"{self._cfg_focus.__str__()}\nThis will move the stage up and down in the range "

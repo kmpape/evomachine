@@ -141,7 +141,7 @@ class DMDControl:
         homography_mat_inv, _ = cv2.findHomography(srcPoints=dmd_points, dstPoints=cam_points)
 
         points_cam = np.array([[[0, 0], [3199, 3199]]], dtype=np.float32)
-        points_dmd = cv2.perspectiveTransform(points_cam.reshape(-1, 1, 2), self._homography_mat)   # noqa
+        points_dmd = cv2.perspectiveTransform(points_cam.reshape(-1, 1, 2), homography_mat)   # noqa
         logger.info(f"DMDControl.load_calibration_data: mapping point "
                     f"({int(points_cam[0][0][0])},{int(points_cam[0][0][1])}) to "
                     f"({int(points_dmd[0][0][0])},{int(points_dmd[0][0][1])}) and "
