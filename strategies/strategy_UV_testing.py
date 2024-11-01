@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import pickle
 import threading
+import time
 from typing import Dict, List, Tuple, Type, Union
 
 from evomachine.commands import AutomatonCommand
@@ -28,7 +29,9 @@ PROCESSOR_CONFIG = ConfigImageProcessorFactory.default_config()
 
 class UVStrategy(AbstractStrategy):
     """
-    ...
+    Strategy for testing UV.
+    All combinations of 60s, 30s, 5s treatment with 29%, 10%, 5% UV.
+    All FoVs are split in half to assess the effect of each treatment on neighbouring cells.
     """
     def __init__(self, cfg: ConfigImageProcessor):
         super().__init__(cfg=cfg)
@@ -41,7 +44,7 @@ class UVStrategy(AbstractStrategy):
             os.mkdir(self.path_to_save)
 
         # Imaging properties
-        self.exposure_time: int = 100  # in ms
+        self.exposure_time: int = 200  # in ms
         self.imaging_channel: LEDType = LEDType.LED_450_NM
         self.imaging_interval: float = 10*60  # in seconds
         self.imaging_brightness: float = 15
@@ -49,18 +52,21 @@ class UVStrategy(AbstractStrategy):
         # UV Projection properties
         self.do_project: bool = True  # Enable/disable UV projection
         self.proj_channel: LEDType = LEDType.LED_385_NM
-        self.proj_img = self.dmd.img_to_dmd_array(np.ones(shape=CAM_WIDTH_HEIGHT, dtype=np.uint8)*255)
+        proj_img_cam = np.zeros(shape=CAM_WIDTH_HEIGHT, dtype=np.uint8)
+        proj_img_cam[0:CAM_WIDTH_HEIGHT[0] // 2, :] = 255
+        self.proj_img = self.dmd.img_to_dmd_array(proj_img_cam)
         # self.proj_img = np.zeros(shape=DMD_WIDTH_HEIGHT, dtype=np.uint8)
-        # self.proj_img[self.proj_img.shape[0] // 4:self.proj_img.shape[0] // 2, :] = 255  # For FoV 1
+        # self.proj_img[self.proj_img.shape[0] // 4:self.proj_img.shape[0] // 2, :] = 255
 
-        self.proj_times = {i: val for i, val in enumerate([0, 60, 60, 60])}  # in seconds
-        self.proj_brightness = {i: val for i, val in enumerate([0, 15, 29, 29])}  # brightness in (0,29]
-        self.proj_repeat = {i: val for i, val in enumerate([False, True, True, False])}
-        assert(len(self.proj_times) == len(self.proj_brightness))
+        self.start_time_UV: float | None = None
+        self.proj_delay = 3 * 60 * 60  # in seconds
+        self.proj_times = {i: val for i, val in enumerate([60,60,60,30,30,30,5,5,5])}  # in seconds
+        self.proj_brightness = {i: val for i, val in enumerate([60,30,15,60,30,15,60,30,15])}  # brightness in (0,29]
+        self.has_projected: bool = False
 
-        # Remove the repeated projections from the waiting time
-        self.imaging_interval = self.imaging_interval - sum([t for t in self.proj_times.values()])
-        assert self.imaging_interval > 0
+    @staticmethod
+    def format_time(t: float | int | None) -> str:
+        return "None" if t is None else time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(t))
 
     def _initialise(self) -> List[AutomatonCommand]:
         """
@@ -93,8 +99,22 @@ class UVStrategy(AbstractStrategy):
             logger.info(f"Initialise UVTestingStrategyv5.\n"
                         f"proj_times={self.proj_times.values()}\n"
                         f"proj_brightness={self.proj_brightness.values()}\n"
-                        f"proj_repeat={self.proj_repeat.values()}\n"
                         f"imaging_interval={self.imaging_interval}")
+
+        current_time = time.time()
+        self.has_projected = False
+        self.start_time_UV = current_time + self.proj_delay
+        logger.info(f"Current time is {self.format_time(current_time)}. "
+                    f"Starting UV projections at {self.format_time(self.start_time_UV)}.")
+
+        # Test a projection to start
+        project = self.command_factory.command_project(
+            channel=LEDType.LED_450_NM,
+            image=self.proj_img,
+            duration=1,
+            brightness=40,
+        )
+        cmd_list.append(project)
 
         for i in range(len(self.field_of_views)):
             move = self.command_factory.command_move(fov_id=i)
@@ -153,8 +173,10 @@ class UVStrategy(AbstractStrategy):
                 save=True,
             )
             cmd_list.append(image)
-            if self.do_project:
-                if (self.proj_repeat[i] or self.callback_counter == 0) and self.proj_times[i] > 0:
+            if i < len(self.proj_times):
+                if (time.time() >= self.start_time_UV) and not self.has_projected:
+                    logger.info(f"Projecting UV now.")
+                    self.has_projected = True
                     project = self.command_factory.command_project(
                         channel=self.proj_channel,
                         image=self.proj_img,

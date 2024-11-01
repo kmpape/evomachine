@@ -208,16 +208,28 @@ class Automaton:
         This is called whenever the strategy loop is interrupted.
         """
         logger.warning(f"act_on_halt: disabling autofocus and LEDS.")
-        self.cam.autofocus_unlock()
-        self.cam.disable_led()
-        self._dmd.display_full()
+        try:
+            self.cam.autofocus_unlock()
+        except Exception as e:
+            msg = f"Automaton.act_on_halt: error unlocking autofocus: {e}"
+            logger.error(msg)
+        try:
+            self.cam.disable_led()
+        except Exception as e:
+            msg = f"Automaton.act_on_halt: error unlocking disabling led: {e}"
+            logger.error(msg)
+        try:
+            self._dmd.display_full()
+        except Exception as e:
+            msg = f"Automaton.act_on_halt: error setting dmd: {e}"
+            logger.error(msg)
 
     def check_status(self):
         if len(self.error_container) > 0:
             msg = "\n".join([str(e) for e in self.error_container.error_list])
-            logging.warning(msg=msg)
+            logger.warning(msg=msg)
         else:
-            logging.warning("No errors for automaton found.")
+            logger.warning("No errors for automaton found.")
         self.cam.check_status()
 
     def fill_queue(
@@ -331,7 +343,7 @@ class Automaton:
             roi_boxes: list[delta.utils.CroppingBox] | None = None,
     ):
         if not self._fov_list_is_initialised or not self._reference_frames_is_initialised:
-            logging.warning("Automaton.initialise_position_processor: position list is not initialised.")
+            logger.warning("Automaton.initialise_position_processor: position list is not initialised.")
             raise ConfigError(message="Automaton.initialise_position_processor: position list is not initialised.",
                               error_code=ErrorCode.ERROR_DEVICE_CONFIG)
         self._create_position_processor(which=which)
@@ -887,7 +899,11 @@ class Automaton:
                 self._dmd.display_image(img=cmd.command_args['image'])
                 time.sleep(0.5)  # TODO
                 # TODO allow for NONE LED to actuate LED separately
-                self.cam.set_led(i_chan=cmd.command_args['channel'], brightness=cmd.command_args['brightness'])
+                self.cam.set_led(
+                    i_chan=cmd.command_args['channel'],
+                    brightness=cmd.command_args['brightness'],
+                    duration=cmd.command_args['duration']*1000.0,
+                )
                 # TODO need to block movement and implement the sleep statement as countdown w. callback
                 self.sleep(duration=cmd.command_args['duration'])  # TODO disable with timer
                 self.cam.disable_led()
@@ -903,7 +919,11 @@ class Automaton:
                 # TODO need assert whether DMD image is being displayed
                 self._dmd.display_image(img=pattern)
                 time.sleep(0.5)  # TODO
-                self.cam.set_led(i_chan=cmd.command_args['channel'], brightness=cmd.command_args['brightness'])
+                self.cam.set_led(
+                    i_chan=cmd.command_args['channel'],
+                    brightness=cmd.command_args['brightness'],
+                    duration=cmd.command_args['duration']*1000.0,
+                )
                 self.sleep(duration=cmd.command_args['duration'])  # TODO disable with timer
                 self.cam.disable_led()
 
@@ -1029,11 +1049,23 @@ class Automaton:
                     logger.error(f"Automaton.run: Exception during GUI process finalisation: {e}.")
                     traceback.print_exc()
                     self.act_on_halt()
-                self.save_state(filename_suffix='finalise')
+                try:
+                    self.save_state(filename_suffix='finalise')
+                except Exception as e:
+                    logger.error(f"Automaton.run: Exception during save_state for finalisation: {e}")
         logger.info("Automaton.run: Shutting down.")
-        self._dmd.finalise()
-        self.cam.finalise()
-        self.cam.autofocus_unlock()
+        try:
+            self._dmd.finalise()
+        except Exception as e:
+            logger.error(f"Automaton.run: Exception finalising dmd: {e}")
+        try:
+            self.cam.autofocus_unlock()
+        except Exception as e:
+            logger.error(f"Automaton.run: Exception unlocking autofocus: {e}")
+        try:
+            self.cam.finalise()
+        except Exception as e:
+            logger.error(f"Automaton.run: Exception finalising cam: {e}")
         time.sleep(3)
 
     def set_strategy(self, strategy: AbstractStrategy):
@@ -1258,7 +1290,7 @@ class Automaton:
             Calibration values with row/col DMD coordinates and remaining coordinates are CAM coordinates.
         """
         if not self.devices_is_initialised():
-            logging.error("Automaton.dmd_calibrate: Devices not initialised. Returning.")
+            logger.error("Automaton.dmd_calibrate: Devices not initialised. Returning.")
             return []
         if filename is None:
             filename = str(EVOMACHINE_DIR / "dmd_calibration_data.pkl")

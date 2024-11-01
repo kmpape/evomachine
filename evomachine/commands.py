@@ -304,13 +304,16 @@ class CommandFactory:
 
         """
         if not isinstance(channel, LEDType):
-            raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument channel ({type(channel)}).")
+            raise TypeError(f"AutomatonCommandFactory.project: Wrong type for argument channel ({type(channel)}).")
         if not (isinstance(image, np.ndarray) and image.shape == DMD_WIDTH_HEIGHT and image.dtype == np.uint8):
-            raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument image ({type(image)}).")
-        if not (isinstance(duration, float) or isinstance(duration, int)):
-            raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument duration ({type(duration)}).")
-        if not (isinstance(brightness, int) or not isinstance(brightness, float)) or not (0 <= brightness <= 29):
-            raise TypeError(f"AutomatonCommandFactory.image: Wrong type or range for argument brightness.")
+            raise TypeError(f"AutomatonCommandFactory.project: Wrong type for argument image ({type(image)}).")
+        if not (isinstance(brightness, int) or not isinstance(brightness, float)) or not (0 <= brightness <= 100):
+            msg = f"AutomatonCommandFactory.project: Brightness must satisfy {0} < {duration} (actual) < 100."
+            raise TypeError(msg)
+        max_duration = 180 if brightness > 29 else 3600
+        if not (isinstance(duration, float) or isinstance(duration, int)) or not (0 < duration < max_duration):
+            msg = f"AutomatonCommandFactory.project: Duration must satisfy {0} < {duration} (actual) < {max_duration}."
+            raise TypeError(msg)
         return AutomatonCommand(
             command_type=AutomatonCommandType.PROJECT,
             command_args={'channel': channel, 'image': image, 'duration': duration, 'brightness': brightness},
@@ -359,12 +362,12 @@ class CommandFactory:
             raise TypeError(f"AutomatonCommandFactory.command_project_roi: pos_id={pos_id} does not exist.")
         if not (all(isinstance(r, int) and (r in self._pos_to_roi[pos_id]) for r in roi_ids)):
             raise TypeError(f"AutomatonCommandFactory.command_project_roi: roi_ids do not exist for pos_id={pos_id}.")
-        if not (isinstance(duration, float) or isinstance(duration, int)):
-            raise TypeError(f"AutomatonCommandFactory.command_project_roi: Wrong type for argument duration "
-                            f"({type(duration)}).")
-        if not (isinstance(brightness, int) or isinstance(brightness, float)) or not (0 <= brightness <= 29):
-            raise TypeError(f"AutomatonCommandFactory.command_project_roi: Wrong type or range for argument "
-                            f"brightness.")
+        if not (isinstance(brightness, int) or not isinstance(brightness, float)) or not (0 <= brightness <= 100):
+            raise TypeError(f"AutomatonCommandFactory.project: Wrong type or range for argument brightness.")
+        max_duration = 180 if brightness > 29 else 3600
+        if not (isinstance(duration, float) or isinstance(duration, int)) or not (0 < duration < max_duration):
+            msg = f"AutomatonCommandFactory.project: Duration must satisfy {0} < {duration} (actual) < {max_duration}"
+            raise TypeError(msg)
         if not isinstance(fill_x, float) or not (0 <= fill_x):
             raise TypeError(f"AutomatonCommandFactory.command_project_roi: Wrong type or range for argument fill_x.")
         if not isinstance(fill_y, float) or not (0 <= fill_y):

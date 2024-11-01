@@ -88,7 +88,7 @@ class ConfigImageProcessor:
     "Lowest verbosity is 0."
     refocus: bool = True
     "Refocus after autofocus loss."
-    max_refocus_trials: int = 5
+    max_refocus_trials: int = 10
     "Maximum number of refocusing trials before stopping execution."
     chamber_orientation: ChamberOrientationType = ChamberOrientationType.HORIZONTAL
     "Orientation of chambers."
@@ -381,10 +381,24 @@ class ConfigCamera:
 
     @property
     def pxl_size(self) -> float:
+        """
+        Returns the size of one pixel in micrometers.
+
+        Returns
+        -------
+        pixel_size: float
+        """
         return self.cam_pxl_size / self.objective.mag  # in μm
 
     @property
     def fov_size(self) -> float:
+        """
+        Returns the size of the field of view in micrometers.
+
+        Returns
+        -------
+        fov_size: float
+        """
         return self.cam_pxl_size / self.objective.mag * self.image.pxl_vert  # in μm
 
     def __post_init__(self):

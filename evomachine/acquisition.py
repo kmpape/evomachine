@@ -14,7 +14,7 @@ from asitiger.command import CRISPState
 import asitiger.tigercontroller
 
 from syncboard.syncboardcontroller import SyncBoardController
-from KWR103Driver import KWR103
+# from KWR103Driver import KWR103
 
 from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, get_logger
 from evomachine.coordinates import Coordinate
@@ -1628,6 +1628,23 @@ class EvoCamerav2(EvoCamera):
         self.syncboard.calibrate_hall(hall_id)
 
     def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False, duration: float | None = None):
+        """
+
+        Parameters
+        ----------
+        i_chan: LEDType
+            LED used for projection.
+        brightness: float
+            If brightness > 29, a duration must be provided. If None, duration is set to 3 seconds.
+        block: bool
+            NOT IMPLEMENTED. Block until response from syncboard is received.
+        duration: float | None
+            In milliseconds. If provided, must be smaller than 1 hour. If none, brightness must be <= 29.
+
+        Returns
+        -------
+
+        """
         if i_chan not in self._led_channel_keys.keys():
             logger.error(msg=f"EvoCamera._set_channel: i_chan={i_chan} not in channels={self._led_channel_keys.keys()}.")
             return
