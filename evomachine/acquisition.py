@@ -1660,7 +1660,7 @@ class EvoCamerav2(EvoCamera):
                 if self.current_channel != LEDType.NO_LED:
                     self.syncboard.disable_led(led_id=self._led_channel_keys[self.current_channel])
                 if brightness > 29 and duration is None:
-                    duration = 3000
+                    duration = 120*1000
                 self.syncboard.enable_led(
                     led_id=self._led_channel_keys[i_chan],
                     intensity=float(brightness) / 100.0,
@@ -1677,7 +1677,6 @@ class EvoCamerav2(EvoCamera):
         logger.warning("Shutting down camera, ASI tiger, and sync board.")
         self.autofocus_unlock()
         if self.syncboard is not None:
-            logger.warning("Shutting down syncboard.")
             self.syncboard.finalise()
         else:
             logger.warning("Syncboard not detected, cannot disable")

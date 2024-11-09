@@ -417,13 +417,17 @@ class DMDControl:
         if not self._is_initialised:
             logger.warning("DMDControl.finalise: DMD not initialised. Attempting to close connection anyway.")
         # self._output_thread.join()
-        self.s.close()
+        self.s.close()  # This should automatically terminate the process
         time.sleep(1)
-        if (self._process is not None) and (self._process.poll() is None):
-            logger.warning("DMDControl.finalise: Closing C program.")
-            self._process.terminate()
-        else:
-            logger.error("DMDControl.finalise: Unable to close C program.")
+        if self._process is not None:
+            if self._process.poll() != 0:
+                logger.warning("DMDControl.finalise: Forcing C program shutdown.")
+                self._process.terminate()
+        # if (self._process is not None) and ((self._process.poll() is None) or (self._process.poll() != 0)):
+        #     logger.warning("DMDControl.finalise: Forcing C program shutdown.")
+        #     self._process.terminate()
+        # elif (self._process is not None):
+        #     logger.error("DMDControl.finalise: Unable to close C program.")
         self._is_initialised = False
 
     def display_none(self):

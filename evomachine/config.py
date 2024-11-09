@@ -348,8 +348,8 @@ class ConfigFocusFactory:
             exposure_time=200,
             focus_channel=LEDType.LED_450_NM,
             brightness=29,
-            rel_range=200,
-            step_size=10,
+            rel_range=50,
+            step_size=5,
         )
 
 

@@ -246,19 +246,29 @@ class EvoGUI(QMainWindow):
         result = QMessageBox.question(
             self,
             "Confirm Exit...",
-            "Are you sure you want to exit?\nShutting down will take about 5s, so don't panic on the titanic!",
+            "Are you sure you want to exit?\nShutting down can take up to 30s, so don't panic on the titanic!",
             QMessageBox.Yes | QMessageBox.No,
         )
         event.ignore()
 
         if result == QMessageBox.Yes:
-            # self.crisp_panel.signal_unlock_crisp.emit()
-            # time.sleep(1)
             self.stop_event.set()
             self.stop_strategy_event.set()
             self.start_strategy_event.set()
             self.shutdown_event.set()
-            time.sleep(5)  # This is needed, otherwise, peripherals are not shut down properly
+            # Wait until automaton has shut down peripherals
+            time.sleep(1)
+            start_time = time.time()
+            while self.shutdown_event.is_set():
+                if time.time() > start_time + 60:
+                    print("Error shutting down peripherals.")
+                    QMessageBox.critical(
+                        self,
+                        "Shutdown Error",
+                        "Error shutting down peripherals."
+                    )
+                    break
+
             logger.debug("closing threads")
             for panel in self.panels:
                 panel.close_threads()

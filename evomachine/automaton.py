@@ -1039,7 +1039,7 @@ class Automaton:
                 if has_stopped:
                     logger.warning("Automaton.run strategy: halting execution.")
                     has_stopped = False
-            logger.info(f"Automaton.run: Leaving strategy loop. Current fov {self._curr_fov_id}.")
+                logger.info(f"Automaton.run: Leaving strategy loop. Current fov {self._curr_fov_id}.")
 
             if self.is_initialised():
                 logger.info("Automaton.run: finalising strategy.")
@@ -1053,7 +1053,7 @@ class Automaton:
                     self.save_state(filename_suffix='finalise')
                 except Exception as e:
                     logger.error(f"Automaton.run: Exception during save_state for finalisation: {e}")
-        logger.info("Automaton.run: Shutting down.")
+        logger.info("Automaton.run: Finalising devices.")
         try:
             self._dmd.finalise()
         except Exception as e:
@@ -1067,6 +1067,9 @@ class Automaton:
         except Exception as e:
             logger.error(f"Automaton.run: Exception finalising cam: {e}")
         time.sleep(3)
+        logger.info("Automaton.run: Shutting down.")
+        # Clear shutdown event for GUI
+        self._shutdown_event.clear()
 
     def set_strategy(self, strategy: AbstractStrategy):
         self._strategy = strategy
