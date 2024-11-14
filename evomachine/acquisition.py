@@ -72,6 +72,15 @@ class AbstractCamera:
         self._focus_status: FocusStatusType = FocusStatusType.UNKNOWN
         "Flag can be queries through get_focus_status() and is set during software_focus()."
 
+        self.coord_pre_autofocus_lock: Dict[str, float] | None = None
+        "Coordinate before autofocus lock."
+        self.coord_post_autofocus_lock: Dict[str, float] | None = None
+        "Coordinate after autofocus lock."
+        self.coord_pre_autofocus_config: Dict[str, float] | None = None
+        "Coordinate before autofocus configuration."
+        self.coord_post_autofocus_config: Dict[str, float] | None = None
+        "Coordinate after autofocus configuration."
+
     def autofocus_initialise(
             self,
             this_cfg_crisp: Optional[ConfigCRISP] = None,
@@ -98,10 +107,27 @@ class AbstractCamera:
     def autofocus_is_locked(self):
         raise NotImplementedError()
 
-    def autofocus_configure(self, this_cfg_crisp: Optional[ConfigCRISP] = None) -> bool:
+    def autofocus_configure(self, this_cfg_crisp: ConfigCRISP | None = None) -> bool:
+        self.coord_pre_autofocus_config = self.get_coordinates(['X', 'Y', 'Z'])
+        res = self._autofocus_configure(this_cfg_crisp=this_cfg_crisp)
+        self.coord_post_autofocus_config = self.get_coordinates(['X', 'Y', 'Z'])
+        msg = f"AbstractCamera.autofocus_configure: Coordinate " \
+              f"before = {self.coord_pre_autofocus_config}, after = {self.coord_post_autofocus_config}"
+        logger.info(msg)
+        return res
+
+    def _autofocus_configure(self, this_cfg_crisp: ConfigCRISP | None = None) -> bool:
         raise NotImplementedError()
 
     def autofocus_lock(self):
+        self.coord_pre_autofocus_lock = self.get_coordinates(['X', 'Y', 'Z'])
+        self._autofocus_lock()
+        self.coord_post_autofocus_lock = self.get_coordinates(['X', 'Y', 'Z'])
+        msg = f"AbstractCamera.autofocus_configure: Coordinate " \
+              f"before = {self.coord_pre_autofocus_lock}, after = {self.coord_post_autofocus_lock}"
+        logger.info(msg)
+
+    def _autofocus_lock(self):
         raise NotImplementedError()
 
     def autofocus_unlock(self):
@@ -672,12 +698,12 @@ class TestCamera(AbstractCamera):
     def autofocus_is_locked(self):
         return self._autofocus_is_locked
 
-    def autofocus_configure(self, this_cfg_crisp: Optional[ConfigCRISP] = None) -> bool:
+    def _autofocus_configure(self, this_cfg_crisp: Optional[ConfigCRISP] = None) -> bool:
         cfg_crisp = this_cfg_crisp if this_cfg_crisp else self.cfg.autofocus
         logger.info(f"TestCamera.autofocus_configure with cfg={cfg_crisp} (this_cfg_crisp={this_cfg_crisp}).")
         return True
 
-    def autofocus_lock(self):
+    def _autofocus_lock(self):
         logger.info("TestCamera.autofocus_lock.")
         self._autofocus_is_locked = True
 
@@ -973,6 +999,7 @@ class EvoCamera(AbstractCamera):
             )
         self.disable_led()
         self.set_exposure()
+        self._set_imaging_mode()
 
         return self._mmc_is_alive and self._tiger_is_alive
 
@@ -1141,7 +1168,7 @@ class EvoCamera(AbstractCamera):
             return
         return self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=None) == 'F'
 
-    def autofocus_configure(self, this_cfg_crisp: Optional[ConfigCRISP] = None) -> bool:
+    def _autofocus_configure(self, this_cfg_crisp: Optional[ConfigCRISP] = None) -> bool:
         if not self._tiger_is_alive:
             logger.error(f"EvoCamera.autofocus_configure: Device not alive.")
             return False
@@ -1180,7 +1207,7 @@ class EvoCamera(AbstractCamera):
         logger.info(f"CRISP: Parameters set to:\n{new_cfg}")
         return True
 
-    def autofocus_lock(self):
+    def _autofocus_lock(self):
         self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.LOCK)
 
     def autofocus_unlock(self):
@@ -1268,7 +1295,17 @@ class EvoCamera(AbstractCamera):
             self.mmc.set_exposure(exposure_time)  # noqa
         else:
             logger.warning("EvoCamera._set_exposure: cannot set exposure as MMC is not alive.")
-            # TODO raise error?
+
+    def _set_imaging_mode(self, imaging_mode: str = "Dynamic Range"):
+        available_modes = ["Dynamic Range", "Sensitivity", "Speed"]
+        if imaging_mode not in available_modes:
+            msg = f"EvoCamera._set_imaging_mode: {imaging_mode} not in {available_modes}."
+            logger.warning(msg)
+            return
+        if self._mmc_is_alive:
+            self.mmc.set_property("Camera-1", "Port", imaging_mode) # noqa
+        else:
+            logger.warning("EvoCamera._set_imaging_mode: cannot set mode as MMC is not alive.")
 
     def set_pos_id_to_coordinate(self, pos_id_to_coordinate: Dict[int, Coordinate], use_autofocus: bool) -> bool:
         for i_pos, coord in pos_id_to_coordinate.items():
@@ -1595,6 +1632,7 @@ class EvoCamerav2(EvoCamera):
 
         self.disable_led()
         self.set_exposure()
+        self._set_imaging_mode()
 
         self.brightfield_connected = False
         # try:

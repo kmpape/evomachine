@@ -669,29 +669,54 @@ class Automaton:
                     # Unlock autofocus to be sure
                     self.cam.autofocus_unlock()
 
-                    # Move to previously recorded Z coordinate (X and Y should be current)
-                    logger.info(f"manage_autofocus: moving back to {self._fovs_full_coords[curr_fov_id]}.")
-                    self.cam.move_to(coordinate=self._fovs_full_coords[curr_fov_id], block=True)
+                    if True:
+                        # Find previous position
+                        prev_pos = curr_fov_id-1 if curr_fov_id-1 >= 0 else list(self._fovs_full_coords.keys())[-1]
+                        logger.info(f"manage_autofocus: moving back to pos ID = {prev_pos} at coordinates "
+                                    f"{self._fovs_full_coords[prev_pos]}.")
 
-                    # Run software focus and lock autofocus if successful.
-                    self._run_software_focus(cfg_focus=self.cam.cfg.focus, curr_fov_id=curr_fov_id)
-                    if self.cam.get_software_focus_status() == FocusStatusType.IN_FOCUS:
+                        # Move to previous position
+                        self.cam.move_to(coordinate=self._fovs_full_coords[prev_pos], block=True)
+
+                        # Run autofocus configuration and lock autofocus if successful.
                         is_success = self.cam.autofocus_initialise(
                             user_input=False,
                         )
                         if is_success:
                             self.cam.autofocus_lock()
+                            logger.info(f"manage_autofocus: Successfully locked on previous position. Moving back.")
+                            self._move_to_pos(curr_fov_id)
                             self._fovs_full_coords[curr_fov_id].z = self.cam.get_coordinates(['Z'])['Z']
-                            logger.info(f"manage_autofocus: successfully refocused and locked autofocus. "
+                            logger.info(f"manage_autofocus: successfully re-initialised autofocus. "
                                         f"Old Z coordinate was {old_z_coord}. "
                                         f"New is {self._fovs_full_coords[curr_fov_id].z}.")
                         else:
                             logger.error(f"manage_autofocus: Error initialising autofocus. Halting execution.")
                             self.shutdown()
                     else:
-                        logger.error(f"manage_autofocus: Received bad FocusStatusType="
-                                     f"{self.cam.get_software_focus_status()}. Halting execution.")
-                        self.shutdown()
+                        # Move to previously recorded Z coordinate (X and Y should be current)
+                        logger.info(f"manage_autofocus: moving back to {self._fovs_full_coords[curr_fov_id]}.")
+                        self.cam.move_to(coordinate=self._fovs_full_coords[curr_fov_id], block=True)
+
+                        # Run software focus and lock autofocus if successful.
+                        self._run_software_focus(cfg_focus=self.cam.cfg.focus, curr_fov_id=curr_fov_id)
+                        if self.cam.get_software_focus_status() == FocusStatusType.IN_FOCUS:
+                            is_success = self.cam.autofocus_initialise(
+                                user_input=False,
+                            )
+                            if is_success:
+                                self.cam.autofocus_lock()
+                                self._fovs_full_coords[curr_fov_id].z = self.cam.get_coordinates(['Z'])['Z']
+                                logger.info(f"manage_autofocus: successfully refocused and locked autofocus. "
+                                            f"Old Z coordinate was {old_z_coord}. "
+                                            f"New is {self._fovs_full_coords[curr_fov_id].z}.")
+                            else:
+                                logger.error(f"manage_autofocus: Error initialising autofocus. Halting execution.")
+                                self.shutdown()
+                        else:
+                            logger.error(f"manage_autofocus: Received bad FocusStatusType="
+                                         f"{self.cam.get_software_focus_status()}. Halting execution.")
+                            self.shutdown()
             else:
                 logger.warning(f"manage_autofocus: Refocusing disabled. Halting execution.")
                 self.shutdown()
