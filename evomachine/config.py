@@ -437,6 +437,11 @@ class ConfigCameraFactory:
             return [LEDType.NO_LED, LEDType.LED_405_NM, LEDType.LED_450_NM, LEDType.LED_505_NM, LEDType.LED_538_NM]
 
     @staticmethod
+    def get_available_filters() -> list[FilterWheelType]:
+        return [FilterWheelType.FILTER, FilterWheelType.FILTER_465nm, FilterWheelType.FILTER_527nm,
+                FilterWheelType.FILTER_592nm, FilterWheelType.BLOCKING, FilterWheelType.NO_FILTER]
+
+    @staticmethod
     def default_oil_config(path_to_save: Path | None = None) -> ConfigCamera:
         return ConfigCamera(
             objective=ObjectiveConfigTypeFactory.default_oil(),
@@ -444,7 +449,7 @@ class ConfigCameraFactory:
             focus=ConfigFocusFactory.default_config(),
             autofocus=ConfigCRISPFactory.default_config(),
             leds=ConfigCameraFactory.get_available_leds(),
-            filters=[FilterWheelType.FILTER, FilterWheelType.BLOCKING, FilterWheelType.NO_FILTER],
+            filters=ConfigCameraFactory.get_available_filters(), # [FilterWheelType.FILTER, FilterWheelType.BLOCKING, FilterWheelType.NO_FILTER],
             path_to_save=EVOMACHINE_DIR.parent / "images/DEFAULT" if path_to_save is None else path_to_save,
         )
 
@@ -456,6 +461,6 @@ class ConfigCameraFactory:
             focus=ConfigFocusFactory.default_config(),
             autofocus=ConfigCRISPFactory.default_config(),
             leds=ConfigCameraFactory.get_available_leds(),
-            filters=[FilterWheelType.FILTER, FilterWheelType.BLOCKING, FilterWheelType.NO_FILTER],
+            filters=ConfigCameraFactory.get_available_filters(), # [FilterWheelType.FILTER, FilterWheelType.BLOCKING, FilterWheelType.NO_FILTER],
             path_to_save=EVOMACHINE_DIR.parent / "images/DEFAULT" if path_to_save is None else path_to_save,
         )

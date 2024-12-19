@@ -122,9 +122,16 @@ class LEDType(EvoType):
 
 
 class FilterWheelType(EvoType):
-    FILTER = 0
-    BLOCKING = 1
-    NO_FILTER = 2
+    # OLD VALUES
+    # FILTER = 0
+    # BLOCKING = 1
+    # NO_FILTER = 2
+    FILTER = 0          # non-specific
+    FILTER_465nm = 1
+    FILTER_527nm = 2
+    FILTER_592nm = 3
+    NO_FILTER = 4
+    BLOCKING = 5
 
 
 class DMDDirType(EvoType):

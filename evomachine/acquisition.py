@@ -13,7 +13,7 @@ from serial import SerialException
 from asitiger.command import CRISPState
 import asitiger.tigercontroller
 
-from syncboard.syncboardcontroller import SyncBoardController
+from syncboard.syncboardcontroller import SyncBoardController, LED_ID
 # from KWR103Driver import KWR103
 
 from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, get_logger
@@ -940,7 +940,13 @@ class EvoCamera(AbstractCamera):
         self.card_address_fw: int = 8
         "Filter wheel card address on ASI tiger."
         self.filter_wheel_settings: Dict[FilterWheelType, int] = {
-            FilterWheelType.FILTER: 1, FilterWheelType.BLOCKING: 0, FilterWheelType.NO_FILTER: 2
+            # FilterWheelType.FILTER: 1, FilterWheelType.BLOCKING: 0, FilterWheelType.NO_FILTER: 2
+            FilterWheelType.FILTER: 0,
+            FilterWheelType.FILTER_465nm: 1,
+            FilterWheelType.FILTER_527nm: 2,
+            FilterWheelType.FILTER_592nm: 3,
+            FilterWheelType.NO_FILTER: 4,
+            FilterWheelType.BLOCKING: 5,
         }
         "Available filter wheels."
         self.card_address_crisp: int = 2
@@ -1530,13 +1536,21 @@ class EvoCamerav2(EvoCamera):
         "Expected sync board serial port. If not found, the code will look for patterns like /dev/ttyACMX"
         self._syncboard_is_alive: bool = False
         "Set to true once successfully connected. Flag is not automatically updated on connection loss."
-        self._led_channel_keys: Dict[LEDType, Union[int, None]] = {
-            LEDType.LED_385_NM: 7,
-            LEDType.LED_450_NM: 1,
-            LEDType.LED_515_NM: 2,
-            LEDType.LED_565_NM: 3,
-            LEDType.LED_645_NM: 4,
-            LEDType.NO_LED: None,
+        # self._led_channel_keys: Dict[LEDType, Union[int, None]] = {
+        #     LEDType.LED_385_NM: 7,
+        #     LEDType.LED_450_NM: 1,
+        #     LEDType.LED_515_NM: 2,
+        #     LEDType.LED_565_NM: 3,
+        #     LEDType.LED_645_NM: 4,
+        #     LEDType.NO_LED: None,
+        # }
+        self._led_channel_keys: Dict[LEDType, LED_ID] = {
+            LEDType.LED_385_NM: LED_ID.LED_385_NM,
+            LEDType.LED_450_NM: LED_ID.LED_450_NM,
+            LEDType.LED_515_NM: LED_ID.LED_515_NM,
+            LEDType.LED_565_NM: LED_ID.LED_565_NM,
+            LEDType.LED_645_NM: LED_ID.LED_645_NM,
+            LEDType.NO_LED: LED_ID.NO_LED,
         }
         "Map from LEDType to channel ID on sync board (hard-coded)."
 
