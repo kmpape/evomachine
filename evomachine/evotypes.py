@@ -16,6 +16,10 @@ class EvoType(Enum):
         return None
 
     @classmethod
+    def from_flag(cls, status_flag: str) -> 'EvoType':
+        return cls(status_flag)
+
+    @classmethod
     def get_all(cls) -> List['EvoType']:
         return [member for member in cls]
 
@@ -56,6 +60,18 @@ class ChamberOrientationType(EvoType):
     VERTICAL = auto()
 
 
+class AutoFocusStatusType(EvoType):
+    # These stati match the stati from CRISPStatus in asitiger.status
+    IDLE = "I"              # LED is tuned off going from Ready to Idle
+    READY = "R"             # LED on
+    DIM = "D"               # Low returned light signal (prevents Ready state)
+    OUT_OF_FOCUS = "K"      # Active but not within focus tolerance
+    IN_FOCUS = "F"          # Active and within focus tolerance
+    INHIBIT = "N"           # Low returned signal (unlocks system)
+    ERROR = "E"             # Usually Out-of-Range Error
+    LOG_CAL = "G"           # Initiate basic Log-Amp Calibration
+
+
 class AutomatonCommandType(EvoType):
     MAGNET = auto()
     CALIBRATE_MAGNET = auto()
@@ -91,6 +107,13 @@ class FocusStatusType(EvoType):
     UNKNOWN = auto()
 
 
+class FocusCurveType(EvoType):
+    HAS_GLOBAL_MAXIMUM = auto()     # Has one global maximum (good)
+    HAS_MAXIMA = auto()             # Has more than one maximum (bad)
+    HAS_BOUNDARY_MAXIMUM = auto()   # Has maximum at a boundary (bad)
+    UNKNOWN = auto()
+
+
 class AxisType(EvoType):
     X = 0
     Y = 1
@@ -114,11 +137,12 @@ class LEDType(EvoType):
     LED_515_NM = 2
     LED_565_NM = 3
     LED_645_NM = 4
+    LED_OVERHEAD = 5
 
     # OLD LEDs
-    LED_405_NM = 5
-    LED_505_NM = 6
-    LED_538_NM = 7
+    LED_405_NM = 6
+    LED_505_NM = 7
+    LED_538_NM = 8
 
 
 class FilterWheelType(EvoType):

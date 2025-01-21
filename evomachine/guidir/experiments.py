@@ -82,6 +82,7 @@ class ExperimentWorker(EvoWorkerTemplate):
             self,
             positions: Dict[int, Dict[str, Union[None, Dict[str, Union[float, int]]]]]
     ) -> Union[List[Coordinate], None]:
+        logger.info(f"get_positions_from_dict DEBUG: Recorded positions = {positions}")
         valid_all = [v for key, val in positions.items() for v in val.values()
                      if all([val1 is not None for val1 in val.values()])]
         valid_dict = [val for key, val in positions.items() if all([val1 is not None for val1 in val.values()])]

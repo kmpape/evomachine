@@ -24,21 +24,16 @@ logger = get_logger(name=__name__)
 def preprocessor_config():
     default_channels = [LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_565_NM, LEDType.LED_645_NM]
     cfg_delta = delta.config.Config.default("mothermachine")
-    cfg_delta.whole_frame_drift = True
-    cfg_delta.target_size_rois = (1024, 1024)
-    cfg_delta.tolerable_resizing_rois = 0
-    cfg_delta.model_file_rois = Path("/home/hslab/workspace_python/delta3.0/de-lta-rt/"
-                                        "evomodels/evo_roi_2024-05-08.keras")  # TODO relative paths
+
     return ConfigImageProcessor(
         cfg_delta=cfg_delta,
         channels=default_channels,
-        channel_seg=LEDType.LED_450_NM,
-        channel_rot=LEDType.LED_450_NM,
-        channel_roi=LEDType.LED_450_NM,
+        channels_seg=[default_channels[0]],
         preproc_enabled=False,
         seg_enabled=False,
         roi_enabled=False,
     )
+
 
 # Define configuration objects
 CAMERA_CONFIG = ConfigCameraFactory.default_air_config()

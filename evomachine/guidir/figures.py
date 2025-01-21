@@ -95,13 +95,15 @@ class ImageROIBoxes(EvoWorkerTemplate):
             self,
             roi_index: int,
             image_to_plot: np.ndarray,
-            seg_mask: np.ndarray,
+            seg_mask: np.ndarray | None,
     ):
-        contours = self.prep_contours(seg_mask=seg_mask)
+        if seg_mask is not None:
+            contours = self.prep_contours(seg_mask=seg_mask)
         self.ax_roi.clear()
         self.ax_roi.imshow(image_to_plot, cmap=CMAP)
-        for cont in contours:
-            self.ax_roi.add_patch(cont)
+        if seg_mask is not None:
+            for cont in contours:
+                self.ax_roi.add_patch(cont)
         self.ax_roi.set_title(f"RoI {roi_index}", fontsize=self.FONT_SIZE)
         self.ax_roi.tick_params(axis='both', labelsize=self.FONT_SIZE)
         self.canvas_roi.draw()
@@ -123,15 +125,20 @@ class ImageROIBoxes(EvoWorkerTemplate):
         self.ax.tick_params(axis='both', labelsize=self.FONT_SIZE)
         if show_roi_boxes:
             self.draw_roi_boxes(roi_boxes=roi_boxes, show_roi_id=show_roi_id)
-        if seg_mask.shape != (0, 0):
-            roi_image = roi_boxes[roi_index].crop(image_to_plot)
-            roi_image_resized = cv2.resize(roi_image, self.roi_size[::-1], interpolation=cv2.INTER_LINEAR)
-            seg_mask_resized = cv2.resize(seg_mask, self.roi_size[::-1], interpolation=cv2.INTER_LINEAR)
-            self.update_roi_plot(
-                roi_index=roi_index,
-                image_to_plot=roi_image_resized,
-                seg_mask=seg_mask_resized,
-            )
+        # TODO: this still bugs below and needs fixes
+        # if show_roi_boxes and (len(roi_boxes) > 0) and roi_boxes[roi_index] is not None:
+        #     box = roi_boxes[roi_index]
+        #     is_valid_box = box.xbr > box.xtl and box.ybr > box.ytl
+        #     if is_valid_box:
+        #         roi_image = box.crop(image_to_plot)
+        #         roi_image_resized = cv2.resize(roi_image, self.roi_size[::-1], interpolation=cv2.INTER_LINEAR)
+        #         seg_mask_resized = cv2.resize(seg_mask, self.roi_size[::-1], interpolation=cv2.INTER_LINEAR) if \
+        #             seg_mask.shape != (0, 0) else None
+        #         self.update_roi_plot(
+        #             roi_index=roi_index,
+        #             image_to_plot=roi_image_resized,
+        #             seg_mask=seg_mask_resized,
+        #         )
         self.canvas.draw()
 
 
@@ -556,33 +563,45 @@ class ImagePlotter(EvoPanelTemplate):
         self.channel_combo_box.currentIndexChanged.connect(self.update_plot)  # noqa
 
         self.layout = QGridLayout()
-        self.layout.addWidget(self.exposure_label, 0, 0, 1, 1)
-        self.layout.addWidget(self.exposure_edit, 0, 1, 1, 1)
-        self.layout.addWidget(self.exposure_value, 0, 2, 1, 1)
+        rr = 0
+        self.layout.addWidget(self.exposure_label, rr, 0, 1, 1)
+        self.layout.addWidget(self.exposure_edit,  rr, 1, 1, 1)
+        self.layout.addWidget(self.exposure_value, rr, 2, 1, 1)
 
-        self.layout.addWidget(self.savepath_label, 1, 0, 1, 1)
-        self.layout.addWidget(self.savepath_edit, 1, 1, 1, 1)
-        self.layout.addWidget(self.savepath_value, 1, 2, 1, 5)
+        rr += 1
+        self.layout.addWidget(self.savepath_label, rr, 0, 1, 1)
+        self.layout.addWidget(self.savepath_edit,  rr, 1, 1, 1)
+        self.layout.addWidget(self.savepath_value, rr, 2, 1, 5)
 
-        self.layout.addWidget(self.filename_label, 2, 0, 1, 1)
-        self.layout.addWidget(self.filename_edit, 2, 1, 1, 1)
-        self.layout.addWidget(self.filename_value, 2, 2, 1, 3)
+        rr += 1
+        self.layout.addWidget(self.filename_label, rr, 0, 1, 1)
+        self.layout.addWidget(self.filename_edit,  rr, 1, 1, 1)
+        self.layout.addWidget(self.filename_value, rr, 2, 1, 3)
+        self.layout.addWidget(self.take_frame_button, rr, 0, 1, 1)
+        self.layout.addWidget(self.savepath_checkbox, rr, 1, 1, 1)
 
-        self.layout.addWidget(self.take_frame_button, 3, 0, 1, 1)
-        self.layout.addWidget(self.savepath_checkbox, 3, 1, 1, 1)
-
-        self.layout.addWidget(self.canvas, 4, 0, 7, 7)
-        rr = 4 + 9
+        # rr += 1
+        # self.layout.addWidget(self.live_frame_label, rr, 0, 1, 1)
+        # self.layout.addWidget(self.live_interval_edit, rr, 1, 1, 1)
+        # self.layout.addWidget(self.live_interval_value, rr, 2, 1, 1)
+        # self.layout.addWidget(self.live_frame_start_button, rr, 3, 1, 1)
+        # self.layout.addWidget(self.live_frame_stop_button, rr, 4, 1, 1)
+        
+        rr += 1
+        self.layout.addWidget(self.canvas, rr, 0, 7, 7)
+        
+        rr += 9
         self.layout.addWidget(self.canvas_roi, rr, 0, 3, 7)
-        rr = rr + 4
-
+        
+        rr += 4
         self.layout.addWidget(self.make_label(f"FoV:", align=RIGHT), rr, 0, 1, 1)
         self.layout.addWidget(self.fov_combo_box, rr, 1, 1, 1)
         self.layout.addWidget(self.make_label(f"Channel:", align=RIGHT), rr, 2, 1, 1)
         self.layout.addWidget(self.channel_combo_box, rr, 3, 1, 1)
         self.layout.addWidget(self.roi_box_checkbox, rr, 4, 1, 1)
         self.layout.addWidget(self.roi_id_checkbox, rr, 5, 1, 1)
-        rr = rr + 1
+        
+        rr += 1
         self.layout.addWidget(self.make_label(f"RoI:", align=RIGHT), rr, 0, 1, 1)
         self.layout.addWidget(self.roi_combo_box, rr, 1, 1, 1)
 

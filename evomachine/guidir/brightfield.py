@@ -123,7 +123,7 @@ class BrightfieldPanel(EvoPanelTemplate):
 
         self.queue_manager.request(
             req_str='self.cam.set_brightfield',
-            kwargs_dict={'i_chan': i_channel, 'brightness': brightness},
+            kwargs_dict={'brightness': brightness},  #  kwargs_dict={'i_chan': i_channel, 'brightness': brightness},
             callback=self.update_brightfield,
             callback_args=(i_channel,),
         )

@@ -662,10 +662,16 @@ class DMDControl:
         self.display_image(img=img)
 
     def display_loaded_image(self):
-        if self._loaded_img is None:
-            logger.error(f"display_loaded_image: No image loaded. Use load_image to load an image.")
-            return
-        self.display_image(img=self._loaded_img)
+        logger.warning(f"display_loaded_image: Applying Idris dirty fix from the 14.01.2025.")
+        proj_img_cam = np.zeros(shape=CAM_WIDTH_HEIGHT, dtype=np.uint8)
+        proj_img_cam[500:CAM_WIDTH_HEIGHT[0] // 2, 200:3000] = 255
+        proj_img = self.img_to_dmd_array(proj_img_cam)
+
+        # if self._loaded_img is None:
+        #     logger.error(f"display_loaded_image: No image loaded. Use load_image to load an image.")
+        #     return
+        # self.display_image(img=self._loaded_img)
+        self.display_image(img=proj_img)
 
     def load_image(self, filename: str, display_image: bool = True):
         if not os.path.exists(filename):  # noqa

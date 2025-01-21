@@ -26,6 +26,8 @@ USE_SYNC_BOARD: bool = True
 EVO_FORMATTER = logging.Formatter('%(asctime)s - %(levelname)s - %(name)s - %(message)s')
 EVO_LOGGING_LEVEL = logging.INFO
 EVO_GUI_LOGGING_LEVEL = logging.INFO
+# EVO_LOGGING_LEVEL = logging.DEBUG
+# EVO_GUI_LOGGING_LEVEL = logging.DEBUG
 
 consolidated_logger = logging.getLogger('consolidated_logger')
 consolidated_logger.setLevel(EVO_LOGGING_LEVEL)
@@ -59,21 +61,19 @@ class ConfigImageProcessor:
     "Delta configuration object. Contains paths to RoI ID, segmentation, and tracking models."
     channels: list[LEDType]
     "List of channels to be imaged. Used for taking reference frames. Do not include any UV here. The list must " \
-    "include channel_seg, channel_rot, and channel_roi. Moreover, the first channel in the list must be channel_seg."  # noqa
-    channel_seg: LEDType
-    "Channel used for segmentation."
-    channel_rot: LEDType
-    "Channel used for rotation identification and drift correction."
-    channel_roi: LEDType
-    "Channel used for region-of-interest identification."
+    "include channels_seg."  # noqa
+    channels_seg: list[LEDType]
+    "Channel(s) used for segmentation. If a list is provided, channels are averaged."
     preproc_enabled: bool = True
     "Enable image preprocessing."
     roi_enabled: bool = True
     "Enable ROI identification (preproc_enabled must be true)."
-    roi_min_area: int | None = 3000
+    roi_min_area: int | None = 1500
     "Min. area of RoIs to be considered in pixels (original image size). Operation is not applied if None."
     roi_max_area: int | None = 7000
     "Max. area of RoIs to be considered in pixels (original image size). Operation is not applied if None."
+    roi_max_height: int | None = 40
+    "Max. height of RoIs to be considered in pixels (original image size). Operation is not applied if None."
     seg_enabled: bool = False
     "Enable image segmentation (preproc_enabled must be true)."
     track_enabled: bool = False
@@ -82,12 +82,16 @@ class ConfigImageProcessor:
     "Enable lineage computations(preproc_enabled, seg_enabled, and track_enabled must be true)."
     use_track_RT: bool = False
     "Use special tracking function for tracking in trenches."
-    delta_roi_preprocess_target_size: tuple[int, int] = (2048, 2048)
+    delta_roi_preprocess_target_size: tuple[int, int] = (3200, 3200)
     "Size of microscope images just before being input to DeLTA. This can be different from cfg_delta.target_size_rois."
     image_processing_verbosity: int = 0
     "Lowest verbosity is 0."
     refocus: bool = True
-    "Refocus after autofocus loss."
+    "Refocus after autofocus loss. Set refocus_using_software_focus=False to avoid using autofocus."
+    refocus_using_software_focus: bool = True
+    "Use software focus to refocus after autofocus loss. refocus must be True."
+    refocus_on_all_positions: bool = False
+    "Try refocusing on all recorded positions. refocus and refocus_using_software_focus must be True."
     max_refocus_trials: int = 10
     "Maximum number of refocusing trials before stopping execution."
     chamber_orientation: ChamberOrientationType = ChamberOrientationType.HORIZONTAL
@@ -106,12 +110,11 @@ class ConfigImageProcessor:
         if not (isinstance(self.channels, list) and all(isinstance(channel, LEDType) for channel in self.channels))\
                 or len(self.channels) == 0 or LEDType.NO_LED in self.channels:
             raise ConfigError("Invalid channel list.", ErrorCode.ERROR_CONFIG)
-        if not isinstance(self.channel_seg, LEDType) or self.channel_seg != self.channels[0]:
-            raise TypeError("channel_seg must be a LEDType object in channels and equal to channels[0].")
-        if not isinstance(self.channel_rot, LEDType) or self.channel_rot not in self.channels:
-            raise TypeError("channel_rot must be a LEDType object in channels.")
-        if not isinstance(self.channel_roi, LEDType) or self.channel_roi not in self.channels:
-            raise TypeError("channel_roi must be a LEDType object in channels.")
+        if not (isinstance(self.channels_seg, list) and all(isinstance(ch, LEDType) for ch in self.channels_seg))\
+                or len(self.channels_seg) == 0 or LEDType.NO_LED in self.channels_seg:
+            raise ConfigError("Invalid channels_seg list.", ErrorCode.ERROR_CONFIG)
+        if not all([ch_seg in self.channels for ch_seg in self.channels_seg]):
+            raise ConfigError("All channels_seg must be contained in channels.", ErrorCode.ERROR_CONFIG)
         if not isinstance(self.use_track_RT, bool):
             raise TypeError("use_track_RT must be a boolean.")
         if not isinstance(self.image_processing_verbosity, int) or self.image_processing_verbosity < 0:
@@ -151,22 +154,25 @@ class ConfigImageProcessor:
 
 class ConfigImageProcessorFactory:
     @staticmethod
-    def default_config(channels: list[LEDType] | None = None) -> ConfigImageProcessor:
+    def default_config(
+            channels: list[LEDType] | None = None,
+            channels_seg: list[LEDType] | None = None
+    ) -> ConfigImageProcessor:
         default_channels = [LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_565_NM, LEDType.LED_645_NM]
         cfg_delta = delta.config.Config.default("mothermachine")
-        cfg_delta.whole_frame_drift = True
-        cfg_delta.target_size_rois = (1024, 1024)
+        cfg_delta.whole_frame_drift = False
+        # cfg_delta.target_size_rois = (1024, 1024)
+        cfg_delta.target_size_rois = (1600, 1600)
         cfg_delta.tolerable_resizing_rois = 0
-        cfg_delta.model_file_rois = EVOMACHINE_DIR.parent / "delta_models/evo_roi_2024-05-08.keras"
+        # cfg_delta.model_file_rois = EVOMACHINE_DIR.parent / "delta_models/evo_roi_2024-05-08.keras"
+        cfg_delta.model_file_rois = EVOMACHINE_DIR.parent / "delta_models/evo_roi_M9_2024-12-10.keras"
         cfg_delta.target_size_seg = (250, 64)
         cfg_delta.model_file_seg = EVOMACHINE_DIR.parent / "delta_models/evo_seg_2024-06-27.keras"
         # cfg_delta.model_file_track = EVOMACHINE_DIR.parent / "delta_models/unet_moma_track.hdf5"
         return ConfigImageProcessor(
             cfg_delta=cfg_delta,
             channels=default_channels if channels is None else channels,
-            channel_seg=LEDType.LED_450_NM,
-            channel_rot=LEDType.LED_450_NM,
-            channel_roi=LEDType.LED_450_NM,
+            channels_seg=default_channels if channels_seg is None else channels_seg,
             roi_enabled=False,
             seg_enabled=False,
             preproc_enabled=False,
@@ -257,7 +263,7 @@ class ConfigCRISPFactory:
             averaging=5,
             update_rate=10,
             objective_na=0.65,
-            lock_range=0.05,
+            lock_range=0.1,
         )
 
 
@@ -369,7 +375,7 @@ class ConfigCamera:
     "Available filter wheels. See FilterWheelType."
     path_to_save: Path
     "Path to save images."
-    default_exposure_time: float | int = 100
+    default_exposure_time: float | int = 500
     "Default exposure time in ms."
     default_focus_channel_id: int = 0
     "Default LED channel index in self.leds."
@@ -432,7 +438,7 @@ class ConfigCameraFactory:
     def get_available_leds() -> list[LEDType]:
         if USE_SYNC_BOARD:
             return [LEDType.NO_LED, LEDType.LED_385_NM, LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_565_NM,
-                    LEDType.LED_645_NM]
+                    LEDType.LED_645_NM, LEDType.LED_OVERHEAD]
         else:
             return [LEDType.NO_LED, LEDType.LED_405_NM, LEDType.LED_450_NM, LEDType.LED_505_NM, LEDType.LED_538_NM]
 

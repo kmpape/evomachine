@@ -8,13 +8,13 @@ import traceback
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QIcon
 
-
+# NOTE: Use env delta_evomachine, and if it bugs use evomachine3.11_v7
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'asitiger'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'sync_board'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'de-lta-rt'))
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'sync_board'))
 
-from evomachine.acquisition import TestCamera, EvoCamera, EvoCamerav2  # noqa
+from evomachine.acquisition import TestCamera, EvoCamera, EvoCamerav2 # , EvoCamerav3  # noqa
 from evomachine.automaton import Automaton  # noqa
 from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, ConfigImageProcessorFactory, \
     EVOMACHINE_DIR, USE_DMD_SOCKET, USE_SYNC_BOARD  # noqa
@@ -23,19 +23,21 @@ if USE_DMD_SOCKET:
 else:
     from evomachine.dmd import DMDControl  # noqa
     import pygame  # noqa
+from evomachine.evotypes import LEDType
 
 from evomachine.guidir.newgui import EvoGUI  # noqa
 from evomachine.guidir.queuemanager import QueueManager  # noqa
 from evomachine.strategy import AbstractStrategy, BasicStrategy   # TODO add dropdown in GUI  # noqa
-from strategies.strategy_2024_03_07 import JessStrategy  # noqa
-from strategies.strategy_2024_04_25 import UVTestingStrategy  # noqa
-from strategies.strategy_2024_04_30 import UVTestingStrategyv2  # noqa
-from strategies.strategy_2024_05_01 import UVTestingStrategyv3  # noqa
-from strategies.strategy_2024_05_10 import UVTestingStrategyv4  # noqa
-from strategies.strategy_2024_05_28 import UVTestingStrategyv5  # noqa
-from strategies.strategy_2024_05_31 import ROITestingStrategy  # noqa
+# from strategies.strategy_2024_03_07 import JessStrategy  # noqa
+# from strategies.strategy_2024_04_25 import UVTestingStrategy  # noqa
+# from strategies.strategy_2024_04_30 import UVTestingStrategyv2  # noqa
+# from strategies.strategy_2024_05_01 import UVTestingStrategyv3  # noqa
+# from strategies.strategy_2024_05_10 import UVTestingStrategyv4  # noqa
+# from strategies.strategy_2024_05_28 import UVTestingStrategyv5  # noqa
+# from strategies.strategy_2024_05_31 import ROITestingStrategy  # noqa
 from strategies.strategy_MagnetOnOff import MagnetOnOffStrategy, PROCESSOR_CONFIG as MAGNET_PROCESSOR_CONFIG
 from strategies.strategy_GFP_image_noise import GFP_noise_strategy
+from strategies.strategy_UV_testing import UVStrategy
 
 
 def create_automaton_process(
@@ -52,6 +54,7 @@ def create_automaton_process(
 ):
     if USE_SYNC_BOARD:
         cam = EvoCamerav2(cfg_camera=camera_config)
+        # cam = EvoCamerav3(cfg_camera=camera_config)
     else:
         cam = EvoCamera(cfg_camera=camera_config)
     if not USE_DMD_SOCKET:
@@ -79,7 +82,7 @@ if __name__ == '__main__':
 
     # Provide strategy that will be loaded by GUI
     # save_path: str = "/media/hslab/Data/ImageData/Idris/2024-07-04"
-    save_path =  "/home/hslab/Documents/Gabi/GUI_SaveDir"
+    save_path = "/home/hslab/Documents/Gabi/GUI_SaveDir"
     if not os.path.exists(save_path):
         current_folder = os.path.dirname(os.path.abspath(__file__))
         save_path = os.path.join(current_folder, "DEFAULT")
@@ -89,19 +92,27 @@ if __name__ == '__main__':
     is_oil_objective = False
     camera_config: ConfigCamera = ConfigCameraFactory.default_air_config()
     camera_config.path_to_save = Path(save_path)
-    
-    # processor_config: ConfigImageProcessor = ConfigImageProcessorFactory.default_config()
-    # processor_config.cfg_delta.whole_frame_drift = True
 
-    processor_config = MAGNET_PROCESSOR_CONFIG
-    # processor_config = ConfigImageProcessorFactory.default_config()
+    processor_config: ConfigImageProcessor = ConfigImageProcessorFactory.default_config(
+        channels=[LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_565_NM, LEDType.LED_645_NM],
+        channels_seg=[LEDType.LED_565_NM],
+    )
+    processor_config.preproc_enabled = False
+    processor_config.roi_enabled = False
+    processor_config.seg_enabled = False
+    processor_config.track_enabled = False
+    processor_config.lineage_enabled = False
+
+    # processor_config = MAGNET_PROCESSOR_CONFIG
 
     # Provide strategy that will be loaded by GUI
     # strategy: AbstractStrategy = UVTestingStrategyv5(cfg=processor_config)
     # strategy: AbstractStrategy = BasicStrategy(cfg=processor_config, save_path=save_path)
     # strategy: AbstractStrategy = ROITestingStrategy(cfg=processor_config)
     # strategy: AbstractStrategy = MagnetOnOffStrategy(cfg=processor_config)
-    strategy: AbstractStrategy = GFP_noise_strategy(cfg=processor_config)
+    # strategy: AbstractStrategy = GFP_noise_strategy(cfg=processor_config)
+    strategy: AbstractStrategy = UVStrategy(cfg=processor_config)
+    camera_config.focus.focus_channel = strategy.imaging_channel  # NEED TO GIVE SF THE RIGHT CHANNEL
     
     # DO NOT MODIFY ANYTHING BELOW THIS LINE -----------------------------------
 

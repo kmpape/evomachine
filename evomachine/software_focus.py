@@ -5,13 +5,35 @@ from typing import Optional
 from delta.utils import CroppingBox
 
 from evomachine.exceptions import ConfigError, ErrorCode
-from evomachine.evotypes import FocusAlgorithmType
+from evomachine.evotypes import FocusAlgorithmType, FocusCurveType
 
 
 DEFAULT_SQUARED_GRAD_THRESHOLD = 0
 
 def get_focus_score_is_good(focus_curve: np.array) -> bool:  # noqa
-    return True
+    return get_focus_curve_type(focus_curve=focus_curve) == FocusCurveType.HAS_GLOBAL_MAXIMUM
+
+
+def get_focus_curve_type(focus_curve: np.array) -> FocusCurveType:
+    if focus_curve.size < 3:
+        return FocusCurveType.UNKNOWN  # Not enough data to analyze properly
+
+    max_indices = np.where(focus_curve == np.max(focus_curve))[0]
+    num_maxima = len(max_indices)
+
+    # Check for boundary maximum
+    if 0 in max_indices or len(focus_curve) - 1 in max_indices:
+        return FocusCurveType.HAS_BOUNDARY_MAXIMUM
+
+    # Check for single global maximum
+    if num_maxima == 1:
+        return FocusCurveType.HAS_GLOBAL_MAXIMUM
+
+    # Check for multiple maxima
+    if num_maxima > 1:
+        return FocusCurveType.HAS_MAXIMA
+
+    return FocusCurveType.UNKNOWN
 
 
 def get_roi_focus_score(

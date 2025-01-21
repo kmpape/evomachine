@@ -23,6 +23,7 @@ class ErrorCode(Enum):
 
     # Camera errors
     ERROR_MMC_NOT_ALIVE = auto()
+    ERROR_PVC_NOT_ALIVE = auto()
 
     # DMD errors
     ERROR_MONITORS = auto()

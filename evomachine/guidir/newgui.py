@@ -29,7 +29,7 @@ from PyQt5.QtWidgets import (
 
 
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/de-lta-rt')
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger')
+sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger' )
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
 
 

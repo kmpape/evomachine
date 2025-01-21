@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import delta
 from delta.rt import PositionRT
 
-from evomachine.acquisition import AbstractCamera, EvoCamera
+from evomachine.acquisition import AbstractCamera, EvoCamera, EvoCamerav3
 from evomachine.commands import AutomatonCommand, CommandFactory
 from evomachine.config import ConfigFocus, ConfigImageProcessor, EVO_GUI_LOGGING_LEVEL, get_logger, EVOMACHINE_DIR,\
     USE_DMD_SOCKET
@@ -25,9 +25,10 @@ else:
     from evomachine.dmd import DMDControl
 from evomachine.exceptions import ErrorCode, ErrorContainer, ConfigError
 from evomachine.strategy import AbstractStrategy
-from evomachine.utils import EvoCroppingBox, normalise_frame, rotation_correction, multipos_rotation_correction
+from evomachine.utils import EvoCroppingBox, normalise_frame, rotation_correction, multipos_rotation_correction, \
+    combine_channels, channel_extend_img
 from evomachine.evotypes import AutomatonCommandType, DMDCalibConfigType, LEDType, FocusAlgorithmType, \
-    FocusStatusType, FilterWheelType, MagnetModeType
+    FocusStatusType, FilterWheelType, MagnetModeType, AutoFocusStatusType
 
 
 logger = get_logger(name=__name__)
@@ -307,6 +308,9 @@ class Automaton:
         logger.info(f"Automaton.initialise: initialisation done.")
 
     def set_cam_live_mode(self, status: bool = False):
+        if isinstance(self.cam, EvoCamerav3):
+            logger.warning(f"Automaton.set_mmc_live_mode: Using pvc.")
+            return
         if not self.cam.is_initialised():
             logger.warning(f"Automaton.set_mmc_live_mode: Camera not initialised.")
             return
@@ -319,7 +323,11 @@ class Automaton:
     def initialise_devices(self):
         logger.info("Automaton.initialise_devices")
         self.cam.initialise()
-        if isinstance(self.cam, EvoCamera):
+        if isinstance(self.cam, EvoCamerav3):
+            if self.cam.is_initialised():
+                self.cam.cam.exp_time = self.cam.cfg.default_exposure_time
+        # elif...
+        elif isinstance(self.cam, EvoCamera):
             if self.cam.is_initialised():
                 self.set_cam_live_mode(False)
                 self.cam.set_exposure(exposure_time=self.cam.cfg.default_exposure_time)
@@ -355,8 +363,8 @@ class Automaton:
                 if rotation is None:
                     if self._multipos_rotation is None:
                         this_rotation = multipos_rotation_correction(
-                            imgs=[self._ref_frames[i][self._channel_to_index[self._cfg.channel_rot], :, :]
-                                  for i in list(range(len(self._pos_processor)))],
+                            imgs=[combine_channels(self._ref_frames[i], self._channel_to_index, self._cfg.channels_seg)  # noqa
+                                  for i in list(range(len(self._pos_processor)))],  # self._ref_frames[i][self._channel_to_index[self._cfg.channel_rot], :, :]
                         )
                     else:
                         this_rotation = self._multipos_rotation
@@ -364,11 +372,13 @@ class Automaton:
                     this_rotation = rotation
                 logger.info(f"Automaton.initialise_position_processor: Rotating pos {i_pos} "
                             f"by {this_rotation} degrees.")
-
                 self._pos_processor[i_pos].initialise(
-                    reference=self._ref_frames[i_pos],
-                    channel_rot=self._channel_to_index[self._cfg.channel_rot],
-                    channel_roi=self._channel_to_index[self._cfg.channel_roi],
+                    reference=channel_extend_img(
+                        img=self._ref_frames[i_pos],
+                        channel_dict=self._channel_to_index,
+                        channels=self._cfg.channels_seg,
+                        ind=0,
+                    ),
                     rotate=this_rotation,
                     roi_boxes=roi_boxes,
                     seg_model=self.seg_model,
@@ -377,6 +387,7 @@ class Automaton:
                     lineage_enabled=self._cfg.lineage_enabled,
                     roi_min_area=self._cfg.roi_min_area,
                     roi_max_area=self._cfg.roi_max_area,
+                    roi_max_height=self._cfg.roi_max_height,
                 )
                 if not self._pos_processor[i_pos].roi_boxes:
                     logger.warning(f"Initialised position {i_pos} but found no RoIs.")
@@ -619,6 +630,7 @@ class Automaton:
                         position_nb=pos_id,
                         config=self._cfg.cfg_delta,
                         use_track_moma=self._cfg.use_track_RT,
+                        roi_input_size=self._cfg.delta_roi_preprocess_target_size,
                     )
                 )
         else:
@@ -629,6 +641,7 @@ class Automaton:
                     position_nb=which,
                     config=self._cfg.cfg_delta,
                     use_track_moma=self._cfg.use_track_RT,
+                    roi_input_size=self._cfg.delta_roi_preprocess_target_size,
             )
 
     def increment_pos(self) -> None:
@@ -636,10 +649,48 @@ class Automaton:
                              else self._curr_period)
         self._curr_fov_id = (self._curr_fov_id + 1) % len(self._fovs)
 
-    def manage_autofocus(self, curr_fov_id: int, debug_mode: bool = True) -> None:
+    def manage_autofocus(
+            self,
+            curr_fov_id: int,
+            refocus_on_all_positions: bool | None = None,
+            debug_mode: bool = True,
+    ) -> None:
         """
-        Checks the autofocus status and refocuses if the autofocus is lost and self._cfg.refocus is True. Throws an
-        error if the software focus fails.
+        Checks the autofocus status and refocuses if the autofocus is lost and self._cfg.refocus is True. The logic in
+        case of autofocus loss is as follows:
+        if self._cfg.refocus:
+            if self._num_refocus > self._cfg.max_refocus_trials:
+                Throw error and shut down.
+            if self._cfg.refocus_using_software_focus:
+                if self._cfg.refocus_on_all_positions: (overridden by refocus_on_all_positions)
+                    Try software_focus and reinitialise autofocus on all recorded positions until successful.
+                else:
+                    Try software_focus and reinitialise autofocus on current position.
+            else:
+                Move back to previously recorded Z coordinate and reinitialise autofocus.
+        else:
+            Throw error and shut down.
+
+        If any of the above fails, or if autofocus is lost when self._cfg.refocus is False, this function will throw an
+        error and trigger a shutdown.
+
+        Parameters
+        ----------
+        curr_fov_id: int
+            The current ID of the field of view.
+        refocus_on_all_positions: bool | None
+            Overrides self._cfg.refocus_on_all_positions.
+        debug_mode: bool
+            Provides additional print statements
+
+        Returns
+        -------
+
+        Assigns
+        -------
+        self._fovs_full_coords[curr_fov_id].z
+        self._fovs_coords_timeseries[curr_fov_id][-1]
+
         """
         if not self.is_initialised():
             logger.error(f"manage_autofocus: Automaton not initialised. Returning.")
@@ -652,9 +703,15 @@ class Automaton:
             curr_z_coord = self.cam.get_coordinates(['Z'])['Z']
             logger.info(f"manage_autofocus: At FoV ID {curr_fov_id} and Z coordinate {curr_z_coord}. "
                         f"Previous recorded Z coordinate was {old_z_coord}.")
+        if self.cam.autofocus_get_status() == AutoFocusStatusType.OUT_OF_FOCUS:
+            wait_s = 10
+            logger.warning(f"manage_autofocus: received autofocus status {AutoFocusStatusType.OUT_OF_FOCUS}. Waiting "
+                           f"{wait_s} seconds before proceeding.")
+            time.sleep(wait_s)
         is_locked = self.cam.autofocus_is_locked()
         if not is_locked:
-            logger.warning(f"manage_autofocus: lost autofocus lock on fov_id={curr_fov_id}.")
+            logger.warning(f"manage_autofocus: lost autofocus lock on fov_id={curr_fov_id} and Z coordinate "
+                           f"self.cam.get_coordinates(['Z'])['Z'].")
             max_num_trials_reached = False
             if self._cfg.refocus:
                 if self._num_refocus > self._cfg.max_refocus_trials:
@@ -669,7 +726,7 @@ class Automaton:
                     # Unlock autofocus to be sure
                     self.cam.autofocus_unlock()
 
-                    if True:
+                    if not self._cfg.refocus_using_software_focus:
                         # Find previous position
                         prev_pos = curr_fov_id-1 if curr_fov_id-1 >= 0 else list(self._fovs_full_coords.keys())[-1]
                         logger.info(f"manage_autofocus: moving back to pos ID = {prev_pos} at coordinates "
@@ -684,6 +741,7 @@ class Automaton:
                         )
                         if is_success:
                             self.cam.autofocus_lock()
+                            time.sleep(3)  # give the tiger box some time to update the autofocus status
                             logger.info(f"manage_autofocus: Successfully locked on previous position. Moving back.")
                             self._move_to_pos(curr_fov_id)
                             self._fovs_full_coords[curr_fov_id].z = self.cam.get_coordinates(['Z'])['Z']
@@ -694,26 +752,53 @@ class Automaton:
                             logger.error(f"manage_autofocus: Error initialising autofocus. Halting execution.")
                             self.shutdown()
                     else:
-                        # Move to previously recorded Z coordinate (X and Y should be current)
-                        logger.info(f"manage_autofocus: moving back to {self._fovs_full_coords[curr_fov_id]}.")
-                        self.cam.move_to(coordinate=self._fovs_full_coords[curr_fov_id], block=True)
-
-                        # Run software focus and lock autofocus if successful.
-                        self._run_software_focus(cfg_focus=self.cam.cfg.focus, curr_fov_id=curr_fov_id)
-                        if self.cam.get_software_focus_status() == FocusStatusType.IN_FOCUS:
-                            is_success = self.cam.autofocus_initialise(
-                                user_input=False,
-                            )
-                            if is_success:
-                                self.cam.autofocus_lock()
-                                self._fovs_full_coords[curr_fov_id].z = self.cam.get_coordinates(['Z'])['Z']
-                                logger.info(f"manage_autofocus: successfully refocused and locked autofocus. "
-                                            f"Old Z coordinate was {old_z_coord}. "
-                                            f"New is {self._fovs_full_coords[curr_fov_id].z}.")
-                            else:
-                                logger.error(f"manage_autofocus: Error initialising autofocus. Halting execution.")
-                                self.shutdown()
+                        if refocus_on_all_positions is not None:
+                            num_iter: int = len(self._fovs) if refocus_on_all_positions else 1
                         else:
+                            num_iter: int = len(self._fovs) if self._cfg.refocus_on_all_positions else 1
+                        msg_tmp = f"all ({num_iter})" if num_iter > 1 else "one"
+                        msg = f"manage_autofocus: Trying to refocus on {msg_tmp} positions."
+                        logger.info(msg)
+
+                        # Try software focus on every required FoV
+                        next_fov_id = curr_fov_id
+                        software_focus_success: bool = False
+                        for i_sf_trial in range(num_iter):
+                            # Move to previously recorded Z coordinate (X and Y should be current)
+                            logger.info(f"manage_autofocus: At iteration {i_sf_trial+1} of {num_iter} and "
+                                        f"fov_id={next_fov_id}. Moving back to {self._fovs_full_coords[next_fov_id]}.")
+                            self.cam.move_to(coordinate=self._fovs_full_coords[next_fov_id], block=True)
+                            this_old_z_coord = self._fovs_full_coords[next_fov_id].z
+
+                            # Run software focus and lock autofocus if successful.
+                            self._run_software_focus(cfg_focus=self.cam.cfg.focus, curr_fov_id=next_fov_id)
+                            software_focus_success = self.cam.get_software_focus_status() == FocusStatusType.IN_FOCUS
+                            if software_focus_success:
+                                auto_focus_success = self.cam.autofocus_initialise(
+                                    user_input=False,
+                                )
+                                if auto_focus_success:
+                                    self.cam.autofocus_lock()
+                                    self._fovs_full_coords[next_fov_id].z = self.cam.get_coordinates(['Z'])['Z']
+                                    logger.info(f"manage_autofocus: successfully refocused and locked autofocus on "
+                                                f"fov_id={next_fov_id}. Old Z coordinate was {this_old_z_coord}. "
+                                                f"New is {self._fovs_full_coords[next_fov_id].z}.")
+                                    if next_fov_id != curr_fov_id:
+                                        logger.info(f"manage_autofocus: moving back to fov_id={curr_fov_id} from "
+                                                    f"fov_id={next_fov_id} before proceeding.")
+                                        self._move_to_pos(pos_id=curr_fov_id)
+                                    break
+                                else:
+                                    logger.error(f"manage_autofocus: Error initialising autofocus. Halting execution.")
+                                    self.shutdown()
+                            else:
+                                # Get next FoV and retry
+                                old_fov_id = next_fov_id
+                                next_fov_id = self.get_next_pos_id(current_pos=next_fov_id)
+                                msg = f"manage_autofocus: software focus unsuccessful on fov_id={old_fov_id}."
+                                logger.warning(msg)
+
+                        if not software_focus_success:
                             logger.error(f"manage_autofocus: Received bad FocusStatusType="
                                          f"{self.cam.get_software_focus_status()}. Halting execution.")
                             self.shutdown()
@@ -773,9 +858,12 @@ class Automaton:
                         f"to {param_value}.")
             self._pos_processor[pos_id].rotate = float(param_value)
             self._pos_processor[pos_id].initialise(
-                reference=normalise_frame(self._ref_frames[pos_id]),  # TODO need to crop frames
-                channel_rot=self._channel_to_index[self._cfg.channel_rot],
-                channel_roi=self._channel_to_index[self._cfg.channel_roi],
+                reference=channel_extend_img(
+                    img=self._ref_frames[pos_id],
+                    channel_dict=self._channel_to_index,
+                    channels=self._cfg.channels_seg,
+                    ind=0,
+                ),
                 rotate=self._pos_processor[pos_id].rotate,
                 seg_model=self.seg_model,
                 tracking_model=self.tracking_model,
@@ -783,6 +871,7 @@ class Automaton:
                 lineage_enabled=self._cfg.lineage_enabled,
                 roi_min_area=self._cfg.roi_min_area,
                 roi_max_area=self._cfg.roi_max_area,
+                roi_max_height=self._cfg.roi_max_height,
             )
 
     def _gui_process(self):
@@ -833,11 +922,6 @@ class Automaton:
             self.last_commands = self.next_commands
             self.next_commands = self._strategy.finalise()
 
-        # try:
-        #     logger.info(f"Automaton._process: Syncboard read: {self.cam.syncboard.connection.read_response(1)}")
-        # except Exception as e:
-        #     logger.warning(e)
-
         # Execute requested commands in the given order
         for cmd in self.next_commands:
             logger.info(f"Automaton._process: Executing {cmd}.")
@@ -850,6 +934,10 @@ class Automaton:
             if cmd.command_type == AutomatonCommandType.MOVE:
                 self._move_to_pos(pos_id=cmd.command_args)
                 self.manage_autofocus(curr_fov_id=self._curr_fov_id)
+                if self._cfg.refocus and self._cfg.refocus_on_all_positions:
+                    # If we refocused on a different position we might've lost autofocus again moving back. In this
+                    # case, refocus on the current position.
+                    self.manage_autofocus(curr_fov_id=self._curr_fov_id, refocus_on_all_positions=False)
 
             elif cmd.command_type == AutomatonCommandType.SAVE_STATE:
                 self.save_state(filename_suffix=cmd.command_args)
@@ -1100,7 +1188,7 @@ class Automaton:
         self._strategy = strategy
         self._initialise_strategy()
 
-    def _move_to_pos(self, pos_id: Union[int, None] = -1):
+    def _move_to_pos(self, pos_id: int | None = -1):
         if pos_id is None:
             return
         elif pos_id == -1:
@@ -1159,6 +1247,9 @@ class Automaton:
 
     def get_channel_to_index(self) -> Dict[LEDType, int]:
         return {key: value for key, value in self._channel_to_index.items()}
+
+    def get_next_pos_id(self, current_pos: int) -> int:
+        return (current_pos + 1) % len(self._fovs)
 
     def get_period(self) -> int:
         return self._curr_period

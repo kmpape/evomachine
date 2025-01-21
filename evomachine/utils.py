@@ -13,12 +13,96 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.expand_frame_repr', False)
 
 
+def channel_extend_img(
+        img: np.ndarray,
+        channel_dict: dict[Any, int],
+        channels: list[Any],
+        ind: int = 0,
+) -> np.ndarray:
+    """
+    Takes a 3D images and inserts a new frame obtained from combine_channels
+    Parameters
+    ----------
+    img
+    channel_dict
+    channels
+    ind
+
+    Returns
+    -------
+
+    """
+    img2d = combine_channels(img=img, channel_dict=channel_dict, channels=channels)
+    return combine_images(img3d=img, img2d=img2d, ind=ind)  # noqa
+
+
+def combine_images(img3d: np.ndarray, img2d: np.ndarray, ind: int = 0) -> np.ndarray:
+    """
+    Combines a 3D and a 2D image by putting the 2D image at position ind of the first 3D axis.
+
+    Parameters
+    ----------
+    img3d:  3D image
+    img2d:  2D image
+    ind:    Index of where img2d will be placed
+
+    Returns
+    -------
+    img3d_new:  New 3D image.
+    """
+    if img2d.shape != img3d.shape[1:]:
+        raise ValueError(f"Shape of img2d must match the height and width of img3d slices. "
+                         f"Expected shape {img3d.shape[1:]}, got {img2d.shape}")
+    n = img3d.shape[0]
+    ind = n if ind == -1 else ind
+    if ind < 0 or ind > n:
+        raise ValueError(f"Index `ind` must be between 0 and {n}, but got {ind}.")
+    img3d_new = np.empty((n + 1, *img3d.shape[1:]), dtype=img3d.dtype)
+    ind_old = [i for i in range(n+1) if i != ind]
+    img3d_new[ind_old] = img3d
+    img3d_new[ind] = img2d
+    return img3d_new
+
+
+def combine_channels(
+        img: np.ndarray,
+        channel_dict: dict[Any, int],
+        channels: list[Any],
+) -> np.ndarray:
+    """
+    
+    Parameters
+    ----------
+    img:            3D numpy array with channels in the first dimension
+    channel_dict:   Dictionary mapping channels to first dimension indices
+    channels:       Channels to combine
+
+    Returns
+    -------
+    combined_img:   2D numpy array of the same type with averaged values
+    """
+    if len(channels) == 1:
+        return img[channel_dict[channels[0]]]
+    else:
+        tmp = img.astype(float)
+        tmp = tmp[[channel_dict[ch] for ch in channels]]
+        tmp = np.mean(tmp, axis=0)
+        return tmp.astype(img.dtype)
+
+
 def list_serial_ports(starts_with: str | None = None) -> list[str]:
     ports = serial.tools.list_ports.comports()
     if starts_with is not None:
         return [port.device for port in ports if port.device.startswith(starts_with)]
     else:
         return [port.device for port in ports]
+
+
+def get_psu_port() -> str:
+    ports = serial.tools.list_ports.comports()
+    for port in ports:
+        if port.product == "KORAD USB Mode" and port.manufacturer == "Nuvoton":
+            return port.device
 
 
 # Data Class to hold rotation parameters

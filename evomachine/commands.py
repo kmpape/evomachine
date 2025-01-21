@@ -166,9 +166,8 @@ class CommandFactory:
 
         Parameters
         ----------
-        channels        : List of LED channels. If the ConfigImageProcessor has preprocessing enabled, channels must
-                          contain ConfigImageProcessor.channel_rot. If the command specifies segment=True, channels must
-                          contain ConfigImageProcessor.channel_seg.
+        channels        : List of LED channels. If any image processing is enabled, channels must
+                          contain ConfigImageProcessor.channels_seg.
         exposure_time   : If None, uses default exposure, otherwise, in MILLISECONDS.
         segment         : Segments image and tracks cells if True. See channels for channel requirements. If segment is
                           True, and ConfigImageProcessor.preproc_enabled is False, this function throws an exception.
@@ -203,12 +202,9 @@ class CommandFactory:
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument force_led ({type(force_led)}).")
         if not isinstance(reset_led, bool):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument reset_led ({type(reset_led)}).")
-        if self._cfg.preproc_enabled:
-            if self._cfg.channel_rot not in channels:
-                raise TypeError(f"If preproc_enabled, channels={channels} must contain {self._cfg.channel_rot}.")
-            if segment:
-                if self._cfg.channel_seg not in channels:
-                    raise TypeError(f"channel_seg={self._cfg.channel_seg} not in channels={channels} for segment=True.")
+        if segment:  # self._cfg.preproc_enabled or
+            if not all([ch_seg in channels for ch_seg in self._cfg.channels_seg]):
+                raise TypeError(f"channels_seg={self._cfg.channels_seg} not in channels={channels} for segment=True.")
         if segment and not self._cfg.preproc_enabled:
             raise TypeError(f"segment=True but preproc_enabled=False.")
         if not ((isinstance(brightness, int) and 0 <= brightness <= 100) or
@@ -310,7 +306,7 @@ class CommandFactory:
         if not (isinstance(brightness, int) or not isinstance(brightness, float)) or not (0 <= brightness <= 100):
             msg = f"AutomatonCommandFactory.project: Brightness must satisfy {0} < {duration} (actual) < 100."
             raise TypeError(msg)
-        max_duration = 180 if brightness > 29 else 3600
+        max_duration = 6*60 if brightness > 29 else 3600
         if not (isinstance(duration, float) or isinstance(duration, int)) or not (0 < duration < max_duration):
             msg = f"AutomatonCommandFactory.project: Duration must satisfy {0} < {duration} (actual) < {max_duration}."
             raise TypeError(msg)
@@ -364,7 +360,7 @@ class CommandFactory:
             raise TypeError(f"AutomatonCommandFactory.command_project_roi: roi_ids do not exist for pos_id={pos_id}.")
         if not (isinstance(brightness, int) or not isinstance(brightness, float)) or not (0 <= brightness <= 100):
             raise TypeError(f"AutomatonCommandFactory.project: Wrong type or range for argument brightness.")
-        max_duration = 180 if brightness > 29 else 3600
+        max_duration = 6*60 if brightness > 29 else 3600
         if not (isinstance(duration, float) or isinstance(duration, int)) or not (0 < duration < max_duration):
             msg = f"AutomatonCommandFactory.project: Duration must satisfy {0} < {duration} (actual) < {max_duration}"
             raise TypeError(msg)
