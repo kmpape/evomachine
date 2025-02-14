@@ -1873,9 +1873,9 @@ class EvoCamerav2(EvoCamera):
         return self._syncboard_is_alive
 
 class EvoCamerav3(EvoCamerav2): # noqa
-    from pyvcam import pvc
-    from pyvcam.camera import Camera
-    from pyvcam import constants
+    # from pyvcam import pvc
+    # from pyvcam.camera import Camera
+    # from pyvcam import constants
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

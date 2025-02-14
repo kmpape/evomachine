@@ -133,9 +133,8 @@ def create_automaton_process(
         time_str = parts[-2] + '_' + parts[-1].split('.')[0] + '.' + parts[-1].split('.')[1]
         return datetime.datetime.strptime(time_str, '%Y-%m-%d_%H:%M:%S.%f')
 
-    # folder_path = str(EVOMACHINE_DIR.parent / "data")
-    # folder_path = "/mnt/nvme1/data/ImageData/mCherry_Images_2024-12-19"
-    folder_path = "/mnt/nvme1/data/ImageData/mCherry_Images_2024-12-19"
+
+    folder_path = "/home/gabi/Projects/evomachine/evomachine_repo/data/mCherry_Images_2024-12-19"
     filenames = [filename for filename in os.listdir(folder_path) if filename.lower().endswith('.tiff')]
     filenames = sorted(filenames, key=lambda x: (get_position(x), get_time(x)))
     pos_to_filename = {get_position(filename): index for index, filename in enumerate(filenames)}
@@ -144,7 +143,7 @@ def create_automaton_process(
 
     if not USE_DMD_SOCKET:
         pygame.init()
-    dmd = DMDControl()
+    dmd = DMDControl(debug_mode=True)  # Set debug_mode to True to avoid creating a window
     automaton = Automaton(
         camera=cam,
         cfg_processor=processor_config,
@@ -180,8 +179,8 @@ if __name__ == '__main__':
         channels=[LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_565_NM, LEDType.LED_645_NM],
         channels_seg=[LEDType.LED_565_NM],
     )
-    processor_config.preproc_enabled = True
-    processor_config.roi_enabled = True
+    processor_config.preproc_enabled = False
+    processor_config.roi_enabled = False
     processor_config.seg_enabled = False
     processor_config.track_enabled = False
     processor_config.lineage_enabled = False

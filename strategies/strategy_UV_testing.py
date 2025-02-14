@@ -36,7 +36,7 @@ class UVStrategy(AbstractStrategy):
     def __init__(self, cfg: ConfigImageProcessor):
         super().__init__(cfg=cfg)
         datestr = datetime.today().strftime('%Y-%m-%d')
-        self.path_to_save = Path("/mnt/nvme1/data/ImageData/UV_Testing_" + datestr)
+        self.path_to_save = Path(f"{DATA_DIR}/UV_Testing_" + datestr)
         if not os.path.exists(self.path_to_save):
             os.mkdir(self.path_to_save)
         # self.path_to_save = self.path_to_save.joinpath("UVStrategy")

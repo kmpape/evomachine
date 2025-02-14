@@ -11,7 +11,9 @@ from evomachine.evotypes import FilterWheelType, FocusAlgorithmType, LEDType, Im
     ImageConfigTypeFactory, ObjectiveConfigTypeFactory, ChamberOrientationType
 
 # Path to large data storage to store logs and files
-DATA_DIR = Path("/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo/images")
+DATA_DIR = Path("/home/gabi/Projects/evomachine/evomachine_repo/data")
+LOG_DIR = DATA_DIR / "Logs"
+LOG_DIR.mkdir(parents=False, exist_ok=True)
 
 # DeLTA/evomachine/asitiger/syncboard/dmdwindow lib install directory
 EVOMACHINE_DIR: Path = Path(__file__).parent
@@ -34,7 +36,7 @@ consolidated_logger.setLevel(EVO_LOGGING_LEVEL)
 
 # Add a file handler for consolidated logging
 filename = "evom_{}.log".format(datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f"))
-file_handler = RotatingFileHandler(f"{DATA_DIR}/Logs/{filename}", maxBytes=1000000, backupCount=20)
+file_handler = RotatingFileHandler(f"{LOG_DIR}/{filename}", maxBytes=1000000, backupCount=20)
 file_handler.setFormatter(EVO_FORMATTER)
 file_handler.setLevel(logging.INFO)
 

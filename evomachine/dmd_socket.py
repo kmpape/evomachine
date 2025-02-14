@@ -103,7 +103,7 @@ class DMDControl:
         "Thread to display output from C program."
         self._calib_data: list[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] | None = None
         "List containing calibration data."
-        self._calib_file: Path = EVOMACHINE_DIR / 'dmd_calibration_data_2025-02-13.pkl'
+        self._calib_file: Path = EVOMACHINE_DIR / 'dmd_calibration_data.pkl'
         "Path to calibration file."
         self._homography_mat: np.ndarray | None = None
         "Homography matrix for mapping image to DMD coordinates."
