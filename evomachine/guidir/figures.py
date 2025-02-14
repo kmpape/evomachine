@@ -126,7 +126,7 @@ class ImageROIBoxes(EvoWorkerTemplate):
         if show_roi_boxes:
             self.draw_roi_boxes(roi_boxes=roi_boxes, show_roi_id=show_roi_id)
         # TODO: this still bugs below and needs fixes
-        if show_roi_boxes and (len(roi_boxes) >= roi_index) and roi_boxes[roi_index] is not None:
+        if show_roi_boxes and (roi_index > -1) and (len(roi_boxes) >= roi_index) and roi_boxes[roi_index] is not None:
             box = roi_boxes[roi_index]
             is_valid_box = box.xbr > box.xtl and box.ybr > box.ytl
             if is_valid_box:
