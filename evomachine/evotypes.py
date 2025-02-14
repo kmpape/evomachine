@@ -220,10 +220,10 @@ class DMDCalibConfigTypeFactory:
             channel=channel,
             brightness=0.4,  # 100
             exposure=50,  # 100
-            line_width=1,
+            line_width=2,
             step=50,  # 400
             delay=0.5,
-            start_row=500,  # should be off-screen
+            start_row=200,  # should be off-screen
             end_row=2200,  # 2500,  # 2250
             start_col=0,
             end_col=1599,

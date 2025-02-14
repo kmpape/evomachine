@@ -53,7 +53,7 @@ class AbstractCamera:
         self._curr_exposure: Union[float, None] = None
         "Currently set exposure time. Note: changes from micromanager are NOT registered."
         self._current_filter_type: FilterWheelType = FilterWheelType.FILTER
-        "Currently set filter type. Note: changes from micromanager are NOT registered."
+        "Currently set filter type. Note: changes from ASI Tiger are NOT registered."
 
         self.focus_scores: Union[None, np.ndarray] = None
         "Initialised in software_focus. Contains the focus score of each image. Larger score = sharper image."
@@ -205,10 +205,12 @@ class AbstractCamera:
             i_pos: int | None = None,
             i_channel: LEDType | None = None,
             suffix: str | None = None,
+            filter_wheel: FilterWheelType | None = None
     ) -> str:
-        return "evom_pos{:02d}_{}_{}{}.tiff".format(
+        return "evom_pos{:02d}_{}_{}{}{}.tiff".format(
             self._curr_pos,
             i_channel if i_channel is not None else "nopos",
+            "" if filter_wheel is None else f"F{filter_wheel.value}",
             datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f"),
             suffix if suffix is not None else "",
         )
@@ -389,6 +391,7 @@ class AbstractCamera:
             filename_suffix: str | None = None,
             i_pos: int | None = None,
             i_channel: LEDType | None = None,
+            filter_wheel: FilterWheelType | None = None,
     ) -> None:
         """
         Image is saved under path_to_save / filename. See arguments for different options. If provided, checks whether
@@ -408,6 +411,8 @@ class AbstractCamera:
             Use i_pos for get_filename().
         i_channel : LEDType | None
             Use i_channel for get_filename().
+        i_channel : LEDType | None
+            Use filter_wheel for get_filename().
         Returns
         -------
 
@@ -569,7 +574,30 @@ class AbstractCamera:
     ) -> bool:
         raise NotImplementedError()
 
+    def get_filter_wheel(self) -> FilterWheelType:
+        """
+        Get current filter wheel set. Variable only set after set_filter_wheel was called. Assumes FILTER otherwise.
+
+        Returns
+        -------
+        filter_wheel : FilterWheelType
+            Last recorded FilterWheelType.
+        """
+        return self._current_filter_type
+
     def set_filter_wheel(self, filter_type: FilterWheelType):
+        """
+        Abstract method for setting filter wheel. Implemented by _set_filter_wheel.
+
+        Parameters
+        ----------
+        filter_type : FilterWheelType
+            Filter to set in camera.
+
+        Returns
+        -------
+
+        """
         self._set_filter_wheel(filter_type=filter_type)
         self._current_filter_type = filter_type
 
@@ -683,6 +711,7 @@ class TestCamera(AbstractCamera):
             i_pos: int | None = None,
             i_channel: LEDType | None = None,
             suffix: str | None = None,
+            filter_wheel: FilterWheelType | None = None,
     ) -> str:
         if i_pos is not None:
             pos = self._pos_id_to_coordinate[i_pos].to_dict()
@@ -690,12 +719,15 @@ class TestCamera(AbstractCamera):
             pos = self._current_pos.to_dict()
         if i_channel is None:
             i_channel = self._current_led_channel
-        return "{}_P{}_X{}_Y{}_Z{}_{}{}.tiff".format(
+        if filter_wheel is None:
+            i_channel = self._current_filter_type
+        return "{}_P{}_X{}_Y{}_Z{}_F{}_{}{}.tiff".format(
             LEDType.get_name(value_to_find=i_channel.value).replace("_", ""),
             i_pos if i_pos is not None else "",
             pos['X'],
             pos['Y'],
             pos['Z'] if 'Z' in pos else "auto",
+            filter_wheel.value if filter_wheel is not None else "None",
             datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f"),
             suffix if suffix is not None else "",
         )
@@ -1293,6 +1325,7 @@ class EvoCamera(AbstractCamera):
             i_pos: int | None = None,
             i_channel: LEDType | None = None,
             suffix: str | None = None,
+            filter_wheel: FilterWheelType | None = None,
     ) -> str:
         if i_pos is not None:
             if i_pos in self._pos_id_to_coordinate.keys():
@@ -1305,12 +1338,15 @@ class EvoCamera(AbstractCamera):
             pos = self.tiger.where(['X', 'Y', 'Z'])
         if i_channel is None:
             i_channel = self._last_frame_channel
-        return "{}_P{}_X{}_Y{}_Z{}_{}{}.tiff".format(
+        if filter_wheel is None:
+            filter_wheel = self._current_filter_type
+        return "{}_P{}_X{}_Y{}_Z{}_F{}_{}{}.tiff".format(
             LEDType.get_name(value_to_find=i_channel.value).replace("_", ""),
             i_pos if i_pos is not None else "",
             np.round(pos['X']),
             np.round(pos['Y']),
             np.round(pos['Z']) if 'Z' in pos else "auto",
+            filter_wheel.value,
             datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f"),
             suffix if suffix is not None else ""
         )

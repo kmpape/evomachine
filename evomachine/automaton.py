@@ -1,4 +1,6 @@
 import copy
+import cv2
+from datetime import datetime
 import logging
 from multiprocessing import Event, Queue
 import numpy as np
@@ -131,7 +133,10 @@ class Automaton:
         self.tracking_model: tf.keras.Model | None = None
         "Delta tracking model."
         if self._cfg.roi_enabled:
-            self.roi_model = delta.model.unet_rois(input_size=(*self._cfg.cfg_delta.target_size_rois, 1))  # noqa
+            self.roi_model = delta.model.unet_rois(
+                input_size=(*self._cfg.cfg_delta.target_size_rois, 1),  # noqa
+                conv_kernel_size=5,
+            )
             logger.info(f"Automaton: Loading RoI model with weights from {self._cfg.cfg_delta.model_file_rois}")
             self.roi_model.load_weights(self._cfg.cfg_delta.model_file_rois)
         if self._cfg.seg_enabled:
@@ -302,8 +307,8 @@ class Automaton:
         assert self._curr_period == 1  # Note that each ROI keeps track of _curr_period as well
 
         # Initialise strategy
-        logger.info(f"Automaton.initialise: initialising strategy...")
-        self._initialise_strategy()
+        logger.warn(f"Automaton.initialise: _NOT_ initialising strategy...")
+        # self._initialise_strategy()
 
         logger.info(f"Automaton.initialise: initialisation done.")
 
@@ -388,6 +393,7 @@ class Automaton:
                     roi_min_area=self._cfg.roi_min_area,
                     roi_max_area=self._cfg.roi_max_area,
                     roi_max_height=self._cfg.roi_max_height,
+                    adjust_cropping_boxes=True,
                 )
                 if not self._pos_processor[i_pos].roi_boxes:
                     logger.warning(f"Initialised position {i_pos} but found no RoIs.")
@@ -577,12 +583,15 @@ class Automaton:
         self.set_cam_live_mode(False)
         logger.info(f"Automaton.initialise_reference_frames: "
                     f"Imaging {len(self._fovs.keys())} FoVs on {self._channel_to_index.keys()}.")
+        # if self._use_autofocus:
+            # Set _curr_fov_id to force autofocus toggle during first move
+            # self._curr_fov_id = None DISABLED BECAUSE NOT NECESSARY FOR NOW
         for i_fov in self._fovs.keys():
-            self.cam.move_to_pos(i_pos=i_fov)
-            self._fovs_full_coords[i_fov].z = self.cam.get_coordinates(['Z'])['Z']
+            self._move_to_pos(pos_id=i_fov)
+            # self._fovs_full_coords[i_fov].z = self.cam.get_coordinates(['Z'])['Z']
             for channel_type, ind in self._channel_to_index.items():
                 if not channel_type == LEDType.LED_385_NM:
-                    self._ref_frames[i_fov][ind, :, :] = self.cam.get_frame(i_chan=channel_type)
+                    self._ref_frames[i_fov][ind, :, :] = self.cam.get_frame(i_chan=channel_type, reset_led=False)
                     if save_references_frames:
                         self.cam.save_frame(
                             frame=self._ref_frames[i_fov][ind, :, :],
@@ -591,6 +600,7 @@ class Automaton:
                             filename_suffix="_ref",
                         )
             self.increment_pos()
+        self._move_to_pos(pos_id=0)
         self.cam.reset_counter()
         self._reference_frames_is_initialised = True
         norm_frames = {i_fov: normalise_frame(frame) for i_fov, frame in zip(self._fovs.keys(), self._ref_frames)}
@@ -692,10 +702,12 @@ class Automaton:
         self._fovs_coords_timeseries[curr_fov_id][-1]
 
         """
-        if not self.is_initialised():
+        if not (self.devices_is_initialised() and self._fov_list_is_initialised):
             logger.error(f"manage_autofocus: Automaton not initialised. Returning.")
             return
+
         if not self._use_autofocus:
+            self._fovs_full_coords[self._curr_fov_id].z = self.cam.get_coordinates(['Z'])['Z']
             logger.warning(f"manage_autofocus: no autofocus to manage as autofocus is disabled.")
             return
         old_z_coord = self._fovs_full_coords[curr_fov_id].z
@@ -743,7 +755,7 @@ class Automaton:
                             self.cam.autofocus_lock()
                             time.sleep(3)  # give the tiger box some time to update the autofocus status
                             logger.info(f"manage_autofocus: Successfully locked on previous position. Moving back.")
-                            self._move_to_pos(curr_fov_id)
+                            self._move_to_pos(curr_fov_id, do_manage_autofocus=False)
                             self._fovs_full_coords[curr_fov_id].z = self.cam.get_coordinates(['Z'])['Z']
                             logger.info(f"manage_autofocus: successfully re-initialised autofocus. "
                                         f"Old Z coordinate was {old_z_coord}. "
@@ -786,7 +798,7 @@ class Automaton:
                                     if next_fov_id != curr_fov_id:
                                         logger.info(f"manage_autofocus: moving back to fov_id={curr_fov_id} from "
                                                     f"fov_id={next_fov_id} before proceeding.")
-                                        self._move_to_pos(pos_id=curr_fov_id)
+                                        self._move_to_pos(pos_id=curr_fov_id, do_manage_autofocus=False)
                                     break
                                 else:
                                     logger.error(f"manage_autofocus: Error initialising autofocus. Halting execution.")
@@ -933,7 +945,7 @@ class Automaton:
 
             if cmd.command_type == AutomatonCommandType.MOVE:
                 self._move_to_pos(pos_id=cmd.command_args)
-                self.manage_autofocus(curr_fov_id=self._curr_fov_id)
+                # self.manage_autofocus(curr_fov_id=self._curr_fov_id)
                 if self._cfg.refocus and self._cfg.refocus_on_all_positions:
                     # If we refocused on a different position we might've lost autofocus again moving back. In this
                     # case, refocus on the current position.
@@ -963,13 +975,21 @@ class Automaton:
                 if self._mmc_live_mode_is_on:  # noqa
                     logger.warning("Automaton._process: Camera live mode is on for IMAGE. Disabling.")
                     self.set_cam_live_mode(False)
+
                 if cmd.command_args['pattern'] is None:
                     self._dmd.display_full()
                 else:
                     self._dmd.display_image(img=cmd.command_args['pattern'])
-                time.sleep(0.5)  # TODO
+                time.sleep(0.5)  # TODO: implement feedback
+
+                if cmd.command_args['filter_wheel'] is not None:
+                    if self.cam.get_filter_wheel() != cmd.command_args['filter_wheel']:
+                        self.cam.set_filter_wheel(filter_type=cmd.command_args['filter_wheel'])
+                        self.sleep(duration=1)  # TODO: implement feedback
+
                 if self.cam.get_exposure() != cmd.command_args['exposure_time']:
                     self.cam.set_exposure(exposure_time=cmd.command_args['exposure_time'])
+
                 self._take_image(
                     channels=cmd.command_args['channels'],
                     brightness=cmd.command_args['brightness'],
@@ -977,6 +997,7 @@ class Automaton:
                 )
                 if not cmd.command_args['force_led']:
                     self.cam.disable_led()
+
                 self._process_position(do_segment=cmd.command_args['segment'], channels=cmd.command_args['channels'])
                 channels_int = [self._channel_to_index[c] for c in cmd.command_args['channels']]
                 if self._cfg.preproc_enabled:  # TODO remove this as position_processors are made accessible to the strategy
@@ -1104,6 +1125,7 @@ class Automaton:
             if not self.devices_is_initialised():
                 self.initialise_devices()
             has_stopped = True
+
             while (not self.strategy_has_started()) and (not self.has_shutdown()):
                 while (not self.stopped()) and (not self.strategy_has_started()) and (not self.has_shutdown()):
                     try:
@@ -1188,15 +1210,60 @@ class Automaton:
         self._strategy = strategy
         self._initialise_strategy()
 
-    def _move_to_pos(self, pos_id: int | None = -1):
+    def _move_to_pos(self, pos_id: int | None = -1, do_manage_autofocus: bool = True):
+        """
+        Move to position pos_id. Implements logic for toggling autofocus if the channel_ids for the current and new
+        position are different. Flag do_manage_autofocus serves to avoid infinite recursive calls as _move_to_pos is
+        also used in manage_autofocus.
+
+        Parameters
+        ----------
+        pos_id : int
+            Position ID to move to.
+        do_manage_autofocus : bool
+            Call self.manage_autofocus() after move.
+
+        Returns
+        -------
+
+        """
+        old_pos_id = self._curr_fov_id
         if pos_id is None:
             return
         elif pos_id == -1:
             self.increment_pos()
-            self.cam.move_to_pos(i_pos=self._curr_fov_id)
+            pos_id = self._curr_fov_id
         else:
-            self.cam.move_to_pos(i_pos=pos_id)
             self._curr_fov_id = pos_id
+
+        toggle_autofocus = (old_pos_id is None and self._use_autofocus) or (
+                (old_pos_id is not None) and
+                (self._fovs[old_pos_id].get_channel_id() is not None) and
+                (self._fovs[self._curr_fov_id].get_channel_id() is not None) and
+                self._use_autofocus and
+                (self._fovs[old_pos_id].get_channel_id() != self._fovs[self._curr_fov_id].get_channel_id())
+        )
+        if not toggle_autofocus:
+            self.cam.move_to_pos(i_pos=pos_id)
+        else:
+            msg = f"Toggling autofocus to move from pos_id {old_pos_id} " \
+                  f"({self._fovs_full_coords[old_pos_id] if old_pos_id is not None else '?'}) to " \
+                  f"{pos_id} ({self._fovs_full_coords[pos_id]})."
+            logger.info(msg)
+            self.cam.autofocus_unlock()
+            self.cam.move_to(coordinate=self._fovs_full_coords[pos_id], block=True)
+            # Note: locking and unlocking does not seem to work
+            # is_success = self.cam.autofocus_initialise(
+            #     user_input=False,
+            # )
+            # msg = f"Re-initialised autofocus after move. Successful: {is_success}"
+            # logger.info(msg)
+            time.sleep(3)  # give the tiger box some time to update the autofocus status
+            self.cam.autofocus_lock()
+
+        if do_manage_autofocus:
+            # Note: even when autofocus disabled, manage_autofocus records the current Z coordinate
+            self.manage_autofocus(curr_fov_id=self._curr_fov_id)
 
     def _take_image(
             self,
@@ -1303,7 +1370,9 @@ class Automaton:
             'cam', '_dmd', '_position_processors_is_initialised', 'roi_model',
             'seg_model', 'tracking_model', '_use_delta', '_start_strategy_event', '_stop_strategy_event',
             '_stop_event', '_shutdown_event', '_process_q', '_gui_to_automaton_q', '_automaton_to_gui_q',
+            'roi_model', 'seg_model', 'tracking_model', '_pos_processor', 'dmd', 'dmd_calibration_data',
         ]
+
         add = {
             'strategy_name': self._strategy.__class__.__name__,
         }
@@ -1412,7 +1481,8 @@ class Automaton:
             logger.error("Automaton.dmd_calibrate: Devices not initialised. Returning.")
             return []
         if filename is None:
-            filename = str(EVOMACHINE_DIR / "dmd_calibration_data.pkl")
+            datestr = datetime.today().strftime('%Y-%m-%d')
+            filename = str(EVOMACHINE_DIR / f"dmd_calibration_data_{datestr}.pkl")
         logger.info(f"Starting DMD calibration with config {cfg} and filename {filename}.")
 
         # Build grid to scan
@@ -1431,6 +1501,7 @@ class Automaton:
         if isinstance(self.cam, EvoCamera):
             self.set_cam_live_mode(False)
         self.cam.set_led(i_chan=cfg.channel, brightness=cfg.brightness)
+        last_filter_type = self.cam.get_filter_wheel()
         self.cam.set_filter_wheel(FilterWheelType.NO_FILTER)
 
         # Get minimum intensity for points to be considered
@@ -1488,7 +1559,7 @@ class Automaton:
                 logger.debug(f"dmd_calibrate: DMD point (r{row},c{col}) off screen with intensity "
                              f"{img_max} < {min_intensity}.")
 
-        self.cam.set_filter_wheel(FilterWheelType.FILTER)
+        self.cam.set_filter_wheel(last_filter_type)
         self.cam.disable_led()
         self._dmd.display_none()
 
@@ -1502,4 +1573,35 @@ class Automaton:
 
         return results
 
+    def project_roi(self, fill_y: float = 0.1):
+        if not self._position_processors_is_initialised or not self._pos_processor:
+            logger.warning(f"Cannot project ROI as position processor not initialised.")
+            return
+        if not self._pos_processor[0].roi_boxes:
+            logger.warning(f"No ROI boxes available to project onto.")
+            return
+        if fill_y > 0:
+            boxes_to_project = [b for i, b in enumerate(self._pos_processor[0].roi_boxes) if i % 2 == 0]
+        else:
+            boxes_to_project = self._pos_processor[0].roi_boxes
+            fill_y = abs(fill_y)
+        pattern = self._dmd.pattern_from_roi_boxes(
+            boxes=boxes_to_project,
+            fill_x=1,
+            fill_y=fill_y,
+        )
+        self._dmd.display_image(img=pattern)
 
+        # cam_img = self._dmd.get_zero_array(img_size=self._dmd.width_height_CAM)
+        # b = self._pos_processor[0].roi_boxes[0]
+        # start_col = b.xtl
+        # end_col = b.xbr
+        # cam_img[:, start_col: end_col] = 255
+        # pattern = self._dmd.img_to_dmd_array(cam_img)
+        # self._dmd.display_image(img=pattern)
+        # img = self._dmd.get_zero_array()
+        # for col in range(30):
+        #     for row in range(30):
+        #         cv2.circle(img, (col*100, row*100), 4, color=255, thickness=-1)  # noqa
+        #         # self._dmd.display_circle(row=row*200, col=col*200, radius=4)
+        # self._dmd.display_image(img)

@@ -37,10 +37,10 @@ class UVStrategy(AbstractStrategy):
         super().__init__(cfg=cfg)
         datestr = datetime.today().strftime('%Y-%m-%d')
         self.path_to_save = Path("/mnt/nvme1/data/ImageData/UV_Testing_" + datestr)
-        # self.path_to_save = Path(DATA_DIR).joinpath("UV_Testing_" + datestr)
         if not os.path.exists(self.path_to_save):
             os.mkdir(self.path_to_save)
-        self.path_to_save = self.path_to_save.joinpath("UVStrategy")
+        # self.path_to_save = self.path_to_save.joinpath("UVStrategy")
+        self.path_to_save = self.path_to_save.joinpath("Overnight")
         if not os.path.exists(self.path_to_save):
             os.mkdir(self.path_to_save)
 
@@ -61,10 +61,13 @@ class UVStrategy(AbstractStrategy):
         # self.proj_img[self.proj_img.shape[0] // 4:self.proj_img.shape[0] // 2, :] = 255
 
         self.start_time_UV: float | None = None
-        self.proj_delay: float = 13.5 * 60 * 60  # in seconds
-        self.proj_times: dict[int, int] = {i: val for i, val in enumerate([300, 30,  45, 60, 60, 60, 60, 0, 0])}  # in seconds
-        self.proj_brightness: dict[int, int] = {i: val for i, val in enumerate([60,  60,  60, 60, 15, 30, 90, 0, 0])}  # brightness in (0,29]
+        self.proj_delay: float = 100 * 60 * 60  # in seconds
+        self.proj_times: dict[int, int] = {i: val for i, val in
+                                           enumerate([300, 30,  45, 60, 60, 60, 60, 0, 0])}  # in seconds
+        self.proj_brightness: dict[int, int] = {i: val for i, val in
+                                                enumerate([60,  60,  60, 60, 15, 30, 90, 0, 0])}  # brightness in (0,29]
         self.has_projected: dict[int, bool] = {i: False for i in range(len(self.proj_times))}
+        # 300 @ 60 to use for ROI projection
 
     @staticmethod
     def format_time(t: float | int | None) -> str:

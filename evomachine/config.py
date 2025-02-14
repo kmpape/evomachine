@@ -87,7 +87,7 @@ class ConfigImageProcessor:
     image_processing_verbosity: int = 0
     "Lowest verbosity is 0."
     refocus: bool = True
-    "Refocus after autofocus loss. Set refocus_using_software_focus=False to avoid using autofocus."
+    "Refocus after autofocus loss (otherwise shuts down). Set refocus_using_software_focus=False to avoid using autofocus."
     refocus_using_software_focus: bool = True
     "Use software focus to refocus after autofocus loss. refocus must be True."
     refocus_on_all_positions: bool = False
@@ -162,10 +162,12 @@ class ConfigImageProcessorFactory:
         cfg_delta = delta.config.Config.default("mothermachine")
         cfg_delta.whole_frame_drift = False
         # cfg_delta.target_size_rois = (1024, 1024)
-        cfg_delta.target_size_rois = (1600, 1600)
+        # cfg_delta.target_size_rois = (1600, 1600)
+        cfg_delta.target_size_rois = (200, 800)
         cfg_delta.tolerable_resizing_rois = 0
         # cfg_delta.model_file_rois = EVOMACHINE_DIR.parent / "delta_models/evo_roi_2024-05-08.keras"
-        cfg_delta.model_file_rois = EVOMACHINE_DIR.parent / "delta_models/evo_roi_M9_2024-12-10.keras"
+        # cfg_delta.model_file_rois = EVOMACHINE_DIR.parent / "delta_models/evo_roi_M9_2024-12-10.keras"
+        cfg_delta.model_file_rois = EVOMACHINE_DIR.parent / "delta_models/evo_roi_mixed_200x800_CKS5_2025-02-11.keras"
         cfg_delta.target_size_seg = (250, 64)
         cfg_delta.model_file_seg = EVOMACHINE_DIR.parent / "delta_models/evo_seg_2024-06-27.keras"
         # cfg_delta.model_file_track = EVOMACHINE_DIR.parent / "delta_models/unet_moma_track.hdf5"

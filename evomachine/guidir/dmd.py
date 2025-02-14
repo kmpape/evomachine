@@ -174,6 +174,15 @@ class DMDPanel(EvoPanelTemplate):
             font=SMALL,
         )
         self.dmd_calib_curves_button.setEnabled(False)
+
+        # DIRTY HACK
+        self.fill_y = 1
+        self.fill_y_textinputs = self.make_lineedit(
+            text="0.1",
+            func=self.set_fill_y,
+            param=None,
+        )
+
         self.layout = QGridLayout()
         self.layout.addWidget(self.make_label(text="DMD Control", font=NORMAL), 0, 0, 1, 1, LEFT)
         _ = [self.layout.addWidget(button, i+1, 0, CENTER) for i, button in enumerate(self.dmd_buttons.values())]
@@ -183,6 +192,8 @@ class DMDPanel(EvoPanelTemplate):
         self.layout.addWidget(self.dmd_calib_curves_button, 2, 3, 1, 1, CENTER)
         self.layout.addWidget(self.img_load_button, 3, 2, 1, 1, CENTER)
         self.layout.addWidget(self.img_label, 3, 3, 1, 1, CENTER)
+        # DIRTY HACK
+        self.layout.addWidget(self.fill_y_textinputs, 4, 0, CENTER)
         self.widget = QWidget()
         self.widget.setLayout(self.layout)
 
@@ -203,15 +214,25 @@ class DMDPanel(EvoPanelTemplate):
 
         self.get_preloaded_calibration()
 
+    # IK: DIRTY HACK
+    def set_fill_y(self):
+        try:
+            self.fill_y = float(self.fill_y_textinputs.text())
+            print(f"Setting fill_y to {self.fill_y}")
+        except ValueError:
+            self.fill_y = 1
+            print(f"Cannot parse value")
+
     def set_dmd(self, mode: int):
         func_dict = {
             DMDModes.DISPLAY_NONE.value: 'self._dmd.display_none',
             DMDModes.DISPLAY_FULL.value: 'self._dmd.display_full',
-            DMDModes.DISPLAY_IMG.value: 'self._dmd.display_loaded_image',
+            # DMDModes.DISPLAY_IMG.value: 'self._dmd.display_loaded_image', DIRTY HACK
+            DMDModes.DISPLAY_IMG.value: 'self.project_roi',
         }
         self.queue_manager.request(
             req_str=func_dict[mode],
-            kwargs_dict={},
+            kwargs_dict={'fill_y': self.fill_y} if mode == DMDModes.DISPLAY_IMG.value else {},
             callback=self.show_dmd_done,
         )
         self.signal_dmd.emit()

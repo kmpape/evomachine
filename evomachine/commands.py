@@ -14,7 +14,7 @@ if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMD_WIDTH_HEIGHT
 else:
     from evomachine.dmd import DMD_WIDTH_HEIGHT
-from evomachine.evotypes import AutomatonCommandType, FocusStatusType, LEDType, MagnetModeType
+from evomachine.evotypes import AutomatonCommandType, FilterWheelType, FocusStatusType, LEDType, MagnetModeType
 from evomachine.utils import EvoCroppingBox
 
 
@@ -158,6 +158,7 @@ class CommandFactory:
             brightness: int | float | list[int | float] = 10,
             save: bool = False,
             pattern: np.ndarray | None = None,
+            filter_wheel: FilterWheelType | None = None,
             force_led: bool = False,
             reset_led: bool = False,
     ) -> AutomatonCommand:
@@ -175,6 +176,7 @@ class CommandFactory:
         save            : Save image(s). Uses ConfigDevice.path_to_save passed to Automaton.
         pattern         : An optional pattern of size width_height_DMD (see DMDControl) that will be displayed using
                           dmd.display_image(). If None, the DMD is set via dmd.display_full().
+        filter_wheel    : Optional filter wheel to set. Otherwise, current setting is used.
         force_led       : TODO
         reset_led       : TODO
 
@@ -215,7 +217,8 @@ class CommandFactory:
             brightness = [brightness for _ in channels]
         command_args = {
             'channels': channels, 'exposure_time': exposure_time, 'segment': segment, 'brightness': brightness,
-            'save': save, 'pattern': pattern, 'force_led': force_led, 'reset_led': reset_led,
+            'save': save, 'pattern': pattern, 'filter_wheel': filter_wheel,
+            'force_led': force_led, 'reset_led': reset_led,
         }
         return AutomatonCommand(
             command_type=AutomatonCommandType.IMAGE,

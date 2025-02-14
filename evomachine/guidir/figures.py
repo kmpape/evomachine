@@ -126,19 +126,24 @@ class ImageROIBoxes(EvoWorkerTemplate):
         if show_roi_boxes:
             self.draw_roi_boxes(roi_boxes=roi_boxes, show_roi_id=show_roi_id)
         # TODO: this still bugs below and needs fixes
-        # if show_roi_boxes and (len(roi_boxes) > 0) and roi_boxes[roi_index] is not None:
-        #     box = roi_boxes[roi_index]
-        #     is_valid_box = box.xbr > box.xtl and box.ybr > box.ytl
-        #     if is_valid_box:
-        #         roi_image = box.crop(image_to_plot)
-        #         roi_image_resized = cv2.resize(roi_image, self.roi_size[::-1], interpolation=cv2.INTER_LINEAR)
-        #         seg_mask_resized = cv2.resize(seg_mask, self.roi_size[::-1], interpolation=cv2.INTER_LINEAR) if \
-        #             seg_mask.shape != (0, 0) else None
-        #         self.update_roi_plot(
-        #             roi_index=roi_index,
-        #             image_to_plot=roi_image_resized,
-        #             seg_mask=seg_mask_resized,
-        #         )
+        if show_roi_boxes and (len(roi_boxes) >= roi_index) and roi_boxes[roi_index] is not None:
+            box = roi_boxes[roi_index]
+            is_valid_box = box.xbr > box.xtl and box.ybr > box.ytl
+            if is_valid_box:
+                roi_image = box.crop(image_to_plot)
+                roi_image_resized = cv2.resize(roi_image, self.roi_size[::-1], interpolation=cv2.INTER_LINEAR)
+                # print(seg_mask)
+                # seg_mask = None
+                # seg_mask_resized = cv2.resize(seg_mask, self.roi_size[::-1], interpolation=cv2.INTER_LINEAR) if \
+                #     seg_mask.size == 0 else None
+                seg_mask_resized = None if seg_mask.size == 0 else cv2.resize(seg_mask, self.roi_size[::-1], interpolation=cv2.INTER_LINEAR)
+                self.update_roi_plot(
+                    roi_index=roi_index,
+                    image_to_plot=roi_image_resized,
+                    seg_mask=seg_mask_resized,
+                )
+        else:
+            logger.warning(f"Cannot show ROI plot for now.")
         self.canvas.draw()
 
 

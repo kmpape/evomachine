@@ -99,7 +99,9 @@ class ExperimentWorker(EvoWorkerTemplate):
             self.valid_coordinates = True
             logger.info(f"Provided points: {valid_all}")
         coordinates = []
-        for from_to in valid_dict:
+        for i_channel, from_to in enumerate(valid_dict):
+            from_to["from"]["channel_id"] = i_channel
+            from_to["to"]["channel_id"] = i_channel
             grid = self.factory.make_grid(
                 start=Coordinate.from_dict(from_to["from"]),
                 stop=Coordinate.from_dict(from_to["to"]),

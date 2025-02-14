@@ -16,7 +16,7 @@ pd.set_option('display.expand_frame_repr', False)
 def channel_extend_img(
         img: np.ndarray,
         channel_dict: dict[Any, int],
-        channels: list[Any],
+        channels: list[Any] | Any,
         ind: int = 0,
 ) -> np.ndarray:
     """
@@ -32,6 +32,8 @@ def channel_extend_img(
     -------
 
     """
+    if not isinstance(channels, list):
+        channels = [channels]
     img2d = combine_channels(img=img, channel_dict=channel_dict, channels=channels)
     return combine_images(img3d=img, img2d=img2d, ind=ind)  # noqa
 

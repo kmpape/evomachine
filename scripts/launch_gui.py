@@ -38,6 +38,7 @@ from evomachine.strategy import AbstractStrategy, BasicStrategy   # TODO add dro
 from strategies.strategy_MagnetOnOff import MagnetOnOffStrategy, PROCESSOR_CONFIG as MAGNET_PROCESSOR_CONFIG
 from strategies.strategy_GFP_image_noise import GFP_noise_strategy
 from strategies.strategy_UV_testing import UVStrategy
+from strategies.strategy_image import ImageStrategy
 
 
 def create_automaton_process(
@@ -82,7 +83,8 @@ if __name__ == '__main__':
 
     # Provide strategy that will be loaded by GUI
     # save_path: str = "/media/hslab/Data/ImageData/Idris/2024-07-04"
-    save_path = "/home/hslab/Documents/Gabi/GUI_SaveDir"
+    # save_path = "/home/hslab/Documents/Gabi/GUI_SaveDir"
+    save_path = "/mnt/nvme1/data/Default"
     if not os.path.exists(save_path):
         current_folder = os.path.dirname(os.path.abspath(__file__))
         save_path = os.path.join(current_folder, "DEFAULT")
@@ -111,7 +113,8 @@ if __name__ == '__main__':
     # strategy: AbstractStrategy = ROITestingStrategy(cfg=processor_config)
     # strategy: AbstractStrategy = MagnetOnOffStrategy(cfg=processor_config)
     # strategy: AbstractStrategy = GFP_noise_strategy(cfg=processor_config)
-    strategy: AbstractStrategy = UVStrategy(cfg=processor_config)
+    # strategy: AbstractStrategy = UVStrategy(cfg=processor_config)
+    strategy: AbstractStrategy = ImageStrategy(cfg=processor_config)
     camera_config.focus.focus_channel = strategy.imaging_channel  # NEED TO GIVE SF THE RIGHT CHANNEL
     
     # DO NOT MODIFY ANYTHING BELOW THIS LINE -----------------------------------

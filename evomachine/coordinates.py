@@ -12,18 +12,21 @@ class Coordinate:
 
     def __init__(
             self,
-            x: Union[float, int, None],
-            y: Union[float, int, None],
-            z: Union[float, int, None] = None,
+            x: float | int | None,
+            y: float | int | None,
+            z: float | int | None = None,
+            channel_id: int = 0,
     ):
-        # if not ((isinstance(x, float) or isinstance(x, int)) and (isinstance(y, float) or isinstance(y, int))):
-        #     raise TypeError(f"Coordinate: both x and y must be float or int. Received x={x} and y={y}.")
         self.x = x
         self.y = y
         self.z = z
+        self._channel_id = channel_id
 
     def copy(self) -> 'Coordinate':
-        return Coordinate(self.x, self.y, self.z)
+        return Coordinate(x=self.x, y=self.y, z=self.z, channel_id=self._channel_id)
+
+    def get_channel_id(self) -> int:
+        return self._channel_id
 
     def has_z(self) -> bool:
         return self.z is not None
@@ -32,13 +35,18 @@ class Coordinate:
         sign_x = 1 if self.x > 0 else (-1 if self.x < 0 else 0)
         sign_y = 1 if self.y > 0 else (-1 if self.y < 0 else 0)
         sign_z = None if self.z is None else (1 if self.z > 0 else (-1 if self.z < 0 else 0))
-        return Coordinate(sign_x, sign_y, sign_z)
+        return Coordinate(x=sign_x, y=sign_y, z=sign_z, channel_id=self._channel_id)
 
     def to_dict(self):
         return {key: val for key, val in zip(['X', 'Y', 'Z'], [self.x, self.y, self.z]) if val is not None}
 
     def __abs__(self):
-        return Coordinate(abs(self.x), abs(self.y), None if self.z is None else abs(self.z))
+        return Coordinate(
+            x=abs(self.x),
+            y=abs(self.y),
+            z=None if self.z is None else abs(self.z),
+            channel_id=self._channel_id
+        )
 
     def __add__(self, other):
         if isinstance(other, Coordinate):
@@ -72,7 +80,7 @@ class Coordinate:
         x_str = f"{self.x:.{COORD_PRINT_PRECISION}f}" if self.x is not None else "None"
         y_str = f"{self.y:.{COORD_PRINT_PRECISION}f}" if self.y is not None else "None"
         z_str = f"{self.z:.{COORD_PRINT_PRECISION}f}" if self.z is not None else "None"
-        return f"(x={x_str}, y={y_str}, z={z_str})"
+        return f"(x={x_str}, y={y_str}, z={z_str}, channel_id={self._channel_id})"
 
     def __repr__(self):
         return f"Coordinate{self}"
@@ -126,11 +134,12 @@ class Coordinate:
         x = coord_dict.get('x') or coord_dict.get('X')
         y = coord_dict.get('y') or coord_dict.get('Y')
         z = coord_dict.get('z') or coord_dict.get('Z')
-        return Coordinate(x, y, z)
+        channel_id = coord_dict['channel_id'] if 'channel_id' in coord_dict.keys() else 0
+        return Coordinate(x=x, y=y, z=z, channel_id=channel_id)
 
     @staticmethod
     def from_coordinate(other: 'Coordinate') -> 'Coordinate':
-        return Coordinate(other.x, other.y, other.z)
+        return Coordinate(other.x, other.y, other.z, other.get_channel_id())
 
     @staticmethod
     def none_coordinate() -> 'Coordinate':
