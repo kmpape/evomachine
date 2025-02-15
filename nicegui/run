@@ -1,0 +1,14 @@
+#!/bin/bash
+
+SCRIPT_DIR=$(dirname "$0")
+cd "$SCRIPT_DIR"
+
+if  [ "$1" == "all" ]; then
+    fuser -k 8765/tcp
+    python microscope_server.py & python main.py
+elif [ "$1" == "server" ]; then
+    fuser -k 8765/tcp
+    python microscope_server.py
+else
+    python main.py
+fi
