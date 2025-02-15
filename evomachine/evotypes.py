@@ -144,6 +144,13 @@ class LEDType(EvoType):
     LED_505_NM = 7
     LED_538_NM = 8
 
+    def to_json(self):
+        return self.name
+
+    @staticmethod
+    def from_json(data):
+        return LEDType[data]
+
 
 class FilterWheelType(EvoType):
     # OLD VALUES

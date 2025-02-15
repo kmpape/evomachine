@@ -160,7 +160,7 @@ def create_automaton_process(
 
 
 
-def launch_automaton() -> tuple[Event, Event, Event, Event, Queue, Queue, Queue]:
+def launch_automaton() -> tuple[Event, Event, Event, Event, Queue, Queue, Queue, Queue, ConfigCamera]:
     print(f"Launching evomachine GUI (Testcamera) from {EVOMACHINE_DIR}.")
 
     # Provide strategy that will be loaded by GUI
@@ -250,6 +250,8 @@ def launch_automaton() -> tuple[Event, Event, Event, Event, Queue, Queue, Queue]
         stop_event,
         shutdown_event,
         process_queue,
+        queue_manager,
         gui_to_automaton_queue,
-        automaton_to_gui_queue
+        automaton_to_gui_queue,
+        camera_config
     )

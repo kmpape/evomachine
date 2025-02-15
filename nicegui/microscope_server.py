@@ -1,13 +1,16 @@
 #!/usr/bin/env python
 
-import datetime
+import sys
+import os
 import asyncio
 from websockets.asyncio.server import serve
 import socket
 import signal
 
 from multiprocessing import Event, Queue
-from launch_automaton import launch_automaton
+from launch_automaton import launch_automaton, QueueManager, ConfigCamera, LEDType
+
+from messages import Message, TextMessage, CameraConfigMessage
 
 SHUTDOWN_EXISTING = True
 
@@ -18,22 +21,50 @@ shutdown_event: Event = None
 process_queue: Queue  = None
 gui_to_automaton_queue: Queue = None
 automaton_to_gui_queue: Queue = None
+queue_manager: QueueManager = None
+camera_config: ConfigCamera = None
+
+def set_led(led, brightness):
+    global queue_manager
+    queue_manager.request(
+        req_str='self.cam.set_led',
+        kwargs_dict={'i_chan': led, 'brightness': brightness},
+        # callback=self.update_led,
+        # callback_args=(i_channel, brightness,),
+    )
+
 
 async def handler(websocket):
-    global automaton_to_gui_queue, gui_to_automaton_queue, shutdown_event
+    global automaton_to_gui_queue, gui_to_automaton_queue, shutdown_event, camera_config
 
-    async def send_periodic_message():
-        while True:
-            current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            await websocket.send(f"Periodic message at time {current_time}")
-            await asyncio.sleep(1)
-
-    asyncio.create_task(send_periodic_message())
+    # async def send_periodic_message():
+    #     while True:
+    #         current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    #         await websocket.send(TextMessage(f"Periodic message at time {current_time}").encode())
+    #         await websocket.send(TextMessage(f"Current a_to_g queue size: {gui_to_automaton_queue.qsize()}").encode())
+    #         await asyncio.sleep(1)
+    # asyncio.create_task(send_periodic_message())
 
 
     # Receive messages
     async for message in websocket:
-        await websocket.send(message)
+        
+        # Attempt to decode the message
+        try:
+            message = Message.decode(message)
+        except Exception as e:
+            print(f"Failed to decode message: {e}")
+            continue
+        
+        await websocket.send(TextMessage(f"Received message of type: {message.type}").encode())
+
+        if message.type == "setled":
+            led, brightness = message.content
+            set_led(led, brightness)
+        elif message.type == "requestcameraconfig":
+            await websocket.send(CameraConfigMessage(content=camera_config).encode())
+        
+        # await websocket.send(message)
 
 
 async def main():
@@ -79,8 +110,10 @@ if __name__ == "__main__":
         stop_event,
         shutdown_event,
         process_queue,
+        queue_manager,
         gui_to_automaton_queue,
-        automaton_to_gui_queue
+        automaton_to_gui_queue,
+        camera_config
     ) = launch_automaton()
 
     try:

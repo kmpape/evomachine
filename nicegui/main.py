@@ -5,6 +5,9 @@ import asyncio
 from websockets.asyncio.client import connect
 from websockets import ClientConnection
 
+from messages import Message, TextMessage, SetLEDMessage, RequestConfigCameraMessage, CameraConfigMessage
+from evomachine.evotypes import LEDType
+
 RELOAD = True
 
 websocket_connection: ClientConnection = None
@@ -12,8 +15,20 @@ websocket_state = {
     'connected': False
 }
 
+led_brightness = {'value': 50.0}
+
+camera_config = None
+camera_config_event = asyncio.Event()
+
 async def on_message(message):
-    print(f"Received message: {message}")
+    global camera_config
+    message = Message.decode(message)
+    print(f"Received message type: {message}")
+
+    if message.type == 'cameraconfig':
+        camera_config = CameraConfigMessage.decode_content(message.content).content
+        camera_config_event.set()
+
 
 async def connect_to_websocket():
     global websocket_connection, websocket_state
@@ -32,13 +47,32 @@ async def connect_to_websocket():
             print(f"Connection failed: {e}. Retrying in 1 second.")
             await asyncio.sleep(1)
 
+    await websocket_connection.send(RequestConfigCameraMessage().encode())
+
 async def hello():
     global websocket_connection
     if websocket_connection is None:
         print("Not connected to websocket!")
         return
-    await websocket_connection.send("Hello world!")
+    await websocket_connection.send(TextMessage("Hello world!").encode())
 
+async def set_led():
+    global websocket_connection, led_brightness
+    if websocket_connection is None:
+        print("Not connected to websocket!")
+        return
+    await websocket_connection.send(SetLEDMessage(content=(LEDType.LED_450_NM, led_brightness)).encode())
+
+@ui.page('/')
+async def page():
+    await camera_config_event.wait() # Make sure the camera config is received before rendering the page
+
+    with ui.card():
+        for led in camera_config.leds:
+            with ui.row():
+                ui.label(f"LED {led.name}")
+                ui.number(value=50.0, min=0, max=100, step=1)
+                # ui.button("Set LED")
 
 def main():
     global websocket_connection
@@ -51,11 +85,17 @@ def main():
         ui.run(host='127.0.0.1', port=8080, reload=RELOAD)
         return
     
-    print("Building UI")
-    ui.label("Say hello button: ")
-    ui.button('Say Hello', on_click=hello)
+    # print("Building UI")
+    # ui.label("Say hello button: ")
+    # ui.button('Say Hello', on_click=hello)
+    # leds_container = ui.card()
+    # with leds_container:
+    #     ui.label("Set LED brightness: ")
+    #     # Wait until the cameraconfig is received
+
 
     app.on_startup(connect_to_websocket)
+
     ui.run(host='127.0.0.1', port=8080, reload=RELOAD)
 
 
