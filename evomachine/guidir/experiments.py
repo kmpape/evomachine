@@ -14,7 +14,8 @@ from delta.utils import CroppingBox as DeltaCroppingBox
 
 from evomachine.acquisition import AbstractCamera
 from evomachine.commands import AutomatonCommand, AutomatonCommandType
-from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
+from evomachine.config import ConfigCamera, get_logger
+from evomachine.config_delta import ConfigImageProcessorFactory
 from evomachine.coordinates import Coordinate, CoordinateFactory
 from evomachine.guidir.figures import FigureMultiWindow, ChannelPlotter
 from evomachine.guidir.guitemplates import EvoGUIThread, EvoPanelTemplate, EvoWorkerTemplate

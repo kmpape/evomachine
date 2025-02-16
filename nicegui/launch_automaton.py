@@ -13,7 +13,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 
 from evomachine.acquisition import TestCamera
 from evomachine.automaton import Automaton
-from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, ConfigImageProcessorFactory, \
+from evomachine.config_delta import ConfigImageProcessor, ConfigImageProcessorFactory
+from evomachine.config import ConfigCamera, ConfigCameraFactory, \
     EVOMACHINE_DIR, USE_DMD_SOCKET, USE_SYNC_BOARD, DATA_DIR
 if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMDControl
@@ -21,7 +22,7 @@ else:
     from evomachine.dmd import DMDControl
     import pygame
 from evomachine.evotypes import LEDType, FilterWheelType
-from evomachine.guidir.newgui import EvoGUI
+# from evomachine.guidir.newgui import EvoGUI
 from evomachine.guidir.queuemanager import QueueManager
 from evomachine.strategy import AbstractStrategy, BasicStrategy
 from strategies.strategy_UV_testing import UVStrategy

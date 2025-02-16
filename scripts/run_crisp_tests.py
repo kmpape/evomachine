@@ -17,7 +17,8 @@ sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/de-lta-rt")
 
 from evomachine.acquisition import TestCamera, EvoCamera, EvoCamerav2
 from evomachine.automaton import Automaton
-from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, ConfigImageProcessorFactory, \
+from evomachine.config_delta import ConfigImageProcessor, ConfigImageProcessorFactory
+from evomachine.config import ConfigCamera, ConfigCameraFactory, \
     EVOMACHINE_DIR, USE_DMD_SOCKET, USE_SYNC_BOARD
 if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMDControl

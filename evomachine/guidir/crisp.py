@@ -15,7 +15,8 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.acquisition import AbstractCamera
-from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, ConfigImageProcessor, get_logger
+from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, get_logger
+from evomachine.config_delta import ConfigImageProcessorFactory
 from evomachine.evotypes import FocusAlgorithmType, LEDType
 from evomachine.guidir.figures import FigureWindow
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread, EVO_STYLE

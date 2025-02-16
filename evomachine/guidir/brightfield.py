@@ -11,7 +11,8 @@ from PyQt5.QtWidgets import (
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
 
-from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
+from evomachine.config import ConfigCamera, get_logger
+from evomachine.config_delta import ConfigImageProcessorFactory
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
 from evomachine.guidir.guitypes import SMALL, CENTER, LEFT, RIGHT, NORMAL
 from evomachine.guidir.queuemanager import QueueManager

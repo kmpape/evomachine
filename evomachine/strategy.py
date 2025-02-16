@@ -8,9 +8,9 @@ import sys
 import time
 import traceback
 from typing import Dict, List, Tuple, Type, Union
-
+from evomachine.config_delta import ConfigImageProcessor
 from evomachine.commands import AutomatonCommand, CommandFactory
-from evomachine.config import get_logger, ConfigCamera, ConfigCameraFactory, USE_DMD_SOCKET, ConfigImageProcessor
+from evomachine.config import get_logger, ConfigCamera, ConfigCameraFactory, USE_DMD_SOCKET
 from evomachine.coordinates import Coordinate
 from evomachine.exceptions import ConfigError, ErrorCode, EvoMachineError, StrategyError
 from evomachine.evotypes import AutomatonCommandType, LEDType

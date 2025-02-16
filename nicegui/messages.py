@@ -135,8 +135,8 @@ class CameraConfigMessage(Message):
 # print(decoded_message)
 
 # Encoding and decoding example
-text_message = TextMessage(content="Hello, world!")
-encoded_message = text_message.encode()
-decoded_message = Message.decode(encoded_message)
+# text_message = TextMessage(content="Hello, world!")
+# encoded_message = text_message.encode()
+# decoded_message = Message.decode(encoded_message)
 
-print(decoded_message)
+# print(decoded_message)

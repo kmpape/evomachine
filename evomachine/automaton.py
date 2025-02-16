@@ -18,7 +18,8 @@ from delta.rt import PositionRT
 
 from evomachine.acquisition import AbstractCamera, EvoCamera, EvoCamerav3
 from evomachine.commands import AutomatonCommand, CommandFactory
-from evomachine.config import ConfigFocus, ConfigImageProcessor, EVO_GUI_LOGGING_LEVEL, get_logger, EVOMACHINE_DIR,\
+from evomachine.config_delta import ConfigImageProcessor
+from evomachine.config import ConfigFocus, EVO_GUI_LOGGING_LEVEL, get_logger, EVOMACHINE_DIR,\
     USE_DMD_SOCKET
 from evomachine.coordinates import Coordinate
 if USE_DMD_SOCKET:

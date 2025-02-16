@@ -8,7 +8,8 @@ import numpy as np
 
 from delta.utils import CroppingBox as DeltaCroppingBox
 
-from evomachine.config import EVO_FORMATTER, get_logger, USE_DMD_SOCKET, ConfigImageProcessor
+from evomachine.config import EVO_FORMATTER, get_logger, USE_DMD_SOCKET
+from evomachine.config_delta import ConfigImageProcessor
 from evomachine.coordinates import Coordinate
 if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMD_WIDTH_HEIGHT

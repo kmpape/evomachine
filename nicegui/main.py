@@ -15,7 +15,7 @@ websocket_state = {
     'connected': False
 }
 
-led_brightness = {'value': 50.0}
+led_brightness = {}
 
 camera_config = None
 camera_config_event = asyncio.Event()
@@ -49,19 +49,19 @@ async def connect_to_websocket():
 
     await websocket_connection.send(RequestConfigCameraMessage().encode())
 
-async def hello():
-    global websocket_connection
-    if websocket_connection is None:
-        print("Not connected to websocket!")
-        return
-    await websocket_connection.send(TextMessage("Hello world!").encode())
+# async def hello():
+#     global websocket_connection
+#     if websocket_connection is None:
+#         print("Not connected to websocket!")
+#         return
+#     await websocket_connection.send(TextMessage("Hello world!").encode())
 
-async def set_led():
+async def set_led(led: LEDType, brightness: float):
     global websocket_connection, led_brightness
     if websocket_connection is None:
         print("Not connected to websocket!")
         return
-    await websocket_connection.send(SetLEDMessage(content=(LEDType.LED_450_NM, led_brightness)).encode())
+    await websocket_connection.send(SetLEDMessage(content=(led, brightness)).encode())
 
 @ui.page('/')
 async def page():
@@ -70,9 +70,18 @@ async def page():
     with ui.card():
         for led in camera_config.leds:
             with ui.row():
+                led_brightness.setdefault(led.name, 29.0)
                 ui.label(f"LED {led.name}")
-                ui.number(value=50.0, min=0, max=100, step=1)
-                # ui.button("Set LED")
+                ui.number(value=led_brightness[led.name], min=0, max=100, step=1).bind_value(led_brightness, led.name).on(type='keydown.enter', handler=lambda led=led: set_led(led, led_brightness[led.name]))
+                ui.button("Set LED", on_click=lambda led=led: set_led(led, led_brightness[led.name]))
+
+async def disconnect_websocket():
+    global websocket_connection
+    if websocket_connection is None:
+        return
+    if websocket_state['connected'] == False:
+        return
+    await websocket_connection.close()
 
 def main():
     global websocket_connection
@@ -84,20 +93,11 @@ def main():
         print("Starting UI in subprocess")
         ui.run(host='127.0.0.1', port=8080, reload=RELOAD)
         return
-    
-    # print("Building UI")
-    # ui.label("Say hello button: ")
-    # ui.button('Say Hello', on_click=hello)
-    # leds_container = ui.card()
-    # with leds_container:
-    #     ui.label("Set LED brightness: ")
-    #     # Wait until the cameraconfig is received
-
 
     app.on_startup(connect_to_websocket)
+    app.on_shutdown(disconnect_websocket)
 
     ui.run(host='127.0.0.1', port=8080, reload=RELOAD)
-
 
 if __name__ in ['__main__', '__mp_main__']:
     main()

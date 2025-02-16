@@ -32,8 +32,8 @@ sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger' )
 sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
 
-
-from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
+from evomachine.config_delta import ConfigImageProcessor
+from evomachine.config import ConfigCamera, get_logger
 from evomachine.guidir.crisp import CRISPPanel
 from evomachine.guidir.dmd import DMDPanel
 from evomachine.guidir.experiments import ExperimentPanel

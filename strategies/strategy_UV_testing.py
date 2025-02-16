@@ -8,8 +8,8 @@ import time
 from typing import Dict, List, Tuple, Type, Union
 
 from evomachine.commands import AutomatonCommand
-from evomachine.config import get_logger, ConfigCameraFactory, ConfigImageProcessorFactory, USE_DMD_SOCKET, \
-    ConfigImageProcessor, DATA_DIR
+from evomachine.config_delta import ConfigImageProcessorFactory, ConfigImageProcessor
+from evomachine.config import get_logger, ConfigCameraFactory, USE_DMD_SOCKET, DATA_DIR
 if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMD_WIDTH_HEIGHT, CAM_WIDTH_HEIGHT
 else:
