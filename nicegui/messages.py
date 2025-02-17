@@ -59,12 +59,48 @@ class SetLEDMessage(Message):
         }).encode('utf-8')
 
     @staticmethod
-    def decode(data: bytes) -> 'SetLEDMessage':
+    def decode_content(content: dict) -> tuple[LEDType, float]:
         """Have to handle this manually to be able to use LEDType"""
-        json_data = json.loads(data.decode('utf-8'))
-        led = LEDType[json_data['content'][0]]
-        brightness = json_data['content'][1]
-        return SetLEDMessage(content=(led, brightness))
+        led = LEDType[content[0]]
+        brightness = content[1]
+        return led, brightness
+
+@dataclass 
+class SetCRISPMessage(Message):
+    type: str = "setcrisp"
+    content: bool = False
+
+    @staticmethod
+    def decode_content(content: dict) -> bool:
+        return bool(content)
+
+@dataclass
+class CheckCRISPMessage(Message):
+    type: str = "checkcrispstatus"
+    content: str = ""
+
+@dataclass
+class InitCRISPMessage(Message):
+    type: str = "initcrisp"
+    content: str = ""
+
+@dataclass
+class CRISPInitialisedMessage(Message):
+    type: str = "crispinitialised"
+    content: bool = False
+
+    @staticmethod
+    def decode_content(content: dict) -> bool:
+        return bool(content)
+
+@dataclass
+class CRISPStatusMessage(Message):
+    content: bool = False
+    type: str = "crispstatus"
+
+    @staticmethod
+    def decode_content(content: dict) -> bool:
+        return bool(content)
 
 @dataclass
 class RequestConfigCameraMessage(Message):
@@ -100,23 +136,23 @@ class CameraConfigMessage(Message):
         }).encode('utf-8')
 
     @staticmethod
-    def decode_content(json_data: dict) -> 'CameraConfigMessage':
-        json_data['image']['pxl_dtype'] = np.dtype(json_data['image']['pxl_dtype'])
-        image = ImageConfigType(**json_data['image'])
-        json_data['focus']['focus_channel'] = LEDType[json_data['focus']['focus_channel']]
+    def decode_content(content: dict) -> 'ConfigCamera':
+        content['image']['pxl_dtype'] = np.dtype(content['image']['pxl_dtype'])
+        image = ImageConfigType(**content['image'])
+        content['focus']['focus_channel'] = LEDType[content['focus']['focus_channel']]
         
-        json_data['focus']['algorithm'] = FocusAlgorithmType[json_data['focus']['algorithm']]
-        focus = ConfigFocus(**json_data['focus'])
+        content['focus']['algorithm'] = FocusAlgorithmType[content['focus']['algorithm']]
+        focus = ConfigFocus(**content['focus'])
 
-        autofocus = ConfigCRISP(**json_data['autofocus'])
-        objective = ObjectiveConfigType(**json_data['objective'])
-        leds = [LEDType[x] for x in json_data['leds']]
-        filters = [FilterWheelType[x] for x in json_data['filters']]
-        path_to_save = Path(json_data['path_to_save'])
-        default_exposure_time = float(json_data['default_exposure_time'])
-        default_focus_channel_id = int(json_data['default_focus_channel_id'])
-        cam_pxl_size = float(json_data['cam_pxl_size'])
-        return CameraConfigMessage(content=ConfigCamera(
+        autofocus = ConfigCRISP(**content['autofocus'])
+        objective = ObjectiveConfigType(**content['objective'])
+        leds = [LEDType[x] for x in content['leds']]
+        filters = [FilterWheelType[x] for x in content['filters']]
+        path_to_save = Path(content['path_to_save'])
+        default_exposure_time = float(content['default_exposure_time'])
+        default_focus_channel_id = int(content['default_focus_channel_id'])
+        cam_pxl_size = float(content['cam_pxl_size'])
+        return ConfigCamera(
             autofocus=autofocus,
             image=image,
             focus=focus,
@@ -127,7 +163,7 @@ class CameraConfigMessage(Message):
             default_exposure_time=default_exposure_time,
             default_focus_channel_id=default_focus_channel_id,
             cam_pxl_size=cam_pxl_size,
-        ))
+        )
 
 # led_message = LEDStatusMessage(content={'LED1':True, 'LED2':False})
 # encoded_message = led_message.encode()

@@ -42,6 +42,9 @@ class AbstractCamera:
         self._is_initialised: bool = False
         "Set by initialise(). Query status through is_initialised()."
 
+        self._crisp_initialised: bool = False
+        "Flag to indicate whether CRISP is initialised."
+
         self._step: int = -1
         "Increments each time an image is taken."
         self._curr_pos: int = 0  # TODO need to initialise with current position ID
@@ -614,6 +617,9 @@ class AbstractCamera:
     ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
         raise NotImplementedError()
 
+    def autofocus_is_initialised(self) -> bool:
+        return self._crisp_initialised
+
 
 class TestCamera(AbstractCamera):
     """
@@ -764,6 +770,8 @@ class TestCamera(AbstractCamera):
     ) -> bool:
         logger.info("TestCamera.autofocus_initialise.")
         self._autofocus_is_locked = False
+        self._crisp_initialised = True
+        time.sleep(1)
         return True
 
     def autofocus_disable(self):
@@ -1294,6 +1302,7 @@ class EvoCamera(AbstractCamera):
             min_snr=cfg_crisp.min_snr,
             min_error=cfg_crisp.min_error,
         )
+        self._crisp_initialised = True
         logger.info(f"CRISP: Parameters set to:\n{new_cfg}")
         return True
 

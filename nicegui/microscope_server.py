@@ -4,13 +4,14 @@ import sys
 import os
 import asyncio
 from websockets.asyncio.server import serve
+from websockets import WebSocketServerProtocol
 import socket
 import signal
 
 from multiprocessing import Event, Queue
 from launch_automaton import launch_automaton, QueueManager, ConfigCamera, LEDType
 
-from messages import Message, TextMessage, CameraConfigMessage
+from messages import *
 
 SHUTDOWN_EXISTING = True
 
@@ -33,6 +34,53 @@ def set_led(led, brightness):
         # callback_args=(i_channel, brightness,),
     )
 
+async def receive_crisp_status(status, websocket: WebSocketServerProtocol):
+    print("Received CRISP status:", status)
+    await websocket.send(CRISPStatusMessage(content=status).encode())
+
+async def receive_crisp_initialised(status, websocket: WebSocketServerProtocol):
+    print("Received CRISP initialised:", status)
+    await websocket.send(CRISPInitialisedMessage(content=status).encode())
+
+# This shows how to register an async callback
+def check_crisp_status(websocket, loop):
+    global queue_manager
+    queue_manager.request(
+        req_str='self.cam.autofocus_is_locked',
+        kwargs_dict={},
+        callback=lambda status: asyncio.run_coroutine_threadsafe(receive_crisp_status(status, websocket), loop),
+    )
+    queue_manager.request(
+        req_str='self.cam.autofocus_is_initialised',
+        kwargs_dict={},
+        callback=lambda status: asyncio.run_coroutine_threadsafe(receive_crisp_initialised(status, websocket), loop),
+    )
+
+# This shows how to register a normal callback
+def set_crisp(lock: bool, websocket, loop):
+    global queue_manager
+    queue_manager.request(
+        req_str='self.cam.autofocus_' + ('lock' if lock else 'unlock'),
+        kwargs_dict={},
+        callback=lambda _: check_crisp_status(websocket, loop),
+    )
+
+
+# def init_crisp(self, cfg_crisp: ConfigCRISP):
+#     self.show_processing()
+#     self.queue_manager.request(
+#         req_str='self.cam.autofocus_initialise',
+#         kwargs_dict={'this_cfg_crisp': cfg_crisp, 'user_input': False},
+#         callback=self.check_crisp,
+#     )
+def init_crisp(cfg_crisp, websocket, loop):
+    global queue_manager
+    queue_manager.request(
+        req_str='self.cam.autofocus_initialise',
+        kwargs_dict={'this_cfg_crisp': cfg_crisp, 'user_input': False},
+        callback=lambda _: check_crisp_status(websocket, loop),
+    )
+
 
 async def handler(websocket):
     global automaton_to_gui_queue, gui_to_automaton_queue, shutdown_event, camera_config
@@ -45,8 +93,9 @@ async def handler(websocket):
     #         await asyncio.sleep(1)
     # asyncio.create_task(send_periodic_message())
 
-
     # Receive messages
+    loop = asyncio.get_event_loop()
+
     async for message in websocket:
         
         # Attempt to decode the message
@@ -56,21 +105,26 @@ async def handler(websocket):
             print(f"Failed to decode message: {e}")
             continue
         
-        await websocket.send(TextMessage(f"Received message of type: {message.type}").encode())
+        await websocket.send(TextMessage(f"Server received message of type: {message.type}").encode())
 
         if message.type == "setled":
-            led, brightness = message.content
+            led, brightness = SetLEDMessage.decode_content(message.content)
             set_led(led, brightness)
         elif message.type == "requestcameraconfig":
             await websocket.send(CameraConfigMessage(content=camera_config).encode())
-        
-        # await websocket.send(message)
+        elif message.type == "checkcrispstatus":
+            check_crisp_status(websocket, loop)
+        elif message.type == "setcrisp":
+            new_crisp_lock = SetCRISPMessage.decode_content(message.content)
+            set_crisp(new_crisp_lock, websocket, loop)
+        elif message.type == "initcrisp":
+            init_crisp(cfg_crisp=camera_config.autofocus, websocket=websocket, loop=loop)
 
+        # await websocket.send(message)
 
 async def main():
     async with serve(handler, "localhost", 8765) as server:
         await server.serve_forever()
-
 
 async def shutdown(loop):
     global shutdown_event
@@ -91,11 +145,8 @@ if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     signal.signal(signal.SIGINT, lambda s, f: asyncio.ensure_future(shutdown(loop)))
 
-
     if is_server_running("localhost", 8765):
-        
         print("Server is already running.")
-        
         if SHUTDOWN_EXISTING:
             print("Shutting down the already running server.")
             os.system("fuser -k 8765/tcp")
