@@ -33,15 +33,15 @@ async def on_message(message):
     message = Message.decode(message)
     # print(f"Received message: {message}")
 
-    if message.type == CameraConfigMessage.type:
-        camera_config = CameraConfigMessage.decode_content(message.content)
+    if message.type == MessageType.camera_config:
+        camera_config = message.content
         camera_config_event.set()
-    elif message.type == CRISPStatusMessage.type:
-        crisp_status['locked'] = CRISPStatusMessage.decode_content(message.content)
-    elif message.type == TextMessage.type:
+    elif message.type == MessageType.crisp_status:
+        crisp_status['locked'] = message.content
+    elif message.type == MessageType.text:
         print(f"GUI: Received text message: {message.content}")
-    elif message.type == CRISPInitialisedMessage.type:
-        x = CRISPInitialisedMessage.decode_content(message.content)
+    elif message.type == MessageType.crisp_initialised:
+        x = message.content
         crisp_status['init'] = CRISPInitStatus.INITED if x else CRISPInitStatus.NOTINIT
     else:
         print(f"GUI: Unhandled message type: {message}")
@@ -64,7 +64,7 @@ async def connect_to_websocket():
             print(f"Connection failed: {e}. Retrying in 1 second.")
             await asyncio.sleep(1)
 
-    await websocket_connection.send(RequestConfigCameraMessage().encode())
+    await websocket_connection.send(Message(type=MessageType.request_camera_config, content="").encode())
 
 # async def hello():
 #     global websocket_connection
@@ -78,21 +78,21 @@ async def set_led(led: LEDType, brightness: float):
     if websocket_connection is None:
         print("Not connected to websocket!")
         return
-    await websocket_connection.send(SetLEDMessage(content=(led, brightness)).encode())
+    await websocket_connection.send(Message(type=MessageType.set_led, content=(led, brightness)).encode())
 
 async def request_crisp_status():
     global websocket_connection
     if websocket_connection is None:
         print("Not connected to websocket!")
         return
-    await websocket_connection.send(CheckCRISPMessage().encode())
+    await websocket_connection.send(Message(type=MessageType.check_crisp_status, content="").encode())
 
 async def request_lock_crisp(lock):
     global websocket_connection
     if websocket_connection is None:
         print("Not connected to websocket")
         return
-    await websocket_connection.send(SetCRISPMessage(lock).encode())
+    await websocket_connection.send(Message(type=MessageType.set_crisp, content=lock).encode())
 
 async def request_init_crisp():
     global websocket_connection
@@ -100,7 +100,7 @@ async def request_init_crisp():
         print("Not connected to websocket")
         return
     crisp_status['init'] = CRISPInitStatus.INITING
-    await websocket_connection.send(InitCRISPMessage().encode())
+    await websocket_connection.send(Message(type=MessageType.init_crisp, content="").encode())
 
 @ui.page('/')
 async def page():

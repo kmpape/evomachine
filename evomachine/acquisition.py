@@ -26,6 +26,9 @@ from evomachine.utils import EvoCroppingBox, list_serial_ports, get_psu_port
 from evomachine.evotypes import AutoFocusStatusType, FilterWheelType, FocusAlgorithmType, ImageConfigType, LEDType, \
     FocusStatusType, FocusCurveType
 
+from pyvcam import pvc
+from pyvcam.camera import Camera
+from pyvcam import constants
 
 logger = get_logger(name=__name__)
 
@@ -665,6 +668,20 @@ class TestCamera(AbstractCamera):
         self._current_pos: Coordinate = Coordinate(0, 0, 0)
         self.focus_curr_pos: Dict[str, float] = {}
 
+        try:
+            pvc.init_pvcam()
+            self.cam = next(Camera.detect_camera())
+            self.cam.open()
+            self.cam.exp_mode = "Internal Trigger"
+            self._pvc_is_alive = True
+            logger.info(f"_initialise: pvcam initialised.")
+        except Exception as e:
+            self._pvc_is_alive = False
+            logger.warning(f"EvoCamerav2._initialise: Error connecting to pvcam: {e}.")
+            self.error_container.add_error(
+                new_error=CameraError(message=str(e), error_code=ErrorCode.ERROR_PVC_NOT_ALIVE)
+            )
+
         self.autofocus_lock()
 
     def increment_filename_index(self):
@@ -693,6 +710,21 @@ class TestCamera(AbstractCamera):
         logger.info(f"TestCamera._set_filter_wheel={self._current_filter_type}.")
         return
 
+    # def _take_frame(
+    #         self,
+    #         i_chan: Optional[LEDType] = None,
+    #         brightness: float = 29,
+    #         block: bool = False,
+    #         reset_led: bool = True,
+    #         disable_led: bool = False,
+    # ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
+    #     random_matrix = np.random.randint(0, 2 ** 6, size=self.cfg.image.shape, dtype=np.uint16)
+    #     image = skimage.io.imread(self.filenames[self._next_filename_index]) + random_matrix
+    #     if self._crop_inds:
+    #         return image[self._crop_inds[0][0]:self._crop_inds[0][1], self._crop_inds[1][0]:self._crop_inds[1][1]]
+    #     else:
+    #         return image
+
     def _take_frame(
             self,
             i_chan: Optional[LEDType] = None,
@@ -701,15 +733,56 @@ class TestCamera(AbstractCamera):
             reset_led: bool = True,
             disable_led: bool = False,
     ) -> Union[None, np.ndarray[(int, int), 'ImageConfigType.pxl_dtype']]:
-        random_matrix = np.random.randint(0, 2 ** 6, size=self.cfg.image.shape, dtype=np.uint16)
-        image = skimage.io.imread(self.filenames[self._next_filename_index]) + random_matrix
-        if self._crop_inds:
-            return image[self._crop_inds[0][0]:self._crop_inds[0][1], self._crop_inds[1][0]:self._crop_inds[1][1]]
+        if not self._pvc_is_alive:
+            logger.error(msg=f"EvoCamera._take_frame: MMC is not alive. Check Camera and Micro-Manager.")
+            return None
+        curr_channel = self.current_channel
+        if i_chan is not None:
+            self._last_frame_channel = i_chan
+            self.set_led(i_chan=i_chan, brightness=brightness, block=block)
+        try:
+            # self.mmc.snap_image()  # noqa
+            pixels = self.cam.get_frame(timeout_ms=1000)
+        except Exception as e:
+            logger.warning(f"EvoCamera._take_frame: Received exception:\n{e}\nHave you disabled MM live mode?")
+            return None
+        # tagged_image = self.mmc.get_tagged_image()  # noqa
+        # pixels = np.reshape(
+        #     tagged_image.pix,
+        #     newshape=[tagged_image.tags['Height'], tagged_image.tags['Width']]
+        # )
+        if i_chan is not None and reset_led and (not disable_led):
+            self.set_led(i_chan=curr_channel, block=False)
+        if disable_led:
+            self.disable_led()
+        return pixels
+
+    def _set_exposure(self, exposure_time: Union[int, None] = None):
+        if self._pvc_is_alive:
+            self.cam.exp_time = exposure_time
         else:
-            return image
+            logger.warning("EvoCamera._set_exposure: cannot set exposure as pvc is not alive.")
+
+    def _set_imaging_mode(self, imaging_mode: str = "Dynamic Range"):
+        available_modes = ["Sensitivity", "Speed", "Dynamic Range", "Sub-Electron"]
+        if imaging_mode not in available_modes:
+            msg = f"EvoCamera._set_imaging_mode: {imaging_mode} not in {available_modes}."
+            logger.warning(msg)
+            return
+        if self._pvc_is_alive:
+            self.cam.readout_port = available_modes.index(imaging_mode)
+        else:
+            logger.warning("EvoCamera._set_imaging_mode: cannot set mode as PVC is not alive.")
+
+
+
+
+
 
     def _finalise(self):
         logger.info("TestCamera.finalise: finalising TestCamera.")
+        self.cam.close()
+        pvc.uninit_pvcam()
         return
 
     def get_filename(
@@ -937,9 +1010,9 @@ class TestCamera(AbstractCamera):
     def keyboard_control(self):
         return
 
-    def _set_exposure(self, exposure_time: Union[int, None] = None):
-        logger.info(f"TestCamera._set_exposure={exposure_time}.")
-        return
+    # def _set_exposure(self, exposure_time: Union[int, None] = None):
+    #     logger.info(f"TestCamera._set_exposure={exposure_time}.")
+    #     return
 
     def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False, duration: float | None = None):
         self._current_led_channel = i_chan
@@ -1882,9 +1955,6 @@ class EvoCamerav2(EvoCamera):
         return self._syncboard_is_alive
 
 class EvoCamerav3(EvoCamerav2): # noqa
-    # from pyvcam import pvc
-    # from pyvcam.camera import Camera
-    # from pyvcam import constants
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1917,8 +1987,8 @@ class EvoCamerav3(EvoCamerav2): # noqa
 
         # Camera communication
         try:
-            EvoCamerav3.pvc.init_pvcam()
-            self.cam = next(EvoCamerav3.Camera.detect_camera())
+            pvc.init_pvcam()
+            self.cam = next(Camera.detect_camera())
             self.cam.open()
             self.cam.exp_mode = "Internal Trigger"
             self._pvc_is_alive = True
@@ -2003,7 +2073,7 @@ class EvoCamerav3(EvoCamerav2): # noqa
 
     def _finalise(self):
         self.cam.close()
-        EvoCamerav3.pvc.uninit_pvcam()
+        pvc.uninit_pvcam()
         super()._finalise()
 
     def _take_frame(
@@ -2054,3 +2124,4 @@ class EvoCamerav3(EvoCamerav2): # noqa
             self.cam.readout_port = available_modes.index(imaging_mode)
         else:
             logger.warning("EvoCamera._set_imaging_mode: cannot set mode as PVC is not alive.")
+

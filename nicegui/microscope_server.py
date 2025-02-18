@@ -11,7 +11,7 @@ import signal
 from multiprocessing import Event, Queue
 from launch_automaton import launch_automaton, QueueManager, ConfigCamera, LEDType
 
-from messages import *
+from messages import Message, MessageType
 
 SHUTDOWN_EXISTING = True
 
@@ -36,11 +36,11 @@ def set_led(led, brightness):
 
 async def receive_crisp_status(status, websocket: WebSocketServerProtocol):
     print("Received CRISP status:", status)
-    await websocket.send(CRISPStatusMessage(content=status).encode())
+    await websocket.send(Message(content=status, type=MessageType.crisp_status).encode())
 
 async def receive_crisp_initialised(status, websocket: WebSocketServerProtocol):
     print("Received CRISP initialised:", status)
-    await websocket.send(CRISPInitialisedMessage(content=status).encode())
+    await websocket.send(Message(content=status, type=MessageType.crisp_initialised).encode())
 
 # This shows how to register an async callback
 def check_crisp_status(websocket, loop):
@@ -65,14 +65,6 @@ def set_crisp(lock: bool, websocket, loop):
         callback=lambda _: check_crisp_status(websocket, loop),
     )
 
-
-# def init_crisp(self, cfg_crisp: ConfigCRISP):
-#     self.show_processing()
-#     self.queue_manager.request(
-#         req_str='self.cam.autofocus_initialise',
-#         kwargs_dict={'this_cfg_crisp': cfg_crisp, 'user_input': False},
-#         callback=self.check_crisp,
-#     )
 def init_crisp(cfg_crisp, websocket, loop):
     global queue_manager
     queue_manager.request(
@@ -81,19 +73,9 @@ def init_crisp(cfg_crisp, websocket, loop):
         callback=lambda _: check_crisp_status(websocket, loop),
     )
 
-
 async def handler(websocket):
     global automaton_to_gui_queue, gui_to_automaton_queue, shutdown_event, camera_config
 
-    # async def send_periodic_message():
-    #     while True:
-    #         current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    #         await websocket.send(TextMessage(f"Periodic message at time {current_time}").encode())
-    #         await websocket.send(TextMessage(f"Current a_to_g queue size: {gui_to_automaton_queue.qsize()}").encode())
-    #         await asyncio.sleep(1)
-    # asyncio.create_task(send_periodic_message())
-
-    # Receive messages
     loop = asyncio.get_event_loop()
 
     async for message in websocket:
@@ -105,22 +87,20 @@ async def handler(websocket):
             print(f"Failed to decode message: {e}")
             continue
         
-        await websocket.send(TextMessage(f"Server received message of type: {message.type}").encode())
+        await websocket.send(Message(content=f"Server received message of type: {message.type}", type=MessageType.text).encode())
 
-        if message.type == "setled":
-            led, brightness = SetLEDMessage.decode_content(message.content)
+        if message.type == MessageType.set_led:
+            led, brightness = message.content
             set_led(led, brightness)
-        elif message.type == "requestcameraconfig":
-            await websocket.send(CameraConfigMessage(content=camera_config).encode())
-        elif message.type == "checkcrispstatus":
+        elif message.type == MessageType.request_camera_config:
+            await websocket.send(Message(content=camera_config, type=MessageType.camera_config).encode())
+        elif message.type == MessageType.check_crisp_status:
             check_crisp_status(websocket, loop)
-        elif message.type == "setcrisp":
-            new_crisp_lock = SetCRISPMessage.decode_content(message.content)
+        elif message.type == MessageType.set_crisp:
+            new_crisp_lock = message.content
             set_crisp(new_crisp_lock, websocket, loop)
-        elif message.type == "initcrisp":
+        elif message.type == MessageType.init_crisp:
             init_crisp(cfg_crisp=camera_config.autofocus, websocket=websocket, loop=loop)
-
-        # await websocket.send(message)
 
 async def main():
     async with serve(handler, "localhost", 8765) as server:
