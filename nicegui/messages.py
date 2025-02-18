@@ -26,6 +26,7 @@ class MessageType(Enum):
     check_crisp_status = auto()
     set_crisp = auto()
     init_crisp = auto()
+    request_frame = auto()
 
 @dataclass
 class Message:

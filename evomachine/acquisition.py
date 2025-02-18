@@ -623,7 +623,8 @@ class AbstractCamera:
     def autofocus_is_initialised(self) -> bool:
         return self._crisp_initialised
 
-
+import os
+os.environ['PVCAM_VIRTUAL_CAMERAS'] = 'Kinetix'
 class TestCamera(AbstractCamera):
     """
     A class to mock the acquisition of frames.
@@ -667,6 +668,9 @@ class TestCamera(AbstractCamera):
         self._next_filename_index: int = next(self.indices)
         self._current_pos: Coordinate = Coordinate(0, 0, 0)
         self.focus_curr_pos: Dict[str, float] = {}
+
+        self.current_channel: LEDType = LEDType.NO_LED
+
 
         try:
             pvc.init_pvcam()

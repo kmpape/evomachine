@@ -38,6 +38,9 @@ async def receive_crisp_status(status, websocket: WebSocketServerProtocol):
     print("Received CRISP status:", status)
     await websocket.send(Message(content=status, type=MessageType.crisp_status).encode())
 
+    import numpy as np
+    await websocket.send(Message(content=(np.random.rand(360, 640, 3) * 255).astype('uint8'), type=MessageType.image).encode())
+
 async def receive_crisp_initialised(status, websocket: WebSocketServerProtocol):
     print("Received CRISP initialised:", status)
     await websocket.send(Message(content=status, type=MessageType.crisp_initialised).encode())
@@ -73,6 +76,14 @@ def init_crisp(cfg_crisp, websocket, loop):
         callback=lambda _: check_crisp_status(websocket, loop),
     )
 
+def request_frame(websocket, loop):
+    global queue_manager
+    queue_manager.request(
+        req_str='self.cam.get_frame',
+        kwargs_dict={'i_chan': None},
+        callback=lambda frame: asyncio.run_coroutine_threadsafe(websocket.send(Message(content=frame, type=MessageType.image).encode()), loop),
+    )
+
 async def handler(websocket):
     global automaton_to_gui_queue, gui_to_automaton_queue, shutdown_event, camera_config
 
@@ -87,7 +98,11 @@ async def handler(websocket):
             print(f"Failed to decode message: {e}")
             continue
         
-        await websocket.send(Message(content=f"Server received message of type: {message.type}", type=MessageType.text).encode())
+        # await websocket.send(Message(content=f"Server received message of type: {message.type}", type=MessageType.text).encode())
+
+        if message.type not in MessageType:
+            print(f"Microscope Server: Received unknown message type: {message.type}")
+            continue
 
         if message.type == MessageType.set_led:
             led, brightness = message.content
@@ -101,6 +116,10 @@ async def handler(websocket):
             set_crisp(new_crisp_lock, websocket, loop)
         elif message.type == MessageType.init_crisp:
             init_crisp(cfg_crisp=camera_config.autofocus, websocket=websocket, loop=loop)
+        elif message.type == MessageType.request_frame:
+            request_frame(websocket, loop)
+        else:
+            print(f"Microscope Server: Received unhandled message type: {message.type}")
 
 async def main():
     async with serve(handler, "localhost", 8765) as server:

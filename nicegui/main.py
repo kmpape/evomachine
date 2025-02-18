@@ -1,5 +1,4 @@
-import nicegui.ui as ui
-import nicegui.app as app
+from nicegui import ui, events, app, binding, run
 
 import asyncio
 from websockets.asyncio.client import connect
@@ -8,12 +7,22 @@ from websockets import ClientConnection
 from messages import *
 from evomachine.evotypes import LEDType
 
+import numpy as np
+from PIL import Image
+
 RELOAD = True
 
 websocket_connection: ClientConnection = None
 websocket_state = {
     'connected': False
 }
+
+# Better performance than using dictionary
+@binding.bindable_dataclass
+class DisplayImage:
+    source: Image = field(default_factory=lambda: Image.fromarray((np.random.rand(360, 640) * 255).astype('uint8')))
+
+display_img = DisplayImage()
 
 # Crisp status enum
 from enum import Enum, auto
@@ -28,10 +37,13 @@ crisp_status   = {'locked': None, 'init': CRISPInitStatus.NOTINIT}
 camera_config = None
 camera_config_event = asyncio.Event()
 
+# def convert_frame(frame):
+#     return Image.fromarray(((frame/1024) * 255).astype('uint8'))
+
 async def on_message(message):
-    global camera_config
-    message = Message.decode(message)
-    # print(f"Received message: {message}")
+    global camera_config, display_img
+    message = await run.cpu_bound(Message.decode, message)
+    print(f"Received message: {message.type}")
 
     if message.type == MessageType.camera_config:
         camera_config = message.content
@@ -43,6 +55,8 @@ async def on_message(message):
     elif message.type == MessageType.crisp_initialised:
         x = message.content
         crisp_status['init'] = CRISPInitStatus.INITED if x else CRISPInitStatus.NOTINIT
+    # elif message.type == MessageType.image:
+        # display_img.source = await run.cpu_bound(convert_frame, message.content)
     else:
         print(f"GUI: Unhandled message type: {message}")
 
@@ -51,7 +65,7 @@ async def connect_to_websocket():
     global websocket_connection, websocket_state
     while websocket_connection is None:
         try:
-            websocket_connection = await connect("ws://localhost:8765")
+            websocket_connection = await connect("ws://localhost:8765", max_size=None)
             websocket_state['connected'] = True
             print("Connected to websocket")
 
@@ -102,45 +116,69 @@ async def request_init_crisp():
     crisp_status['init'] = CRISPInitStatus.INITING
     await websocket_connection.send(Message(type=MessageType.init_crisp, content="").encode())
 
+async def request_frame():
+    global websocket_connection
+    print("Requesting frame")
+    if websocket_connection is None:
+        print("Not connected to websocket")
+        return
+    await websocket_connection.send(Message(type=MessageType.request_frame, content="").encode())    
+
 @ui.page('/')
 async def page():
     await camera_config_event.wait() # Make sure the camera config is received before rendering the page
 
-    with ui.card().tight():
-        with ui.card_section().classes('w-full bg-gray-200'):
-            ui.label("LED Controls")
-        with ui.card_section():
-            for led in camera_config.leds:
-                with ui.row().classes('w-full no-wrap'):
-                    led_brightness.setdefault(led.name, 29.0)
-                    ui.label(f"{led.name.replace('_', ' ')}").classes('w-1/4')
-                    ui.number(value=led_brightness[led.name], min=0, max=100, step=1)\
-                        .bind_value(led_brightness, led.name)\
-                        .on(type='keydown.enter', handler=lambda led=led: set_led(led, led_brightness[led.name]))\
-                        .classes('w-1/4')
-                    ui.button("Set LED", on_click=lambda led=led: set_led(led, led_brightness[led.name]))\
-                        .classes('w-2/4')
+    with ui.row():
+        with ui.card().tight():
+            with ui.card_section().classes('w-full bg-gray-200'):
+                ui.label("LED Controls")
+            with ui.card_section():
+                for led in camera_config.leds:
+                    with ui.row().classes('w-full no-wrap'):
+                        led_brightness.setdefault(led.name, 29.0)
+                        ui.label(f"{led.name.replace('_', ' ')}").classes('w-1/4')
+                        ui.number(value=led_brightness[led.name], min=0, max=100, step=1)\
+                            .bind_value(led_brightness, led.name)\
+                            .on(type='keydown.enter', handler=lambda led=led: set_led(led, led_brightness[led.name]))\
+                            .classes('w-1/4')
+                        ui.button("Set LED", on_click=lambda led=led: set_led(led, led_brightness[led.name]))\
+                            .classes('w-2/4')
+
+        with ui.card().tight():
+            with ui.card_section().classes('w-full bg-gray-200'):
+                ui.label("CRISP Controls")
+            with ui.card_section():
+                ui.label("CRISP status: ")
+                ui.label(text="").bind_text_from(crisp_status, 'locked', backward=lambda x: "Locked" if x==True else ("Unlocked" if x==False else "Unknown"))
+                ui.label(text="").bind_text_from(crisp_status, 'init', backward=lambda x: "Initialised" if x==CRISPInitStatus.INITED else ("Initialising" if x==CRISPInitStatus.INITING else "Not initialised"))
+                with ui.row():
+                    ui.button("Check CRISP", on_click=request_crisp_status)
+                    ui.button("Lock CRISP", on_click=lambda: request_lock_crisp(True))
+                    ui.button("Init CRSIP", on_click=request_init_crisp)
+                    ui.button("Unlock CRISP", on_click=lambda: request_lock_crisp(False))
     
     with ui.card().tight():
         with ui.card_section().classes('w-full bg-gray-200'):
-            ui.label("CRISP Controls")
+            ui.label("Image Display")
         with ui.card_section():
-            ui.label("CRISP status: ")
-            ui.label(text="").bind_text_from(crisp_status, 'locked', backward=lambda x: "Locked" if x==True else ("Unlocked" if x==False else "Unknown"))
-            ui.label(text="").bind_text_from(crisp_status, 'init', backward=lambda x: "Initialised" if x==CRISPInitStatus.INITED else ("Initialising" if x==CRISPInitStatus.INITING else "Not initialised"))
-            with ui.row():
-                with ui.column():
-                    ui.button("Check CRISP", on_click=request_crisp_status)
-                with ui.column():
-                    ui.button("Lock CRISP", on_click=lambda: request_lock_crisp(True))
-                with ui.column():
-                    ui.button("Init CRSIP", on_click=lambda: request_init_crisp())
-                with ui.column():
-                    ui.button("Unlock CRISP", on_click=lambda: request_lock_crisp(False))
-    #     ui.label("Crisp status")
-    #     ui.label(str(crisp_status))
-    #     ui.button("Init")
-
+            with ui.column():
+                ui.button("Get Frame", on_click=request_frame)
+                # ui.interactive_image(source='http://127.0.0.1:8081/')
+                # ui.html("<canvas id='imageCanvas'></canvas>")
+                # img = ui.interactive_image()
+                ui.html("<img id='image' width='800'>")
+                ui.run_javascript("""
+                    const ws = new WebSocket("ws://localhost:8000/ws");
+                    ws.binaryType = 'arraybuffer'
+                    ws.onmessage = async event => {
+                    const message = new Uint8Array(event.data);
+                    // Handle binary image data
+                    const blob = new Blob([message], { type: 'image/jpeg' });
+                    const url = URL.createObjectURL(blob);
+                    const img = document.getElementById('image');
+                    img.src = url;
+                };""")
+                
 async def disconnect_websocket():
     global websocket_connection
     if websocket_connection is None:
