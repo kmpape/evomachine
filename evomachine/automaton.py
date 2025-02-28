@@ -1376,6 +1376,12 @@ class Automaton:
         add = {
             'strategy_name': self._strategy.__class__.__name__,
         }
+        if self._pos_processor is not None and len(self._pos_processor) > 0:
+            roi_boxes = {
+                i: proc.roi_boxes for i, proc in enumerate(self._pos_processor)
+            }
+            add['roi_boxes'] = roi_boxes
+
         to_save: dict = {
             k: v for k, v in self.__dict__.items() if k not in exclude
         }

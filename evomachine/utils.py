@@ -20,14 +20,18 @@ def channel_extend_img(
         ind: int = 0,
 ) -> np.ndarray:
     """
-    Takes a 3D images and inserts a new frame obtained from combine_channels
+    Takes a 3D images and inserts a new frame obtained from combine_channels.
+
     Parameters
     ----------
-    img
-    channel_dict
-    channels
-    ind
-
+    img : np.ndarray
+        3D image.
+    channel_dict : dict[Any, int]
+        Dictionary mapping channels to their respective index in img.
+    channels : list[Any]
+        List of channels to combine.
+    ind : int, optional
+        Index of where the combined image will be inserted.
     Returns
     -------
 
@@ -117,7 +121,7 @@ class RotationParameters:
 
 
 def multipos_rotation_correction(imgs: list[np.ndarray], params: RotationParameters = RotationParameters()) -> float:
-    rotations = [rotation_correction(img=img, params=params) for img in imgs]
+    rotations = [rotation_correction(img=img.astype(float), params=params) for img in imgs]
     rotations_counter = Counter([r for r in rotations if r is not None])
     if not rotations_counter.most_common():
         return 0.0
