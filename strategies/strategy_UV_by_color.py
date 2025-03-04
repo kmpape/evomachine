@@ -2,6 +2,7 @@ from datetime import datetime
 import numpy as np
 from pathlib import Path
 import pickle
+import skimage
 import threading
 import time
 from typing import Dict, List, Tuple, Type, Union
@@ -14,7 +15,7 @@ if USE_DMD_SOCKET:
 else:
     from evomachine.dmd import DMD_WIDTH_HEIGHT
 from evomachine.exceptions import EvoMachineError
-from evomachine.evotypes import LEDType
+from evomachine.evotypes import LEDType, FilterWheelType
 from evomachine.strategy import AbstractStrategy
 
 from delta.rt import ROIRT
@@ -28,21 +29,22 @@ CAMERA_CONFIG = ConfigCameraFactory.default_air_config()
 PROCESSOR_CONFIG = ConfigImageProcessorFactory.default_config()
 
 
-class ROITestingStrategy(AbstractStrategy):
+class ROIbyColorStrategy(AbstractStrategy):
     """
     See AbstractStrategy for function documentations and available attributes.
     """
     def __init__(self, cfg: ConfigImageProcessor):
         super().__init__(cfg=cfg)
         datestr = datetime.today().strftime('%Y-%m-%d')
-        self.path_to_save = Path("/mnt/nvme1/data/ImageData/UV_by_ROI_" + datestr + "-b")
+        self.path_to_save = Path("/mnt/nvme1/data/ImageData/UV_by_color_" + datestr)
         self.path_to_save.mkdir(parents=False, exist_ok=True)
 
         # Imaging properties
         self.exposure_time: int = 200  # in ms
         self.imaging_channels: list[LEDType] = [LEDType.LED_450_NM, LEDType.LED_565_NM]
+        self.imaging_filters: list[FilterWheelType] = [FilterWheelType.FILTER_465nm, FilterWheelType.FILTER_592nm]
         self.imaging_interval: float = 5*60  # in seconds
-        self.imaging_brightness: float = 29
+        self.imaging_brightness: list[float] = [29, 29]
 
         # IP properties
         self.cfg.channels_seg = [LEDType.LED_450_NM, LEDType.LED_565_NM]  # channels will be averaged for segmentation
@@ -52,12 +54,15 @@ class ROITestingStrategy(AbstractStrategy):
 
         # UV Projection properties
         self.do_project: bool = True  # Enable/disable UV projection
+        self.project_from_pos: int = 2
+        self.fill_x: float = 1.0
+        self.fill_y: float = 0.5
         self.proj_channel: LEDType = LEDType.LED_385_NM
         self.start_time_UV: float | None = None
-        self.proj_delay: float = 120 * 60  # in seconds
+        self.proj_delay: float = 10 * 60  # in seconds
         self.proj_time = 300
-        self.proj_brightness = 99
-        self.has_projected = [False, False, False, False]
+        self.proj_brightness = 60
+        self.has_projected = []
         self.proj_imgs = []
 
     @staticmethod
@@ -68,7 +73,46 @@ class ROITestingStrategy(AbstractStrategy):
         fluo = roi.get_fluo(frame=1)  # get the newest fluo frames
         fluo_1 = fluo[self.cfg.channel_to_index[LEDType.LED_450_NM]]
         fluo_2 = fluo[self.cfg.channel_to_index[LEDType.LED_565_NM]]
-        return fluo_1.mean() > fluo_2.mean()
+        is_red = fluo_1.max() < fluo_2.max()
+        # if roi.roi_nb < 10:
+        #     print(f"{self.cfg.channel_to_index}")
+        #     for i in range(fluo.shape[0]):
+        #         print(f"ROI: {roi.roi_nb}, fluo[{i}]={fluo[i].max()}")
+        # if roi.roi_nb < 100:
+        #     print(f"ROI: {roi.roi_nb}, is_red={is_red}, shape={fluo_1.shape}, "
+        #           f"fluo_1.max={fluo_1.max()}, fluo_1.mean={fluo_1.mean()}, "
+        #           f"fluo_2.max={fluo_2.max()}, fluo_2.mean={fluo_2.mean()}.")
+        #     tmp = fluo_1.astype(float)
+        #     tmp = (tmp - tmp.min()) / (tmp.ptp() if tmp.ptp() > 0 else 1)
+        #     skimage.io.imsave(f"/home/hslab/tmpisred/ROI{roi.roi_nb}_fluo1_is_red_{is_red}.png", (tmp*255).astype(np.uint8), check_contrast=False)
+        #     tmp = fluo_2.astype(float)
+        #     tmp = (tmp - tmp.min()) / (tmp.ptp() if tmp.ptp() > 0 else 1)
+        #     skimage.io.imsave(f"/home/hslab/tmpisred/ROI{roi.roi_nb}_fluo2_is_red_{is_red}.png", (tmp*255).astype(np.uint8), check_contrast=False)
+        #
+        return is_red
+
+    def make_projection_images(self):
+        if self.pos_processors:
+            self.is_red = {
+                pos: [self.roi_is_red(roi) for roi in proc.rois]
+                for pos, proc in enumerate(self.pos_processors)
+            }
+            self.is_red_id = {
+                pos: [iroi for iroi, roi_is_red in enumerate(self.is_red[pos]) if roi_is_red]
+                for pos in self.is_red.keys()
+            }
+            for i in range(len(self.field_of_views)):
+                logger.info(f"Field of view {i}: #ROI={len(self.pos_processors[i].rois)} "
+                            f"#is_red={sum(self.is_red[i])}, IDs={self.is_red_id[i]}")
+
+                boxes_to_project = [self.pos_processors[i].roi_boxes[iroi] for iroi in self.is_red_id[i]]
+                self.proj_imgs.append(self.dmd.pattern_from_roi_boxes(
+                    boxes=boxes_to_project,
+                    fill_x=self.fill_x,
+                    fill_y=self.fill_y,
+                ))
+        else:
+            logger.warning(f"strategy_UV_by_ROI: no position processors. Cannot project onto ROI.")
 
     def _initialise(self) -> List[AutomatonCommand]:
         current_time = time.time()
@@ -77,50 +121,26 @@ class ROITestingStrategy(AbstractStrategy):
                     f"Starting UV projections at {self.format_time(self.start_time_UV)}.")
 
         # Reset
-        self.has_projected = [False for _ in self.has_projected]
+        self.has_projected = [False for _ in range(len(self.field_of_views))]
+        self.proj_imgs = []
 
-        # Categorise trenches
-        self.is_red = {
-            pos: [self.roi_is_red(roi) for roi in proc.rois] for pos, proc in enumerate(self.pos_processors)
-        }
-        self.is_red_id = {
-            pos: [iroi for iroi, roi_is_red in enumerate(self.is_red[pos]) if roi_is_red] for pos in self.is_red.keys()
-        }
-        for i in range(len(self.field_of_views)):
-            logger.info(f"Field of view {i}: #ROI={len(self.pos_processors[i].rois)} "
-                        f"#is_red={sum(self.is_red[i])}, IDs={self.is_red_id[i]}")
+        logger.info("Making boxes for projection.")
+        self.make_projection_images()
 
         cmd_list = []
         for i in range(len(self.field_of_views)):
             move = self.command_factory.command_move(fov_id=i)
             cmd_list.append(move)
-            image = self.command_factory.command_image(
-                channels=self.imaging_channels,
-                exposure_time=self.exposure_time,
-                segment=False,
-                brightness=[self.imaging_brightness],
-                save=True,
-            )
-            cmd_list.append(image)
-
-            if self.pos_processors:
-                boxes_to_project = self.is_red_id[i]
-                self.proj_imgs.append(self.dmd.pattern_from_roi_boxes(
-                    boxes=boxes_to_project,
-                    fill_x=1,
-                    fill_y=0.5,
-                ))
+            for i_img in range(2):
                 image = self.command_factory.command_image(
-                    channels=self.imaging_channels,
+                    channels=[self.imaging_channels[i_img]],
+                    filter_wheel=self.imaging_filters[i_img],
                     exposure_time=self.exposure_time,
-                    brightness=[self.imaging_brightness],
                     segment=False,
-                    pattern=self.proj_imgs[i],
+                    brightness=[self.imaging_brightness[i_img]],
                     save=True,
                 )
                 cmd_list.append(image)
-            else:
-                logger.warning(f"strategy_UV_by_ROI: no position processors. Cannot project onto ROI.")
 
         return cmd_list
 
@@ -159,26 +179,30 @@ class ROITestingStrategy(AbstractStrategy):
         for i in range(len(self.field_of_views)):
             move = self.command_factory.command_move(fov_id=i)
             cmd_list.append(move)
-            image = self.command_factory.command_image(
-                channels=self.imaging_channels,
-                exposure_time=self.exposure_time,
-                brightness=[self.imaging_brightness],
-                segment=False,
-                save=True,
-            )
-            cmd_list.append(image)
+            for i_img in range(2):
+                image = self.command_factory.command_image(
+                    channels=[self.imaging_channels[i_img]],
+                    filter_wheel=self.imaging_filters[i_img],
+                    exposure_time=self.exposure_time,
+                    segment=False,
+                    brightness=[self.imaging_brightness[i_img]],
+                    save=True,
+                )
+                cmd_list.append(image)
             if i < len(self.has_projected):
-                if (time.time() >= self.start_time_UV) and (not self.has_projected[i]) and i > 1:
+                if (time.time() >= self.start_time_UV) and (not self.has_projected[i]):
                     logger.info(f"Imaging UV pattern now.")
-                    image = self.command_factory.command_image(
-                        channels=self.imaging_channels,
-                        exposure_time=self.exposure_time,
-                        brightness=[self.imaging_brightness],
-                        segment=False,
-                        pattern=self.proj_imgs[i],
-                        save=True,
-                    )
-                    cmd_list.append(image)
+                    for i_img in range(2):
+                        image = self.command_factory.command_image(
+                            channels=[self.imaging_channels[i_img]],
+                            filter_wheel=self.imaging_filters[i_img],
+                            exposure_time=self.exposure_time,
+                            segment=False,
+                            brightness=[self.imaging_brightness[i_img]],
+                            save=True,
+                            pattern=self.proj_imgs[i],
+                        )
+                        cmd_list.append(image)
 
                     logger.info(f"Projecting UV on FoV {i} now.")
                     self.has_projected[i] = True
@@ -195,6 +219,9 @@ class ROITestingStrategy(AbstractStrategy):
             set_live_mode=False,
         )
         cmd_list.append(wait)
+
+        for cmd in cmd_list:
+            logger.info(f"Sending command {cmd} with args {cmd.command_args}.")
 
         return cmd_list
 

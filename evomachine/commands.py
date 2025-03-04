@@ -211,7 +211,7 @@ class CommandFactory:
             raise TypeError(f"segment=True but preproc_enabled=False.")
         if not ((isinstance(brightness, int) and 0 <= brightness <= 100) or
                 (isinstance(brightness, list) and
-                 all(0 <= b <= 100 for b in brightness) and len(brightness) == len(channels))):
+                 all([0 <= b <= 100 for b in brightness]) and len(brightness) == len(channels))):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type or range or format for argument brightness.")
         if isinstance(brightness, int):
             brightness = [brightness for _ in channels]

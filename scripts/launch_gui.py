@@ -39,6 +39,7 @@ from strategies.strategy_MagnetOnOff import MagnetOnOffStrategy, PROCESSOR_CONFI
 from strategies.strategy_GFP_image_noise import GFP_noise_strategy
 from strategies.strategy_UV_testing import UVStrategy
 from strategies.strategy_image import ImageStrategy
+from strategies.strategy_UV_by_color import ROIbyColorStrategy
 
 
 def create_automaton_process(
@@ -97,10 +98,10 @@ if __name__ == '__main__':
 
     processor_config: ConfigImageProcessor = ConfigImageProcessorFactory.default_config(
         channels=[LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_565_NM, LEDType.LED_645_NM],
-        channels_seg=[LEDType.LED_565_NM],
+        channels_seg=[LEDType.LED_450_NM, LEDType.LED_565_NM],
     )
-    processor_config.preproc_enabled = False
-    processor_config.roi_enabled = False
+    processor_config.preproc_enabled = True
+    processor_config.roi_enabled = True
     processor_config.seg_enabled = False
     processor_config.track_enabled = False
     processor_config.lineage_enabled = False
@@ -114,8 +115,9 @@ if __name__ == '__main__':
     # strategy: AbstractStrategy = MagnetOnOffStrategy(cfg=processor_config)
     # strategy: AbstractStrategy = GFP_noise_strategy(cfg=processor_config)
     # strategy: AbstractStrategy = UVStrategy(cfg=processor_config)
-    strategy: AbstractStrategy = ImageStrategy(cfg=processor_config)
-    camera_config.focus.focus_channel = strategy.imaging_channel  # NEED TO GIVE SF THE RIGHT CHANNEL
+    # strategy: AbstractStrategy = ImageStrategy(cfg=processor_config)
+    strategy: AbstractStrategy = ROIbyColorStrategy(cfg=processor_config)
+    camera_config.focus.focus_channel = LEDType.LED_450_NM  # NEED TO GIVE SF THE RIGHT CHANNEL
     
     # DO NOT MODIFY ANYTHING BELOW THIS LINE -----------------------------------
 

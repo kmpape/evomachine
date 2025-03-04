@@ -377,13 +377,14 @@ class Automaton:
                     this_rotation = rotation
                 logger.info(f"Automaton.initialise_position_processor: Rotating pos {i_pos} "
                             f"by {this_rotation} degrees.")
+                ref = channel_extend_img(
+                    img=self._ref_frames[i_pos],
+                    channel_dict=self._channel_to_index,
+                    channels=self._cfg.channels_seg,
+                    ind=0,
+                )
                 self._pos_processor[i_pos].initialise(
-                    reference=channel_extend_img(
-                        img=self._ref_frames[i_pos],
-                        channel_dict=self._channel_to_index,
-                        channels=self._cfg.channels_seg,
-                        ind=0,
-                    ),
+                    reference=ref,
                     rotate=this_rotation,
                     roi_boxes=roi_boxes,
                     seg_model=self.seg_model,
@@ -936,7 +937,7 @@ class Automaton:
 
         # Execute requested commands in the given order
         for cmd in self.next_commands:
-            logger.info(f"Automaton._process: Executing {cmd}.")
+            logger.info(f"Automaton._process: Executing {cmd} with args {cmd.command_args}.")
 
             if self.stopped():
                 logger.warning(f"Automaton.process: stopping process at {str(cmd)}.")
@@ -1000,9 +1001,11 @@ class Automaton:
 
                 self._process_position(do_segment=cmd.command_args['segment'], channels=cmd.command_args['channels'])
                 channels_int = [self._channel_to_index[c] for c in cmd.command_args['channels']]
-                if self._cfg.preproc_enabled:  # TODO remove this as position_processors are made accessible to the strategy
+                if self._cfg.preproc_enabled:
+                    # Remove channel from channel extension for segmentation
+                    tmp = self._pos_processor[self._curr_fov_id].preproc_frame[1:, :, :]
                     cmd.command_data = {
-                        'img': [self._pos_processor[self._curr_fov_id].preproc_frame[channels_int, :, :]],
+                        'img': [tmp[channels_int, :, :]],
                     }
                 else:
                     cmd.command_data = {
@@ -1018,12 +1021,14 @@ class Automaton:
                             frame=self._all_frames_raw[self._curr_fov_id][1, channel_index, :, :],
                             i_channel=i_chan,
                             i_pos=self._curr_fov_id,
+                            filter_wheel=cmd.command_args['filter_wheel'],
                         )
                         if self._cfg.preproc_enabled:
                             self.cam.save_frame(
                                 frame=self._pos_processor[self._curr_fov_id].preproc_frame[channel_index, :, :],
                                 i_channel=i_chan,
                                 i_pos=self._curr_fov_id,
+                                filter_wheel=cmd.command_args['filter_wheel'],
                                 filename_suffix="_preproc",
                             )
                 self._dmd.display_none()
@@ -1305,11 +1310,21 @@ class Automaton:
 
     def _process_position(self, channels: list[LEDType], do_segment: bool = True):
         if self._cfg.preproc_enabled:
+            # TODO: channel extend images for segmentation
+            img = channel_extend_img(
+                img=self._all_frames_raw[self._curr_fov_id][1, :, :, :],
+                channel_dict=self._channel_to_index,
+                channels=self._cfg.channels_seg,
+                ind=0,
+            )
+            channel_inds = [self._channel_to_index[c]+1 for c in channels]  # Add 1 for channel_extend_img
+            if 0 not in channel_inds:
+                channel_inds = [0] + channel_inds
             self._pos_processor[self._curr_fov_id].process_new_frame(
-                new_frame=self._all_frames_raw[self._curr_fov_id][1, :, :, :],  # normalise_frame(self._all_frames_raw[self._curr_fov_id][1, :, :, :]),
+                new_frame=img,  # normalise_frame(self._all_frames_raw[self._curr_fov_id][1, :, :, :]),
                 seg_model=self.seg_model if do_segment else None,
                 tracking_model=self.tracking_model,
-                channel_inds=[self._channel_to_index[c] for c in channels],
+                channel_inds=channel_inds,
             )
 
     def get_channel_to_index(self) -> Dict[LEDType, int]:
@@ -1580,6 +1595,19 @@ class Automaton:
         return results
 
     def project_roi(self, fill_y: float = 0.1):
+        if not self._strategy.proj_imgs:
+            self._curr_fov_id = 0
+            self._initialise_strategy()
+            self.next_commands = self._strategy.callback(
+                fov_id=self._curr_fov_id,
+                data=self.last_commands,
+                errors=[],
+            )
+            self.next_commands = [cmd for cmd in self.next_commands if cmd.command_type != AutomatonCommandType.WAIT]
+            self._process(finalise=False)
+            time.sleep(5)
+            self._strategy.make_projection_images()
+
         if not self._position_processors_is_initialised or not self._pos_processor:
             logger.warning(f"Cannot project ROI as position processor not initialised.")
             return
@@ -1587,7 +1615,8 @@ class Automaton:
             logger.warning(f"No ROI boxes available to project onto.")
             return
         if fill_y > 0:
-            boxes_to_project = [b for i, b in enumerate(self._pos_processor[0].roi_boxes) if i % 2 == 0]
+            # boxes_to_project = [b for i, b in enumerate(self._pos_processor[0].roi_boxes) if i % 2 == 0]
+            boxes_to_project = [self._pos_processor[0].roi_boxes[iroi] for iroi in self._strategy.is_red_id[0]]
         else:
             boxes_to_project = self._pos_processor[0].roi_boxes
             fill_y = abs(fill_y)

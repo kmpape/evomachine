@@ -418,7 +418,7 @@ class AbstractCamera:
 
         """
         if not filename:
-            filename = self.get_filename(i_pos=i_pos, i_channel=i_channel)
+            filename = self.get_filename(i_pos=i_pos, i_channel=i_channel, filter_wheel=filter_wheel)
 
         if filename_suffix is not None:
             filename = self.add_filename_suffix(filename=filename, filename_suffix=filename_suffix)

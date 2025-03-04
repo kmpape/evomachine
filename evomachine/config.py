@@ -168,7 +168,7 @@ class ConfigImageProcessorFactory:
         # cfg_delta.model_file_rois = EVOMACHINE_DIR.parent / "delta_models/evo_roi_2024-05-08.keras"
         # cfg_delta.model_file_rois = EVOMACHINE_DIR.parent / "delta_models/evo_roi_M9_2024-12-10.keras"
         cfg_delta.model_file_rois = EVOMACHINE_DIR.parent / "delta_models/evo_roi_mixed_200x800_CKS5_2025-02-11.keras"
-        cfg_delta.target_size_seg = (250, 64)
+        cfg_delta.target_size_seg = (64, 256)
         cfg_delta.model_file_seg = EVOMACHINE_DIR.parent / "delta_models/evo_seg_2024-06-27.keras"
         # cfg_delta.model_file_track = EVOMACHINE_DIR.parent / "delta_models/unet_moma_track.hdf5"
         return ConfigImageProcessor(
