@@ -565,17 +565,18 @@ class Automaton:
         self._focus_is_initialised = True
         logger.info(f"Automaton.initialise_fov_focus: initialisation done.")
 
-    def _run_software_focus(self, cfg_focus: ConfigFocus, curr_fov_id: int):
+    def _run_software_focus(self, cfg_focus: ConfigFocus, curr_fov_id: int | None):
         self._dmd.display_full()
         self.cam.software_focus(
             cfg_focus=cfg_focus,
             user_input_override=True,
             countdown_override=True,
-            cropping_box=None,
+            cropping_box=cfg_focus.cropping_box,
         )
-        self.focus_curves[curr_fov_id] = (self.cam.focus_Z_coords, self.cam.focus_scores)
-        self.focus_prev_stack[:, :, curr_fov_id] = self.cam.focus_prev_image
-        self.focus_stack[:, :, curr_fov_id] = self.cam.get_software_focus_z_frame()
+        if curr_fov_id is not None:
+            self.focus_curves[curr_fov_id] = (self.cam.focus_Z_coords, self.cam.focus_scores)
+            self.focus_prev_stack[:, :, curr_fov_id] = self.cam.focus_prev_image
+            self.focus_stack[:, :, curr_fov_id] = self.cam.get_software_focus_z_frame()
         self._dmd.display_none()
 
     def initialise_reference_frames(self, save_references_frames: bool = True):
@@ -1001,7 +1002,7 @@ class Automaton:
 
                 self._process_position(do_segment=cmd.command_args['segment'], channels=cmd.command_args['channels'])
                 channels_int = [self._channel_to_index[c] for c in cmd.command_args['channels']]
-                if self._cfg.preproc_enabled:
+                if self._cfg.preproc_enabled and self._pos_processor[self._curr_fov_id].rois:
                     # Remove channel from channel extension for segmentation
                     tmp = self._pos_processor[self._curr_fov_id].preproc_frame[1:, :, :]
                     cmd.command_data = {
@@ -1023,7 +1024,7 @@ class Automaton:
                             i_pos=self._curr_fov_id,
                             filter_wheel=cmd.command_args['filter_wheel'],
                         )
-                        if self._cfg.preproc_enabled:
+                        if self._cfg.preproc_enabled and self._pos_processor[self._curr_fov_id].rois:
                             self.cam.save_frame(
                                 frame=self._pos_processor[self._curr_fov_id].preproc_frame[channel_index, :, :],
                                 i_channel=i_chan,
@@ -1257,12 +1258,14 @@ class Automaton:
             logger.info(msg)
             self.cam.autofocus_unlock()
             self.cam.move_to(coordinate=self._fovs_full_coords[pos_id], block=True)
+            self._run_software_focus(cfg_focus=self.cam.cfg.focus, curr_fov_id=pos_id)
+            time.sleep(1)  # give the stage some time to move to new position
             # Note: locking and unlocking does not seem to work
-            # is_success = self.cam.autofocus_initialise(
-            #     user_input=False,
-            # )
-            # msg = f"Re-initialised autofocus after move. Successful: {is_success}"
-            # logger.info(msg)
+            is_success = self.cam.autofocus_initialise(
+                user_input=False,
+            )
+            msg = f"Re-initialised autofocus after move. Successful: {is_success}"
+            logger.info(msg)
             time.sleep(3)  # give the tiger box some time to update the autofocus status
             self.cam.autofocus_lock()
 
@@ -1309,7 +1312,7 @@ class Automaton:
                 )
 
     def _process_position(self, channels: list[LEDType], do_segment: bool = True):
-        if self._cfg.preproc_enabled:
+        if self._cfg.preproc_enabled and self._pos_processor[self._curr_fov_id].rois:
             # TODO: channel extend images for segmentation
             img = channel_extend_img(
                 img=self._all_frames_raw[self._curr_fov_id][1, :, :, :],
@@ -1616,14 +1619,15 @@ class Automaton:
             return
         if fill_y > 0:
             # boxes_to_project = [b for i, b in enumerate(self._pos_processor[0].roi_boxes) if i % 2 == 0]
-            boxes_to_project = [self._pos_processor[0].roi_boxes[iroi] for iroi in self._strategy.is_red_id[0]]
+            boxes_to_project = [self._pos_processor[0].roi_boxes[iroi] for iroi in self._strategy.is_not_red_id[0]]
         else:
             boxes_to_project = self._pos_processor[0].roi_boxes
             fill_y = abs(fill_y)
         pattern = self._dmd.pattern_from_roi_boxes(
             boxes=boxes_to_project,
-            fill_x=1,
-            fill_y=fill_y,
+            fill_x=self._strategy.fill_x,
+            fill_y=self._strategy.fill_y,
+            invert=True,
         )
         self._dmd.display_image(img=pattern)
 

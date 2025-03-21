@@ -23,8 +23,9 @@ if USE_DMD_SOCKET:
 else:
     from evomachine.dmd import DMDControl  # noqa
     import pygame  # noqa
-from evomachine.evotypes import LEDType
-
+from evomachine.coordinates import Coordinate
+from evomachine.evotypes import AutoFocusStatusType, FilterWheelType, FocusAlgorithmType, ImageConfigType, LEDType, \
+    FocusStatusType, FocusCurveType
 from evomachine.guidir.newgui import EvoGUI  # noqa
 from evomachine.guidir.queuemanager import QueueManager  # noqa
 from evomachine.strategy import AbstractStrategy, BasicStrategy   # TODO add dropdown in GUI  # noqa
@@ -100,8 +101,8 @@ if __name__ == '__main__':
         channels=[LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_565_NM, LEDType.LED_645_NM],
         channels_seg=[LEDType.LED_450_NM, LEDType.LED_565_NM],
     )
-    processor_config.preproc_enabled = True
-    processor_config.roi_enabled = True
+    processor_config.preproc_enabled = False
+    processor_config.roi_enabled = False
     processor_config.seg_enabled = False
     processor_config.track_enabled = False
     processor_config.lineage_enabled = False

@@ -127,11 +127,14 @@ class AbstractCamera:
         raise NotImplementedError()
 
     def autofocus_lock(self):
+        status_pre = self.autofocus_get_status()
         self.coord_pre_autofocus_lock = self.get_coordinates(['X', 'Y', 'Z'])
         self._autofocus_lock()
         self.coord_post_autofocus_lock = self.get_coordinates(['X', 'Y', 'Z'])
+        status_post = self.autofocus_get_status()
         msg = f"AbstractCamera.autofocus_configure: Coordinate " \
-              f"before = {self.coord_pre_autofocus_lock}, after = {self.coord_post_autofocus_lock}"
+              f"before = {self.coord_pre_autofocus_lock} ({status_pre}), " \
+              f"after = {self.coord_post_autofocus_lock} ({status_post})"
         logger.info(msg)
 
     def _autofocus_lock(self):
@@ -467,7 +470,11 @@ class AbstractCamera:
         # Image and compute focus scores
         self.set_led(i_chan=cfg_focus.focus_channel, brightness=cfg_focus.brightness)
         for ipos in range(len(self.focus_Z_coords)):
-            success = self.software_focus_step(ipos=ipos)
+            success = self.software_focus_step(
+                ipos=ipos,
+                rowshift=cfg_focus.rowshift_px,
+                colshift=cfg_focus.colshift_px,
+            )
             if not success:
                 logger.error(
                     f"Error during software focus step. Check log. Aborting focus."
@@ -475,7 +482,6 @@ class AbstractCamera:
                 return
 
         # Verify focus curve
-
         self.software_focus_finalise()
 
     def software_focus_finalise(self, move_on_any_focus_status: bool = True, debug_save: bool = True):
@@ -522,7 +528,7 @@ class AbstractCamera:
     def software_focus_is_initialised(self) -> bool:
         return self._focus_is_initialised
 
-    def software_focus_step(self, ipos: int) -> bool:
+    def software_focus_step(self, ipos: int, rowshift: int, colshift: int) -> bool:
         """
         Moves the stage to self.focus_Z_coords[ipos], takes an image stored in self.focus_stack[:, :, ipos], computes the
         focus score, and stores the score in self.focus_scores[ipos].
@@ -852,7 +858,7 @@ class TestCamera(AbstractCamera):
         self.focus_prev_image = self.get_frame(i_chan=self._cfg_focus.focus_channel).astype(np.float64)
         self._focus_is_initialised = True
 
-    def software_focus_step(self, ipos: int) -> bool:
+    def software_focus_step(self, ipos: int, rowshift: int, colshift: int) -> bool:
         logger.info(f"TestCamera.software_focus_step at pos_z={ipos}.")
         z_coord = self.focus_Z_coords[ipos]
         self.move_to(coordinate={'Z': z_coord}, block=True)
@@ -870,6 +876,8 @@ class TestCamera(AbstractCamera):
         self.focus_scores[ipos] = get_focus_score(
             img=self.focus_cropping_box.crop(self.focus_stack[:, :, ipos]),
             algorithm=self._cfg_focus.algorithm,
+            rowshift=rowshift,
+            colshift=colshift,
         )
         return True
 
@@ -1587,7 +1595,7 @@ class EvoCamera(AbstractCamera):
         ).astype(np.float64)
         self._focus_is_initialised = True
 
-    def software_focus_step(self, ipos: int) -> bool:
+    def software_focus_step(self, ipos: int, rowshift: int, colshift: int) -> bool:
         z_coord = self.focus_Z_coords[ipos]
         self.move_to(coordinate={'Z': z_coord}, block=True)
         image_raw = self.display_save_frame(
@@ -1605,6 +1613,8 @@ class EvoCamera(AbstractCamera):
         self.focus_scores[ipos] = get_focus_score(
             img=self.focus_cropping_box.crop(self.focus_stack[:, :, ipos]),
             algorithm=self._cfg_focus.algorithm,
+            rowshift=rowshift,
+            colshift=colshift,
         )
         return True
 

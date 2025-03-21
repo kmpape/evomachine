@@ -5,6 +5,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import delta
+from delta.utils import CroppingBox
 
 from evomachine.exceptions import ConfigError, ErrorCode
 from evomachine.evotypes import FilterWheelType, FocusAlgorithmType, LEDType, ImageConfigType, ObjectiveConfigType, \
@@ -284,6 +285,12 @@ class ConfigFocus:
 
     algorithm: FocusAlgorithmType = FocusAlgorithmType.STEEL
     "Algorithm used to focus. See FocusAlgorithmType for available algorithms."
+    rowshift_px: int = 25
+    "Focus algorithm parameter. See software_focus.py."
+    colshift_px: int = 0
+    "Focus algorithm parameter. See software_focus.py. Note: Can also use 50px (trench length) here."
+    cropping_box: CroppingBox | None = None
+    "Box to crop out image area to focus on."
     user_input: bool | None = True
     "Ask for user input before configuring and starting software focus."
 
@@ -358,6 +365,7 @@ class ConfigFocusFactory:
             brightness=29,
             rel_range=50,
             step_size=5,
+            cropping_box=CroppingBox(xtl=200, xbr=3000, ytl=300, ybr=2900),  # Note: must be changed for other chips
         )
 
 

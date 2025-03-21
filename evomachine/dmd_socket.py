@@ -309,9 +309,17 @@ class DMDControl:
             return None
         return cv2.warpPerspective(img, self._homography_mat_inv, self.width_height_CAM).astype(img.dtype)
 
-    def pattern_from_roi_boxes(self, boxes: list[CroppingBox], fill_x: float = 1.0, fill_y: float = 1.0) -> np.ndarray:
+    def pattern_from_roi_boxes(
+            self,
+            boxes: list[CroppingBox],
+            fill_x: float = 1.0,
+            fill_y: float = 1.0,
+            invert: bool = False,
+    ) -> np.ndarray:
         """
-        Creates a pattern from a list of cropping boxes (Image coordinates) and returns a warped DMD pattern.
+        Creates a pattern from a list of cropping boxes (Image coordinates) and returns a warped DMD pattern. If
+        invert=False (default), the given boxes are filled with white and the background is black. If invert=True,
+        the background is filled with white and the given boxes are filled with black.
 
         Parameters
         ----------
@@ -322,13 +330,16 @@ class DMDControl:
             a fill percentage of the cropping box.
         fill_y : float
             Same as fill_x but in vertical direction.
+        invert : bool
+            For False, background is black and boxes are white; for True, background is white and boxes are black.
 
         Returns
         -------
         warped_image : np.ndarray
             Warped image ready to be projected via DMD.
         """
-        cam_img = self.get_zero_array(img_size=self.width_height_CAM)
+        fill_color = 255 if (not invert) else 0
+        cam_img = self.get_one_array(img_size=self.width_height_CAM) * (0 if (not invert) else 255)
         for b in boxes:
             shift_x = int(np.round(0.5 * (1-fill_x) * (b.xbr - b.xtl), 0))
             shift_y = int(np.round(0.5 * (1-fill_y) * (b.ybr - b.ytl), 0))
@@ -336,7 +347,7 @@ class DMDControl:
             end_row = min(b.ybr+1-shift_y, cam_img.shape[0]-1)
             start_col = max(b.xtl+shift_x, 0)
             end_col = min(b.xbr+1-shift_x, cam_img.shape[1]-1)
-            cam_img[start_row: end_row, start_col: end_col] = 255
+            cam_img[start_row: end_row, start_col: end_col] = fill_color
         return self.img_to_dmd_array(cam_img)
 
     def initialise(self, is_test: bool = False):
@@ -480,6 +491,12 @@ class DMDControl:
         if img_size is None:
             img_size = DMD_WIDTH_HEIGHT
         return np.zeros(img_size, dtype=ARR_TYPE)
+
+    @staticmethod
+    def get_one_array(img_size: Optional[Tuple[int, int]] = None) -> np.ndarray:
+        if img_size is None:
+            img_size = DMD_WIDTH_HEIGHT
+        return np.ones(img_size, dtype=ARR_TYPE)
 
     @staticmethod
     def _make_half_line_width(line_width: int, at_pos: int, length: int) -> Tuple[int, int]:
