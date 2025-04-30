@@ -29,6 +29,7 @@ from evomachine.evotypes import AutoFocusStatusType, FilterWheelType, FocusAlgor
 from evomachine.guidir.newgui import EvoGUI  # noqa
 from evomachine.guidir.queuemanager import QueueManager  # noqa
 from evomachine.strategy import AbstractStrategy, BasicStrategy   # TODO add dropdown in GUI  # noqa
+from strategies.strategy_UV_dosage import UVDosageStrategy
 # from strategies.strategy_2024_03_07 import JessStrategy  # noqa
 # from strategies.strategy_2024_04_25 import UVTestingStrategy  # noqa
 # from strategies.strategy_2024_04_30 import UVTestingStrategyv2  # noqa
@@ -40,8 +41,8 @@ from strategies.strategy_MagnetOnOff import MagnetOnOffStrategy, PROCESSOR_CONFI
 from strategies.strategy_GFP_image_noise import GFP_noise_strategy
 from strategies.strategy_UV_testing import UVStrategy
 from strategies.strategy_image import ImageStrategy
-from strategies.strategy_UV_by_color import ROIbyColorStrategy
-
+from strategies.strategy_image import ImageStrategy
+# from strategies.strategy_UV_by_color import ROIbyColorStrategy
 
 def create_automaton_process(
         camera_config: ConfigCamera,
@@ -86,7 +87,7 @@ if __name__ == '__main__':
     # Provide strategy that will be loaded by GUI
     # save_path: str = "/media/hslab/Data/ImageData/Idris/2024-07-04"
     # save_path = "/home/hslab/Documents/Gabi/GUI_SaveDir"
-    save_path = "/mnt/nvme1/data/Default"
+    save_path = "/mnt/nvme1/data/ImageData/Svenja_Pilot_2025-04-11"
     if not os.path.exists(save_path):
         current_folder = os.path.dirname(os.path.abspath(__file__))
         save_path = os.path.join(current_folder, "DEFAULT")
@@ -96,6 +97,8 @@ if __name__ == '__main__':
     is_oil_objective = False
     camera_config: ConfigCamera = ConfigCameraFactory.default_air_config()
     camera_config.path_to_save = Path(save_path)
+    camera_config.focus.focus_channel = LEDType.LED_515_NM  # NEED TO GIVE SF THE RIGHT CHANNEL
+    camera_config.focus.exposure_time = 200
 
     processor_config: ConfigImageProcessor = ConfigImageProcessorFactory.default_config(
         channels=[LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_565_NM, LEDType.LED_645_NM],
@@ -106,19 +109,17 @@ if __name__ == '__main__':
     processor_config.seg_enabled = False
     processor_config.track_enabled = False
     processor_config.lineage_enabled = False
+    processor_config.cfg_delta.drift_correction = False
+    processor_config.channels_seg = [LEDType.LED_565_NM]
+    # DANGEROUS SETTINGS
+    processor_config.refocus_using_software_focus = True
+    processor_config.refocus_on_all_positions = False
 
     # processor_config = MAGNET_PROCESSOR_CONFIG
 
     # Provide strategy that will be loaded by GUI
-    # strategy: AbstractStrategy = UVTestingStrategyv5(cfg=processor_config)
-    # strategy: AbstractStrategy = BasicStrategy(cfg=processor_config, save_path=save_path)
-    # strategy: AbstractStrategy = ROITestingStrategy(cfg=processor_config)
-    # strategy: AbstractStrategy = MagnetOnOffStrategy(cfg=processor_config)
-    # strategy: AbstractStrategy = GFP_noise_strategy(cfg=processor_config)
-    # strategy: AbstractStrategy = UVStrategy(cfg=processor_config)
     # strategy: AbstractStrategy = ImageStrategy(cfg=processor_config)
-    strategy: AbstractStrategy = ROIbyColorStrategy(cfg=processor_config)
-    camera_config.focus.focus_channel = LEDType.LED_450_NM  # NEED TO GIVE SF THE RIGHT CHANNEL
+    strategy: AbstractStrategy = UVDosageStrategy(cfg=processor_config)
     
     # DO NOT MODIFY ANYTHING BELOW THIS LINE -----------------------------------
 

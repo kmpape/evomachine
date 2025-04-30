@@ -363,7 +363,7 @@ class ConfigFocusFactory:
             exposure_time=200,
             focus_channel=LEDType.LED_450_NM,
             brightness=29,
-            rel_range=50,
+            rel_range=75,
             step_size=5,
             cropping_box=CroppingBox(xtl=200, xbr=3000, ytl=300, ybr=2900),  # Note: must be changed for other chips
         )

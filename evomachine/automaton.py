@@ -577,7 +577,6 @@ class Automaton:
             self.focus_curves[curr_fov_id] = (self.cam.focus_Z_coords, self.cam.focus_scores)
             self.focus_prev_stack[:, :, curr_fov_id] = self.cam.focus_prev_image
             self.focus_stack[:, :, curr_fov_id] = self.cam.get_software_focus_z_frame()
-        self._dmd.display_none()
 
     def initialise_reference_frames(self, save_references_frames: bool = True):
         if not self.devices_is_initialised():
@@ -585,9 +584,11 @@ class Automaton:
         self.set_cam_live_mode(False)
         logger.info(f"Automaton.initialise_reference_frames: "
                     f"Imaging {len(self._fovs.keys())} FoVs on {self._channel_to_index.keys()}.")
-        # if self._use_autofocus:
-            # Set _curr_fov_id to force autofocus toggle during first move
-            # self._curr_fov_id = None DISABLED BECAUSE NOT NECESSARY FOR NOW
+        if self._use_autofocus:
+            #  Set _curr_fov_id to force autofocus toggle during first move
+            has_different_channels = len(np.unique([c.get_channel_id() for c in self._fovs_full_coords.values()])) > 1
+            if has_different_channels:
+                self._curr_fov_id = None  # This will trigger a software focus below
         for i_fov in self._fovs.keys():
             self._move_to_pos(pos_id=i_fov)
             # self._fovs_full_coords[i_fov].z = self.cam.get_coordinates(['Z'])['Z']
@@ -601,7 +602,7 @@ class Automaton:
                             i_pos=i_fov,
                             filename_suffix="_ref",
                         )
-            self.increment_pos()
+            # self.increment_pos()
         self._move_to_pos(pos_id=0)
         self.cam.reset_counter()
         self._reference_frames_is_initialised = True
@@ -1268,6 +1269,8 @@ class Automaton:
             logger.info(msg)
             time.sleep(3)  # give the tiger box some time to update the autofocus status
             self.cam.autofocus_lock()
+            time.sleep(1)
+            self._fovs_full_coords[pos_id].z = self.cam.get_coordinates(['Z'])['Z']
 
         if do_manage_autofocus:
             # Note: even when autofocus disabled, manage_autofocus records the current Z coordinate
@@ -1483,7 +1486,8 @@ class Automaton:
     def dmd_calibrate(
             self,
             cfg: DMDCalibConfigType,
-            filename: str | None = None
+            filename: str | None = None,
+            on_mothermachine: bool = True,
     ) -> list[tuple[tuple[int, int], tuple[int, int]]]:
         """
         Calibrates DMD by scanning DMD coordinates and measuring CAM coordinates (on image). See DMDCAlibConfigType for
@@ -1504,6 +1508,7 @@ class Automaton:
         if not self.devices_is_initialised():
             logger.error("Automaton.dmd_calibrate: Devices not initialised. Returning.")
             return []
+        self.set_cam_live_mode(status=False)
         if filename is None:
             datestr = datetime.today().strftime('%Y-%m-%d')
             filename = str(EVOMACHINE_DIR / f"dmd_calibration_data_{datestr}.pkl")
@@ -1530,19 +1535,24 @@ class Automaton:
 
         # Get minimum intensity for points to be considered
         max_intensity = 0
-        for i_row in range(3):
-            for i_col in range(3):
-                if self.stopped():
-                    logger.warning("dmd_calibrate: Stop event encountered. Aborting DMD calibration.")
-                    return []
-                row = (self._dmd.width_height_DMD[0] * (i_row + 1)) // 4
-                col = (self._dmd.width_height_DMD[1] * (i_col + 1)) // 4
-                self._dmd.display_circle(row=row, col=col, radius=cfg.line_width)  # these points should be on screen
-                self.sleep(cfg.delay)
-                test_img = self.cam.get_frame(i_chan=None, normalise=False)
-                max_intensity += test_img.max()  # noqa
-                logger.debug(f"Init image ({row}, {col}): {test_img.max()}")  # noqa
-        max_intensity = float(max_intensity) / 9
+        if on_mothermachine:
+            self._dmd.display_full()
+            test_img = self.cam.get_frame(i_chan=None, normalise=False)
+            max_intensity = float(test_img.max())  # noqa
+        else:
+            for i_row in range(3):
+                for i_col in range(3):
+                    if self.stopped():
+                        logger.warning("dmd_calibrate: Stop event encountered. Aborting DMD calibration.")
+                        return []
+                    row = (self._dmd.width_height_DMD[0] * (i_row + 1)) // 4
+                    col = (self._dmd.width_height_DMD[1] * (i_col + 1)) // 4
+                    self._dmd.display_circle(row=row, col=col, radius=cfg.line_width)  # these points should be on screen
+                    self.sleep(cfg.delay)
+                    test_img = self.cam.get_frame(i_chan=None, normalise=False)
+                    max_intensity += test_img.max()  # noqa
+                    logger.debug(f"Init image ({row}, {col}): {test_img.max()}")  # noqa
+            max_intensity = float(max_intensity) / 9
         self._dmd.display_circle(row=0, col=0, radius=cfg.line_width)
         self.sleep(cfg.delay)
         test_img_none = self.cam.get_frame(i_chan=None, normalise=False)
@@ -1552,7 +1562,10 @@ class Automaton:
                          f"0.9*on_screen={0.9*max_intensity}. "
                          f"Please verify. Aborting calibration.")
             return []
-        min_intensity = max_intensity_none + 0.5 * (max_intensity - max_intensity_none)
+        if on_mothermachine:
+            min_intensity = max_intensity_none + 0.03 * (max_intensity - max_intensity_none)
+        else:
+            min_intensity = max_intensity_none + 0.5 * (max_intensity - max_intensity_none)
         logger.info(f"dmd_calibrate: Max. on-screen intensity={max_intensity}, "
                     f"max off-screen intensity={max_intensity_none} => min req. intensity={min_intensity}.")
 
@@ -1580,7 +1593,7 @@ class Automaton:
                                 (img_row_max.argmax(), img_col_max.argmax()),
                                 (img_row_max.max(), img_col_max.max())))
             else:
-                logger.debug(f"dmd_calibrate: DMD point (r{row},c{col}) off screen with intensity "
+                logger.info(f"dmd_calibrate: DMD point (r{row},c{col}) off screen with intensity "
                              f"{img_max} < {min_intensity}.")
 
         self.cam.set_filter_wheel(last_filter_type)

@@ -103,7 +103,9 @@ class DMDControl:
         "Thread to display output from C program."
         self._calib_data: list[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] | None = None
         "List containing calibration data."
-        self._calib_file: Path = EVOMACHINE_DIR / 'dmd_calibration_data_2025-02-13.pkl'
+        self._calib_file: Path = EVOMACHINE_DIR / 'dmd_calibration_data_2025-04-24.pkl'
+        # self._calib_file: Path = EVOMACHINE_DIR / 'dmd_calibration_data_2025-02-13.pkl'
+        # self._calib_file: Path = EVOMACHINE_DIR / 'dmd_calibration_data-2024-03-21.pkl'
         "Path to calibration file."
         self._homography_mat: np.ndarray | None = None
         "Homography matrix for mapping image to DMD coordinates."
@@ -263,7 +265,9 @@ class DMDControl:
             msg = f"img_to_dmd_array: Expected image of shape {self.width_height_CAM} but received {img.shape}."
             logger.error(msg)
             raise ValueError(msg)
-        return cv2.warpPerspective(img, self._homography_mat, self.width_height_DMD[::-1]).astype(img.dtype)
+        return cv2.warpPerspective(
+            img, self._homography_mat, self.width_height_DMD[::-1], flags=cv2.INTER_NEAREST
+        ).astype(img.dtype)
 
     def dmd_to_img_coords(self, img_row: int, img_col: int) -> tuple[int, int] | None:
         """
@@ -307,7 +311,9 @@ class DMDControl:
         if img.shape != self.width_height_DMD:
             logger.error(f"dmd_to_img_array: Expected image of shape {self.width_height_DMD} but received {img.shape}.")
             return None
-        return cv2.warpPerspective(img, self._homography_mat_inv, self.width_height_CAM).astype(img.dtype)
+        return cv2.warpPerspective(
+            img, self._homography_mat_inv, self.width_height_CAM, flags=cv2.INTER_NEAREST
+        ).astype(img.dtype)
 
     def pattern_from_roi_boxes(
             self,
@@ -315,6 +321,7 @@ class DMDControl:
             fill_x: float = 1.0,
             fill_y: float = 1.0,
             invert: bool = False,
+            warp: bool = True,
     ) -> np.ndarray:
         """
         Creates a pattern from a list of cropping boxes (Image coordinates) and returns a warped DMD pattern. If
@@ -332,6 +339,8 @@ class DMDControl:
             Same as fill_x but in vertical direction.
         invert : bool
             For False, background is black and boxes are white; for True, background is white and boxes are black.
+        warp : bool
+            Warp perspective for DMD.
 
         Returns
         -------
@@ -348,7 +357,7 @@ class DMDControl:
             start_col = max(b.xtl+shift_x, 0)
             end_col = min(b.xbr+1-shift_x, cam_img.shape[1]-1)
             cam_img[start_row: end_row, start_col: end_col] = fill_color
-        return self.img_to_dmd_array(cam_img)
+        return self.img_to_dmd_array(cam_img) if warp else cam_img
 
     def initialise(self, is_test: bool = False):
         logger.info(f"DMDControl.initialise: initialising DMD.")

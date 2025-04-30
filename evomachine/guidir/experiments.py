@@ -102,9 +102,11 @@ class ExperimentWorker(EvoWorkerTemplate):
         for i_channel, from_to in enumerate(valid_dict):
             from_to["from"]["channel_id"] = i_channel
             from_to["to"]["channel_id"] = i_channel
+            start_coord = Coordinate.from_dict(from_to["from"])
+            stop_coord = Coordinate.from_dict(from_to["to"])
             grid = self.factory.make_grid(
-                start=Coordinate.from_dict(from_to["from"]),
-                stop=Coordinate.from_dict(from_to["to"]),
+                start=start_coord,
+                stop=stop_coord,
             )
             coordinates.extend(grid)
         logger.info(f"Extracted {len(coordinates)} coordinates: {coordinates}")

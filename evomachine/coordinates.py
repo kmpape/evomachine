@@ -53,12 +53,12 @@ class Coordinate:
             new_x = self.x + other.x
             new_y = self.y + other.y
             new_z = None if (self.z is None or other.z is None) else self.z + other.z
-            return Coordinate(new_x, new_y, new_z)
+            return Coordinate(new_x, new_y, new_z, self.get_channel_id())
         elif isinstance(other, int) or isinstance(other, float):
             new_x = self.x + other
             new_y = self.y + other
             new_z = None if self.z is None else self.z + other
-            return Coordinate(new_x, new_y, new_z)
+            return Coordinate(new_x, new_y, new_z, self.get_channel_id())
         else:
             raise TypeError("Unsupported operand type(s) for +: '{}' and '{}'".format(type(self), type(other)))
 
@@ -67,12 +67,12 @@ class Coordinate:
             new_x = self.x - other.x
             new_y = self.y - other.y
             new_z = None if (self.z is None or other.z is None) else self.z - other.z
-            return Coordinate(new_x, new_y, new_z)
+            return Coordinate(new_x, new_y, new_z, self.get_channel_id())
         elif isinstance(other, int) or isinstance(other, float):
             new_x = self.x - other
             new_y = self.y - other
             new_z = None if self.z is None else self.z - other
-            return Coordinate(new_x, new_y, new_z)
+            return Coordinate(new_x, new_y, new_z, self.get_channel_id())
         else:
             raise TypeError("Unsupported operand type(s) for -: '{}' and '{}'".format(type(self), type(other)))
 
@@ -114,18 +114,19 @@ class Coordinate:
             new_x = self.x * other.x
             new_y = self.y * other.y
             new_z = None if (self.z is None or other.z is None) else self.z * other.z
-            return Coordinate(new_x, new_y, new_z)
+            return Coordinate(new_x, new_y, new_z, self.get_channel_id())
         elif isinstance(other, int) or isinstance(other, float):
             new_x = self.x * other
             new_y = self.y * other
             new_z = None if self.z is None else self.z * other
-            return Coordinate(new_x, new_y, new_z)
+            return Coordinate(new_x, new_y, new_z, self.get_channel_id())
         else:
             raise TypeError("Unsupported operand type(s) for *: '{}' and '{}'".format(type(self), type(other)))
 
     def __eq__(self, other):
         if isinstance(other, Coordinate):
-            return self.x == other.x and self.y == other.y and self.z == other.z
+            return self.x == other.x and self.y == other.y and self.z == other.z and \
+                self.get_channel_id() == other.get_channel_id()
         else:
             return False
 
@@ -143,7 +144,7 @@ class Coordinate:
 
     @staticmethod
     def none_coordinate() -> 'Coordinate':
-        return Coordinate(None, None, None)
+        return Coordinate(None, None, None, None)
 
 
 class CoordinateFactory:
@@ -184,12 +185,14 @@ class CoordinateFactory:
                 x=diff.sign().x * self.dfov,
                 y=diff.y / (float(num_pos_x) - 1),
                 z=diff.z / (float(num_pos_x) - 1),
+                channel_id=start.get_channel_id(),
             )
         else:
             delta = Coordinate(
                 x=diff.x / (float(num_pos_y) - 1),
                 y=diff.sign().y * self.dfov,
                 z=diff.z / (float(num_pos_y) - 1),
+                channel_id=start.get_channel_id(),
             )
         return [start + (delta * i) for i in range(max(num_pos_x, num_pos_y))]
 

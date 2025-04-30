@@ -309,7 +309,7 @@ class CommandFactory:
         if not (isinstance(brightness, int) or not isinstance(brightness, float)) or not (0 <= brightness <= 100):
             msg = f"AutomatonCommandFactory.project: Brightness must satisfy {0} < {duration} (actual) < 100."
             raise TypeError(msg)
-        max_duration = 6*60 if brightness > 29 else 3600
+        max_duration = 60*60 if brightness > 29 else 3600
         if not (isinstance(duration, float) or isinstance(duration, int)) or not (0 < duration < max_duration):
             msg = f"AutomatonCommandFactory.project: Duration must satisfy {0} < {duration} (actual) < {max_duration}."
             raise TypeError(msg)
