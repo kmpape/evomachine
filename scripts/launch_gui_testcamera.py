@@ -28,6 +28,8 @@ from evomachine.guidir.queuemanager import QueueManager
 from evomachine.strategy import AbstractStrategy, BasicStrategy
 from strategies.strategy_UV_testing import UVStrategy
 
+from delta.rttypes import TrackingSetting
+
 
 # Utils for loading saved data
 def get_position(filename) -> int:
@@ -130,13 +132,15 @@ def create_automaton_process(
 
     def get_time(filename):
         parts = filename.split('_')
-        time_str = parts[-2] + '_' + parts[-1].split('.')[0] + '.' + parts[-1].split('.')[1]
+        timepart = parts[-1].split(".")[0]
+        time_str = parts[-2] + '_' + ":".join(timepart.split('-')[:-1]) + '.' + timepart.split('-')[-1]
         return datetime.datetime.strptime(time_str, '%Y-%m-%d_%H:%M:%S.%f')
 
     # folder_path = str(EVOMACHINE_DIR.parent / "data")
     # folder_path = "/mnt/nvme1/data/ImageData/mCherry_Images_2024-12-19"
-    folder_path = "/mnt/nvme1/data/ImageData/mCherry_Images_2024-12-19"
-    filenames = [filename for filename in os.listdir(folder_path) if filename.lower().endswith('.tiff')]
+    folder_path = "/mnt/nvme1/data/ImageData/UV_by_ROI_2025-02-14"
+    filenames = [filename for filename in os.listdir(folder_path)
+                 if filename.lower().endswith('.tiff') and "preproc" not in filename]
     filenames = sorted(filenames, key=lambda x: (get_position(x), get_time(x)))
     pos_to_filename = {get_position(filename): index for index, filename in enumerate(filenames)}
     filenames = [folder_path + "/" + f for f in filenames]
@@ -178,14 +182,16 @@ if __name__ == '__main__':
     camera_config.path_to_save = Path(save_path)
     processor_config: ConfigImageProcessor = ConfigImageProcessorFactory.default_config(
         channels=[LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_565_NM, LEDType.LED_645_NM],
-        channels_seg=[LEDType.LED_565_NM],
+        channels_seg=[LEDType.LED_450_NM],
     )
     processor_config.preproc_enabled = True
     processor_config.roi_enabled = True
-    processor_config.seg_enabled = False
-    processor_config.track_enabled = False
+    processor_config.seg_enabled = True
+    processor_config.track_enabled = True
     processor_config.lineage_enabled = False
-    processor_config.channels_seg = LEDType.LED_565_NM
+    processor_config.channels_seg = LEDType.LED_450_NM
+    processor_config.tracking_setting = TrackingSetting.MOTHERONLY
+    processor_config.cfg_delta.drift_correction = True
 
     # Provide strategy that will be loaded by GUI
     # strategy: AbstractStrategy = BasicStrategy(save_path=save_path, cfg=processor_config)

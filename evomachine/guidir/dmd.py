@@ -1,6 +1,7 @@
 from multiprocessing import Event, Queue
 import matplotlib.pyplot as plt
 import numpy as np
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QEventLoop, QThread, QTimer, QObject, QRegExp, Qt
 from PyQt5 import QtGui
@@ -28,17 +29,19 @@ class DMDWorker(EvoWorkerTemplate):
     def __init__(
             self,
             buttons: Dict[int, QPushButton],
+            disp_modes_keys: List[int],
             parent: Optional[QObject] = None,
     ):
         super().__init__(parent)
         self.buttons = buttons
+        self.disp_modes_keys = disp_modes_keys
 
     @pyqtSlot(int)
     def set_dmd_states(self, i_active: int):
         for i, button in self.buttons.items():
             if i == i_active:
                 button.setStyleSheet("background-color: green;")
-            elif i in [DMDModes.DISPLAY_NONE.value, DMDModes.DISPLAY_FULL.value, DMDModes.DISPLAY_IMG.value]:
+            elif i in self.disp_modes_keys:
                 button.setStyleSheet("background-color: red;")
 
     @pyqtSlot()
@@ -134,7 +137,8 @@ class DMDPanel(EvoPanelTemplate):
             shutdown_event=shutdown_event,
         )
         self.calib_config: DMDCalibConfigType = DMDCalibConfigTypeFactory.default()
-        self.calib_data: Optional[List[Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]]] = None
+        # calib_data = (calib_data, homography_mat, homography_mat_inv, calib_file)
+        self.calib_data: tuple[list, np.ndarray, np.ndarray, Path] | tuple[None, None, None, None] = None, None, None, None
         self.filename: str | None = None
         self.img_label = self.make_label(text=self.make_save_path_label(str(None)), font=SMALL)
         self.img_load_button = self.make_button(
@@ -142,16 +146,21 @@ class DMDPanel(EvoPanelTemplate):
             func=self.show_file_dialog,
             font=SMALL,
         )
+        tmp_modes = [
+            (DMDModes.DISPLAY_NONE.value, "NONE"),
+            (DMDModes.DISPLAY_FULL.value, "FULL"),
+            (DMDModes.DISPLAY_IMG.value, "IMG"),
+            (DMDModes.DISPLAY_CHECKB.value, "CHECKB"),
+            (DMDModes.DISPLAY_CALIB.value, "CALIMG"),
+            (DMDModes.DISPLAY_ROI.value, "ROI"),
+        ]
         self.dmd_buttons = {i: self.make_button(
             text=txt,
             func=self.set_dmd,
             font=SMALL,
             mode=i,
             stylesheet="QPushButton {background-color: red;}",
-        ) for i, txt in zip(
-            [DMDModes.DISPLAY_NONE.value, DMDModes.DISPLAY_FULL.value, DMDModes.DISPLAY_IMG.value],
-            ["NONE", "FULL", "IMG"],
-        )}
+        ) for i, txt in tmp_modes}
         self.dmd_buttons[DMDModes.DISPLAY_FULL.value].setStyleSheet("background-color: green;")
         self.dmd_init_button = self.make_button(
             text="Initialise",
@@ -169,11 +178,11 @@ class DMDPanel(EvoPanelTemplate):
             font=SMALL,
         )
         self.dmd_calib_curves_button = self.make_button(
-            text="Data",
+            text="Show Loaded Calibration",
             func=self.show_calibration,
             font=SMALL,
         )
-        self.dmd_calib_curves_button.setEnabled(False)
+        self.dmd_calib_curves_button.setEnabled(True)
 
         # DIRTY HACK
         self.fill_y = 1
@@ -192,8 +201,8 @@ class DMDPanel(EvoPanelTemplate):
         self.layout.addWidget(self.dmd_calib_curves_button, 2, 3, 1, 1, CENTER)
         self.layout.addWidget(self.img_load_button, 3, 2, 1, 1, CENTER)
         self.layout.addWidget(self.img_label, 3, 3, 1, 1, CENTER)
-        # DIRTY HACK
-        self.layout.addWidget(self.fill_y_textinputs, 4, 0, CENTER)
+        # # DIRTY HACK
+        # self.layout.addWidget(self.fill_y_textinputs, 4, 0, CENTER)
         self.widget = QWidget()
         self.widget.setLayout(self.layout)
 
@@ -201,7 +210,10 @@ class DMDPanel(EvoPanelTemplate):
         self.dmd_buttons[max(list(self.dmd_buttons.keys()))+1] = self.dmd_finalise_button
         self.dmd_buttons[max(list(self.dmd_buttons.keys()))+1] = self.dmd_calibrate_button
         self.dmd_buttons[max(list(self.dmd_buttons.keys()))+1] = self.dmd_calib_curves_button
-        self.worker = DMDWorker(buttons=self.dmd_buttons)
+        self.worker = DMDWorker(
+            buttons=self.dmd_buttons,
+            disp_modes_keys=[tmp[0] for tmp in tmp_modes],
+        )
         self.signal_set_dmd.connect(self.worker.set_dmd_states)
         # TODO this seems to bug on repeated clicks
         # self.signal_dmd.connect(self.worker.dmd_click_start)
@@ -212,7 +224,7 @@ class DMDPanel(EvoPanelTemplate):
         thread.start()
         self.threads.append(thread)
 
-        self.get_preloaded_calibration()
+        # self.get_preloaded_calibration()
 
     # IK: DIRTY HACK
     def set_fill_y(self):
@@ -227,12 +239,32 @@ class DMDPanel(EvoPanelTemplate):
         func_dict = {
             DMDModes.DISPLAY_NONE.value: 'self._dmd.display_none',
             DMDModes.DISPLAY_FULL.value: 'self._dmd.display_full',
-            # DMDModes.DISPLAY_IMG.value: 'self._dmd.display_loaded_image', DIRTY HACK
-            DMDModes.DISPLAY_IMG.value: 'self.project_roi',
+            DMDModes.DISPLAY_IMG.value: 'self._dmd.display_loaded_image',
+            DMDModes.DISPLAY_CHECKB.value: 'self._dmd.display_checkerboard',
+            # DMDModes.DISPLAY_CALIB.value: 'self._dmd.display_calibration_image',
+            DMDModes.DISPLAY_CALIB.value: 'self._dmd.display_circles',
+            DMDModes.DISPLAY_ROI.value: 'self.project_roi',
+            # Comment the above and insert your own test functions below
+            # DMDModes.DISPLAY_CHECKB.value: 'self.project_custom_1',
+            # DMDModes.DISPLAY_CALIB.value: 'self.project_custom_2',
+            # DMDModes.DISPLAY_ROI.value: 'self.project_custom_3',
         }
+        kwargs_dict = {}
+        if func_dict[mode] == "self._dmd.display_circles":
+            kwargs_dict = {
+                'start_col': self.calib_config.start_col,
+                'end_col': self.calib_config.end_col,
+                # 'start_row': self.calib_config.start_row,
+                # 'end_row': self.calib_config.end_row,
+                'start_row': 1250,
+                'end_row': 2000,
+                'step_row': self.calib_config.step,
+                'step_col': self.calib_config.step,
+                'radius': self.calib_config.line_width,
+            }
         self.queue_manager.request(
             req_str=func_dict[mode],
-            kwargs_dict={'fill_y': self.fill_y} if mode == DMDModes.DISPLAY_IMG.value else {},
+            kwargs_dict=kwargs_dict,
             callback=self.show_dmd_done,
         )
         self.signal_dmd.emit()
@@ -278,9 +310,10 @@ class DMDPanel(EvoPanelTemplate):
             callback=self.update_calibration,
         )
 
-    def update_calibration(self, data: Tuple[Dict[str, List[int]], Dict[str, np.ndarray], Dict[str, np.ndarray]]):
+    def update_calibration(self, data: tuple[list, np.ndarray, np.ndarray, Path] | tuple[None, None, None, None]):
         self.calib_data = data
-        self.dmd_calib_curves_button.setEnabled(True)
+        self.show_calibration_plot()
+        # self.dmd_calib_curves_button.setEnabled(True)
         self.signal_dmd_done.emit()
 
     def finalise_dmd(self):
@@ -296,12 +329,25 @@ class DMDPanel(EvoPanelTemplate):
 
     def show_calibration(self):
         logger.debug("Showing calibration data.")
-        if self.calib_data is None or not self.calib_data:
-            logger.error("show_calibration: missing data. Returning.")
+        if self.calib_data[0] is None or not self.calib_data[0]:
+            self.get_preloaded_calibration()
+            logger.info("show_calibration: Requesting calibration data.")
             return
+        self.show_calibration_plot()
 
-        data = self.calib_data
+    def show_calibration_plot(self):
+        if self.calib_data[0] is None:
+            logger.error(f"show_calibration_plot: No data received.")
+            return
+        logger.info("show_calibration_plot: plotting data. This might take a while.")
+        data = self.calib_data[0]
+        DMD_WIDTH_HEIGHT = (2716, 1600)
+        CAM_WIDTH_HEIGHT = (3200, 3200)
+        dmd_img = np.ones(DMD_WIDTH_HEIGHT, dtype=np.uint8) * 100
+        cam_img = np.ones(CAM_WIDTH_HEIGHT, dtype=np.uint8) * 100
         fig, axs = plt.subplots(1, 2)
+        axs[0].imshow(dmd_img, cmap='gray')
+        axs[1].imshow(cam_img, cmap='gray')
         for i, ((r_dmd, c_dmd), (r_cam, c_cam), _) in enumerate(data):
             marker = str(i)
             _ = axs[0].scatter(c_dmd, r_dmd, marker='$' + marker + '$')
@@ -312,11 +358,9 @@ class DMDPanel(EvoPanelTemplate):
             _ = axs[1].set_title('Camera Points')
             _ = axs[1].set_xlabel('Column')
             _ = axs[1].set_ylabel('Row')
-        self.calib_window = FigureWindow(fig=fig, title="DMD Calibration Curves")
+        self.calib_window = FigureWindow(fig=fig, title=f"DMD Calibration Curves: {str(self.calib_data[-1])}")
         self.calib_window.show()
-        # self.exp_focus_curves_window = FigureMultiWindow({0: fig})
-        # self.exp_focus_curves_window.show()
-        logger.debug("Showing window.")
+        logger.debug("show_calibration_plot: Showing window.")
 
     def show_config(self):
         dialog = DMDCalibDialog(cfg=self.calib_config)

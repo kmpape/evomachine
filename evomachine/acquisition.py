@@ -468,12 +468,14 @@ class AbstractCamera:
             return
 
         # Image and compute focus scores
-        self.set_led(i_chan=cfg_focus.focus_channel, brightness=cfg_focus.brightness)
+        # self.set_led(i_chan=cfg_focus.focus_channel, brightness=cfg_focus.brightness)
         for ipos in range(len(self.focus_Z_coords)):
             success = self.software_focus_step(
                 ipos=ipos,
                 rowshift=cfg_focus.rowshift_px,
                 colshift=cfg_focus.colshift_px,
+                i_chan=cfg_focus.focus_channel,
+                brightness=cfg_focus.brightness,
             )
             if not success:
                 logger.error(
@@ -528,7 +530,14 @@ class AbstractCamera:
     def software_focus_is_initialised(self) -> bool:
         return self._focus_is_initialised
 
-    def software_focus_step(self, ipos: int, rowshift: int, colshift: int) -> bool:
+    def software_focus_step(
+            self,
+            ipos: int,
+            rowshift: int,
+            colshift: int,
+            i_chan: Union[LEDType, None],
+            brightness: float = 29,
+    ) -> bool:
         """
         Moves the stage to self.focus_Z_coords[ipos], takes an image stored in self.focus_stack[:, :, ipos], computes the
         focus score, and stores the score in self.focus_scores[ipos].
@@ -558,7 +567,14 @@ class AbstractCamera:
     def _set_exposure(self, exposure_time: Union[int, None] = None):
         raise NotImplementedError()
 
-    def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False, duration: float | None = None):
+    def set_led(
+            self,
+            i_chan: LEDType,
+            brightness: float = 29,
+            block: bool = False,
+            duration: float | None = None,
+            disable_current_LED: bool = True,
+    ):
         raise NotImplementedError()
 
     def calibrate_magnet(self):
@@ -858,15 +874,21 @@ class TestCamera(AbstractCamera):
         self.focus_prev_image = self.get_frame(i_chan=self._cfg_focus.focus_channel).astype(np.float64)
         self._focus_is_initialised = True
 
-    def software_focus_step(self, ipos: int, rowshift: int, colshift: int) -> bool:
+    def software_focus_step(
+            self,
+            ipos: int,
+            rowshift: int,
+            colshift: int,
+            i_chan: LEDType | None,
+            brightness: float = 29,
+    ) -> bool:
         logger.info(f"TestCamera.software_focus_step at pos_z={ipos}.")
         z_coord = self.focus_Z_coords[ipos]
         self.move_to(coordinate={'Z': z_coord}, block=True)
-        image_raw = self.display_save_frame(
-            i_chan=None,  # self._cfg_focus.focus_channel,
-            path_to_save=False,
-            filename=None,
-            display_frame=False,
+        image_raw = self.get_frame(
+            i_chan=i_chan,
+            brightness=brightness,
+            disable_led=True,
         )
         if image_raw is None:
             logger.warning("EvoCamera.software_focus: self._take_frame returned None. Aborting...")
@@ -941,7 +963,14 @@ class TestCamera(AbstractCamera):
         logger.info(f"TestCamera._set_exposure={exposure_time}.")
         return
 
-    def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False, duration: float | None = None):
+    def set_led(
+            self,
+            i_chan: LEDType,
+            brightness: float = 29,
+            block: bool = False,
+            duration: float | None = None,
+            disable_current_LED: bool = True,
+    ):
         self._current_led_channel = i_chan
         logger.info(f"TestCamera.set_led={i_chan}, brightness={brightness}, block={block}.")
         return
@@ -1351,8 +1380,8 @@ class EvoCamera(AbstractCamera):
         return "{}_P{}_X{}_Y{}_Z{}_F{}_{}{}.tiff".format(
             LEDType.get_name(value_to_find=i_channel.value).replace("_", ""),
             i_pos if i_pos is not None else "",
-            np.round(pos['X']),
-            np.round(pos['Y']),
+            np.round(pos['X']) if 'X' in pos else "",
+            np.round(pos['Y']) if 'Y' in pos else "",
             np.round(pos['Z']) if 'Z' in pos else "auto",
             filter_wheel.value,
             datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f"),
@@ -1433,7 +1462,14 @@ class EvoCamera(AbstractCamera):
         self._pos_id_to_coordinate = {key: val for key, val in pos_id_to_coordinate.items()}
         return True
 
-    def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False, duration: float | None = None):
+    def set_led(
+            self,
+            i_chan: LEDType,
+            brightness: float = 29,
+            block: bool = False,
+            duration: float | None = None,
+            disable_current_LED: bool = True,
+    ):
         if i_chan not in self._led_channel_keys.keys():
             logger.error(msg=f"EvoCamera._set_channel: i_chan={i_chan} not in channels={self._led_channel_keys.keys()}.")
             return
@@ -1471,7 +1507,7 @@ class EvoCamera(AbstractCamera):
                     return False
         return True
 
-    def software_focus_finalise(self, move_on_any_focus_status: bool = True, debug_save: bool = True):
+    def software_focus_finalise(self, move_on_any_focus_status: bool = True, debug_save: bool = False):
         self._focus_is_initialised = False
         self._focus_curve_status = get_focus_curve_type(self.focus_scores)
         self._focus_status = FocusStatusType.IN_FOCUS if get_focus_score_is_good(self.focus_scores) \
@@ -1595,14 +1631,20 @@ class EvoCamera(AbstractCamera):
         ).astype(np.float64)
         self._focus_is_initialised = True
 
-    def software_focus_step(self, ipos: int, rowshift: int, colshift: int) -> bool:
+    def software_focus_step(
+            self,
+            ipos: int,
+            rowshift: int,
+            colshift: int,
+            i_chan: Union[LEDType, None],
+            brightness: float = 29,
+    ) -> bool:
         z_coord = self.focus_Z_coords[ipos]
         self.move_to(coordinate={'Z': z_coord}, block=True)
-        image_raw = self.display_save_frame(
-            i_chan=None,    # self._cfg_focus.focus_channel
-            path_to_save=False,
-            filename=None,
-            display_frame=False,
+        image_raw = self.get_frame(
+            i_chan=i_chan,
+            brightness=brightness,
+            disable_led=True,
         )
         if image_raw is None:
             logger.warning("EvoCamera.software_focus: self._take_frame returned None. Aborting...")
@@ -1806,7 +1848,14 @@ class EvoCamerav2(EvoCamera):
     def calibrate_hall(self, hall_id: int):
         self.syncboard.calibrate_hall(hall_id)
 
-    def set_led(self, i_chan: LEDType, brightness: float = 29, block: bool = False, duration: float | None = None):
+    def set_led(
+            self,
+            i_chan: LEDType,
+            brightness: float = 29,
+            block: bool = False,
+            duration: float | None = None,
+            disable_current_LED: bool = True,
+    ):
         """
 
         Parameters
@@ -1819,6 +1868,8 @@ class EvoCamerav2(EvoCamera):
             NOT IMPLEMENTED. Block until response from syncboard is received.
         duration: float | None
             In milliseconds. If provided, must be smaller than 1 hour. If none, brightness must be <= 29.
+        disable_current_LED: bool
+            Disable the current LED.
 
         Returns
         -------
@@ -1845,7 +1896,7 @@ class EvoCamerav2(EvoCamera):
             else:
                 is_good_brightness_value = False
             if is_good_brightness_value:
-                if self.current_channel != LEDType.NO_LED:
+                if (self.current_channel != LEDType.NO_LED) and disable_current_LED:
                     self.syncboard.disable_led(led_id=self._led_channel_keys[self.current_channel])
                 if brightness > 29 and duration is None:
                     duration = 120*1000

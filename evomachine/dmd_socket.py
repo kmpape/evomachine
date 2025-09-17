@@ -17,6 +17,7 @@ from evomachine.config import get_logger, EVOMACHINE_DIR
 from evomachine.exceptions import DMDError, ErrorCode, ErrorContainer
 
 from delta.utils import CroppingBox
+from delta.imgops import correct_drift
 
 logger = get_logger(name=__name__)
 
@@ -37,6 +38,7 @@ EM_DMD_PROGRAM_PATH = EVOMACHINE_DIR.resolve().parent.parent / "em_dmd_window/Re
 
 class DMDControl:
     DEFAULT_LINE_WIDTH: int = 5
+    DEFAULT_SQUARE_WIDTH: int = 20
     "Line width used for calibration and displaying lines. Use odd values."
     EXTENSIONS = ['png', 'tiff', 'tif']
     "Accepted file extensions for loading images."
@@ -103,7 +105,8 @@ class DMDControl:
         "Thread to display output from C program."
         self._calib_data: list[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] | None = None
         "List containing calibration data."
-        self._calib_file: Path = EVOMACHINE_DIR / 'dmd_calibration_data_2025-04-24.pkl'
+        self._calib_file: Path = EVOMACHINE_DIR / 'dmd_calibration_data_2025-08-14_v2.pkl'
+        # self._calib_file: Path = EVOMACHINE_DIR / 'dmd_calibration_data_2025-04-30.pkl'
         # self._calib_file: Path = EVOMACHINE_DIR / 'dmd_calibration_data_2025-02-13.pkl'
         # self._calib_file: Path = EVOMACHINE_DIR / 'dmd_calibration_data-2024-03-21.pkl'
         "Path to calibration file."
@@ -210,9 +213,13 @@ class DMDControl:
         self._calib_data, self._homography_mat, self._homography_mat_inv = DMDControl.load_calibration_data(
             filepath=self._calib_file if filepath is None else filepath,
         )
+        self._calib_file = self._calib_file if filepath is None else filepath
 
-    def get_calibration_data(self) -> list[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]]:
-        return self._calib_data
+    def get_calibration_data(self) -> tuple[list, np.ndarray, np.ndarray, Path] | tuple[None, None, None, None]:
+        return self._calib_data, self._homography_mat, self._homography_mat_inv, self._calib_file
+
+    def get_calibration_filename(self) -> Path:
+        return self._calib_file
 
     def img_to_dmd_coords(self, img_row: int, img_col: int) -> tuple[int, int] | None:
         """
@@ -315,6 +322,66 @@ class DMDControl:
             img, self._homography_mat_inv, self.width_height_CAM, flags=cv2.INTER_NEAREST
         ).astype(img.dtype)
 
+    def patches_from_roi_groups(
+            self,
+            roi_boxes_group_ids: list[list[int]],
+            roi_boxes: list[CroppingBox],
+            xshift: int = 0,
+
+    ) -> list[CroppingBox]:
+        """
+        If ROI boxes are arranged in vertical columns, this function creates boxes in between columns and between edge
+        columns and image borders.
+
+        Parameters
+        ----------
+        roi_boxes_group_ids: list[list[int]]
+            Lists with ROI IDs grouped by columns. Example: [[0, 1, ..., ncol1-1], [ncol1, ncol1+1, ...], ...]. These
+            groups must be sorted, i.e. arranged with X coordinates increasing by group.
+        roi_boxes: list[CroppingBox]
+            List of ROI boxes.
+        xshift: int
+            Shift to increase spacing between columns and patches.
+
+        Returns
+        -------
+        patches: list[CroppingBox]
+            List of patches.
+
+        """
+        black_patches = []
+        for i, group_ids in enumerate(roi_boxes_group_ids):
+            if i == 0:
+                trench = roi_boxes[group_ids[0]]
+                box = CroppingBox(
+                    xtl=0,
+                    ytl=0,
+                    xbr=trench.xtl - xshift,
+                    ybr=self.width_height_CAM[1] - 1,
+                )
+                black_patches.append(box)
+            else:
+                group_ids_left = roi_boxes_group_ids[i - 1]
+                trench_left = roi_boxes[group_ids_left[0]]
+                trench_right = roi_boxes[group_ids[0]]
+                box = CroppingBox(
+                    xtl=trench_left.xbr + xshift,
+                    ytl=0,
+                    xbr=trench_right.xtl - xshift,
+                    ybr=self.width_height_CAM[1] - 1,
+                )
+                black_patches.append(box)
+                if i == len(roi_boxes_group_ids) - 1:
+                    trench = roi_boxes[group_ids[0]]
+                    box = CroppingBox(
+                        xtl=trench.xbr + xshift,
+                        ytl=0,
+                        xbr=self.width_height_CAM[0] - 1,
+                        ybr=self.width_height_CAM[1] - 1,
+                    )
+                    black_patches.append(box)
+        return black_patches
+
     def pattern_from_roi_boxes(
             self,
             boxes: list[CroppingBox],
@@ -322,6 +389,9 @@ class DMDControl:
             fill_y: float = 1.0,
             invert: bool = False,
             warp: bool = True,
+            drift: tuple[int, int] | None = None,
+            black_patches: list[CroppingBox] | None = None,
+            border_px: int = 2,
     ) -> np.ndarray:
         """
         Creates a pattern from a list of cropping boxes (Image coordinates) and returns a warped DMD pattern. If
@@ -331,7 +401,7 @@ class DMDControl:
         Parameters
         ----------
         boxes : list[CroppingBox]
-            Cropping boxes to display pattern on.
+            Cropping boxes to display pattern on. Note: negative coordinates will be ignored.
         fill_x : float
             If fill_x=1.0, the entire cropping box is filled in horizontal direction. If 0.0 < fill_x < 1.0, it fills
             a fill percentage of the cropping box.
@@ -341,6 +411,12 @@ class DMDControl:
             For False, background is black and boxes are white; for True, background is white and boxes are black.
         warp : bool
             Warp perspective for DMD.
+        drift : tuple[int, int]
+            Applies drift correction before warping the image. See delta.imgops.correct_drift for drift definition.
+        black_patches : list[CroppingBox]
+            Additional cropping boxes to fill with black.
+        border_px : int
+            Add a black border of border_px pixels around the image.
 
         Returns
         -------
@@ -357,6 +433,20 @@ class DMDControl:
             start_col = max(b.xtl+shift_x, 0)
             end_col = min(b.xbr+1-shift_x, cam_img.shape[1]-1)
             cam_img[start_row: end_row, start_col: end_col] = fill_color
+        if black_patches is not None:
+            for b in black_patches:
+                start_row = max(b.ytl, 0)
+                end_row = min(b.ybr + 1, cam_img.shape[0] - 1)
+                start_col = max(b.xtl, 0)
+                end_col = min(b.xbr + 1, cam_img.shape[1] - 1)
+                cam_img[start_row: end_row, start_col: end_col] = 0
+        if drift is not None:
+            cam_img = correct_drift(cam_img, drift)
+        if border_px > 0:
+            cam_img[0:border_px+1, :] = 0
+            cam_img[-border_px:, :] = 0
+            cam_img[:, 0:border_px+1] = 0
+            cam_img[:, -border_px:] = 0
         return self.img_to_dmd_array(cam_img) if warp else cam_img
 
     def initialise(self, is_test: bool = False):
@@ -516,27 +606,99 @@ class DMDControl:
         else:
             return max(0, at_pos-int(line_width/2)), min(length, at_pos+int(line_width/2))
 
-    def display_calibration_image(self, lw: int = 5):
-        img = self.get_zero_array()
+    def get_calibration_image(self, lw: int = 5, img_size: tuple[int, int] | None = None) -> np.ndarray:
+        """
+        Returns a calibration image with squares of different size and a crosshair.+
+        Returns it in DMD dimensions if img_size == None.
+
+        Parameters
+        ----------
+        lw: int
+            Thickness of crosshair.
+        img_size: tuple[int, int] | None
+            Size of image
+
+        """
+        img = self.get_zero_array(img_size=img_size)
         mid_row, mid_col = img.shape[0]//2, img.shape[1]//2
         cv2.line(img, (mid_col, 0), (mid_col, img.shape[0]), 255, lw)  # noqa
         cv2.line(img, (0, mid_row), (img.shape[1], mid_row), 255, lw)  # noqa
         box_sizes = [5, 10, 20, 40, 80, 160, 320]
         box_sizes_rev = box_sizes[::-1]
+        bigshifts_x = [400, -400]
         shift = 20
-        for idx, box_size in enumerate(box_sizes):
-            start_x = mid_col - shift - box_size
-            start_y = mid_row + shift * (idx+1) + sum(box_sizes[:idx+1])  # noqa
-            cv2.rectangle(img, (start_x, start_y), (start_x + box_size, start_y + box_size), 255, -1)
-            start_y = mid_row - shift * (idx+1) - sum(box_sizes[:idx+1])
-            cv2.rectangle(img, (start_x, start_y), (start_x + box_size, start_y + box_size), 255, -1)
-        for idx, box_size in enumerate(box_sizes_rev):
-            start_x = mid_col + shift
-            start_y = mid_row + shift * (idx+1) + sum(box_sizes_rev[:idx+1])  # noqa
-            cv2.rectangle(img, (start_x, start_y), (start_x + box_size, start_y + box_size), 255, -1)
-            start_y = mid_row - shift * (idx+1) - sum(box_sizes_rev[:idx+1])
-            cv2.rectangle(img, (start_x, start_y), (start_x + box_size, start_y + box_size), 255, -1)
-        self.display_image(img)
+        for bigshift_x in bigshifts_x:
+            for idx, box_size in enumerate(box_sizes):
+                start_x = mid_col - shift - box_size + bigshift_x
+                start_y = mid_row + shift * (idx+1) + sum(box_sizes[:idx+1])  # noqa
+                cv2.rectangle(img, (start_x, start_y), (start_x + box_size, start_y + box_size), 255, -1)
+                start_y = mid_row - shift * (idx+1) - sum(box_sizes[:idx+1])
+                cv2.rectangle(img, (start_x, start_y), (start_x + box_size, start_y + box_size), 255, -1)
+            for idx, box_size in enumerate(box_sizes_rev):
+                start_x = mid_col + shift + bigshift_x
+                start_y = mid_row + shift * (idx+1) + sum(box_sizes_rev[:idx+1])  # noqa
+                cv2.rectangle(img, (start_x, start_y), (start_x + box_size, start_y + box_size), 255, -1)
+                start_y = mid_row - shift * (idx+1) - sum(box_sizes_rev[:idx+1])
+                cv2.rectangle(img, (start_x, start_y), (start_x + box_size, start_y + box_size), 255, -1)
+        return img
+
+    def display_calibration_image(self, lw: int = 5):
+        """
+        Displays a calibration image with squares of different size and a crosshair.
+
+        Parameters
+        ----------
+        lw: int             Thickness of crosshair.
+
+        """
+        self.display_image(self.get_calibration_image(lw=lw))
+
+    def get_checkerboard(
+            self,
+            square_size: int | None = None,
+            img_size: tuple[int, int] | None = None,
+    ):
+        """
+        Returns a checkerboard with squares of size square_size. Returns it in DMD dimensions if img_size == None.
+
+        Parameters
+        ----------
+        square_size: int
+            Thickness of line (see _make_half_line_width)
+        img_size: tuple[int, int] | None
+            Size of image
+
+        """
+        if not square_size:
+            square_size = DMDControl.DEFAULT_SQUARE_WIDTH
+        img = self.get_zero_array(img_size=img_size)
+        for i in range(0, img.shape[0], square_size * 2):
+            img[i:i + square_size, :] = 255
+        for j in range(square_size, img.shape[1], square_size * 2):
+            img[:, j:j + square_size] = 255
+
+        return img
+
+    def get_circles(self, col_range: np.array, row_range: np.array, radius: int):
+        cols, rows = np.meshgrid(col_range, row_range)
+        img = self.get_zero_array()
+        for i, (col, row) in enumerate(zip(cols.flatten(), rows.flatten())):
+            cv2.circle(img, (col, row), radius, color=255, thickness=-1)  # noqa
+        return img
+
+    def display_circles(
+            self,
+            start_col: int,
+            end_col: int,
+            start_row: int,
+            end_row: int,
+            step_row: int,
+            step_col: int,
+            radius: int,
+    ):
+        col_range = np.arange(start_col, end_col + step_col, step_col, dtype=np.dtype('int'))
+        row_range = np.arange(start_row, end_row + step_row, step_row, dtype=np.dtype('int'))
+        self.display_image(self.get_circles(col_range=col_range, row_range=row_range, radius=radius))
 
     def display_checkerboard(
             self,
@@ -550,14 +712,7 @@ class DMDControl:
         square_size: int             Thickness of line (see _make_half_line_width)
 
         """
-        if not square_size:
-            square_size = DMDControl.DEFAULT_LINE_WIDTH
-        img = self.get_zero_array()
-        for i in range(0, img.shape[0], square_size * 2):
-            img[i:i + square_size, :] = 255
-        for j in range(square_size, img.shape[1], square_size * 2):
-            img[:, j:j + square_size] = 255
-        self.display_image(img)
+        self.display_image(self.get_checkerboard(square_size=square_size))
 
     def display_circle(
             self,

@@ -143,7 +143,7 @@ class ImageROIBoxes(EvoWorkerTemplate):
                     seg_mask=seg_mask_resized,
                 )
         else:
-            logger.warning(f"Cannot show ROI plot for now.")
+            logger.debug(f"Cannot show ROI plot for now.")
         self.canvas.draw()
 
 

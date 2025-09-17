@@ -40,8 +40,10 @@ class AutomatonCommand:
     "Time at which the command was created. Produced via time.time()."
     command_data: Any = None
     "Data collected after executing the command."
+    # command_start_time: Union[float, None] = None
+    # "Time pre execution. Produced via time.time()."
     command_execution_time: Union[float, None] = None
-    "Time at which the command was created. Produced via time.time()."
+    "Time post execution. Produced via time.time()."
     fov_id: int | None = None
     "Field of view ID. Used for commands sent to GUI."
 
@@ -52,12 +54,26 @@ class AutomatonCommand:
     def get_exec_time(self):
         return self._get_time(self.command_execution_time)
 
+    @staticmethod
+    def _format_args(command_args):
+        if isinstance(command_args, dict):
+            def _format_val(val):
+                if isinstance(val, np.ndarray):
+                    return f"shape {val.shape}, min={val.min()}, max={val.max()}, mean={np.mean(val)}"
+                else:
+                    return val
+
+            "\t\n".join([f"{key}: {_format_val(val)}" for key, val in command_args.items()])
+        else:
+            return command_args
+
     def __str__(self):
         creation_time = self._get_time(self.command_creation_time)
         exec_time = self._get_time(self.command_execution_time)
         has_data = "True" if self.command_data is not None else "False"
         return f"Command(Type={self.command_type}, ID={self.command_id}, has_data={has_data}, " \
-               f"Creation Time={creation_time}, Exec Time={exec_time})"
+               f"Creation Time={creation_time}, Exec Time={exec_time}) " \
+               f"with args {self._format_args(self.command_args)}."
 
 
 class CommandFactory:
@@ -157,8 +173,9 @@ class CommandFactory:
             segment: bool,
             brightness: int | float | list[int | float] = 10,
             save: bool = False,
+            filename_suffix: str | None = None,
             pattern: np.ndarray | None = None,
-            filter_wheel: FilterWheelType | None = None,
+            filter_wheel: FilterWheelType | list[FilterWheelType] | None = None,
             force_led: bool = False,
             reset_led: bool = False,
     ) -> AutomatonCommand:
@@ -174,6 +191,7 @@ class CommandFactory:
                           True, and ConfigImageProcessor.preproc_enabled is False, this function throws an exception.
         brightness      : Brightness as value in [0,29].
         save            : Save image(s). Uses ConfigDevice.path_to_save passed to Automaton.
+        filename_suffix : Suffix to append to filenames.
         pattern         : An optional pattern of size width_height_DMD (see DMDControl) that will be displayed using
                           dmd.display_image(). If None, the DMD is set via dmd.display_full().
         filter_wheel    : Optional filter wheel to set. Otherwise, current setting is used.
@@ -206,19 +224,27 @@ class CommandFactory:
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument reset_led ({type(reset_led)}).")
         if segment:  # self._cfg.preproc_enabled or
             if not all([ch_seg in channels for ch_seg in self._cfg.channels_seg]):
-                raise TypeError(f"channels_seg={self._cfg.channels_seg} not in channels={channels} for segment=True.")
+                raise TypeError(f"AutomatonCommandFactory.image: channels_seg={self._cfg.channels_seg} not in channels={channels} for segment=True.")
         if segment and not self._cfg.preproc_enabled:
-            raise TypeError(f"segment=True but preproc_enabled=False.")
+            raise TypeError(f"AutomatonCommandFactory.image: segment=True but preproc_enabled=False.")
         if not ((isinstance(brightness, int) and 0 <= brightness <= 100) or
                 (isinstance(brightness, list) and
                  all([0 <= b <= 100 for b in brightness]) and len(brightness) == len(channels))):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type or range or format for argument brightness.")
         if isinstance(brightness, int):
             brightness = [brightness for _ in channels]
+        if filter_wheel is not None:
+            if isinstance(filter_wheel, list) and (len(channels) != len(filter_wheel) or
+                                                   any([not isinstance(f, FilterWheelType) for f in filter_wheel])):
+                raise TypeError("AutomatonCommandFactory.image: If list, len(filter_wheel) must be equal len(channels).")
+            elif not isinstance(filter_wheel, list) and not isinstance(filter_wheel, FilterWheelType):
+                raise TypeError("AutomatonCommandFactory.image: filter_wheel must be of type FilterWheelType.")
+        if not (isinstance(filename_suffix, str) or filename_suffix is None):
+            raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument filename_suffix ({type(filename_suffix)}).")
         command_args = {
             'channels': channels, 'exposure_time': exposure_time, 'segment': segment, 'brightness': brightness,
             'save': save, 'pattern': pattern, 'filter_wheel': filter_wheel,
-            'force_led': force_led, 'reset_led': reset_led,
+            'force_led': force_led, 'reset_led': reset_led, 'filename_suffix': filename_suffix,
         }
         return AutomatonCommand(
             command_type=AutomatonCommandType.IMAGE,
@@ -329,6 +355,8 @@ class CommandFactory:
             brightness: int | float = 29,
             fill_x: float = 1.0,
             fill_y: float = 1.0,
+            invert: bool = False,
+            set_live_mode: bool = False,
     ) -> AutomatonCommand:
         """
         Projects a pattern built from the specified RoI boxes onto the current FoV. NOTE: The automaton will NOT move to
@@ -343,6 +371,7 @@ class CommandFactory:
         brightness      : Brightness as value in [0,100].
         fill_x          : Determines the percentage of the RoI boxes filled (in X/horizontal/column direction).
         fill_y          : Determines the percentage of the RoI boxes filled (in Y/vertical/row direction).
+        invert          : Inverts black/white after creating the projection pattern. See Automaton._process.
 
         Returns in AbstractStrategy.callback
         ------------------------------------
@@ -363,7 +392,7 @@ class CommandFactory:
             raise TypeError(f"AutomatonCommandFactory.command_project_roi: roi_ids do not exist for pos_id={pos_id}.")
         if not (isinstance(brightness, int) or not isinstance(brightness, float)) or not (0 <= brightness <= 100):
             raise TypeError(f"AutomatonCommandFactory.project: Wrong type or range for argument brightness.")
-        max_duration = 6*60 if brightness > 29 else 3600
+        max_duration = 60*60 if brightness > 29 else 3600
         if not (isinstance(duration, float) or isinstance(duration, int)) or not (0 < duration < max_duration):
             msg = f"AutomatonCommandFactory.project: Duration must satisfy {0} < {duration} (actual) < {max_duration}"
             raise TypeError(msg)
@@ -374,7 +403,8 @@ class CommandFactory:
         return AutomatonCommand(
             command_type=AutomatonCommandType.PROJECT_ROI,
             command_args={'channel': channel, 'pos_id': pos_id, 'roi_ids': roi_ids, 'duration': duration,
-                          'brightness': brightness, 'fill_x': fill_x, 'fill_y': fill_y},
+                          'brightness': brightness, 'fill_x': fill_x, 'fill_y': fill_y, 'invert': invert,
+                          'set_live_mode': set_live_mode},
             command_id=self.get_next_id(),
             command_creation_time=time(),
         )

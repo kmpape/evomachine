@@ -43,6 +43,9 @@ class DMDModes(Enum):
     DISPLAY_NONE = 0
     DISPLAY_FULL = 1
     DISPLAY_IMG = 2
+    DISPLAY_CHECKB = 3
+    DISPLAY_CALIB = 4
+    DISPLAY_ROI = 5
 
 
 class DisplayMode(Enum):

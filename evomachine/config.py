@@ -6,6 +6,7 @@ from pathlib import Path
 
 import delta
 from delta.utils import CroppingBox
+from delta.rttypes import TrackingSetting
 
 from evomachine.exceptions import ConfigError, ErrorCode
 from evomachine.evotypes import FilterWheelType, FocusAlgorithmType, LEDType, ImageConfigType, ObjectiveConfigType, \
@@ -81,8 +82,8 @@ class ConfigImageProcessor:
     "Enable tracking (preproc_enabled and seg_enabled must be true)."
     lineage_enabled: bool = False
     "Enable lineage computations(preproc_enabled, seg_enabled, and track_enabled must be true)."
-    use_track_RT: bool = False
-    "Use special tracking function for tracking in trenches."
+    tracking_setting: TrackingSetting = TrackingSetting.DISABLED
+    "Pick tracking algorithm."
     delta_roi_preprocess_target_size: tuple[int, int] = (3200, 3200)
     "Size of microscope images just before being input to DeLTA. This can be different from cfg_delta.target_size_rois."
     image_processing_verbosity: int = 0
@@ -116,8 +117,8 @@ class ConfigImageProcessor:
             raise ConfigError("Invalid channels_seg list.", ErrorCode.ERROR_CONFIG)
         if not all([ch_seg in self.channels for ch_seg in self.channels_seg]):
             raise ConfigError("All channels_seg must be contained in channels.", ErrorCode.ERROR_CONFIG)
-        if not isinstance(self.use_track_RT, bool):
-            raise TypeError("use_track_RT must be a boolean.")
+        if not isinstance(self.tracking_setting, TrackingSetting):
+            raise TypeError("Tracking setting must have type TrackingSetting.")
         if not isinstance(self.image_processing_verbosity, int) or self.image_processing_verbosity < 0:
             raise TypeError("image_processing_verbosity must be an integer >= 0.")
         if self.refocus and self.max_refocus_trials < 1:
@@ -265,7 +266,8 @@ class ConfigCRISPFactory:
             loop_gain=10,
             averaging=5,
             update_rate=10,
-            objective_na=0.65,
+            # objective_na=0.65,
+            objective_na=0.9,
             lock_range=0.1,
         )
 
@@ -385,7 +387,7 @@ class ConfigCamera:
     "Available filter wheels. See FilterWheelType."
     path_to_save: Path
     "Path to save images."
-    default_exposure_time: float | int = 500
+    default_exposure_time: float | int = 200
     "Default exposure time in ms."
     default_focus_channel_id: int = 0
     "Default LED channel index in self.leds."

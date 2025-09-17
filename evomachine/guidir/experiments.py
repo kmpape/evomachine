@@ -351,10 +351,10 @@ class ExperimentPanel(EvoPanelTemplate):
         thread.start()
         self.threads.append(thread)
 
-        self.num_read_ins = 3
+        self.num_read_ins = 6
         self.read_in_buttons = {i: {
-            "from": self.make_button(text="From", func=self.record_param, font=SMALL, which=(i, "from")),
-            "to": self.make_button(text="To", func=self.record_param, font=SMALL, which=(i, "to"))
+            "from": self.make_button(text="From", func=self.record_param, font=VERYSMALL, which=(i, "from")),
+            "to": self.make_button(text="To", func=self.record_param, font=VERYSMALL, which=(i, "to"))
         } for i in range(self.num_read_ins)}
         self.read_in_display = {i: {
             "from": self.make_label(text="X=??????\nY=??????\nZ=??????", font=SMALL, align=Qt.AlignLeft),
@@ -362,27 +362,27 @@ class ExperimentPanel(EvoPanelTemplate):
         } for i in range(self.num_read_ins)}
         self.read_in_positions = {i: {"from": None, "to": None} for i in range(self.num_read_ins)}
         self.read_in_label = {i: self.make_label(text=f"Path {i}", font=SMALL) for i in range(self.num_read_ins)}
-        self.init_all_button = self.make_button(text="Initialise all", func=self.init_all, font=SMALL)
-        self.init_positions_button = self.make_button(text="Initialise FoVs", func=self.init_positions, font=SMALL)
-        self.init_focus_button = self.make_button(text="Initialise Focus", func=self.init_focus, font=SMALL)
-        self.init_references_button = self.make_button(text="Take Refs", func=self.init_references, font=SMALL)
-        self.init_processors_button = self.make_button(text="Initialise IP", func=self.init_processors, font=SMALL)
-        self.read_in_clear_button = self.make_button(text="Clear Paths", func=self.clear_param, font=SMALL)
-        self.focus_curves_button = self.make_button(text="Focus Curves", func=self.show_focus_curves, font=SMALL)
+        self.init_all_button = self.make_button(text="Initialise all", func=self.init_all, font=VERYSMALL)
+        self.init_positions_button = self.make_button(text="Initialise FoVs", func=self.init_positions, font=VERYSMALL)
+        self.init_focus_button = self.make_button(text="Initialise Focus", func=self.init_focus, font=VERYSMALL)
+        self.init_references_button = self.make_button(text="Take Refs", func=self.init_references, font=VERYSMALL)
+        self.init_processors_button = self.make_button(text="Initialise IP", func=self.init_processors, font=VERYSMALL)
+        self.read_in_clear_button = self.make_button(text="Clear Paths", func=self.clear_param, font=VERYSMALL)
+        self.focus_curves_button = self.make_button(text="Focus Curves", func=self.show_focus_curves, font=VERYSMALL)
         self.use_autofocus: bool = True
         self.autofocus_checkbox = self.make_checkbox(text="Use autofocus", font=SMALL, set_true=self.use_autofocus,
                                                      func=self.toggle_autofocus)
-        self.position_dialog_button = self.make_button(text="FoVs", func=self.show_position_dialog, font=SMALL)
-        self.strategy_label = self.make_label(text="???", font=SMALL)
+        self.position_dialog_button = self.make_button(text="FoVs", func=self.show_position_dialog, font=VERYSMALL)
+        self.strategy_label = self.make_label(text="???", font=VERYSMALL)
         self._automaton_is_initialised: bool = False
-        self.start_button = self.make_button(text="Start", func=self.start_acquisition, font=SMALL)
+        self.start_button = self.make_button(text="Start", func=self.start_acquisition, font=VERYSMALL)
         #  self.pause_button = self.make_button(text="Pause", func=self.pause_acquisition, font=SMALL)
-        self.stop_button = self.make_button(text="Stop", func=self.stop_acquisition, font=SMALL)
+        self.stop_button = self.make_button(text="Stop", func=self.stop_acquisition, font=VERYSMALL)
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
 
         self.layout.addWidget(self.make_label(text="Strategy", font=NORMAL), 0, 0, 1, 1, LEFT)
-        self.layout.addWidget(self.strategy_label, 0, 1, 1, 3, CENTER)
+        self.layout.addWidget(self.strategy_label, 0, 1, 1, 2, CENTER)
         self.layout.addWidget(self.read_in_clear_button, 1, 0, 1, 1)
         self.layout.addWidget(self.init_positions_button, 2, 0, 1, 1)
         self.layout.addWidget(self.init_focus_button, 3, 0, 1, 1)
@@ -391,11 +391,17 @@ class ExperimentPanel(EvoPanelTemplate):
         self.layout.addWidget(self.init_processors_button, 5, 0, 1, 1)
         self.layout.addWidget(self.init_all_button, 6, 0, 1, 1)
         for i in range(self.num_read_ins):
-            self.layout.addWidget(self.read_in_label[i], 2*i+1, 2, 1, 1)
-            self.layout.addWidget(self.read_in_buttons[i]["from"], 2*i+1, 3, 1, 1)
-            self.layout.addWidget(self.read_in_buttons[i]["to"], 2*i+1, 4, 1, 1)
-            self.layout.addWidget(self.read_in_display[i]["from"], 2*i+2, 3, 1, 1)
-            self.layout.addWidget(self.read_in_display[i]["to"], 2*i+2, 4, 1, 1)
+            # self.layout.addWidget(self.read_in_label[i], 2*i+1, 2, 1, 1)
+            # _shift = 1
+            # self.layout.addWidget(self.read_in_buttons[i]["from"], 2*i+1, 3+_shift, 1, 1)
+            # self.layout.addWidget(self.read_in_buttons[i]["to"], 2*i+1, 4+_shift, 1, 1)
+            # self.layout.addWidget(self.read_in_display[i]["from"], 2*i+2, 3+_shift, 1, 1)
+            # self.layout.addWidget(self.read_in_display[i]["to"], 2*i+2, 4+_shift, 1, 1)
+            _shift = 1
+            self.layout.addWidget(self.read_in_buttons[i]["from"], 2*i+1, 3+_shift, 1, 1)
+            self.layout.addWidget(self.read_in_buttons[i]["to"], 2*i+1, 5+_shift, 1, 1)
+            self.layout.addWidget(self.read_in_display[i]["from"], 2*i+1, 4+_shift, 1, 1)
+            self.layout.addWidget(self.read_in_display[i]["to"], 2*i+1, 6+_shift, 1, 1)
 
         this_row = min(7, 1+2*self.num_read_ins)
         self.layout.addWidget(self.start_button, this_row, 0, 1, 1)

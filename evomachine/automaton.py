@@ -4,6 +4,7 @@ from datetime import datetime
 import logging
 from multiprocessing import Event, Queue
 import numpy as np
+from pathlib import Path
 import pickle
 import queue
 import skimage
@@ -15,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import delta
 from delta.rt import PositionRT
+from delta.rttypes import TrackingSetting
 
 from evomachine.acquisition import AbstractCamera, EvoCamera, EvoCamerav3
 from evomachine.commands import AutomatonCommand, CommandFactory
@@ -143,7 +145,7 @@ class Automaton:
             self.seg_model = delta.model.unet_seg(input_size=(*self._cfg.cfg_delta.target_size_seg, 1))  # noqa
             logger.info(f"Automaton: Loading seg model with weights from {self._cfg.cfg_delta.model_file_seg}")
             self.seg_model.load_weights(self._cfg.cfg_delta.model_file_seg)
-        if self._cfg.track_enabled and not self._cfg.use_track_RT:
+        if self._cfg.track_enabled and (self._cfg.tracking_setting == TrackingSetting.DELTA):
             self.tracking_model = delta.model.unet_track(input_size=(*self._cfg.cfg_delta.target_size_track, 1))  # noqa
             logger.info(f"Automaton: Loading tracking model with weights from {self._cfg.cfg_delta.model_file_track}")
             self.tracking_model.load_weights(self._cfg.cfg_delta.model_file_track)
@@ -361,7 +363,8 @@ class Automaton:
                               error_code=ErrorCode.ERROR_DEVICE_CONFIG)
         self._create_position_processor(which=which)
         position_list = list(range(len(self._pos_processor))) if which is None else [which]
-        logger.info(f"Automaton.initialise_position_processors: Positions {position_list} with {self._cfg}.")
+        logger.info(f"Automaton.initialise_position_processors: Positions {position_list} with {self._cfg}."
+                    f" Use DeLTA={self._use_delta}.")
         for i_pos in position_list:
             logger.debug(f"Automaton.initialise_position_processor: initialising position processor {i_pos}.")
             if self._cfg.preproc_enabled or self._cfg.roi_enabled or self._cfg.seg_enabled:
@@ -384,7 +387,7 @@ class Automaton:
                     ind=0,
                 )
                 self._pos_processor[i_pos].initialise(
-                    reference=ref,
+                    reference=copy.deepcopy(ref),
                     rotate=this_rotation,
                     roi_boxes=roi_boxes,
                     seg_model=self.seg_model,
@@ -642,7 +645,7 @@ class Automaton:
                     PositionRT(
                         position_nb=pos_id,
                         config=self._cfg.cfg_delta,
-                        use_track_moma=self._cfg.use_track_RT,
+                        tracking_setting=self._cfg.tracking_setting,
                         roi_input_size=self._cfg.delta_roi_preprocess_target_size,
                     )
                 )
@@ -653,7 +656,7 @@ class Automaton:
             self._pos_processor[which] = PositionRT(
                     position_nb=which,
                     config=self._cfg.cfg_delta,
-                    use_track_moma=self._cfg.use_track_RT,
+                    tracking_setting=self._cfg.tracking_setting,
                     roi_input_size=self._cfg.delta_roi_preprocess_target_size,
             )
 
@@ -939,7 +942,7 @@ class Automaton:
 
         # Execute requested commands in the given order
         for cmd in self.next_commands:
-            logger.info(f"Automaton._process: Executing {cmd} with args {cmd.command_args}.")
+            logger.info(f"Automaton._process: Executing {cmd}.")
 
             if self.stopped():
                 logger.warning(f"Automaton.process: stopping process at {str(cmd)}.")
@@ -948,7 +951,6 @@ class Automaton:
 
             if cmd.command_type == AutomatonCommandType.MOVE:
                 self._move_to_pos(pos_id=cmd.command_args)
-                # self.manage_autofocus(curr_fov_id=self._curr_fov_id)
                 if self._cfg.refocus and self._cfg.refocus_on_all_positions:
                     # If we refocused on a different position we might've lost autofocus again moving back. In this
                     # case, refocus on the current position.
@@ -985,11 +987,6 @@ class Automaton:
                     self._dmd.display_image(img=cmd.command_args['pattern'])
                 time.sleep(0.5)  # TODO: implement feedback
 
-                if cmd.command_args['filter_wheel'] is not None:
-                    if self.cam.get_filter_wheel() != cmd.command_args['filter_wheel']:
-                        self.cam.set_filter_wheel(filter_type=cmd.command_args['filter_wheel'])
-                        self.sleep(duration=1)  # TODO: implement feedback
-
                 if self.cam.get_exposure() != cmd.command_args['exposure_time']:
                     self.cam.set_exposure(exposure_time=cmd.command_args['exposure_time'])
 
@@ -997,13 +994,21 @@ class Automaton:
                     channels=cmd.command_args['channels'],
                     brightness=cmd.command_args['brightness'],
                     reset_led=cmd.command_args['reset_led'],
+                    filter_wheel=cmd.command_args['filter_wheel'],
                 )
                 if not cmd.command_args['force_led']:
                     self.cam.disable_led()
 
-                self._process_position(do_segment=cmd.command_args['segment'], channels=cmd.command_args['channels'])
+                if cmd.command_args['pattern'] is None:
+                    self._process_position(do_segment=cmd.command_args['segment'], channels=cmd.command_args['channels'])
                 channels_int = [self._channel_to_index[c] for c in cmd.command_args['channels']]
-                if self._cfg.preproc_enabled and self._pos_processor[self._curr_fov_id].rois:
+
+                if True == True:
+                    proc = self._pos_processor[0]
+                    roi = proc.rois[0]
+                    fluo = roi.get_fluo(frame=1)
+                if cmd.command_args['pattern'] is None and self._cfg.preproc_enabled and \
+                        self._pos_processor[self._curr_fov_id].rois:
                     # Remove channel from channel extension for segmentation
                     tmp = self._pos_processor[self._curr_fov_id].preproc_frame[1:, :, :]
                     cmd.command_data = {
@@ -1013,26 +1018,29 @@ class Automaton:
                     cmd.command_data = {
                         'img': [self._all_frames[self._curr_fov_id][1, channels_int, :, :]],
                     }
-                if self._cfg.seg_enabled and cmd.command_args['segment']:
+                if self._cfg.seg_enabled and cmd.command_args['segment'] and cmd.command_args['pattern'] is None:
                     cmd.command_data['seg'] = self._pos_processor[self._curr_fov_id].get_seg(frame=1)
-                if self._cfg.seg_enabled and cmd.command_args['segment'] and self._cfg.track_enabled:
+                if self._cfg.seg_enabled and cmd.command_args['segment'] and self._cfg.track_enabled\
+                        and cmd.command_args['pattern'] is None:
                     cmd.command_data['cells'] = [r.lineage.cells for r in self._pos_processor[self._curr_fov_id].rois]
+
                 if cmd.command_args['save']:
-                    for i_chan, channel_index in zip(cmd.command_args['channels'], channels_int):
+                    if cmd.command_args['filename_suffix'] is None:
+                        filename_suffix = f"_{self._strategy.callback_counter}"
+                    else:
+                        filename_suffix = f"_{self._strategy.callback_counter}"+cmd.command_args['filename_suffix']
+                    if not isinstance(cmd.command_args['filter_wheel'], list):
+                        filter_wheels = [cmd.command_args['filter_wheel']] * len(cmd.command_args['channels'])
+                    else:
+                        filter_wheels = cmd.command_args['filter_wheel']
+                    for i_chan, channel_index, fw in zip(cmd.command_args['channels'], channels_int, filter_wheels):
                         self.cam.save_frame(
                             frame=self._all_frames_raw[self._curr_fov_id][1, channel_index, :, :],
                             i_channel=i_chan,
                             i_pos=self._curr_fov_id,
-                            filter_wheel=cmd.command_args['filter_wheel'],
+                            filter_wheel=fw,
+                            filename_suffix=filename_suffix,
                         )
-                        if self._cfg.preproc_enabled and self._pos_processor[self._curr_fov_id].rois:
-                            self.cam.save_frame(
-                                frame=self._pos_processor[self._curr_fov_id].preproc_frame[channel_index, :, :],
-                                i_channel=i_chan,
-                                i_pos=self._curr_fov_id,
-                                filter_wheel=cmd.command_args['filter_wheel'],
-                                filename_suffix="_preproc",
-                            )
                 self._dmd.display_none()
 
             elif cmd.command_type == AutomatonCommandType.PROJECT:
@@ -1052,11 +1060,29 @@ class Automaton:
             elif cmd.command_type == AutomatonCommandType.PROJECT_ROI:
                 pos_id = cmd.command_args['pos_id']
                 roi_boxes = [self._pos_processor[pos_id].roi_boxes[r] for r in cmd.command_args['roi_ids']]
+                drift = self._pos_processor[pos_id].drift_values[-1] if self._cfg.cfg_delta.drift_correction else None
+                if drift is not None:
+                    drift = (-drift[0], -drift[1])
+                if cmd.command_args['invert']:
+                    black_patches = self._dmd.patches_from_roi_groups(
+                        roi_boxes_group_ids=self._pos_processor[pos_id].roi_boxes_group_ids,
+                        roi_boxes=self._pos_processor[pos_id].roi_boxes,
+                        xshift=0,
+                    )
+                else:
+                    black_patches = None
+
                 pattern = self._dmd.pattern_from_roi_boxes(
                     boxes=roi_boxes,
                     fill_x=cmd.command_args['fill_x'],
                     fill_y=cmd.command_args['fill_y'],
+                    warp=True,
+                    invert=cmd.command_args['invert'],
+                    drift=drift,
+                    black_patches=black_patches,
                 )
+                cmd.command_data = pattern
+
                 # TODO need assert whether DMD image is being displayed
                 self._dmd.display_image(img=pattern)
                 time.sleep(0.5)  # TODO
@@ -1065,7 +1091,7 @@ class Automaton:
                     brightness=cmd.command_args['brightness'],
                     duration=cmd.command_args['duration']*1000.0,
                 )
-                self.sleep(duration=cmd.command_args['duration'])  # TODO disable with timer
+                self.sleep(duration=cmd.command_args['duration'], set_live_mode=cmd.command_args['set_live_mode'])  # TODO disable with timer
                 self.cam.disable_led()
 
             elif cmd.command_type == AutomatonCommandType.MAGNET:
@@ -1282,16 +1308,30 @@ class Automaton:
             brightness: int | float | list[int] | list[float] = 100,
             reset_led: bool = False,
             disable_led: bool = False,
+            filter_wheel: FilterWheelType | list[FilterWheelType] | None = None,
     ):
         if (channels is None) or not channels:
             channels = self._cfg.channels
         if isinstance(brightness, int):
             brightness = [brightness for _ in channels]
+        if filter_wheel is not None and not isinstance(filter_wheel, list):
+            if self.cam.get_filter_wheel() != filter_wheel:
+                self.cam.set_filter_wheel(filter_type=filter_wheel)
+                self.sleep(duration=1)  # TODO: implement feedback
+        elif isinstance(filter_wheel, list) and not len(channels) == len(filter_wheel):
+            msg = f"_take_image: channel and filter wheel lengths must match. " \
+                  f"len(channels)={len(channels)}. len(filter_wheel)={len(filter_wheel)}."
+            raise KeyError(msg)
         for i, channel in enumerate(channels):
             i_chan = self._channel_to_index[channel]
             fov_id = self._curr_fov_id
             self._all_frames_raw[fov_id][0, i_chan, :, :] = self._all_frames_raw[fov_id][1, i_chan, :, :]
             self._all_frames[fov_id][0, i_chan, :, :] = self._all_frames[fov_id][1, i_chan, :, :]
+
+            if filter_wheel is not None and isinstance(filter_wheel, list):
+                if self.cam.get_filter_wheel() != filter_wheel[i]:
+                    self.cam.set_filter_wheel(filter_type=filter_wheel[i])
+                    self.sleep(duration=1)  # TODO: implement feedback
 
             self._all_frames_raw[fov_id][1, i_chan, :, :] = self.cam.get_frame(
                 i_chan=channel,
@@ -1323,6 +1363,7 @@ class Automaton:
                 channels=self._cfg.channels_seg,
                 ind=0,
             )
+
             channel_inds = [self._channel_to_index[c]+1 for c in channels]  # Add 1 for channel_extend_img
             if 0 not in channel_inds:
                 channel_inds = [0] + channel_inds
@@ -1332,6 +1373,11 @@ class Automaton:
                 tracking_model=self.tracking_model,
                 channel_inds=channel_inds,
             )
+            if self._cfg.cfg_delta.drift_correction:
+                this_drift = self._pos_processor[self._curr_fov_id].drift_values[-1]
+                num_drift = len(self._pos_processor[self._curr_fov_id].drift_values)
+                msg = f"Drift {num_drift} for FoV {self._curr_fov_id}: {this_drift}"
+                logger.info(msg)
 
     def get_channel_to_index(self) -> Dict[LEDType, int]:
         return {key: value for key, value in self._channel_to_index.items()}
@@ -1373,7 +1419,7 @@ class Automaton:
         now = time.perf_counter()
         end = now + duration
         if set_live_mode:
-            self._dmd.display_full()
+            # self._dmd.display_full()
             self.cam.set_led(i_chan=channel, brightness=brightness)
             self.set_cam_live_mode(status=True)
         while (now < end) and (not self.stopped()) and (not self.strategy_has_stopped()) and (not self.has_shutdown()):
@@ -1387,6 +1433,9 @@ class Automaton:
         self._stop_event.clear()
 
     def save_state(self, filename_suffix: str = ''):
+        if True:
+            logger.warning(f"Save state currently disabled.")
+            return
         exclude = [
             'cam', '_dmd', '_position_processors_is_initialised', 'roi_model',
             'seg_model', 'tracking_model', '_use_delta', '_start_strategy_event', '_stop_strategy_event',
@@ -1487,8 +1536,7 @@ class Automaton:
             self,
             cfg: DMDCalibConfigType,
             filename: str | None = None,
-            on_mothermachine: bool = True,
-    ) -> list[tuple[tuple[int, int], tuple[int, int]]]:
+    ) -> tuple[list, np.ndarray, np.ndarray, Path] | tuple[None, None, None, None]:
         """
         Calibrates DMD by scanning DMD coordinates and measuring CAM coordinates (on image). See DMDCAlibConfigType for
         parameters. Note that this routine hard-codes some points that MUST be within the image. Change if needed.
@@ -1505,18 +1553,27 @@ class Automaton:
         results : [((row, col), (img_row_max.argmax(), img_col_max.argmax()), (img_row_max.max(), img_col_max.max()))]
             Calibration values with row/col DMD coordinates and remaining coordinates are CAM coordinates.
         """
+        error_return_value = (None, None, None, None)
         if not self.devices_is_initialised():
             logger.error("Automaton.dmd_calibrate: Devices not initialised. Returning.")
-            return []
+            return error_return_value
         self.set_cam_live_mode(status=False)
         if filename is None:
             datestr = datetime.today().strftime('%Y-%m-%d')
-            filename = str(EVOMACHINE_DIR / f"dmd_calibration_data_{datestr}.pkl")
+            calib_version = 0
+            filename = str(EVOMACHINE_DIR / f"dmd_calibration_data_{datestr}_v{calib_version}.pkl")
+            while Path(filename).exists():
+                calib_version += 1
+                filename = str(EVOMACHINE_DIR / f"dmd_calibration_data_{datestr}_v{calib_version}.pkl")
         logger.info(f"Starting DMD calibration with config {cfg} and filename {filename}.")
 
         # Build grid to scan
         if cfg.end_col >= self._dmd.width_height_DMD[0] or cfg.end_col >= self._dmd.width_height_DMD[1]:
             logger.error(f"dmd_calibrate: Invalid row or column ranges for config: {cfg}")
+        # if cfg.on_mothermachine:  # TODO add step_col step_row to calibration config
+        #     col_range = np.arange(cfg.start_col, cfg.end_col + cfg.step, int(cfg.step/2), dtype=np.dtype('int'))
+        # else:
+        #     col_range = np.arange(cfg.start_col, cfg.end_col + cfg.step, cfg.step, dtype=np.dtype('int'))
         col_range = np.arange(cfg.start_col, cfg.end_col + cfg.step, cfg.step, dtype=np.dtype('int'))
         row_range = np.arange(cfg.start_row, cfg.end_row + cfg.step, cfg.step, dtype=np.dtype('int'))
         if col_range[-1] == self._dmd.width_height_DMD[1]:
@@ -1529,22 +1586,38 @@ class Automaton:
         self.cam.set_exposure(exposure_time=cfg.exposure)
         if isinstance(self.cam, EvoCamera):
             self.set_cam_live_mode(False)
-        self.cam.set_led(i_chan=cfg.channel, brightness=cfg.brightness)
+        if isinstance(cfg.channel, list):
+            self.cam.disable_led()
+            for channel in cfg.channel:
+                self.cam.set_led(i_chan=channel, brightness=cfg.brightness, disable_current_LED=False)
+        else:
+            self.cam.set_led(i_chan=cfg.channel, brightness=cfg.brightness)
         last_filter_type = self.cam.get_filter_wheel()
-        self.cam.set_filter_wheel(FilterWheelType.NO_FILTER)
+        # self.cam.set_filter_wheel(FilterWheelType.NO_FILTER)
+        self.cam.set_filter_wheel(FilterWheelType.FILTER_527nm)
 
         # Get minimum intensity for points to be considered
         max_intensity = 0
-        if on_mothermachine:
-            self._dmd.display_full()
+        if cfg.on_mothermachine:
+            # self._dmd.display_full()
+            self._dmd.display_circles(
+                start_col=cfg.start_col,
+                end_col=cfg.end_col,
+                start_row=cfg.start_row,
+                end_row=cfg.end_row,
+                step_row=cfg.step,
+                step_col=cfg.step,
+                radius=cfg.line_width,
+            )
             test_img = self.cam.get_frame(i_chan=None, normalise=False)
             max_intensity = float(test_img.max())  # noqa
+            # max_intensity = float(np.percentile(test_img, 90))
         else:
             for i_row in range(3):
                 for i_col in range(3):
                     if self.stopped():
                         logger.warning("dmd_calibrate: Stop event encountered. Aborting DMD calibration.")
-                        return []
+                        return error_return_value
                     row = (self._dmd.width_height_DMD[0] * (i_row + 1)) // 4
                     col = (self._dmd.width_height_DMD[1] * (i_col + 1)) // 4
                     self._dmd.display_circle(row=row, col=col, radius=cfg.line_width)  # these points should be on screen
@@ -1561,8 +1634,8 @@ class Automaton:
             logger.error(f"dmd_calibrate: max off-screen intensity is high. off_screen={max_intensity} > "
                          f"0.9*on_screen={0.9*max_intensity}. "
                          f"Please verify. Aborting calibration.")
-            return []
-        if on_mothermachine:
+            return error_return_value
+        if cfg.on_mothermachine:
             min_intensity = max_intensity_none + 0.03 * (max_intensity - max_intensity_none)
         else:
             min_intensity = max_intensity_none + 0.5 * (max_intensity - max_intensity_none)
@@ -1576,7 +1649,7 @@ class Automaton:
                 logger.info(f"At {i+1} of {len(cols.flatten())}")
             if self.stopped():
                 logger.warning("dmd_calibrate: Stop event encountered. Aborting DMD calibration.")
-                return []
+                return error_return_value
             if not USE_DMD_SOCKET:
                 self._dmd.display_none(update_display=False)
             self._dmd.display_circle(row=row, col=col, radius=cfg.line_width)
@@ -1594,7 +1667,7 @@ class Automaton:
                                 (img_row_max.max(), img_col_max.max())))
             else:
                 logger.info(f"dmd_calibrate: DMD point (r{row},c{col}) off screen with intensity "
-                             f"{img_max} < {min_intensity}.")
+                            f"{img_max} < {min_intensity}.")
 
         self.cam.set_filter_wheel(last_filter_type)
         self.cam.disable_led()
@@ -1608,52 +1681,102 @@ class Automaton:
 
         logger.info(f"dmd_calibrate: Saved calibration data under {filename}.")
 
-        return results
+        if filename is not None:
+            self._dmd.calibrate(Path(filename))
 
-    def project_roi(self, fill_y: float = 0.1):
-        if not self._strategy.proj_imgs:
-            self._curr_fov_id = 0
-            self._initialise_strategy()
-            self.next_commands = self._strategy.callback(
-                fov_id=self._curr_fov_id,
-                data=self.last_commands,
-                errors=[],
-            )
-            self.next_commands = [cmd for cmd in self.next_commands if cmd.command_type != AutomatonCommandType.WAIT]
-            self._process(finalise=False)
-            time.sleep(5)
-            self._strategy.make_projection_images()
+        return self._dmd.get_calibration_data()
 
+    def project_roi(self, fill_y: float = 1.1, fill_x: float = 1.1, every_2nd_roi: bool = True, invert: bool = True):
         if not self._position_processors_is_initialised or not self._pos_processor:
             logger.warning(f"Cannot project ROI as position processor not initialised.")
             return
         if not self._pos_processor[0].roi_boxes:
             logger.warning(f"No ROI boxes available to project onto.")
             return
-        if fill_y > 0:
-            # boxes_to_project = [b for i, b in enumerate(self._pos_processor[0].roi_boxes) if i % 2 == 0]
-            boxes_to_project = [self._pos_processor[0].roi_boxes[iroi] for iroi in self._strategy.is_not_red_id[0]]
+        if every_2nd_roi:
+            boxes_to_project = [b for j, b in enumerate(self._pos_processor[0].roi_boxes) if j % 2 == 0]
         else:
             boxes_to_project = self._pos_processor[0].roi_boxes
-            fill_y = abs(fill_y)
+        if invert:
+            black_patches = []
+            xshift = 0
+            for i, group_ids in enumerate(self._pos_processor[0].roi_boxes_group_ids):
+                if i == 0:
+                    trench = self._pos_processor[0].roi_boxes[group_ids[0]]
+                    box = EvoCroppingBox(
+                        xtl=0,
+                        ytl=0,
+                        xbr=trench.xtl - xshift,
+                        ybr=self._dmd.width_height_CAM[1] - 1,
+                    )
+                    black_patches.append(box)
+                else:
+                    group_ids_left = self._pos_processor[0].roi_boxes_group_ids[i - 1]
+                    trench_left = self._pos_processor[0].roi_boxes[group_ids_left[0]]
+                    trench_right = self._pos_processor[0].roi_boxes[group_ids[0]]
+                    box = EvoCroppingBox(
+                        xtl=trench_left.xbr + xshift,
+                        ytl=0,
+                        xbr=trench_right.xtl - xshift,
+                        ybr=self._dmd.width_height_CAM[1] - 1,
+                    )
+                    black_patches.append(box)
+                    if i == len(self._pos_processor[0].roi_boxes_group_ids) - 1:
+                        trench = self._pos_processor[0].roi_boxes[group_ids[0]]
+                        box = EvoCroppingBox(
+                            xtl=trench.xbr + xshift,
+                            ytl=0,
+                            xbr=self._dmd.width_height_CAM[0] - 1,
+                            ybr=self._dmd.width_height_CAM[1] - 1,
+                        )
+                        black_patches.append(box)
+        else:
+            black_patches = None
         pattern = self._dmd.pattern_from_roi_boxes(
             boxes=boxes_to_project,
-            fill_x=self._strategy.fill_x,
-            fill_y=self._strategy.fill_y,
-            invert=True,
+            fill_x=fill_x,
+            fill_y=fill_y,
+            invert=invert,
+            black_patches=black_patches,
         )
         self._dmd.display_image(img=pattern)
 
-        # cam_img = self._dmd.get_zero_array(img_size=self._dmd.width_height_CAM)
-        # b = self._pos_processor[0].roi_boxes[0]
-        # start_col = b.xtl
-        # end_col = b.xbr
-        # cam_img[:, start_col: end_col] = 255
-        # pattern = self._dmd.img_to_dmd_array(cam_img)
-        # self._dmd.display_image(img=pattern)
-        # img = self._dmd.get_zero_array()
-        # for col in range(30):
-        #     for row in range(30):
-        #         cv2.circle(img, (col*100, row*100), 4, color=255, thickness=-1)  # noqa
-        #         # self._dmd.display_circle(row=row*200, col=col*200, radius=4)
-        # self._dmd.display_image(img)
+    def project_custom_3(self):
+        logger.info("project_custom_3")
+        roi_boxes = None
+        drift = (100, -400)
+        self._project_custom(roi_boxes=roi_boxes, drift=drift)
+
+    def project_custom_2(self):
+        logger.info("project_custom_2")
+        roi_boxes = None
+        drift = (0, 200)
+        self._project_custom(roi_boxes=roi_boxes, drift=drift)
+
+    def project_custom_1(self):
+        logger.info("project_custom_1")
+        roi_boxes = None
+        drift = (0, 0)
+        self._project_custom(roi_boxes=roi_boxes, drift=drift)
+
+    def _project_custom(self, roi_boxes: list[delta.imgops.CroppingBox] | None = None, drift: tuple[int, int] | None = None):
+        if roi_boxes is None:
+            roi_boxes = [
+                delta.imgops.CroppingBox(xtl=200, xbr=3000, ytl=1000, ybr=2200),
+                delta.imgops.CroppingBox(xtl=200, xbr=3000, ytl=2600, ybr=2800),
+            ]
+        if drift is not None:
+            drift = (-drift[0], -drift[1])
+        logger.info(f"displaying box with drift={drift}")
+        pattern = self._dmd.pattern_from_roi_boxes(
+            boxes=roi_boxes,
+            fill_x=1,
+            fill_y=1,
+            warp=True,
+            invert=False,
+            drift=drift,
+        )
+        logger.info(f"pattern.min={pattern.min()}, pattern.max={pattern.max()}, pattern.dtype={pattern.dtype}")
+        logger.info(f"unique={np.unique(pattern)}, sum={pattern.astype(float).sum()}, mean={pattern.astype(float).mean()}")
+        self._dmd.display_image(img=pattern)
+        return

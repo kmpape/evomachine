@@ -415,6 +415,65 @@ class DMDControl:
             return self.get_zero_array()
         return cv2.warpPerspective(img, self._homography_mat, self.width_height_DMD[::-1]).astype(img.dtype)
 
+    def patches_from_roi_groups(
+            self,
+            roi_boxes_group_ids: list[list[int]],
+            roi_boxes: list[CroppingBox],
+            xshift: int = 0,
+
+    ) -> list[CroppingBox]:
+        """
+        If ROI boxes are arranged in vertical columns, this function creates boxes in between columns and between edge
+        columns and image borders.
+
+        Parameters
+        ----------
+        roi_boxes_group_ids: list[list[int]]
+            Lists with ROI IDs grouped by columns. Example: [[0, 1, ..., ncol1-1], [ncol1, ncol1+1, ...], ...]. These
+            groups must be sorted, i.e. arranged with X coordinates increasing by group.
+        roi_boxes: list[CroppingBox]
+            List of ROI boxes.
+        xshift: int
+            Shift to increase spacing between columns and patches.
+
+        Returns
+        -------
+        patches: list[CroppingBox]
+            List of patches.
+
+        """
+        black_patches = []
+        for i, group_ids in enumerate(roi_boxes_group_ids):
+            if i == 0:
+                trench = roi_boxes[group_ids[0]]
+                box = CroppingBox(
+                    xtl=0,
+                    ytl=0,
+                    xbr=trench.xtl - xshift,
+                    ybr=self.width_height_CAM[1] - 1,
+                )
+                black_patches.append(box)
+            else:
+                group_ids_left = roi_boxes_group_ids[i - 1]
+                trench_left = roi_boxes[group_ids_left[0]]
+                trench_right = roi_boxes[group_ids[0]]
+                box = CroppingBox(
+                    xtl=trench_left.xbr + xshift,
+                    ytl=0,
+                    xbr=trench_right.xtl - xshift,
+                    ybr=self.width_height_CAM[1] - 1,
+                )
+                black_patches.append(box)
+                if i == len(roi_boxes_group_ids) - 1:
+                    trench = roi_boxes[group_ids[0]]
+                    box = CroppingBox(
+                        xtl=trench.xbr + xshift,
+                        ytl=0,
+                        xbr=self.width_height_CAM[0] - 1,
+                        ybr=self.width_height_CAM[1] - 1,
+                    )
+                    black_patches.append(box)
+        return black_patches
     def pattern_from_roi_boxes(self, boxes: list[CroppingBox]) -> np.ndarray:
         """
         Creates a pattern from a list of cropping boxes (Image coordinates) and returns a warped DMD pattern.

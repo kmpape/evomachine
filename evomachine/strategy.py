@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import copy
 import inspect
 import importlib.util
 import numpy as np
@@ -308,7 +309,7 @@ class BasicStrategy(AbstractStrategy):
         super().__init__(cfg=cfg)
         self.path_to_save = Path(save_path)
         self.imaging_interval: int = 60*3  # seconds
-        self.imaging_channels: list[LEDType] = [LEDType.LED_450_NM]  # GFP
+        self.imaging_channels: list[LEDType] = [LEDType.LED_565_NM]  # GFP
         self.exposure_time: int = 100  # milliseconds
         self.num_fovs: int | None = None
 

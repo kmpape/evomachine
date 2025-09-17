@@ -14,10 +14,11 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'sync_board'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'de-lta-rt'))
 
-from evomachine.acquisition import TestCamera, EvoCamera, EvoCamerav2 # , EvoCamerav3  # noqa
+from evomachine.acquisition import TestCamera, EvoCamera, EvoCamerav2  # , EvoCamerav3  # noqa
 from evomachine.automaton import Automaton  # noqa
 from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, ConfigImageProcessorFactory, \
     EVOMACHINE_DIR, USE_DMD_SOCKET, USE_SYNC_BOARD  # noqa
+
 if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMDControl  # noqa
 else:
@@ -28,8 +29,10 @@ from evomachine.evotypes import AutoFocusStatusType, FilterWheelType, FocusAlgor
     FocusStatusType, FocusCurveType
 from evomachine.guidir.newgui import EvoGUI  # noqa
 from evomachine.guidir.queuemanager import QueueManager  # noqa
-from evomachine.strategy import AbstractStrategy, BasicStrategy   # TODO add dropdown in GUI  # noqa
-from strategies.strategy_UV_dosage import UVDosageStrategy
+from evomachine.strategy import AbstractStrategy, BasicStrategy  # TODO add dropdown in GUI  # noqa
+from strategies.strategy_UV_dosage import UVDosageStrategy, UVDosageStrategyInvert, UVDosageStrategyPatternCheck, \
+    UVDosageStrategyPhotoSynthesizer
+
 # from strategies.strategy_2024_03_07 import JessStrategy  # noqa
 # from strategies.strategy_2024_04_25 import UVTestingStrategy  # noqa
 # from strategies.strategy_2024_04_30 import UVTestingStrategyv2  # noqa
@@ -37,12 +40,18 @@ from strategies.strategy_UV_dosage import UVDosageStrategy
 # from strategies.strategy_2024_05_10 import UVTestingStrategyv4  # noqa
 # from strategies.strategy_2024_05_28 import UVTestingStrategyv5  # noqa
 # from strategies.strategy_2024_05_31 import ROITestingStrategy  # noqa
-from strategies.strategy_MagnetOnOff import MagnetOnOffStrategy, PROCESSOR_CONFIG as MAGNET_PROCESSOR_CONFIG
-from strategies.strategy_GFP_image_noise import GFP_noise_strategy
-from strategies.strategy_UV_testing import UVStrategy
-from strategies.strategy_image import ImageStrategy
-from strategies.strategy_image import ImageStrategy
+# from strategies.strategy_MagnetOnOff import MagnetOnOffStrategy, PROCESSOR_CONFIG as MAGNET_PROCESSOR_CONFIG
+# from strategies.strategy_GFP_image_noise import GFP_noise_strategy
+# from strategies.strategy_UV_testing import UVStrategy
+# from strategies.strategy_image import ImageStrategy
 # from strategies.strategy_UV_by_color import ROIbyColorStrategy
+# from strategies.strategy_kirill import ImageStrategyKirill
+# from strategies.strategy_mCherry_image import SimpleImaging
+from strategies.strategy_UV_by_color import ROIbyColorStrategyv2
+# from strategies.strategy_mCherry_image import SimpleImaging
+# from strategies.strategy_interval_image import IntervalImaging
+
+from strategies.strategy_mCherry_image import SimpleImaging
 
 def create_automaton_process(
         camera_config: ConfigCamera,
@@ -87,7 +96,7 @@ if __name__ == '__main__':
     # Provide strategy that will be loaded by GUI
     # save_path: str = "/media/hslab/Data/ImageData/Idris/2024-07-04"
     # save_path = "/home/hslab/Documents/Gabi/GUI_SaveDir"
-    save_path = "/mnt/nvme1/data/ImageData/Svenja_Pilot_2025-04-11"
+    save_path = "/mnt/nvme1/data/ImageData/Bs_growth_backport"
     if not os.path.exists(save_path):
         current_folder = os.path.dirname(os.path.abspath(__file__))
         save_path = os.path.join(current_folder, "DEFAULT")
@@ -97,30 +106,36 @@ if __name__ == '__main__':
     is_oil_objective = False
     camera_config: ConfigCamera = ConfigCameraFactory.default_air_config()
     camera_config.path_to_save = Path(save_path)
-    camera_config.focus.focus_channel = LEDType.LED_515_NM  # NEED TO GIVE SF THE RIGHT CHANNEL
-    camera_config.focus.exposure_time = 200
+    camera_config.focus.focus_channel = LEDType.LED_565_NM  # NEED TO GIVE SOFTWARE FOCUS THE RIGHT CHANNEL
+    camera_config.focus.exposure_time = 100  # SOFTWARE FOCUS EXPOSURE TIME
 
     processor_config: ConfigImageProcessor = ConfigImageProcessorFactory.default_config(
         channels=[LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_565_NM, LEDType.LED_645_NM],
-        channels_seg=[LEDType.LED_450_NM, LEDType.LED_565_NM],
+        channels_seg=[LEDType.LED_565_NM],  # CHANNEL FOR SEGMENTATION; SEE ConfigImageProcessor doc
     )
-    processor_config.preproc_enabled = False
-    processor_config.roi_enabled = False
+    processor_config.preproc_enabled = True  # SET THIS TO FALSE IF NOT USING IMAGE PROCESSING
+    processor_config.roi_enabled = True  # SET THIS TO FALSE IF NOT USING IMAGE PROCESSING
     processor_config.seg_enabled = False
     processor_config.track_enabled = False
     processor_config.lineage_enabled = False
-    processor_config.cfg_delta.drift_correction = False
-    processor_config.channels_seg = [LEDType.LED_565_NM]
-    # DANGEROUS SETTINGS
+    processor_config.cfg_delta.drift_correction = True
+    processor_config.channels_seg = [LEDType.LED_450_NM, LEDType.LED_565_NM]  # !!!
+    # SEE ConfigImageProcessor doc for explanations
     processor_config.refocus_using_software_focus = True
     processor_config.refocus_on_all_positions = False
 
     # processor_config = MAGNET_PROCESSOR_CONFIG
 
     # Provide strategy that will be loaded by GUI
+    # strategy: AbstractStrategy = SimpleImaging(cfg=processor_config)
+    # strategy: AbstractStrategy = ROIbyColorStrategyv2(cfg=processor_config)
     # strategy: AbstractStrategy = ImageStrategy(cfg=processor_config)
-    strategy: AbstractStrategy = UVDosageStrategy(cfg=processor_config)
-    
+    # strategy: AbstractStrategy = UVDosageStrategyPhotoSynthesizer(cfg=processor_config)
+    # strategy: AbstractStrategy = ImageStrategy(cfg=processor_config)
+    strategy: AbstractStrategy = UVDosageStrategyPatternCheck(cfg=processor_config)
+    # strategy: AbstractStrategy = ImageStrategyKirill(cfg=processor_config)
+    camera_config.path_to_save = strategy.path_to_save
+
     # DO NOT MODIFY ANYTHING BELOW THIS LINE -----------------------------------
 
     # Test strategy and do not launch if test fails
@@ -190,6 +205,7 @@ if __name__ == '__main__':
     icon = QIcon(str(EVOMACHINE_DIR / 'guidir/em_logo.jpg'))
     w.setWindowIcon(icon)
 
+
     def exception_hook(exctype, value, traceback):
         print(f"An unhandled exception occurred (type={exctype}): {value}\n{traceback}")
         stop_event.set()
@@ -198,6 +214,7 @@ if __name__ == '__main__':
         shutdown_event.set()
         time.sleep(5)
         sys.exit()
+
 
     sys.excepthook = exception_hook
     try:

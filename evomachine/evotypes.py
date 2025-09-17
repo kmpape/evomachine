@@ -165,7 +165,7 @@ class DMDDirType(EvoType):
 
 @dataclass
 class DMDCalibConfigType:
-    channel: LEDType
+    channel: LEDType | list[LEDType]
     "LED type for calibration."
     brightness: float | int
     "Brightness of LED."
@@ -185,6 +185,8 @@ class DMDCalibConfigType:
     "Start index for columns (DMD coordinates). Should be off-camera-screen."
     end_col: int
     "End index for columns (DMD coordinates). Should be off-camera-screen."
+    on_mothermachine: bool
+    "Executed on mothermachine or normal slide."
 
     def __post_init__(self):
         if not ((0 <= self.start_row) and (self.start_row < self.end_row) and (self.end_row < 2716)):
@@ -199,14 +201,14 @@ class DMDCalibConfigType:
                 s.append(f" ├─ {k}: {v}")
             else:
                 s.append(f" └─ {k}: {v}")
-        return "\n".join(s)
+        return "\n".join(s)#
 
 
 class DMDCalibConfigTypeFactory:
     @staticmethod
-    def default(channel: LEDType = LEDType.LED_565_NM) -> DMDCalibConfigType:
+    def default(channel: LEDType | list[LEDType] = LEDType.LED_450_NM) -> DMDCalibConfigType:
         """
-        This configuration should be used together with a fluorescent slide.
+        This configuration should be used together with a mother machine. Modify channels if needed.
 
         Parameters
         ----------
@@ -221,18 +223,47 @@ class DMDCalibConfigTypeFactory:
             brightness=29,
             exposure=100,  # 100
             line_width=5,
-            step=80,  # 400
+            step=150,  # 400
+            delay=0.75,
+            start_row=200,  # should be off-screen
+            end_row=2500,  # 2500,  # 2250
+            start_col=0,
+            end_col=1599,
+            on_mothermachine=True,
+        )
+
+    @staticmethod
+    def thin_fluo_slide(channel: LEDType = LEDType.LED_565_NM) -> DMDCalibConfigType:
+        """
+        This configuration should be used together with a thin fluorescent slide (e.g., coated with rhodamine or with
+        dense cells).
+
+        Parameters
+        ----------
+        channel : LEDType
+            Use this to override default channel.
+        Returns
+        -------
+        cfg : DMDCalibConfigType
+        """
+        return DMDCalibConfigType(
+            channel=channel,
+            brightness=29,
+            exposure=100,  # 100
+            line_width=5,
+            step=150,  # 400
             delay=0.5,
             start_row=200,  # should be off-screen
             end_row=2200,  # 2500,  # 2250
             start_col=0,
             end_col=1599,
+            on_mothermachine=False,
         )
 
     @staticmethod
     def fluo_slide(channel: LEDType = LEDType.LED_450_NM) -> DMDCalibConfigType:
         """
-        This configuration should be used together with a fluorescent slide.
+        This configuration should be used together with a thick fluorescent slide.
 
         Parameters
         ----------
@@ -253,6 +284,7 @@ class DMDCalibConfigTypeFactory:
             end_row=2200,  # 2500,  # 2250
             start_col=0,
             end_col=1599,
+            on_mothermachine=False,
         )
 
 
