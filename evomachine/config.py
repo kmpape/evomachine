@@ -82,7 +82,8 @@ class ConfigImageProcessor:
     "Enable tracking (preproc_enabled and seg_enabled must be true)."
     lineage_enabled: bool = False
     "Enable lineage computations(preproc_enabled, seg_enabled, and track_enabled must be true)."
-    tracking_setting: TrackingSetting = TrackingSetting.DISABLED
+    #  tracking_setting: TrackingSetting = TrackingSetting.DISABLED
+    tracking_setting: TrackingSetting = TrackingSetting.MOTHERONLY  # 2025-11-04
     "Pick tracking algorithm."
     delta_roi_preprocess_target_size: tuple[int, int] = (3200, 3200)
     "Size of microscope images just before being input to DeLTA. This can be different from cfg_delta.target_size_rois."
@@ -169,10 +170,14 @@ class ConfigImageProcessorFactory:
         cfg_delta.tolerable_resizing_rois = 0
         # cfg_delta.model_file_rois = EVOMACHINE_DIR.parent / "delta_models/evo_roi_2024-05-08.keras"
         # cfg_delta.model_file_rois = EVOMACHINE_DIR.parent / "delta_models/evo_roi_M9_2024-12-10.keras"
-        cfg_delta.model_file_rois = EVOMACHINE_DIR.parent / "delta_models/evo_roi_mixed_200x800_CKS5_2025-02-11.keras"
-        cfg_delta.target_size_seg = (64, 256)
-        cfg_delta.model_file_seg = EVOMACHINE_DIR.parent / "delta_models/evo_seg_2024-06-27.keras"
+        cfg_delta.model_file_rois = EVOMACHINE_DIR.parent / "delta_models/evo_roi_mixed_200x800_CKS5_2025-02-11.keras"  # 2025-11-04
+        # cfg_delta.target_size_seg = (64, 256)
+        # cfg_delta.model_file_seg = EVOMACHINE_DIR.parent / "delta_models/evo_seg_2024-06-27.keras"
+        cfg_delta.target_size_seg = (64, 512)  # 2025-11-04
+        cfg_delta.model_file_seg = EVOMACHINE_DIR.parent / "delta_models/evo_seg_64x512_kernel5_levels5_2025-05-29_realdata.keras"  # 2025-11-04
         # cfg_delta.model_file_track = EVOMACHINE_DIR.parent / "delta_models/unet_moma_track.hdf5"
+        cfg_delta.target_size_seg = (64, 256)  # 2025-11-04
+        cfg_delta.model_file_track = EVOMACHINE_DIR.parent / "delta_models/evo_track_64x256_2024-08-30.keras"  # 2025-11-04
         return ConfigImageProcessor(
             cfg_delta=cfg_delta,
             channels=default_channels if channels is None else channels,
@@ -268,6 +273,17 @@ class ConfigCRISPFactory:
             update_rate=10,
             # objective_na=0.65,
             objective_na=0.9,
+            lock_range=0.1,
+        )
+
+    @staticmethod
+    def default_oil_config() -> ConfigCRISP:
+        return ConfigCRISP(
+            led_intensity=70,
+            loop_gain=10,
+            averaging=5,
+            update_rate=10,
+            objective_na=1.4,
             lock_range=0.1,
         )
 
@@ -465,7 +481,7 @@ class ConfigCameraFactory:
             objective=ObjectiveConfigTypeFactory.default_oil(),
             image=ImageConfigTypeFactory.pv_cam(),
             focus=ConfigFocusFactory.default_config(),
-            autofocus=ConfigCRISPFactory.default_config(),
+            autofocus=ConfigCRISPFactory.default_oil_config(),
             leds=ConfigCameraFactory.get_available_leds(),
             filters=ConfigCameraFactory.get_available_filters(), # [FilterWheelType.FILTER, FilterWheelType.BLOCKING, FilterWheelType.NO_FILTER],
             path_to_save=EVOMACHINE_DIR.parent / "images/DEFAULT" if path_to_save is None else path_to_save,

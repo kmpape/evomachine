@@ -362,6 +362,11 @@ class CommandFactory:
         Projects a pattern built from the specified RoI boxes onto the current FoV. NOTE: The automaton will NOT move to
         the provided pos_id. A MOVE command to the corresponding pos_id / fov_id must be provided first.
 
+        Special behavior with invert=True:
+        If invert=True, the automaton will add black patches to the left and right of the trench columns. These black
+        patches extend to the trench box boundary for fill_x>=1. IF fill_x<1, the black patches will extend into the
+        box.
+
         Parameters
         ----------
         channel         : LED channel.

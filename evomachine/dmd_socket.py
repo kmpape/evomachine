@@ -327,6 +327,7 @@ class DMDControl:
             roi_boxes_group_ids: list[list[int]],
             roi_boxes: list[CroppingBox],
             xshift: int = 0,
+            yshift: int = 0,
 
     ) -> list[CroppingBox]:
         """
@@ -342,6 +343,8 @@ class DMDControl:
             List of ROI boxes.
         xshift: int
             Shift to increase spacing between columns and patches.
+        yshift: int
+            Margin from the top and bottom of the image.
 
         Returns
         -------
@@ -355,9 +358,9 @@ class DMDControl:
                 trench = roi_boxes[group_ids[0]]
                 box = CroppingBox(
                     xtl=0,
-                    ytl=0,
+                    ytl=0 + yshift,
                     xbr=trench.xtl - xshift,
-                    ybr=self.width_height_CAM[1] - 1,
+                    ybr=self.width_height_CAM[1] - 1 - yshift,
                 )
                 black_patches.append(box)
             else:
@@ -366,18 +369,18 @@ class DMDControl:
                 trench_right = roi_boxes[group_ids[0]]
                 box = CroppingBox(
                     xtl=trench_left.xbr + xshift,
-                    ytl=0,
+                    ytl=0 + yshift,
                     xbr=trench_right.xtl - xshift,
-                    ybr=self.width_height_CAM[1] - 1,
+                    ybr=self.width_height_CAM[1] - 1 - yshift,
                 )
                 black_patches.append(box)
                 if i == len(roi_boxes_group_ids) - 1:
                     trench = roi_boxes[group_ids[0]]
                     box = CroppingBox(
                         xtl=trench.xbr + xshift,
-                        ytl=0,
+                        ytl=0 + yshift,
                         xbr=self.width_height_CAM[0] - 1,
-                        ybr=self.width_height_CAM[1] - 1,
+                        ybr=self.width_height_CAM[1] - 1 - yshift,
                     )
                     black_patches.append(box)
         return black_patches
@@ -397,6 +400,9 @@ class DMDControl:
         Creates a pattern from a list of cropping boxes (Image coordinates) and returns a warped DMD pattern. If
         invert=False (default), the given boxes are filled with white and the background is black. If invert=True,
         the background is filled with white and the given boxes are filled with black.
+
+        If you invert the image, you may want to avoid projecting where there are no trenches at all. For this, provide
+        black_patches - these boxes will be filled with black regardless of invert.
 
         Parameters
         ----------

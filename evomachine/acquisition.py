@@ -10,6 +10,7 @@ from pycromanager import Core, Studio
 import skimage
 from serial import SerialException
 
+import com_ports
 from asitiger.command import CRISPState
 from asitiger.status import CRISPStatus
 import asitiger.tigercontroller
@@ -17,6 +18,7 @@ import asitiger.tigercontroller
 from syncboard.syncboardcontroller import SyncBoardController, LED_ID
 from KWR103Driver import KWR103
 
+import evomachine.com_ports
 from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, get_logger
 from evomachine.coordinates import Coordinate
 from evomachine.exceptions import CameraError, ConfigError, ErrorCode, ErrorContainer, \
@@ -1695,13 +1697,13 @@ class EvoCamerav2(EvoCamera):
             self,
             cfg_camera: ConfigCamera,
             tiger_port: str = "/dev/ttyUSB0",  # TODO move this to config
-            syncboard_port: str = "/dev/syncboard",  # TODO move this to config
+            syncboard_port: str = "/dev/syncboard",  # TODO move this to config or remove, see below
     ):
         super().__init__(cfg_camera=cfg_camera, tiger_port=tiger_port)
 
         self.syncboard: Optional[SyncBoardController] = None
         "Object to control sync board functions such as LEDs"
-        self._syncboard_port: str = syncboard_port
+        self._syncboard_port: str = evomachine.com_ports.get_syncboard_port()  # syncboard_port
         "Expected sync board serial port. If not found, the code will look for patterns like /dev/ttyACMX"
         self._syncboard_is_alive: bool = False
         "Set to true once successfully connected. Flag is not automatically updated on connection loss."
@@ -1771,7 +1773,7 @@ class EvoCamerav2(EvoCamera):
                 raise ConfigError("EvoCamerav2._initialise: Unable to initialise SyncBoard.",
                                   error_code=ErrorCode.ERROR_SYNC_BOARD)
             self._syncboard_is_alive = True
-            logger.info(f"_initialise: syncboard initialised on {self._syncboard_port}.")
+            logger.info(f"EvoCamerav2._initialise: syncboard initialised on {self._syncboard_port}.")
         except Exception as e:
             self._syncboard_is_alive = False
             logger.debug(f"EvoCamerav2._initialise: Error connecting to SyncBoard on port {self._syncboard_port}: {e}.")

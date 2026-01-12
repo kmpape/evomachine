@@ -420,6 +420,19 @@ class BasicStrategy(AbstractStrategy):
 
 def get_all_strategies() -> list[tuple[Type[AbstractStrategy], str]]:
     subclasses = []
+
+
+
+
+
+
+
+
+
+
+
+
+
     current_module = sys.modules[__name__]
     for name, obj in inspect.getmembers(current_module):
         if inspect.isclass(obj) and issubclass(obj, AbstractStrategy) and obj != AbstractStrategy and obj != NoStrategy:

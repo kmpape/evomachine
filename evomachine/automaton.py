@@ -142,7 +142,12 @@ class Automaton:
             logger.info(f"Automaton: Loading RoI model with weights from {self._cfg.cfg_delta.model_file_rois}")
             self.roi_model.load_weights(self._cfg.cfg_delta.model_file_rois)
         if self._cfg.seg_enabled:
-            self.seg_model = delta.model.unet_seg(input_size=(*self._cfg.cfg_delta.target_size_seg, 1))  # noqa
+            # Levels and kernel size are hard coded here and may change depending on the model used
+            self.seg_model = delta.model.unet_seg(
+                input_size=(*self._cfg.cfg_delta.target_size_seg, 1),
+                levels=5,
+                conv_kernel_size=5,
+            )  # noqa
             logger.info(f"Automaton: Loading seg model with weights from {self._cfg.cfg_delta.model_file_seg}")
             self.seg_model.load_weights(self._cfg.cfg_delta.model_file_seg)
         if self._cfg.track_enabled and (self._cfg.tracking_setting == TrackingSetting.DELTA):
@@ -984,7 +989,8 @@ class Automaton:
                 if cmd.command_args['pattern'] is None:
                     self._dmd.display_full()
                 else:
-                    self._dmd.display_image(img=cmd.command_args['pattern'])
+                    pattern = cmd.command_args['pattern']
+                    self._dmd.display_image(img=pattern)
                 time.sleep(0.5)  # TODO: implement feedback
 
                 if self.cam.get_exposure() != cmd.command_args['exposure_time']:
@@ -1003,10 +1009,6 @@ class Automaton:
                     self._process_position(do_segment=cmd.command_args['segment'], channels=cmd.command_args['channels'])
                 channels_int = [self._channel_to_index[c] for c in cmd.command_args['channels']]
 
-                if True == True:
-                    proc = self._pos_processor[0]
-                    roi = proc.rois[0]
-                    fluo = roi.get_fluo(frame=1)
                 if cmd.command_args['pattern'] is None and self._cfg.preproc_enabled and \
                         self._pos_processor[self._curr_fov_id].rois:
                     # Remove channel from channel extension for segmentation
@@ -1064,10 +1066,14 @@ class Automaton:
                 if drift is not None:
                     drift = (-drift[0], -drift[1])
                 if cmd.command_args['invert']:
+                    xshift = 0
+                    if cmd.command_args['fill_x'] < 1:
+                        box = self._pos_processor[pos_id].roi_boxes[0]
+                        xshift = -int(box.shape[1] * abs(1 - cmd.command_args['fill_x']) * 0.5)
                     black_patches = self._dmd.patches_from_roi_groups(
                         roi_boxes_group_ids=self._pos_processor[pos_id].roi_boxes_group_ids,
                         roi_boxes=self._pos_processor[pos_id].roi_boxes,
-                        xshift=0,
+                        xshift=xshift,
                     )
                 else:
                     black_patches = None
@@ -1686,7 +1692,7 @@ class Automaton:
 
         return self._dmd.get_calibration_data()
 
-    def project_roi(self, fill_y: float = 1.1, fill_x: float = 1.1, every_2nd_roi: bool = True, invert: bool = True):
+    def project_roi(self, fill_y: float = 1.1, fill_x: float = 0.8, every_2nd_roi: bool = True, invert: bool = True):
         if not self._position_processors_is_initialised or not self._pos_processor:
             logger.warning(f"Cannot project ROI as position processor not initialised.")
             return
@@ -1698,38 +1704,15 @@ class Automaton:
         else:
             boxes_to_project = self._pos_processor[0].roi_boxes
         if invert:
-            black_patches = []
             xshift = 0
-            for i, group_ids in enumerate(self._pos_processor[0].roi_boxes_group_ids):
-                if i == 0:
-                    trench = self._pos_processor[0].roi_boxes[group_ids[0]]
-                    box = EvoCroppingBox(
-                        xtl=0,
-                        ytl=0,
-                        xbr=trench.xtl - xshift,
-                        ybr=self._dmd.width_height_CAM[1] - 1,
-                    )
-                    black_patches.append(box)
-                else:
-                    group_ids_left = self._pos_processor[0].roi_boxes_group_ids[i - 1]
-                    trench_left = self._pos_processor[0].roi_boxes[group_ids_left[0]]
-                    trench_right = self._pos_processor[0].roi_boxes[group_ids[0]]
-                    box = EvoCroppingBox(
-                        xtl=trench_left.xbr + xshift,
-                        ytl=0,
-                        xbr=trench_right.xtl - xshift,
-                        ybr=self._dmd.width_height_CAM[1] - 1,
-                    )
-                    black_patches.append(box)
-                    if i == len(self._pos_processor[0].roi_boxes_group_ids) - 1:
-                        trench = self._pos_processor[0].roi_boxes[group_ids[0]]
-                        box = EvoCroppingBox(
-                            xtl=trench.xbr + xshift,
-                            ytl=0,
-                            xbr=self._dmd.width_height_CAM[0] - 1,
-                            ybr=self._dmd.width_height_CAM[1] - 1,
-                        )
-                        black_patches.append(box)
+            if fill_x < 1:
+                box = self._pos_processor[0].roi_boxes[0]
+                xshift = -int(box.shape[1] * abs(1-fill_x) * 0.5)
+            black_patches = self._dmd.patches_from_roi_groups(
+                roi_boxes_group_ids=self._pos_processor[0].roi_boxes_group_ids,
+                roi_boxes=self._pos_processor[0].roi_boxes,
+                xshift=xshift,
+            )
         else:
             black_patches = None
         pattern = self._dmd.pattern_from_roi_boxes(
@@ -1740,6 +1723,61 @@ class Automaton:
             black_patches=black_patches,
         )
         self._dmd.display_image(img=pattern)
+
+    def project_roi2(self, fill_y: float = 1.1, fill_x: float = 1.1, every_2nd_roi: bool = True, invert: bool = True):
+        if not self._position_processors_is_initialised or not self._pos_processor:
+            logger.warning(f"Cannot project ROI as position processor not initialised.")
+            return
+        if not self._pos_processor[0].roi_boxes:
+            logger.warning(f"No ROI boxes available to project onto.")
+            return
+        if every_2nd_roi:
+            boxes_to_project = [b for j, b in enumerate(self._pos_processor[0].roi_boxes) if j % 2 == 0]
+        else:
+            boxes_to_project = self._pos_processor[0].roi_boxes
+        if invert:
+            black_patches = self._dmd.patches_from_roi_groups(
+                roi_boxes_group_ids=self._pos_processor[0].roi_boxes_group_ids,
+                roi_boxes=self._pos_processor[0].roi_boxes,
+            )
+        else:
+            black_patches = None
+        pattern = self._dmd.pattern_from_roi_boxes(
+            boxes=boxes_to_project,
+            fill_x=fill_x,
+            fill_y=fill_y,
+            invert=invert,
+            black_patches=black_patches,
+        )
+        self._dmd.display_image(img=pattern)
+
+    def project_for_reflection_tests(self, invert_pattern: bool = False):
+        logger.info("project_for_reflection_tests")
+        if not self._pos_processor:
+            logger.warning("Cannot project. No position processors.")
+        else:
+            pos_id = 0
+            off_trench_boxes = self._dmd.patches_from_roi_groups(
+                roi_boxes_group_ids=self._pos_processor[pos_id].roi_boxes_group_ids,
+                roi_boxes=self._pos_processor[pos_id].roi_boxes,
+                xshift=50,
+                yshift=0,
+            )
+            off_trench_img_dmd = self._dmd.pattern_from_roi_boxes(
+                boxes=off_trench_boxes,
+                fill_x=1.0,
+                fill_y=1.0,
+                invert=invert_pattern,
+                warp=True,
+                drift=None,
+                black_patches=None,
+                border_px=0,
+            )
+            logger.info(f"Projecting image with invert={invert_pattern}.")
+            self._dmd.display_image(img=off_trench_img_dmd)
+
+    def project_for_reflection_tests_invert(self):
+        self.project_for_reflection_tests(invert_pattern=True)
 
     def project_custom_3(self):
         logger.info("project_custom_3")
