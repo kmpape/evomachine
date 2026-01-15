@@ -229,7 +229,7 @@ class Automaton:
         try:
             self.cam.disable_led()
         except Exception as e:
-            msg = f"Automaton.act_on_halt: error unlocking disabling led: {e}"
+            msg = f"Automaton.act_on_halt: error disabling led: {e}"
             logger.error(msg)
         try:
             self._dmd.display_full()
@@ -603,6 +603,7 @@ class Automaton:
             for channel_type, ind in self._channel_to_index.items():
                 if not channel_type == LEDType.LED_385_NM:
                     self._ref_frames[i_fov][ind, :, :] = self.cam.get_frame(i_chan=channel_type, reset_led=False)
+                    self.cam.disable_led()
                     if save_references_frames:
                         self.cam.save_frame(
                             frame=self._ref_frames[i_fov][ind, :, :],
