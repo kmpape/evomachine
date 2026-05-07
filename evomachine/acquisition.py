@@ -1043,10 +1043,10 @@ class EvoCamera(AbstractCamera):
         self._last_frame_channel: LEDType = LEDType.NO_LED
         "Channel used to take last frame."
         self._led_channel_keys: Dict[LEDType, Union[str, None]] = {
-            LEDType.LED_405_NM: "X",
-            LEDType.LED_450_NM: "Y",
-            LEDType.LED_505_NM: "Z",
-            LEDType.LED_538_NM: "F",
+            LEDType.TIGER_LED_1: "X",
+            LEDType.TIGER_LED_2: "Y",
+            LEDType.TIGER_LED_3: "Z",
+            LEDType.TIGER_LED_4: "F",
             LEDType.NO_LED: None,
         }
         "LED keys i_chan=0,...,3 for communication with Tiger."
@@ -1145,7 +1145,7 @@ class EvoCamera(AbstractCamera):
             logger.error(msg=f"EvoCamera._set_filter_wheel: Tiger is not alive.")
 
     def disable_led(self):
-        self.set_led(i_chan=LEDType.NO_LED)
+        self.set_led(i_chan=LEDType.NO_LED, block=True)
 
     def disable_live_mode(self):
         self.studio.live().set_live_mode(False)  # noqa
@@ -1723,7 +1723,19 @@ class EvoCamerav2(EvoCamera):
             LEDType.LED_645_NM: LED_ID.LED_645_NM,
             LEDType.NO_LED: LED_ID.NO_LED,
             LEDType.LED_OVERHEAD: -99,
+            LEDType.LED_OVERHEAD_TIGER: -98,
         }
+        self._syncboard_leds: [LEDType] = [LEDType.LED_385_NM, LEDType.LED_450_NM, LEDType.LED_515_NM,
+                                           LEDType.LED_565_NM, LEDType.LED_645_NM]
+        self._tiger_leds: [LEDType] = [LEDType.LED_OVERHEAD_TIGER]
+        self._psu_leds: [LEDType] = [LEDType.LED_OVERHEAD]
+        self._tiger_led_channel_keys: Dict[LEDType, Union[str, None]] = {
+            LEDType.TIGER_LED_1: "X",
+            LEDType.TIGER_LED_2: "Y",
+            LEDType.TIGER_LED_3: "Z",
+            LEDType.TIGER_LED_4: "F",
+        }
+        self._LED_OVERHEAD_TIGER_CHANNEL = LEDType.TIGER_LED_2
         "Map from LEDType to channel ID on sync board (hard-coded)."
         self.brightfield_psu: KWR103 | None = None
         "Serial object for brightfield control."
@@ -1877,6 +1889,8 @@ class EvoCamerav2(EvoCamera):
         -------
 
         """
+        if i_chan == LEDType.NO_LED:
+            brightness = 0
         if i_chan not in self._led_channel_keys.keys():
             logger.error(msg=f"EvoCamerav2.set_led: i_chan={i_chan} not in channels={self._led_channel_keys.keys()}.")
             return
@@ -1886,19 +1900,54 @@ class EvoCamerav2(EvoCamera):
                 logger.error(msg)
                 return
             self.set_brightfield(brightness=brightness)
+            if brightness == 0:
+                self.brightfield_psu.set_output(False)
+            self.current_channel = i_chan
+            self._current_led_brightness = brightness
             return
         if i_chan == LEDType.NO_LED and (self.brightfield_psu is not None):
+            self.set_brightfield(brightness=0)
             self.brightfield_psu.set_output(False)
-        if self._syncboard_is_alive:
+            if self.current_channel == LEDType.LED_OVERHEAD:
+                time.sleep(0.5)
+        if i_chan == LEDType.LED_OVERHEAD_TIGER:
+            if not self._tiger_is_alive:
+                msg = f"EvoCamerav2.set_led: Tiger not alive. Cannot set {i_chan}."
+                logger.error(msg)
+                return
+            brightness = int(brightness)
+            led_settings = {val: (brightness if ((key == self._LED_OVERHEAD_TIGER_CHANNEL) and (i_chan != LEDType.NO_LED)) else 0)
+                            for key, val in self._tiger_led_channel_keys.items()}
+            is_good_brightness_value = 0 <= brightness <= 100
+            if is_good_brightness_value:
+                self.tiger.led(led_brightnesses=led_settings, card_address=self.card_address_led)
+                self.current_channel = i_chan
+                self._current_led_brightness = brightness
+                if block:
+                    self.tiger.wait_until_idle()
+                return
+            else:
+                logger.error(msg=f"Cannot set brightness: {brightness} is out of range [0, 100]. LED not set.")
+                return
+        elif self._tiger_is_alive and \
+                (i_chan == LEDType.NO_LED) and (self.current_channel == LEDType.LED_OVERHEAD_TIGER):
+            led_settings = { val: 0 for key, val in self._tiger_led_channel_keys.items()}
+            self.tiger.led(led_brightnesses=led_settings, card_address=self.card_address_led)
+            if block:
+                self.tiger.wait_until_idle()
+        if self._syncboard_is_alive and (i_chan in [*self._syncboard_leds, LEDType.NO_LED]):
             if i_chan == LEDType.NO_LED:
                 self.syncboard.disable_led()
+                self.current_channel = i_chan
+                self._current_led_brightness = brightness
                 return
             if (0 < brightness <= 100) or (i_chan != LEDType.NO_LED):
                 is_good_brightness_value = True
             else:
                 is_good_brightness_value = False
             if is_good_brightness_value:
-                if (self.current_channel != LEDType.NO_LED) and disable_current_LED:
+                if (self.current_channel not in [LEDType.NO_LED, LEDType.LED_OVERHEAD, LEDType.LED_OVERHEAD_TIGER]) \
+                        and disable_current_LED:
                     self.syncboard.disable_led(led_id=self._led_channel_keys[self.current_channel])
                 if brightness > 29 and duration is None:
                     duration = 120*1000
@@ -1909,10 +1958,13 @@ class EvoCamerav2(EvoCamera):
                 )
                 self.current_channel = i_chan
                 self._current_led_brightness = 0 if i_chan == LEDType.NO_LED else brightness
+                return
             else:
                 logger.error(msg=f"Cannot set brightness: {brightness} is out of range [0, 29]. LED not set.")
         else:
             logger.error(msg=f"EvoCamera._set_channel: SyncBoard is not alive.")
+        self.current_channel = i_chan
+        self._current_led_brightness = brightness
 
     def _finalise(self):
         logger.warning("Shutting down camera, ASI tiger, and sync board.")

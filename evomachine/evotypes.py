@@ -138,11 +138,13 @@ class LEDType(EvoType):
     LED_565_NM = 3
     LED_645_NM = 4
     LED_OVERHEAD = 5
+    LED_OVERHEAD_TIGER = 6
 
-    # OLD LEDs
-    LED_405_NM = 6
-    LED_505_NM = 7
-    LED_538_NM = 8
+    # TIGER
+    TIGER_LED_1 = auto()
+    TIGER_LED_2 = auto()
+    TIGER_LED_3 = auto()
+    TIGER_LED_4 = auto()
 
 
 class FilterWheelType(EvoType):

@@ -292,7 +292,7 @@ class ConfigCRISPFactory:
 class ConfigFocus:
     exposure_time: float | int
     "Exposure time for focusing in ms."
-    focus_channel: LEDType
+    focus_channel: LEDType   # TODO make list
     "LED channel to use while scanning. See LEDType for available channels."
     rel_range: int
     "Relative range for Z-movement of stage in 1/10 μm, e.g., stage will move current_position+-rel_range."
@@ -381,7 +381,7 @@ class ConfigFocusFactory:
             exposure_time=200,
             focus_channel=LEDType.LED_450_NM,
             brightness=29,
-            rel_range=75,
+            rel_range=50,
             step_size=5,
             cropping_box=CroppingBox(xtl=200, xbr=3000, ytl=300, ybr=2900),  # Note: must be changed for other chips
         )
@@ -466,7 +466,7 @@ class ConfigCameraFactory:
     def get_available_leds() -> list[LEDType]:
         if USE_SYNC_BOARD:
             return [LEDType.NO_LED, LEDType.LED_385_NM, LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_565_NM,
-                    LEDType.LED_645_NM, LEDType.LED_OVERHEAD]
+                    LEDType.LED_645_NM, LEDType.LED_OVERHEAD, LEDType.LED_OVERHEAD_TIGER]
         else:
             return [LEDType.NO_LED, LEDType.LED_405_NM, LEDType.LED_450_NM, LEDType.LED_505_NM, LEDType.LED_538_NM]
 
