@@ -3,7 +3,6 @@ import numpy as np
 from pathlib import Path
 import pickle
 import threading
-from typing import Dict, List, Tuple, Type, Union
 
 from evomachine.commands import AutomatonCommand
 from evomachine.config import get_logger, ConfigCameraFactory, ConfigImageProcessorFactory, USE_DMD_SOCKET, \
@@ -13,7 +12,7 @@ if USE_DMD_SOCKET:
 else:
     from evomachine.dmd import DMD_WIDTH_HEIGHT
 from evomachine.exceptions import EvoMachineError
-from evomachine.evotypes import LEDType
+from evomachine.types import LEDType
 from evomachine.strategy import AbstractStrategy
 
 
@@ -54,7 +53,7 @@ class JessStrategy(AbstractStrategy):
         self.timer_interval: float = 60*60*5  # in seconds
         # Change DMD projection using a timer
         self.timer: threading.Timer = threading.Timer(self.timer_interval, self.change_image)
-        self.time_changes: List[datetime] = []
+        self.time_changes: list[datetime] = []
         self.timer_started: bool = False
         self.timer_must_stop: bool = False
 
@@ -70,7 +69,7 @@ class JessStrategy(AbstractStrategy):
         else:
             logger.info("Cancelling timer.")
 
-    def _initialise(self) -> List[AutomatonCommand]:
+    def _initialise(self) -> list[AutomatonCommand]:
         """
         Initialise the strategy. Following attributes are available:
 
@@ -106,9 +105,9 @@ class JessStrategy(AbstractStrategy):
     def _callback(
             self,
             fov_id: int,
-            data: List[AutomatonCommand],
-            errors: List[EvoMachineError],
-    ) -> List[AutomatonCommand]:
+            data: list[AutomatonCommand],
+            errors: list[EvoMachineError],
+    ) -> list[AutomatonCommand]:
         """
         Callback function for the strategy. This function is called by the
         automaton when new data is available.
@@ -155,7 +154,7 @@ class JessStrategy(AbstractStrategy):
         )
         return [image, project]
 
-    def finalise(self) -> List[AutomatonCommand]:
+    def finalise(self) -> list[AutomatonCommand]:
         """
         Save everything else than images here.
 

@@ -77,9 +77,9 @@ plt.show()
 
 def display_text(
         self,
-        text: Optional[str] = "Hello, World!",
-        img_fraction: Optional[float] = 0.5,
-        path_to_font: Optional[str] = "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+        text: str | None = "Hello, World!",
+        img_fraction: float | None = 0.5,
+        path_to_font: str | None = "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
 ):
     image_pil = Image.fromarray(np.transpose(np.zeros(self.width_height_DMD, dtype=np.uint8)))
     img_height, img_width = self.width_height_DMD

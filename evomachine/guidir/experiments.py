@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 from multiprocessing import Event
 import numpy as np
 from serial import SerialException
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
 from PyQt5.QtWidgets import QWidget, QPushButton, QDialog, QComboBox, QLabel, QGridLayout, QCheckBox
 
@@ -43,9 +43,9 @@ class ExperimentWorker(EvoWorkerTemplate):
 
         self.valid_coordinates = False
         self.factory: CoordinateFactory = CoordinateFactory(dfov=self.cfg_camera.fov_size * 10)
-        self._field_of_views: Union[None, Dict[int, Coordinate]] = None
-        self._cropping_boxes: Union[None, List[delta.utils.CroppingBox]] = None
-        self._stage_limits: Union[None, Dict[str, Tuple[float, float]]] = None
+        self._field_of_views: None | dict[int, Coordinate] = None
+        self._cropping_boxes: None | list[delta.utils.CroppingBox] = None
+        self._stage_limits: None | dict[str, tuple[float, float]] = None
         self.queue_manager.request(
             req_str='self.cam.get_stage_limits',
             kwargs_dict={},
@@ -55,8 +55,8 @@ class ExperimentWorker(EvoWorkerTemplate):
 
     @ staticmethod
     def make_delta_cropping_boxes(
-            cropping_inds: Union[None, List[Tuple[Tuple[int, int], Tuple[int, int]]]],
-    ) -> Union[None, List[delta.utils.CroppingBox]]:
+            cropping_inds: None | list[tuple[tuple[int, int], tuple[int, int]]],
+    ) -> None | list[delta.utils.CroppingBox]:
         if cropping_inds is None or not cropping_inds:
             return None
         # cropping_indices = ((box0.xtl, box0.xbr), (box0.ytl, box0.ybr))
@@ -65,13 +65,13 @@ class ExperimentWorker(EvoWorkerTemplate):
             for c in cropping_inds
         ]
 
-    def coordinate_is_out_of_bounds(self, coordinates: Dict[str, float]) -> bool:
+    def coordinate_is_out_of_bounds(self, coordinates: dict[str, float]) -> bool:
         return False if self._stage_limits is None else any((key not in self._stage_limits) or
                                                             (val < self._stage_limits[key][0]) or
                                                             (val > self._stage_limits[key][1])
                                                             for key, val in coordinates.items())
 
-    def update_limits(self, data: Union[Tuple[Coordinate, Coordinate], Exception]):
+    def update_limits(self, data: tuple[Coordinate, Coordinate] | Exception):
         if isinstance(data, Exception):
             logger.error("ExperimentWorker.update_limits: received exception. Returning.")
             return
@@ -80,8 +80,8 @@ class ExperimentWorker(EvoWorkerTemplate):
 
     def get_positions_from_dict(
             self,
-            positions: Dict[int, Dict[str, Union[None, Dict[str, Union[float, int]]]]]
-    ) -> Union[List[Coordinate], None]:
+            positions: dict[int, dict[str, None | dict[str, float | int]]]
+    ) -> list[Coordinate] | None:
         logger.info(f"get_positions_from_dict DEBUG: Recorded positions = {positions}")
         valid_all = [v for key, val in positions.items() for v in val.values()
                      if all([val1 is not None for val1 in val.values()])]
@@ -175,8 +175,8 @@ class ExperimentWorker(EvoWorkerTemplate):
 
     def initialise_automaton_field_of_views(
             self,
-            read_in_positions: Dict[int, Dict[str, Union[None, Dict[str, Union[float, int]]]]],
-            cropping_boxes: Optional[List[EvoCroppingBox]] = None,
+            read_in_positions: dict[int, dict[str, None | dict[str, float | int]]],
+            cropping_boxes: list[EvoCroppingBox] | None = None,
             is_init_all: bool = False,
             use_autofocus: bool = False,
     ):
@@ -216,8 +216,8 @@ class ExperimentWorker(EvoWorkerTemplate):
 
     def initialise_all(
             self,
-            read_in_positions: Dict[int, Dict[str, Union[None, Dict[str, Union[float, int]]]]],
-            cropping_boxes: Optional[List[EvoCroppingBox]] = None,
+            read_in_positions: dict[int, dict[str, None | dict[str, float | int]]],
+            cropping_boxes: list[EvoCroppingBox] | None = None,
             use_autofocus: bool = False,
     ):
         self.initialise_automaton_field_of_views(
@@ -239,7 +239,7 @@ class ExperimentWorker(EvoWorkerTemplate):
         self.signal_set_button_color.emit([0, 1, 2, 3], "green")
         self.signal_set_button_color.emit([8], "lightgray")
 
-    def enable_disable_next_buttons(self, data: Any, enable: List[int], disable: List[int]):
+    def enable_disable_next_buttons(self, data: Any, enable: list[int], disable: list[int]):
         if isinstance(data, Exception):
             logger.error("ExperimentWorker.enable_disable_next_buttons: received exception. Returning.")
             return
@@ -253,7 +253,7 @@ class ButtonWorker(EvoWorkerTemplate):
     def __init__(
             self,
             queue_manager: QueueManager,
-            button_list: List[Union[QPushButton, QCheckBox]],
+            button_list: list[QPushButton | QCheckBox],
             strategy_label: QLabel
     ):
         super().__init__()
@@ -263,7 +263,7 @@ class ButtonWorker(EvoWorkerTemplate):
         self.signal_update_strategy_label.connect(self._update_strategy_label)
 
     @pyqtSlot(list, str)  # noqa
-    def set_color(self, button_indices: List[int], color_str: str):
+    def set_color(self, button_indices: list[int], color_str: str):
         for i in button_indices:
             if i >= len(self.button_list):
                 logger.error(f"ButtonWorker: Cannot set color for button {i}.")
@@ -271,7 +271,7 @@ class ButtonWorker(EvoWorkerTemplate):
                 self.button_list[i].setStyleSheet(f"background-color: {color_str};")
 
     @pyqtSlot(list)  # noqa
-    def disable_button(self, indices: List[int]):
+    def disable_button(self, indices: list[int]):
         for i in indices:
             if i >= len(self.button_list):
                 logger.error(f"ButtonWorker: Cannot disable button {i}.")
@@ -279,7 +279,7 @@ class ButtonWorker(EvoWorkerTemplate):
                 self.button_list[i].setEnabled(False)
 
     @pyqtSlot(list)  # noqa
-    def enable_button(self, indices: List[int]):
+    def enable_button(self, indices: list[int]):
         for i in indices:
             if i >= len(self.button_list):
                 logger.error(f"ButtonWorker: Cannot enable button {i}.")
@@ -440,16 +440,16 @@ class ExperimentPanel(EvoPanelTemplate):
         self.signal_disable_button.emit([0, 1, 2, 3, 4, 5, 6, 7, 8])
         self.signal_update_strategy.emit()
 
-        self.cropping_boxes: Dict[int, Union[None, EvoCroppingBox]] = {0: None, 1: None}
+        self.cropping_boxes: dict[int, None | EvoCroppingBox] = {0: None, 1: None}
 
-        self.fov_data: Dict[str, Any] = {}
+        self.fov_data: dict[str, Any] = {}
         self.ref_data: dict[int, np.ndarray] = {}
-        self.roi_data: Dict[int, Dict[str, Any]] = {}
-        self.focus_data: Dict[str, Any] = {}
+        self.roi_data: dict[int, dict[str, Any]] = {}
+        self.focus_data: dict[str, Any] = {}
 
-        self.pos_dialog: Union[PositionDialog, None] = None
+        self.pos_dialog: PositionDialog | None = None
 
-    def record_param(self, which: Tuple[int, str]):
+    def record_param(self, which: tuple[int, str]):
         logger.debug(f"ExperimentPanel.record_param: Recording {which}.")
         self.queue_manager.request(
             req_str='self.cam.get_coordinates',
@@ -458,7 +458,7 @@ class ExperimentPanel(EvoPanelTemplate):
             callback_args=(which,),
         )
 
-    def _record_param(self, data, which: Tuple[int, str]):
+    def _record_param(self, data, which: tuple[int, str]):
         if isinstance(data, Exception):
             logger.error("ExperimentWorker._record_param: received exception. Returning.")
             return
@@ -650,7 +650,7 @@ class ExperimentPanel(EvoPanelTemplate):
             self.use_autofocus = False
 
     @pyqtSlot(int, int, EvoCroppingBox)  # noqa
-    def update_cropping_boxes(self, fov_id: int, box_id: int, cropping_box: Union[EvoCroppingBox, None]):
+    def update_cropping_boxes(self, fov_id: int, box_id: int, cropping_box: EvoCroppingBox | None):
         logger.debug(f"ExperimentPanel.update_cropping_boxes: fov_id={fov_id}, box_id={box_id}, cropping_box={cropping_box}")
         self.cropping_boxes[box_id] = None if cropping_box.is_none else cropping_box
 
@@ -659,14 +659,14 @@ class PositionDialogWorker(EvoWorkerTemplate):
     def __init__(
             self,
             curr_fov_id: int,
-            fov_coordinates: Dict[int, Coordinate],
-            actives: Dict[int, Dict[str, Any]],
-            overrides: Dict[int, Dict[str, Any]],
-            info_labels: Dict[str, QLabel],
-            value_labels: Dict[str, QLabel],
-            override_labels: Dict[str, QLabel],
-            edits: Dict[str, QLabel],
-            buttons: Dict[str, QLabel],
+            fov_coordinates: dict[int, Coordinate],
+            actives: dict[int, dict[str, Any]],
+            overrides: dict[int, dict[str, Any]],
+            info_labels: dict[str, QLabel],
+            value_labels: dict[str, QLabel],
+            override_labels: dict[str, QLabel],
+            edits: dict[str, QLabel],
+            buttons: dict[str, QLabel],
             combo_box: QComboBox,
     ):
         super().__init__()
@@ -682,7 +682,7 @@ class PositionDialogWorker(EvoWorkerTemplate):
         self.combo_box = combo_box
 
     @staticmethod
-    def _format(val: Union[float, int]) -> str:
+    def _format(val: float | int) -> str:
         return f"{val:.2f}" if isinstance(val, float) else str(val)
 
     @pyqtSlot(int)  # noqa
@@ -734,10 +734,10 @@ class PositionDialog(QDialog):
     def __init__(
             self,
             queue_manager: QueueManager,
-            fov_data: Dict[str, Any],
+            fov_data: dict[str, Any],
             ref_data: dict[int, np.ndarray],
-            focus_data: Dict[str, Any],
-            roi_data: Dict[int, Dict[str, Any]],
+            focus_data: dict[str, Any],
+            roi_data: dict[int, dict[str, Any]],
             processor_config: ConfigImageProcessor,
      ):
         super().__init__()  # noqa
@@ -749,16 +749,16 @@ class PositionDialog(QDialog):
         font-size: 18px;
         """)
         self.queue_manager: QueueManager = queue_manager
-        self.fov_data: Dict[str, Any] = fov_data
+        self.fov_data: dict[str, Any] = fov_data
         self.ref_data: dict[int, np.ndarray] = ref_data
-        self.focus_data: Dict[str, Any] = focus_data
-        self.roi_data: Dict[int, Dict[str, Any]] = roi_data
+        self.focus_data: dict[str, Any] = focus_data
+        self.roi_data: dict[int, dict[str, Any]] = roi_data
         self.processor_config: ConfigImageProcessor = processor_config
         self.channel_to_index = self.processor_config.channel_to_index
 
-        self.fovs: Dict[int, Coordinate] = fov_data["fovs"]
-        self.fov_cropping_boxes: Dict[int, Union[None, EvoCroppingBox]] = fov_data["cropping_boxes"]
-        self.rotations: Dict[int, float] = {k: d["rotation"] for k, d in self.roi_data.items()}
+        self.fovs: dict[int, Coordinate] = fov_data["fovs"]
+        self.fov_cropping_boxes: dict[int, None | EvoCroppingBox] = fov_data["cropping_boxes"]
+        self.rotations: dict[int, float] = {k: d["rotation"] for k, d in self.roi_data.items()}
 
         self.combo_box = QComboBox()  # noqa
         self.combo_box.addItems(["FoV "+str(key) for key in self.fovs.keys()])

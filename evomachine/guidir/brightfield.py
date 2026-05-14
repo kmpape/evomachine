@@ -1,5 +1,5 @@
 from multiprocessing import Event, Queue
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QEventLoop, QThread, QTimer, QObject, QRegExp, Qt
 from PyQt5 import QtGui
 from PyQt5.QtGui import QRegExpValidator, QDoubleValidator, QFont, QPalette, QColor, QValidator
@@ -23,9 +23,9 @@ logger = get_logger(name=__name__, is_gui=True)
 class BrightfieldWorker(EvoWorkerTemplate):
     def __init__(
             self,
-            buttons: Dict[int, QPushButton],
+            buttons: dict[int, QPushButton],
             queue_manager: QueueManager,
-            parent: Optional[QObject] = None,
+            parent: QObject | None = None,
     ):
         super().__init__(parent)
         self.queue_manager: QueueManager = queue_manager

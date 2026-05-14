@@ -14,7 +14,6 @@ from serial import SerialException
 import sys
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QEventLoop, QThread, QTimer, QObject, QRegExp, Qt
 from PyQt5 import QtGui
@@ -81,7 +80,7 @@ class EvoGUI(QMainWindow):
             **kwargs
     ):
         super(EvoGUI, self).__init__(*args, **kwargs)
-        self.panels: List[EvoPanelTemplate] = []
+        self.panels: list[EvoPanelTemplate] = []
 
         self.queue_manager: QueueManager = queue_manager
         self.camera_config: ConfigCamera = camera_config

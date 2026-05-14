@@ -1,9 +1,10 @@
+from collections.abc import Callable
 from multiprocessing import Event
 import os
 import queue
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QEventLoop, QThread, QTimer, QObject, QRegExp, Qt
 from PyQt5 import QtGui
 from PyQt5.QtGui import QRegExpValidator, QDoubleValidator, QFont, QPalette, QColor, QValidator
@@ -115,15 +116,15 @@ class EvoPanelTemplate(QWidget):
         self.shutdown_event: Event = shutdown_event
         "Shuts down everything."
 
-        self.threads: List[Union[EvoGUIThread, None]] = []
+        self.threads: list[EvoGUIThread | None] = []
         "List of threads that are running in the panel."
         # self.single_shot_threads: List[Union[SingleShotThread, None]] = []
         # "List of threads that are running in the panel."
         self.layout: QGridLayout = QGridLayout(self)
         "Layout of the panel."
-        self.widget: Union[QWidget, None] = None
+        self.widget: QWidget | None = None
         "Widget of the panel."
-        self.workers: List[EvoWorkerTemplate] = []
+        self.workers: list[EvoWorkerTemplate] = []
         "List of workers that are running in the panel."
 
     def clean_threads(self):
@@ -151,8 +152,8 @@ class EvoPanelTemplate(QWidget):
     def run_as_thread(
             self,
             func: Callable,
-            connect_signal: Optional[Callable[[Any], None]] = None,
-            callback: Optional[Callable[[None], None]] = None,
+            connect_signal: Callable[[Any], None] | None = None,
+            callback: Callable[[None], None] | None = None,
     ):
         thread = SingleShotThread(target=func)
         if connect_signal is not None:
@@ -215,8 +216,8 @@ class EvoPanelTemplate(QWidget):
 
     @staticmethod
     def make_dropdown(
-            items: List[str],
-            func: Optional[Union[Callable, None]]=None,
+            items: list[str],
+            func: Callable | None | None=None,
     ):
         dropdown = QComboBox()
         dropdown.addItems(items)
@@ -226,10 +227,10 @@ class EvoPanelTemplate(QWidget):
 
     @staticmethod
     def make_lineedit(
-            text: Union[str, None],
-            func: Optional[Callable] = None,
-            validator: Optional[QValidator] = None,
-            param: Optional[Any] = None,
+            text: str | None,
+            func: Callable | None = None,
+            validator: QValidator | None = None,
+            param: Any | None = None,
     ) -> QLineEdit:
         lineedit = QLineEdit()
         if func is not None:
@@ -247,10 +248,10 @@ class EvoPanelTemplate(QWidget):
     @staticmethod
     def make_label(
             text: str,
-            width_px: Union[int, None] = None,
+            width_px: int | None = None,
             font: QFont = NORMAL,
             align: int = Qt.AlignCenter,
-            stylesheet: Union[str, None] = None,
+            stylesheet: str | None = None,
     ) -> QLabel:
         label = QLabel()
         label.setText(text)
@@ -283,7 +284,7 @@ class EvoPanelTemplate(QWidget):
         return checkbox
 
     @staticmethod
-    def make_pos_str(value: Union[int, float, None], unit: Optional[str] = None) -> str:
+    def make_pos_str(value: int | float | None, unit: str | None = None) -> str:
         try:
             if unit == "um":
                 f, ustr = 0.1, "\u03BCm"
@@ -298,7 +299,7 @@ class EvoPanelTemplate(QWidget):
             return "?"*7
 
     @staticmethod
-    def set_button_state(button: QPushButton, states: Union[ButtonState, List[ButtonState]]):
+    def set_button_state(button: QPushButton, states: ButtonState | list[ButtonState]):
         if not isinstance(states, list):
             states = [states]
         for state in states:
@@ -327,7 +328,7 @@ class EvoWorkerTemplate(QObject):
         return self._disable
 
     @pyqtSlot(dict, str)
-    def set_labels(self, labels: Dict[int, Dict[str, Union[QLabel, QLineEdit]]], text: Optional[str] = "?"):
+    def set_labels(self, labels: dict[int, dict[str, QLabel | QLineEdit]], text: str | None = "?"):
         for _dict in labels.values():
             for label_or_edit in _dict.values():
                 label_or_edit.setText(text)

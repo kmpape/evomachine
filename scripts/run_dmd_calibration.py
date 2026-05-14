@@ -25,7 +25,8 @@ else:
     from evomachine.dmd import DMDControl
     import pygame
 
-from evomachine.evotypes import DMDCalibConfigTypeFactory, FilterWheelType, LEDType
+from evomachine.types import FilterWheelType, LEDType
+from evomachine.config_types import DMDCalibConfigTypeFactory
 from evomachine.coordinates import Coordinate
 from evomachine.guidir.newgui import EvoGUI
 from evomachine.guidir.queuemanager import QueueManager
@@ -130,4 +131,3 @@ cam.disable_led()
 dmd.display_none()
 
 dmd_calibration_data = results
-

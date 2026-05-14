@@ -3,7 +3,6 @@ import numpy as np
 from pathlib import Path
 import pickle
 import threading
-from typing import Dict, List, Tuple, Type, Union
 
 from evomachine.commands import AutomatonCommand
 from evomachine.config import get_logger, ConfigCameraFactory, ConfigImageProcessorFactory, USE_DMD_SOCKET, \
@@ -13,7 +12,7 @@ if USE_DMD_SOCKET:
 else:
     from evomachine.dmd import DMD_WIDTH_HEIGHT
 from evomachine.exceptions import EvoMachineError
-from evomachine.evotypes import LEDType
+from evomachine.types import LEDType
 from evomachine.strategy import AbstractStrategy
 
 
@@ -49,7 +48,7 @@ class UVTestingStrategy(AbstractStrategy):
         self.proj_brightness = {i: val for i, val in enumerate([0, 1, 29, 29, 29, 29, 29])}  # brightness in pct
         assert(len(self.proj_times) == len(self.proj_brightness))
 
-    def _initialise(self) -> List[AutomatonCommand]:
+    def _initialise(self) -> list[AutomatonCommand]:
         """
         Initialise the strategy. Following attributes are available:
 
@@ -97,9 +96,9 @@ class UVTestingStrategy(AbstractStrategy):
     def _callback(
             self,
             fov_id: int,
-            data: List[AutomatonCommand],
-            errors: List[EvoMachineError],
-    ) -> List[AutomatonCommand]:
+            data: list[AutomatonCommand],
+            errors: list[EvoMachineError],
+    ) -> list[AutomatonCommand]:
         """
         Callback function for the strategy. This function is called by the
         automaton when new data is available.
@@ -161,7 +160,7 @@ class UVTestingStrategy(AbstractStrategy):
 
         return cmd_list
 
-    def finalise(self) -> List[AutomatonCommand]:
+    def finalise(self) -> list[AutomatonCommand]:
         """
         Save everything else than images here.
 

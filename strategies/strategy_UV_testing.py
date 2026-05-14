@@ -5,7 +5,6 @@ from pathlib import Path
 import pickle
 import threading
 import time
-from typing import Dict, List, Tuple, Type, Union
 
 from evomachine.commands import AutomatonCommand
 from evomachine.config import get_logger, ConfigCameraFactory, ConfigImageProcessorFactory, USE_DMD_SOCKET, \
@@ -15,7 +14,7 @@ if USE_DMD_SOCKET:
 else:
     from evomachine.dmd import DMD_WIDTH_HEIGHT
 from evomachine.exceptions import EvoMachineError
-from evomachine.evotypes import LEDType
+from evomachine.types import LEDType
 from evomachine.strategy import AbstractStrategy
 
 
@@ -73,7 +72,7 @@ class UVStrategy(AbstractStrategy):
     def format_time(t: float | int | None) -> str:
         return "None" if t is None else time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(t))
 
-    def _initialise(self) -> List[AutomatonCommand]:
+    def _initialise(self) -> list[AutomatonCommand]:
         """
         Initialise the strategy. Note that initialise will be called several times, and it therefore MUST reset
         the strategy to an initial state. Changes to hard-coded constructor attributes that are changed after the
@@ -138,9 +137,9 @@ class UVStrategy(AbstractStrategy):
     def _callback(
             self,
             fov_id: int,
-            data: List[AutomatonCommand],
-            errors: List[EvoMachineError],
-    ) -> List[AutomatonCommand]:
+            data: list[AutomatonCommand],
+            errors: list[EvoMachineError],
+    ) -> list[AutomatonCommand]:
         """
         Callback function for the strategy. This function is called by the
         automaton when new data is available.
@@ -209,7 +208,7 @@ class UVStrategy(AbstractStrategy):
 
         return cmd_list
 
-    def finalise(self) -> List[AutomatonCommand]:
+    def finalise(self) -> list[AutomatonCommand]:
         """
         Save everything else than images here.
 

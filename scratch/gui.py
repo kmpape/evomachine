@@ -1,3 +1,4 @@
+from collections.abc import Callable
 import copy
 import cv2
 from enum import Enum
@@ -16,7 +17,7 @@ from serial import SerialException
 import sys
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QEventLoop, QThread, QTimer, QObject, QRegExp, Qt
 from PyQt5 import QtGui
 from PyQt5.QtGui import QRegExpValidator, QDoubleValidator, QFont, QPalette, QColor, QValidator
@@ -46,7 +47,7 @@ if USE_DMD_SOCKET:
 else:
     from evomachine.dmd import DMDControl
 from evomachine.exceptions import ConfigError, TigerError
-from evomachine.evotypes import FocusAlgorithmType, LEDType
+from evomachine.types import FocusAlgorithmType, LEDType
 
 
 logger = get_logger(name=__name__)
@@ -75,7 +76,7 @@ class Direction(Enum):
     MOVETO = 7
 
     @classmethod
-    def get_all_values(cls) -> List[int]:
+    def get_all_values(cls) -> list[int]:
         return [member.value for member in cls]
 
 
@@ -91,7 +92,7 @@ class DisplayMode(Enum):
     UNKNOWN = 3
 
     @classmethod
-    def get_all_values(cls) -> List[int]:
+    def get_all_values(cls) -> list[int]:
         return [member.value for member in cls]
 
     def get_string(self) -> str:
@@ -227,8 +228,8 @@ class EvoGUI(QMainWindow):
 
     def make_dropdown(
             self,
-            items: List[str],
-            func: Optional[Union[Callable, None]]=None,
+            items: list[str],
+            func: Callable | None | None=None,
     ):
         dropdown = QComboBox(self)
         dropdown.addItems(items)
@@ -238,9 +239,9 @@ class EvoGUI(QMainWindow):
 
     @staticmethod
     def make_lineedit(
-            text: Union[str, None],
-            func: Optional[Callable] = None,
-            param: Optional[Any] = None,
+            text: str | None,
+            func: Callable | None = None,
+            param: Any | None = None,
     ) -> QLineEdit:
         lineedit = QLineEdit()
         if func is not None:
@@ -255,10 +256,10 @@ class EvoGUI(QMainWindow):
     @staticmethod
     def make_label(
             text: str,
-            width_px: Union[int, None] = None,
+            width_px: int | None = None,
             font: QFont = NORMAL,
             align: int = Qt.AlignCenter,
-            stylesheet: Union[str, None] = None,
+            stylesheet: str | None = None,
     ) -> QLabel:
         label = QLabel()
         label.setText(text)
@@ -291,7 +292,7 @@ class EvoGUI(QMainWindow):
         return checkbox
 
     @staticmethod
-    def make_pos_str(value: Union[int, None]) -> str:
+    def make_pos_str(value: int | None) -> str:
         try:
             return f"+{float(abs(value))/10:.1f}\u03BCm" if value > 0 else f"-{float(abs(value))/10:.1f}\u03BCm"
         except TypeError as e:
@@ -330,7 +331,7 @@ class EvoGUI(QMainWindow):
         self.crisp_enable_crisp_button = self.make_button(text="Enable", font=SMALL, func=self.start_crisp)
         self.crisp_disable_crisp_button = self.make_button(text="Disable", font=SMALL, func=self.end_crisp)
         self.crisp_reset_button = self.make_button(text="Reset", font=SMALL, func=self.crisp_reset)
-        self.crisp_thread: Union[ThreadStartCRISP, None] = None
+        self.crisp_thread: ThreadStartCRISP | None = None
         self.crisp_layout = QGridLayout()
         self.crisp_layout.addWidget(EvoGUI.make_label(text="CRISP Control", font=NORMAL), 0, 0, 1, 3, LEFT)
         for i, lab_val in enumerate(self.crisp_labels_values.values(), start=1):
@@ -343,8 +344,8 @@ class EvoGUI(QMainWindow):
         self.crisp_layout.addWidget(self.crisp_reset_button, len(self.crisp_labels_values)+3, 2, CENTER)
         crisp_widget = QWidget()
         crisp_widget.setLayout(self.crisp_layout)
-        self.crisp_thread: Union[ThreadStartCRISP, None] = None
-        self.crisp_reset_thread: Union[None, ThreadConfigReset] = None
+        self.crisp_thread: ThreadStartCRISP | None = None
+        self.crisp_reset_thread: None | ThreadConfigReset = None
         return crisp_widget
 
     def make_dmd_panel(self) -> QWidget:
@@ -361,7 +362,7 @@ class EvoGUI(QMainWindow):
         _ = [self.dmd_layout.addWidget(button, 1, i, CENTER) for i, button in enumerate(self.dmd_buttons.values())]
         dmd_widget = QWidget()
         dmd_widget.setLayout(self.dmd_layout)
-        self.dmd_thread: Union[ThreadDMD, None] = None
+        self.dmd_thread: ThreadDMD | None = None
         return dmd_widget
 
     def make_experiment_panel(self):
@@ -380,7 +381,7 @@ class EvoGUI(QMainWindow):
         self.exp_init_positions_button = self.make_button(text="Initialise Positions", func=self.exp_init_positions, font=SMALL)
         self.exp_readin_clear_button = self.make_button(text="Clear all", func=self.exp_clear_param, font=SMALL)
         self.exp_focus_curves_button = self.make_button(text="Focus Curves", func=self.exp_show_focus_curves, font=SMALL)
-        self.exp_clear_thread: Union[ThreadClearReadin, None] = None
+        self.exp_clear_thread: ThreadClearReadin | None = None
         self.exp_start_button = self.make_button(text="Start", func=self.exp_start_acquisition, font=SMALL)
         self.exp_stop_button = self.make_button(text="Stop", func=self.exp_stop_acquisition, font=SMALL)
         self.exp_layout = QGridLayout()
@@ -399,10 +400,10 @@ class EvoGUI(QMainWindow):
         self.exp_layout.addWidget(self.exp_stop_button, 1+2*self.exp_num_read_ins, 1, 1, 1)
         exp_widget = QWidget()
         exp_widget.setLayout(self.exp_layout)
-        self.exp_monitor_thread: Union[ThreadMonitorExperiment, None] = None
-        self.exp_initialise_thread: Union[ThreadInitialiseExperiment, None] = None
-        self.exp_focus_curves: Union[None, np.typing.Array] = None
-        self.exp_focus_prev_curr_stack: Union[None, Tuple[np.typing.Array, np.typing.Array]] = None
+        self.exp_monitor_thread: ThreadMonitorExperiment | None = None
+        self.exp_initialise_thread: ThreadInitialiseExperiment | None = None
+        self.exp_focus_curves: None | np.typing.Array = None
+        self.exp_focus_prev_curr_stack: None | tuple[np.typing.Array, np.typing.Array] = None
         return exp_widget
 
     def make_led_panel(self) -> QWidget:
@@ -437,7 +438,7 @@ class EvoGUI(QMainWindow):
              enumerate(self.led_textinputs.values(), start=1)]
         led_widget = QWidget()
         led_widget.setLayout(self.led_layout)
-        self.led_thread: Union[ThreadLED, None] = None
+        self.led_thread: ThreadLED | None = None
         return led_widget
 
     def make_multi_acquisition_panel(self) -> QWidget:
@@ -462,7 +463,7 @@ class EvoGUI(QMainWindow):
         self.multi_param_layout.addWidget(self.multi_param_button, 4, 0, 1, 2)
         multi_param_widget = QWidget()
         multi_param_widget.setLayout(self.multi_param_layout)
-        self.multi_param_thread: Union[ThreadMultiParam, None] = None
+        self.multi_param_thread: ThreadMultiParam | None = None
         return multi_param_widget
 
     def make_picture_panel(self, central_widget: QWidget) -> QWidget:
@@ -525,7 +526,7 @@ class EvoGUI(QMainWindow):
         self.pic_layout.addWidget(self.mpl_canvas, 4 + self.pic_num_read_ins, 0, 1, 4)
         pic_widget = QWidget()
         pic_widget.setLayout(self.pic_layout)
-        self.live_mode_thread: Union[ThreadLiveMode, None] = None
+        self.live_mode_thread: ThreadLiveMode | None = None
         return pic_widget
 
     def make_position_panel(self) -> QWidget:
@@ -583,7 +584,7 @@ class EvoGUI(QMainWindow):
         self.pos_layout.setHorizontalSpacing(0)
         pos_widget = QWidget()
         pos_widget.setLayout(self.pos_layout)
-        self.pos_thread: Union[ThreadPos, None] = None
+        self.pos_thread: ThreadPos | None = None
         return pos_widget
 
     def make_save_config_panel(self) -> QWidget:
@@ -669,8 +670,8 @@ class EvoGUI(QMainWindow):
         self.swfocus_layout.addWidget(self.swfocus_curve_button, len(self.swfocus_labels_values)+2, 3, CENTER)
         swfocus_widget = QWidget()
         swfocus_widget.setLayout(self.swfocus_layout)
-        self.swfocus_start_thread: Union[None, ThreadSWFocus] = None
-        self.swfocus_reset_thread: Union[None, ThreadConfigReset] = None
+        self.swfocus_start_thread: None | ThreadSWFocus = None
+        self.swfocus_reset_thread: None | ThreadConfigReset = None
         return swfocus_widget
 
     def browse_savepath(self):
@@ -757,7 +758,7 @@ class EvoGUI(QMainWindow):
         )
         self.pos_thread.start()
 
-    def exp_record_param(self, which: Tuple[int, str]):
+    def exp_record_param(self, which: tuple[int, str]):
         i, from_to = which
         try:
             pos_dict = self.cam.get_coordinates(AXES)
@@ -772,7 +773,7 @@ class EvoGUI(QMainWindow):
             self.exp_readin_positions[i][from_to] = None
         # self.exp_readin_label = {i: self.make_label(text=f"Path {i}", font=SMALL) for i in range(self.exp_num_read_ins)}
 
-    def pic_record_param(self, which: Tuple[int, str]):
+    def pic_record_param(self, which: tuple[int, str]):
         def is_valid_format(txt: str):
             pattern = re.compile(r'\[(\d+),(\d+)\]')
             match = pattern.match(txt)
@@ -1172,12 +1173,12 @@ class EvoGUI(QMainWindow):
 class ThreadConfigReset(QThread):
     def __init__(
             self,
-            this_cfg: Union[ConfigFocus, ConfigCRISP],
-            labels_values: Dict[str, List[Union[QLabel, QLineEdit]]],
+            this_cfg: ConfigFocus | ConfigCRISP,
+            labels_values: dict[str, list[QLabel | QLineEdit]],
     ):
         super(QThread, self).__init__()
-        self.this_cfg: Union[ConfigFocus, ConfigCRISP] = this_cfg
-        self.labels_values: Dict[str, List[QLabel, QLineEdit]] = labels_values
+        self.this_cfg: ConfigFocus | ConfigCRISP = this_cfg
+        self.labels_values: dict[str, list[QLabel, QLineEdit]] = labels_values
 
     def run(self):
         for param_name in self.labels_values.keys():
@@ -1195,7 +1196,7 @@ class ThreadSWFocus(QThread):
             self,
             cam: EvoCamera,
             cfg_focus: ConfigFocus,
-            cropping_indices: Optional[Tuple[Tuple[int, int], Tuple[int, int]]] = None,
+            cropping_indices: tuple[tuple[int, int], tuple[int, int]] | None = None,
     ):
         super(QThread, self).__init__()
         self.cam = cam
@@ -1231,7 +1232,7 @@ class ThreadMultiParam(QThread):
     def __init__(
             self,
             cam: EvoCamera,
-            multi_param_lineedits: Dict[str, QLineEdit],
+            multi_param_lineedits: dict[str, QLineEdit],
             savepath: str,
     ):
         super(QThread, self).__init__()
@@ -1295,9 +1296,9 @@ class ThreadPos(QThread):
     def __init__(
             self,
             cam: EvoCamera,
-            pos_values: List[QLabel],
+            pos_values: list[QLabel],
             i_direction: int,
-            pos_move_lineedits: Dict[str, QLineEdit],
+            pos_move_lineedits: dict[str, QLineEdit],
     ):
         super(QThread, self).__init__()
         self.cam = cam
@@ -1340,7 +1341,7 @@ class ThreadPos(QThread):
 
 
 class ThreadClearReadin(QThread):
-    def __init__(self, labels: Dict[int, Dict[str, Union[QLabel, QLineEdit]]], text: Optional[str] = "?"):
+    def __init__(self, labels: dict[int, dict[str, QLabel | QLineEdit]], text: str | None = "?"):
         super(QThread, self).__init__()
         self.labels = labels
         self.text = text
@@ -1352,7 +1353,7 @@ class ThreadClearReadin(QThread):
 
 
 class ThreadLED(QThread):
-    def __init__(self, buttons: Dict[int, QPushButton], i_active: int):
+    def __init__(self, buttons: dict[int, QPushButton], i_active: int):
         super(QThread, self).__init__()
         self.buttons = buttons
         self.i_active = i_active
@@ -1368,7 +1369,7 @@ class ThreadLED(QThread):
 
 
 class ThreadDMD(QThread):
-    def __init__(self, buttons: Dict[int, QPushButton], i_active: int):
+    def __init__(self, buttons: dict[int, QPushButton], i_active: int):
         super(QThread, self).__init__()
         self.buttons = buttons
         self.i_active = i_active
@@ -1433,8 +1434,8 @@ class FigureWidget(FigureCanvas):
         self.fig_width: int = width
         self.fig_height: int = height
         self.fig_dpi: int = dpi
-        self.cropping_boxes: Union[None, Dict[int, List[Tuple[int, int]]]] = None
-        self._cropping_indices: Union[None, Dict[int, Tuple[Tuple[int, int], Tuple[int, int]]]] = None
+        self.cropping_boxes: None | dict[int, list[tuple[int, int]]] = None
+        self._cropping_indices: None | dict[int, tuple[tuple[int, int], tuple[int, int]]] = None
         self.num_subplots: int = 1
         self.display_mode: DisplayMode = DisplayMode.NO_CROP
         self.fig = Figure(figsize=(self.fig_width, self.fig_height), dpi=self.fig_dpi)
@@ -1444,7 +1445,7 @@ class FigureWidget(FigureCanvas):
         self.make_figure()
 
     @staticmethod
-    def cropping_boxes_are_valid(cropping_boxes: Union[None, Dict[int, List[Tuple[int, int]]]]):
+    def cropping_boxes_are_valid(cropping_boxes: None | dict[int, list[tuple[int, int]]]):
         if not isinstance(cropping_boxes, dict):
             logger.warning(f"(1) Invalid cropping boxes {cropping_boxes}")
             return False
@@ -1467,8 +1468,8 @@ class FigureWidget(FigureCanvas):
 
     @staticmethod
     def get_cropping_indices(
-            cropping_boxes: Dict[int, List[Tuple[int, int]]]
-    ) -> List[Tuple[Tuple[int, int], Tuple[int, int]]]:
+            cropping_boxes: dict[int, list[tuple[int, int]]]
+    ) -> list[tuple[tuple[int, int], tuple[int, int]]]:
         cropping_indices = []
         for key, point_list in cropping_boxes.items():
             x_coords = [p[0] for p in point_list]
@@ -1480,7 +1481,7 @@ class FigureWidget(FigureCanvas):
     def update_display_mode(
             self,
             display_mode: DisplayMode,
-            cropping_boxes: Union[None, Dict[int, List[Tuple[int, int]]]]
+            cropping_boxes: None | dict[int, list[tuple[int, int]]]
     ):
         old_num_subplots = self.num_subplots
         if display_mode in [DisplayMode.CROP, DisplayMode.SHOW_FRAME]:
@@ -1524,10 +1525,10 @@ class FigureWidget(FigureCanvas):
 
     @staticmethod
     def create_image_with_text(
-            text: Optional[str] = "Hello, World!",
-            img_fraction: Optional[float] = 0.5,
-            path_to_font: Optional[str] = "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
-            size: Optional[Tuple[int, int]] = (3200, 3200),
+            text: str | None = "Hello, World!",
+            img_fraction: float | None = 0.5,
+            path_to_font: str | None = "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+            size: tuple[int, int] | None = (3200, 3200),
     ):
         img_height, img_width = size
         image_pil = PIL.Image.fromarray(np.transpose(np.zeros(size, dtype=np.uint8)))
@@ -1622,7 +1623,7 @@ class ThreadLiveMode(QThread):
             cam: EvoCamera,
             mpl_canvas: FigureWidget,
             normalise: bool,
-            exposure_time: Union[int, float],
+            exposure_time: int | float,
             img_channel: int,
     ):
         super(QThread, self).__init__()
@@ -1659,14 +1660,14 @@ class ThreadExperiment(QThread):
             self,
             cam: EvoCamera,
             mpl_canvas: FigureWidget,
-            positions: Dict[int, Dict[str, Union[None, Dict[str, Union[float, int]]]]],
+            positions: dict[int, dict[str, None | dict[str, float | int]]],
     ):
         super(QThread, self).__init__()
         self.cam = cam
         self.mpl_canvas = mpl_canvas
         self.valid_coordinates = False
         # self.coordinates = [{'X': 185501.2, 'Y': -62229.3}]
-        self.coordinates: Union[None, List[Dict[str, float]]] = self.get_positions_from_dict(positions)
+        self.coordinates: None | list[dict[str, float]] = self.get_positions_from_dict(positions)
         self.img_channels = [1, 2]
         self.disp_channel = 1
         self.exposure_time = 1000
@@ -1674,7 +1675,7 @@ class ThreadExperiment(QThread):
         self.savepath = "/mnt/ImageData/Scott/2023-12-12"
         self._stop_event = threading.Event()
 
-    def get_positions_from_dict(self, positions: Dict[int, Dict[str, Union[None, Dict[str, Union[float, int]]]]]):
+    def get_positions_from_dict(self, positions: dict[int, dict[str, None | dict[str, float | int]]]):
         valid_all = [v for key, val in positions.items() for v in val.values()
                      if all([val1 is not None for val1 in val.values()])]
         valid_dict = [val for key, val in positions.items() if all([val1 is not None for val1 in val.values()])]
@@ -1768,8 +1769,8 @@ class ThreadInitialiseExperiment(QThread):
             cam: EvoCamera,
             automaton: Automaton,
             mpl_canvas: FigureWidget,
-            positions: Dict[int, Dict[str, Union[None, Dict[str, Union[float, int]]]]],
-            cropping_indices: Optional[Tuple[Tuple[int, int], Tuple[int, int]]] = None,
+            positions: dict[int, dict[str, None | dict[str, float | int]]],
+            cropping_indices: tuple[tuple[int, int], tuple[int, int]] | None = None,
     ):
         super(QThread, self).__init__()
         self.cam = cam
@@ -1778,7 +1779,7 @@ class ThreadInitialiseExperiment(QThread):
         self.valid_coordinates = False
         # self.coordinates = [{'X': 185501.2, 'Y': -62229.3}]
         self.factory: CoordinateFactory = CoordinateFactory(dfov=self.cam.get_delta_fov())
-        self.coordinates: Union[None, List[Coordinate]] = self.get_positions_from_dict(positions)
+        self.coordinates: None | list[Coordinate] = self.get_positions_from_dict(positions)
         self._cropping_boxes = ThreadInitialiseExperiment.make_delta_cropping_boxes(cropping_indices)
         self.pause_time = 1
         self.savepath = "/mnt/ImageData/Scott/2023-12-12"
@@ -1786,8 +1787,8 @@ class ThreadInitialiseExperiment(QThread):
 
     @staticmethod
     def make_delta_cropping_boxes(
-            cropping_inds: Union[None, List[Tuple[Tuple[int, int], Tuple[int, int]]]],
-    ) -> Union[None, List[delta.utils.CroppingBox]]:
+            cropping_inds: None | list[tuple[tuple[int, int], tuple[int, int]]],
+    ) -> None | list[delta.utils.CroppingBox]:
         if cropping_inds is None or not cropping_inds:
             return None
         # cropping_indices = ((box0.xtl, box0.xbr), (box0.ytl, box0.ybr))
@@ -1796,7 +1797,7 @@ class ThreadInitialiseExperiment(QThread):
             for c in cropping_inds
         ]
 
-    def get_positions_from_dict(self, positions: Dict[int, Dict[str, Union[None, Dict[str, Union[float, int]]]]]):
+    def get_positions_from_dict(self, positions: dict[int, dict[str, None | dict[str, float | int]]]):
         valid_all = [v for key, val in positions.items() for v in val.values()
                      if all([val1 is not None for val1 in val.values()])]
         valid_dict = [val for key, val in positions.items() if all([val1 is not None for val1 in val.values()])]
@@ -1865,7 +1866,7 @@ class ThreadMonitorExperiment(QThread):
                 tmp_data = self.data_queue.get(block=True, timeout=5)
                 if tmp_data[0] == AutomatonQueueDataType.PROCESS_DATA:
                     pos_id: int = tmp_data[1][0]
-                    commands: List[AutomatonCommand] = tmp_data[1][1]
+                    commands: list[AutomatonCommand] = tmp_data[1][1]
                     image_command = next((command for command in commands if command.command_type == AutomatonCommandType.IMAGE), None)
                     # TODO display correct channel if it exists and consider segment=True
                     frame = AbstractCamera.normalise_frame(image_command.command_data[0, :, :])
@@ -1874,4 +1875,3 @@ class ThreadMonitorExperiment(QThread):
                     time.sleep(self.pause_time)
             except queue.Empty:
                 pass
-

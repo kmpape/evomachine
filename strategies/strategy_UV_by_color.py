@@ -5,7 +5,6 @@ import pickle
 import skimage
 import threading
 import time
-from typing import Dict, List, Tuple, Type, Union
 
 import delta.imgops
 from evomachine.commands import AutomatonCommand
@@ -16,7 +15,7 @@ if USE_DMD_SOCKET:
 else:
     from evomachine.dmd import DMD_WIDTH_HEIGHT
 from evomachine.exceptions import EvoMachineError
-from evomachine.evotypes import LEDType, FilterWheelType
+from evomachine.types import LEDType, FilterWheelType
 from evomachine.strategy import AbstractStrategy
 
 from delta.rt import ROIRT
@@ -125,7 +124,7 @@ class ROIbyColorStrategyv2(AbstractStrategy):
         else:
             logger.warning(f"strategy_UV_by_ROI: no position processors. Cannot project onto ROI.")
 
-    def _initialise(self) -> List[AutomatonCommand]:
+    def _initialise(self) -> list[AutomatonCommand]:
         current_time = time.time()
         self.start_time_UV = current_time + self.proj_delay
         logger.info(f"Current time is {self.format_time(current_time)}. "
@@ -191,9 +190,9 @@ class ROIbyColorStrategyv2(AbstractStrategy):
     def _callback(
             self,
             fov_id: int,
-            data: List[AutomatonCommand],
-            errors: List[EvoMachineError],
-    ) -> List[AutomatonCommand]:
+            data: list[AutomatonCommand],
+            errors: list[EvoMachineError],
+    ) -> list[AutomatonCommand]:
         """
         Callback function for the strategy. This function is called by the
         automaton when new data is available.
@@ -322,7 +321,7 @@ class ROIbyColorStrategyv2(AbstractStrategy):
 
         return cmd_list
 
-    def finalise(self) -> List[AutomatonCommand]:
+    def finalise(self) -> list[AutomatonCommand]:
         logger.info("Finalising strategy and saving data.")
         if True:
             fname = self.path_to_save / Path("proj_imgs_final.pkl")
@@ -421,7 +420,7 @@ class ROIbyColorStrategy(AbstractStrategy):
         else:
             logger.warning(f"strategy_UV_by_ROI: no position processors. Cannot project onto ROI.")
 
-    def _initialise(self) -> List[AutomatonCommand]:
+    def _initialise(self) -> list[AutomatonCommand]:
         current_time = time.time()
         self.start_time_UV = current_time + self.proj_delay
         logger.info(f"Current time is {self.format_time(current_time)}. "
@@ -455,9 +454,9 @@ class ROIbyColorStrategy(AbstractStrategy):
     def _callback(
             self,
             fov_id: int,
-            data: List[AutomatonCommand],
-            errors: List[EvoMachineError],
-    ) -> List[AutomatonCommand]:
+            data: list[AutomatonCommand],
+            errors: list[EvoMachineError],
+    ) -> list[AutomatonCommand]:
         """
         Callback function for the strategy. This function is called by the
         automaton when new data is available.
@@ -537,7 +536,7 @@ class ROIbyColorStrategy(AbstractStrategy):
 
         return cmd_list
 
-    def finalise(self) -> List[AutomatonCommand]:
+    def finalise(self) -> list[AutomatonCommand]:
         logger.info("Finalising strategy and saving data.")
 
         return []
@@ -614,7 +613,7 @@ class ROIbyColorStrategy_v20250301(AbstractStrategy):
         else:
             logger.warning(f"strategy_UV_by_ROI: no position processors. Cannot project onto ROI.")
 
-    def _initialise(self) -> List[AutomatonCommand]:
+    def _initialise(self) -> list[AutomatonCommand]:
         current_time = time.time()
         self.start_time_UV = current_time + self.proj_delay
         logger.info(f"Current time is {self.format_time(current_time)}. "
@@ -647,9 +646,9 @@ class ROIbyColorStrategy_v20250301(AbstractStrategy):
     def _callback(
             self,
             fov_id: int,
-            data: List[AutomatonCommand],
-            errors: List[EvoMachineError],
-    ) -> List[AutomatonCommand]:
+            data: list[AutomatonCommand],
+            errors: list[EvoMachineError],
+    ) -> list[AutomatonCommand]:
         """
         Callback function for the strategy. This function is called by the
         automaton when new data is available.
@@ -725,7 +724,7 @@ class ROIbyColorStrategy_v20250301(AbstractStrategy):
 
         return cmd_list
 
-    def finalise(self) -> List[AutomatonCommand]:
+    def finalise(self) -> list[AutomatonCommand]:
         logger.info("Finalising strategy and saving data.")
 
         return []

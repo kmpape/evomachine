@@ -22,7 +22,7 @@ if USE_DMD_SOCKET:
 else:
     from evomachine.dmd import DMDControl
     import pygame
-from evomachine.evotypes import LEDType, FilterWheelType
+from evomachine.types import LEDType, FilterWheelType
 from evomachine.guidir.newgui import EvoGUI
 from evomachine.guidir.queuemanager import QueueManager
 from evomachine.strategy import AbstractStrategy, BasicStrategy

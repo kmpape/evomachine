@@ -1,7 +1,6 @@
 from collections import deque
 from enum import Enum, auto
 import time
-from typing import Dict, List
 
 
 MAX_ERROR_LEN = 1000
@@ -48,7 +47,7 @@ class ErrorCode(Enum):
     ERROR_STRATEGY = auto()
 
     @classmethod
-    def get_all_values(cls) -> List[int]:
+    def get_all_values(cls) -> list[int]:
         """ Returns all member values defined in Enum class."""
         return [member.value for member in cls]
 
@@ -61,7 +60,7 @@ class ErrorCode(Enum):
         return ""
 
     @classmethod
-    def get_dict(cls) -> Dict[int, str]:
+    def get_dict(cls) -> dict[int, str]:
         """ Returns a value-variable_name dictionary. """
         return {v: cls.get_name(value_to_find=v) for v in cls.get_all_values()}
 

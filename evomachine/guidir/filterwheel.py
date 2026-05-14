@@ -1,5 +1,5 @@
 from multiprocessing import Event, Queue
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QEventLoop, QThread, QTimer, QObject, QRegExp, Qt
 from PyQt5 import QtGui
 from PyQt5.QtGui import QRegExpValidator, QDoubleValidator, QFont, QPalette, QColor, QValidator
@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
-from evomachine.evotypes import FilterWheelType
+from evomachine.types import FilterWheelType
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
 from evomachine.guidir.guitypes import SMALL, CENTER, LEFT, RIGHT, NORMAL
 from evomachine.guidir.queuemanager import QueueManager
@@ -24,8 +24,8 @@ logger = get_logger(name=__name__, is_gui=True)
 class FilterWorker(EvoWorkerTemplate):
     def __init__(
             self,
-            buttons: Dict[FilterWheelType, QPushButton],
-            parent: Optional[QObject] = None,
+            buttons: dict[FilterWheelType, QPushButton],
+            parent: QObject | None = None,
     ):
         super().__init__(parent)
         self.buttons = buttons

@@ -1,11 +1,10 @@
 import cv2
 import numpy as np
-from typing import Optional
 
 from delta.utils import CroppingBox
 
 from evomachine.exceptions import ConfigError, ErrorCode
-from evomachine.evotypes import FocusAlgorithmType, FocusCurveType
+from evomachine.types import FocusAlgorithmType, FocusCurveType
 
 
 DEFAULT_SQUARED_GRAD_THRESHOLD = 0
@@ -40,7 +39,7 @@ def get_roi_focus_score(
         img: np.array,
         algorithm: FocusAlgorithmType,
         boxes: list[CroppingBox],
-        threshold: Optional[float] = None,
+        threshold: float | None = None,
         rowshift: int = 25,
         colshift: int = 50,
         normalise_score: bool = False,
@@ -61,7 +60,7 @@ def get_roi_focus_score(
 def get_focus_score(
         img: np.array,
         algorithm: FocusAlgorithmType,
-        threshold: Optional[float] = None,
+        threshold: float | None = None,
         rowshift: int = 25,
         colshift: int = 50,
         normalise_score: bool = False,
@@ -81,7 +80,7 @@ def get_focus_score_laplacian_var(img: np.array) -> float:
     return (lap[1:-1, 1:-1]**2).var()
 
 
-def get_focus_score_squared_gradient(img: np.array, threshold: Optional[float] = None) -> float:
+def get_focus_score_squared_gradient(img: np.array, threshold: float | None = None) -> float:
     threshold = DEFAULT_SQUARED_GRAD_THRESHOLD if threshold is None else threshold
     tmp = abs(img[:, 1:] - img[:, :-1])
     tmp[tmp < threshold] = 0

@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from math import ceil
-from typing import Dict, List, Optional, Union
 
 from evomachine.exceptions import ConfigError, ErrorCode
 from evomachine.utils import EvoCroppingBox
@@ -131,7 +130,7 @@ class Coordinate:
             return False
 
     @staticmethod
-    def from_dict(coord_dict: Dict[str, Union[float, int]]) -> 'Coordinate':
+    def from_dict(coord_dict: dict[str, float | int]) -> 'Coordinate':
         x = coord_dict.get('x') or coord_dict.get('X')
         y = coord_dict.get('y') or coord_dict.get('Y')
         z = coord_dict.get('z') or coord_dict.get('Z')
@@ -161,7 +160,7 @@ class CoordinateFactory:
             self,
             start: Coordinate,
             stop: Coordinate,
-    ) -> List[Coordinate]:
+    ) -> list[Coordinate]:
         """
         Creates a grid of field of views from start to stop coordinate. Moves in steps of dfov in either x or y
         direction, and linearly in the other and the z direction (if not None).
@@ -203,8 +202,8 @@ class FieldOfView:
     "ID of the field of view."
     coordinate: Coordinate
     "Coordinate of the field of view."
-    cropping_boxes: Dict[int, EvoCroppingBox]
+    cropping_boxes: dict[int, EvoCroppingBox]
     "List of cropping boxes for the field of view."
 
-    def get_position_ids(self) -> List[int]:
+    def get_position_ids(self) -> list[int]:
         return list(self.cropping_boxes.keys())

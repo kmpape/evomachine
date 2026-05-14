@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 import logging
 from time import time, gmtime, strftime
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any
 
 import numpy as np
 
@@ -14,7 +14,7 @@ if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMD_WIDTH_HEIGHT
 else:
     from evomachine.dmd import DMD_WIDTH_HEIGHT
-from evomachine.evotypes import AutomatonCommandType, FilterWheelType, FocusStatusType, LEDType, MagnetModeType
+from evomachine.types import AutomatonCommandType, FilterWheelType, FocusStatusType, LEDType, MagnetModeType
 from evomachine.utils import EvoCroppingBox
 
 
@@ -42,13 +42,13 @@ class AutomatonCommand:
     "Data collected after executing the command."
     # command_start_time: Union[float, None] = None
     # "Time pre execution. Produced via time.time()."
-    command_execution_time: Union[float, None] = None
+    command_execution_time: float | None = None
     "Time post execution. Produced via time.time()."
     fov_id: int | None = None
     "Field of view ID. Used for commands sent to GUI."
 
     @staticmethod
-    def _get_time(t: Union[float, None]) -> str:
+    def _get_time(t: float | None) -> str:
         return "None" if t is None else strftime('%Y-%m-%d %H:%M:%S', gmtime(t))
 
     def get_exec_time(self):
@@ -502,11 +502,11 @@ class CommandFactory:
 
     @staticmethod
     def command_focus_data(
-            focus_curves: Dict[int, Tuple[np.ndarray, np.ndarray]],
+            focus_curves: dict[int, tuple[np.ndarray, np.ndarray]],
             focus_stack: np.ndarray,
             focus_prev_stack: np.ndarray,
             focus_prev_z_coords: np.ndarray,
-            fovs: Dict[int, Coordinate],
+            fovs: dict[int, Coordinate],
     ) -> AutomatonCommand:
         command_args = {
             'focus_curves': focus_curves,
@@ -524,10 +524,10 @@ class CommandFactory:
 
     @staticmethod
     def command_fov_data(
-            fovs: Dict[int, Coordinate],
-            cropping_boxes: Dict[int, List[EvoCroppingBox]],
-            fov_to_pos: Dict[int, List[int]],
-            pos_to_fov_index: Dict[int, int]
+            fovs: dict[int, Coordinate],
+            cropping_boxes: dict[int, list[EvoCroppingBox]],
+            fov_to_pos: dict[int, list[int]],
+            pos_to_fov_index: dict[int, int]
     ) -> AutomatonCommand:
         command_args = {
             'fovs': fovs,

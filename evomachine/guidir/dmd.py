@@ -2,7 +2,7 @@ from multiprocessing import Event, Queue
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QEventLoop, QThread, QTimer, QObject, QRegExp, Qt
 from PyQt5 import QtGui
 from PyQt5.QtGui import QRegExpValidator, QDoubleValidator, QFont, QPalette, QColor, QValidator
@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
-from evomachine.evotypes import DMDCalibConfigType, DMDCalibConfigTypeFactory
+from evomachine.config_types import DMDCalibConfigType, DMDCalibConfigTypeFactory
 from evomachine.guidir.figures import FigureWindow, FigureMultiWindow
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
 from evomachine.guidir.guitypes import ButtonState, DMDModes, SMALL, CENTER, LEFT, RIGHT, NORMAL
@@ -28,9 +28,9 @@ logger = get_logger(name=__name__, is_gui=True)
 class DMDWorker(EvoWorkerTemplate):
     def __init__(
             self,
-            buttons: Dict[int, QPushButton],
-            disp_modes_keys: List[int],
-            parent: Optional[QObject] = None,
+            buttons: dict[int, QPushButton],
+            disp_modes_keys: list[int],
+            parent: QObject | None = None,
     ):
         super().__init__(parent)
         self.buttons = buttons

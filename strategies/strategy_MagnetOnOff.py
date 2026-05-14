@@ -3,7 +3,6 @@ from datetime import datetime
 import numpy as np
 from pathlib import Path
 import pickle
-from typing import Dict, List, Tuple, Type, Union
 
 from evomachine.commands import AutomatonCommand
 from evomachine.config import get_logger, ConfigCameraFactory, ConfigImageProcessorFactory, USE_DMD_SOCKET, \
@@ -13,7 +12,7 @@ if USE_DMD_SOCKET:
 else:
     from evomachine.dmd import DMD_WIDTH_HEIGHT
 from evomachine.exceptions import EvoMachineError
-from evomachine.evotypes import LEDType, MagnetModeType
+from evomachine.types import LEDType, MagnetModeType
 from evomachine.strategy import AbstractStrategy
 import delta
 
@@ -65,7 +64,7 @@ class MagnetOnOffStrategy(AbstractStrategy):
         self.images_taken = 0
         self.images_per_magnet = 10 # switch magnet every 10 images
 
-    def _initialise(self) -> List[AutomatonCommand]:
+    def _initialise(self) -> list[AutomatonCommand]:
         """
         Initialise the strategy. Following attributes are available:
 
@@ -114,9 +113,9 @@ class MagnetOnOffStrategy(AbstractStrategy):
     def _callback(
             self,
             fov_id: int,
-            data: List[AutomatonCommand],
-            errors: List[EvoMachineError],
-    ) -> List[AutomatonCommand]:
+            data: list[AutomatonCommand],
+            errors: list[EvoMachineError],
+    ) -> list[AutomatonCommand]:
         """
         Callback function for the strategy. This function is called by the
         automaton when new data is available.
@@ -178,7 +177,7 @@ class MagnetOnOffStrategy(AbstractStrategy):
         
         return cmds
 
-    def finalise(self) -> List[AutomatonCommand]:
+    def finalise(self) -> list[AutomatonCommand]:
         """
         Save everything else than images here.
 

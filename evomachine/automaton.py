@@ -12,7 +12,7 @@ import time
 import tensorrt  # noqa
 import tensorflow as tf
 import traceback
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import delta
 from delta.rt import PositionRT
@@ -31,8 +31,9 @@ from evomachine.exceptions import ErrorCode, ErrorContainer, ConfigError
 from evomachine.strategy import AbstractStrategy
 from evomachine.utils import EvoCroppingBox, normalise_frame, rotation_correction, multipos_rotation_correction, \
     combine_channels, channel_extend_img
-from evomachine.evotypes import AutomatonCommandType, DMDCalibConfigType, LEDType, FocusAlgorithmType, \
-    FocusStatusType, FilterWheelType, MagnetModeType, AutoFocusStatusType
+from evomachine.types import AutomatonCommandType, LEDType, FocusAlgorithmType, FocusStatusType, FilterWheelType, \
+    MagnetModeType, AutoFocusStatusType
+from evomachine.config_types import DMDCalibConfigType
 
 
 logger = get_logger(name=__name__)
@@ -49,9 +50,9 @@ class Automaton:
             stop_strategy_event: Event,
             stop_event: Event,
             shutdown_event: Event,
-            process_q: Optional[Queue] = None,
-            gui_to_automaton_q: Optional[Queue] = None,
-            automaton_to_gui_q: Optional[Queue] = None,
+            process_q: Queue | None = None,
+            gui_to_automaton_q: Queue | None = None,
+            automaton_to_gui_q: Queue | None = None,
             queue_timeout: float = 0,
             run_timeout: float = 0,
     ):
@@ -89,7 +90,7 @@ class Automaton:
         """
         self._cfg: ConfigImageProcessor = cfg_processor
         "Delta configuration object for image segmentation."
-        self._channel_to_index: Dict[LEDType, int] = self._cfg.channel_to_index
+        self._channel_to_index: dict[LEDType, int] = self._cfg.channel_to_index
         "Dictionary mapping LEDType to channel index in 3D arrays."
         self._curr_fov_id: int = 0
         "Current position."
@@ -103,13 +104,13 @@ class Automaton:
         "Flag for live mode for EvoCamera that uses MMC."
         self._dmd: DMDControl = dmd
         "DMDControl object to project images."
-        self._pos_processor: List[PositionRT] = []
+        self._pos_processor: list[PositionRT] = []
         "List of Delta objects to process the images."
-        self._all_frames_raw: List[np.ndarray] = []
+        self._all_frames_raw: list[np.ndarray] = []
         "List indexed by i_pos w. image array: prev/current x channels x pxl_vert x pxl_horiz."
-        self._all_frames: List[np.ndarray] = []
+        self._all_frames: list[np.ndarray] = []
         "List indexed by i_pos w. image array: prev/current x channels x pxl_vert x pxl_horiz."
-        self._ref_frames: List[np.ndarray] = []
+        self._ref_frames: list[np.ndarray] = []
         "List indexed by i_pos w. reference image array: channels x pxl_vert x pxl_horiz. In camera format."
         self._use_autofocus: bool = False
         "If true, only X & Y coordinates are used in the position list."
@@ -156,38 +157,38 @@ class Automaton:
             self.tracking_model.load_weights(self._cfg.cfg_delta.model_file_track)
         self._use_delta: bool = self._cfg.preproc_enabled or self._cfg.seg_enabled or self._cfg.roi_enabled
 
-        self._fovs: Dict[int, Coordinate] = {}
+        self._fovs: dict[int, Coordinate] = {}
         "Dictionary containing coordinates of field of views. If AF is ON, Z coordinate is None."
-        self._fovs_full_coords: Dict[int, Coordinate] = {}
+        self._fovs_full_coords: dict[int, Coordinate] = {}
         "Dictionary including Z coordinates. Initialised in initialise_reference_frames."
         self._fovs_coords_timeseries: dict[int, list[tuple[float, float, bool]]] = {}
         "Dictionary indexed by FoV with a list (Z pos, time, autofocus_on), used in manage_autofocus."
-        self._cropping_boxes: Union[None, Dict[int, List[EvoCroppingBox]]] = None
+        self._cropping_boxes: None | dict[int, list[EvoCroppingBox]] = None
         "List of cropping boxes applied to each FoV. One cropping box yields one position."
-        self._fov_to_pos: Dict[int, List[int]] = {}
+        self._fov_to_pos: dict[int, list[int]] = {}
         "Dictionary mapping FoV to positions. Initialised in initialise_field_of_view_list()."
-        self._pos_to_fov: Dict[int, int] = {}
+        self._pos_to_fov: dict[int, int] = {}
         "Dictionary mapping position to FoV. Initialised in initialise_field_of_view_list()."
-        self._pos_to_fov_index: Dict[int, int] = {}
+        self._pos_to_fov_index: dict[int, int] = {}
         "Dictionary mapping position to index in _cropping_boxes. Initialised in initialise_field_of_view_list()."
-        self._pos_to_roi: Dict[int, List[int]] = {}
+        self._pos_to_roi: dict[int, list[int]] = {}
         "Dictionary mapping position to RoI. Initialised in initialise_position_processor."
 
-        self.focus_curves: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
+        self.focus_curves: dict[int, tuple[np.ndarray, np.ndarray]] = {}
         "Dictionary containing (Z coordinates for focus, focus scores) at each position."
-        self.focus_stack: Union[None, np.ndarray] = None
+        self.focus_stack: None | np.ndarray = None
         "3D array with focus frame of each position (3rd dimension)."
-        self.focus_prev_stack: Union[None, np.ndarray] = None
+        self.focus_prev_stack: None | np.ndarray = None
         "3D array with frame before focus for each position (3rd dimension)."
-        self.focus_prev_z_coords: Union[None, np.ndarray] = None
+        self.focus_prev_z_coords: None | np.ndarray = None
         "1D array with z coordinate before focus for each position."
 
-        self.dmd_calibration_data: List[Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]] = []
+        self.dmd_calibration_data: list[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] = []
         "Tuple containing calibration data: [((r_dmd, c_dmd), (r_cam, c_cam), (r_max_val, c_max_val)), ...]."
 
-        self.next_commands: List[AutomatonCommand] = []
+        self.next_commands: list[AutomatonCommand] = []
         "List of commands to be executed at the next timestep."
-        self.last_commands: List[AutomatonCommand] = []
+        self.last_commands: list[AutomatonCommand] = []
         "List of commands executed at the last timestep."
 
         self._start_strategy_event = start_strategy_event
@@ -199,11 +200,11 @@ class Automaton:
         self._shutdown_event = shutdown_event
         "Shuts down Automaton "
 
-        self._process_q: Union[queue.Queue, None] = process_q
+        self._process_q: queue.Queue | None = process_q
         "Queue for communication with the GUI."
-        self._gui_to_automaton_q: Union[queue.Queue, None] = gui_to_automaton_q
+        self._gui_to_automaton_q: queue.Queue | None = gui_to_automaton_q
         "Queue for communication with the GUI."
-        self._automaton_to_gui_q: Union[queue.Queue, None] = automaton_to_gui_q
+        self._automaton_to_gui_q: queue.Queue | None = automaton_to_gui_q
         "Queue for communication with the GUI."
         self.queue_timeout: float = queue_timeout
         "Timeout for polling all queues."
@@ -642,7 +643,7 @@ class Automaton:
 
         self._strategy_is_initialised = True
 
-    def _create_position_processor(self, which: Optional[int] = None):
+    def _create_position_processor(self, which: int | None = None):
         if which is None:
             logger.debug("Creating position procesors.")
             self._pos_processor = []
@@ -855,7 +856,7 @@ class Automaton:
     def override_parameter(self, fov_id: int, pos_id: int, param_name: str, param_value: Any):
         logger.info(f"Automaton.override_parameter: setting {param_name} to {param_value} for "
                     f"FoV {fov_id} and pos {pos_id}.")
-        avail: List[str] = ["z_pos", "rotation", "cols_s_e"]
+        avail: list[str] = ["z_pos", "rotation", "cols_s_e"]
         if param_name not in avail:
             raise ConfigError(f"Automaton.override_parameter: {param_name} is not an available override. {avail}",
                               ErrorCode.ERROR_DEVICE_CONFIG)
@@ -1386,7 +1387,7 @@ class Automaton:
                 msg = f"Drift {num_drift} for FoV {self._curr_fov_id}: {this_drift}"
                 logger.info(msg)
 
-    def get_channel_to_index(self) -> Dict[LEDType, int]:
+    def get_channel_to_index(self) -> dict[LEDType, int]:
         return {key: value for key, value in self._channel_to_index.items()}
 
     def get_next_pos_id(self, current_pos: int) -> int:
@@ -1487,14 +1488,14 @@ class Automaton:
 
     def software_focus(
             self,
-            cfg_focus: Optional[ConfigFocus] = None,
-            focus_channel_override: Optional[LEDType] = None,
-            rel_range_override: Optional[int] = None,
-            cropping_box: Optional[EvoCroppingBox] = None,
-            algorithm_override: Optional[FocusAlgorithmType] = None,
+            cfg_focus: ConfigFocus | None = None,
+            focus_channel_override: LEDType | None = None,
+            rel_range_override: int | None = None,
+            cropping_box: EvoCroppingBox | None = None,
+            algorithm_override: FocusAlgorithmType | None = None,
             user_input_override: bool = False,
             countdown_override: bool = False,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]:
         self.cam.software_focus(
             cfg_focus=cfg_focus,
             focus_channel_override=focus_channel_override,

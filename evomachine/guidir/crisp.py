@@ -2,7 +2,7 @@ from multiprocessing import Event, Queue
 import numpy as np
 import matplotlib.pyplot as plt
 import time
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QEventLoop, QThread, QTimer, QObject, QRegExp, Qt
 from PyQt5 import QtGui
 from PyQt5.QtGui import QRegExpValidator, QDoubleValidator, QFont, QPalette, QColor, QValidator
@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
 
 from evomachine.acquisition import AbstractCamera
 from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, ConfigImageProcessor, get_logger
-from evomachine.evotypes import FocusAlgorithmType, LEDType
+from evomachine.types import FocusAlgorithmType, LEDType
 from evomachine.guidir.figures import FigureWindow
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread, EVO_STYLE
 from evomachine.guidir.guitypes import SMALL, CENTER, LEFT, RIGHT, NORMAL
@@ -31,7 +31,7 @@ class CrispWorker(EvoWorkerTemplate):
     def __init__(
             self,
             queue_manager: QueueManager,
-            labels_values: Dict[str, List[Union[QLabel, QLineEdit]]],
+            labels_values: dict[str, list[QLabel | QLineEdit]],
             init_button: QPushButton,
             lock_button: QPushButton,
             unlock_button: QPushButton,
@@ -40,7 +40,7 @@ class CrispWorker(EvoWorkerTemplate):
     ):
         super().__init__(parent)
         self.queue_manager: QueueManager = queue_manager
-        self.labels_values: Dict[str, List[Union[QLabel, QLineEdit]]] = labels_values
+        self.labels_values: dict[str, list[QLabel | QLineEdit]] = labels_values
         self.init_button: QPushButton = init_button
         self.lock_button: QPushButton = lock_button
         self.unlock_button: QPushButton = unlock_button

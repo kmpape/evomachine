@@ -1,5 +1,4 @@
 from multiprocessing import Event, Queue
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QEventLoop, QThread, QTimer, QObject, QRegExp, Qt
 from PyQt5 import QtGui
 from PyQt5.QtGui import QRegExpValidator, QDoubleValidator, QFont, QPalette, QColor, QValidator
@@ -16,7 +15,7 @@ from serial import SerialException
 from evomachine.commands import AutomatonCommand
 from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, ConfigImageProcessor, get_logger
 from evomachine.coordinates import Coordinate, CoordinateFactory
-from evomachine.evotypes import AutomatonCommandType
+from evomachine.types import AutomatonCommandType
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
 from evomachine.guidir.guitypes import DisplayMode, Direction, ARROW_LEFT, ARROW_RIGHT, ARROW_UP, ARROW_DOWN, AXES, \
     SMALL, CENTER, LEFT, RIGHT, NORMAL
@@ -31,7 +30,7 @@ class PositionWorker(EvoWorkerTemplate):
             self,
             queue_manager: QueueManager,
             data_curr_pos: pyqtSignal,
-            parent: Optional[QMainWindow] = None,
+            parent: QMainWindow | None = None,
     ):
         super().__init__(parent)
         self.data_curr_pos = data_curr_pos
@@ -112,7 +111,7 @@ class PositionWorker(EvoWorkerTemplate):
         )
 
     @pyqtSlot(int)
-    def update_position(self, data: Union[int, None]):
+    def update_position(self, data: int | None):
         logger.debug("update_position.")
         if self.is_disabled():
             logger.warning("MoveThread.update_position: Thread is disabled.")
@@ -235,8 +234,8 @@ class PositionPanel(EvoPanelTemplate):
             font=SMALL)
         "Move to entered coordinates."
 
-        self.fovs: Dict[int, Coordinate] = {}
-        self.curr_fov: Union[int, None] = None
+        self.fovs: dict[int, Coordinate] = {}
+        self.curr_fov: int | None = None
         self.fov_combo_box: QComboBox = QComboBox()
         self.fov_combo_box.addItems(["None"])
         self.fov_combo_box.setEnabled(False)
@@ -304,14 +303,14 @@ class PositionPanel(EvoPanelTemplate):
             logger.error(f"Invalid move to input: {self.pos_move_lineedits[key].text()}")
             self.current_moveto[key] = None
 
-    def update_limits(self, data: Tuple[Coordinate, Coordinate]):
+    def update_limits(self, data: tuple[Coordinate, Coordinate]):
         curr_limits = {'X': (data[0].x, data[1].x), 'Y': (data[0].y, data[1].y), 'Z': (data[0].z, data[1].z)}
         for i, ax in enumerate(AXES):
             self.pos_labels[i].setText(f"{ax} [{self.make_pos_str(curr_limits[ax][0], unit='mm')}, "
                                        f"{self.make_pos_str(curr_limits[ax][1], unit='mm')}]")
 
     @pyqtSlot(dict)
-    def update_position_str(self, pos_dict: Dict[str, Union[int, float, None]]):
+    def update_position_str(self, pos_dict: dict[str, int | float | None]):
         logger.debug(f"update_position_str: {pos_dict}.")
         try:
             _ = [lab.setText(self.make_pos_str(pos_dict[ax])) for lab, ax in zip(self.pos_values, AXES)]

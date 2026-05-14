@@ -5,7 +5,7 @@ import pandas as pd
 import serial.tools.list_ports
 import skimage
 import time
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import delta.utils
 
@@ -162,8 +162,8 @@ def rotation_correction(img: np.ndarray, params: RotationParameters = RotationPa
 
 def normalise_frame(
         frame: np.ndarray,
-        channels: Optional[List[int]] = None,
-        dtype: Optional[np.dtype] = None
+        channels: list[int] | None = None,
+        dtype: np.dtype | None = None
 ) -> np.ndarray:
     """
     Normalises frame by datatype or range.
@@ -227,11 +227,11 @@ class EvoCroppingBox:
     is_none: bool = False
 
     @property
-    def shape(self) -> Tuple[int, int]:
+    def shape(self) -> tuple[int, int]:
         return self.ybr - self.ytl, self.xbr - self.xtl
 
     @staticmethod
-    def full(image: Union[np.ndarray, Tuple[int, int]]) -> 'EvoCroppingBox':
+    def full(image: np.ndarray | tuple[int, int]) -> 'EvoCroppingBox':
         """
         Return a cropping box set to the full size of the image.
 
@@ -307,7 +307,7 @@ class EvoCroppingBox:
         return framed
 
     @staticmethod
-    def from_dict(d: Dict[str, int]) -> 'EvoCroppingBox':
+    def from_dict(d: dict[str, int]) -> 'EvoCroppingBox':
         return EvoCroppingBox(xtl=d['xtl'], ytl=d['ytl'], xbr=d['xbr'], ybr=d['ybr'])
 
     def patch(self, image: np.ndarray, patch: np.ndarray):
@@ -369,7 +369,7 @@ class Timer:
         self.timer_level: int = timer_level
         self.name: str = name
         self.enabled: bool = enabled
-        self.timings: Dict[str, List] = {}
+        self.timings: dict[str, list] = {}
 
     def start(self, func_name: str, level: int) -> None:
         if (not self.enabled) or (level > self.timer_level):
@@ -385,7 +385,7 @@ class Timer:
         end_time = time.perf_counter()
         self.timings[func_name][-1][1] = end_time
 
-    def get_timings(self) -> Dict[str, Dict]:
+    def get_timings(self) -> dict[str, dict]:
         timings = {}
         for func_name, start_end in self.timings.items():
             n_calls = len(start_end)
@@ -394,7 +394,7 @@ class Timer:
                                   'min': min(elapsed), 'max': max(elapsed)}
         return timings
 
-    def get_timings_per_call(self) -> Dict[str, List]:
+    def get_timings_per_call(self) -> dict[str, list]:
         timings = {}
         for func_name, start_end in self.timings.items():
             elapsed = [end-start for start, end in start_end]

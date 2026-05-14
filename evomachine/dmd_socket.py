@@ -10,7 +10,6 @@ import skimage
 import subprocess
 import socket
 import time
-from typing import Dict, List, Optional, Union, Tuple
 from threading import Thread
 
 from evomachine.config import get_logger, EVOMACHINE_DIR
@@ -592,19 +591,19 @@ class DMDControl:
                          f"but DMD shape={DMD_WIDTH_HEIGHT}.")
 
     @staticmethod
-    def get_zero_array(img_size: Optional[Tuple[int, int]] = None) -> np.ndarray:
+    def get_zero_array(img_size: tuple[int, int] | None = None) -> np.ndarray:
         if img_size is None:
             img_size = DMD_WIDTH_HEIGHT
         return np.zeros(img_size, dtype=ARR_TYPE)
 
     @staticmethod
-    def get_one_array(img_size: Optional[Tuple[int, int]] = None) -> np.ndarray:
+    def get_one_array(img_size: tuple[int, int] | None = None) -> np.ndarray:
         if img_size is None:
             img_size = DMD_WIDTH_HEIGHT
         return np.ones(img_size, dtype=ARR_TYPE)
 
     @staticmethod
-    def _make_half_line_width(line_width: int, at_pos: int, length: int) -> Tuple[int, int]:
+    def _make_half_line_width(line_width: int, at_pos: int, length: int) -> tuple[int, int]:
         if line_width == 1:
             return at_pos, min(at_pos+line_width, length)
         elif line_width % 2 == 0:
@@ -738,7 +737,7 @@ class DMDControl:
     def display_line_vert(
             self,
             at_pos: int,
-            line_width: Optional[Union[int, None]] = None,
+            line_width: int | None | None = None,
     ):
         """
 
@@ -762,7 +761,7 @@ class DMDControl:
     def display_line_horiz(
             self,
             at_pos: int,
-            line_width: Optional[Union[int, None]] = None,
+            line_width: int | None | None = None,
     ):
         """
 
@@ -785,9 +784,9 @@ class DMDControl:
 
     def display_crosshair(
             self,
-            at_pos: Optional[Tuple[int, int]] = None,
-            line_width: Optional[Union[int, None]] = None,
-            img_size: Optional[Tuple[int, int]] = None,
+            at_pos: tuple[int, int] | None = None,
+            line_width: int | None | None = None,
+            img_size: tuple[int, int] | None = None,
     ):
         """
 
@@ -819,7 +818,7 @@ class DMDControl:
             text: str,
             img_fraction: float,
             path_to_font: str,
-            img_size: Tuple[int, int],
+            img_size: tuple[int, int],
     ) -> np.ndarray:
         image_pil = Image.fromarray(np.transpose(np.zeros(img_size, dtype=np.uint8)))
         img_height, img_width = img_size
@@ -835,10 +834,10 @@ class DMDControl:
 
     def display_text(
             self,
-            text: Optional[str] = "Hello, World!",
-            img_fraction: Optional[float] = 0.5,
-            path_to_font: Optional[str] = "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
-            img_size: Optional[Tuple[int, int]] = None,
+            text: str | None = "Hello, World!",
+            img_fraction: float | None = 0.5,
+            path_to_font: str | None = "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+            img_size: tuple[int, int] | None = None,
     ):
         if not Path(path_to_font).exists():
             logger.error("DMDControl.display_test: Path to font does not exist.")

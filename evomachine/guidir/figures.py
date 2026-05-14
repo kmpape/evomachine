@@ -10,7 +10,7 @@ from matplotlib.patches import Rectangle, Polygon
 
 import numpy as np
 from PyQt5.QtGui import QIntValidator
-from typing import Any, Dict, Tuple, Union
+from typing import Any
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QTimer, Qt, QThread
 from PyQt5.QtWidgets import (
     QWidget, QLineEdit,  QComboBox,
@@ -23,7 +23,7 @@ from delta.utils import CroppingBox as DeltaCroppingBox
 
 from evomachine.commands import AutomatonCommand
 from evomachine.coordinates import Coordinate
-from evomachine.evotypes import AutomatonCommandType, LEDType
+from evomachine.types import AutomatonCommandType, LEDType
 from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoGUIThread, EvoWorkerTemplate, FolderExistsValidator, \
     FilenameValidator, EVO_STYLE
@@ -172,7 +172,7 @@ class ImageCroppingBoxes(EvoWorkerTemplate):
         self.rectangle0 = None
         self.rectangle1 = None
         self.start_point = None
-        self.current_point: Union[None, Tuple[int, int]] = None
+        self.current_point: None | tuple[int, int] = None
         self.box_id = None
         self.canvas.mpl_connect('button_press_event', self.on_mouse_press)  # noqa
         self.canvas.mpl_connect('motion_notify_event', self.on_mouse_move)  # noqa
@@ -338,7 +338,7 @@ class ChannelPlotter(QWidget):
     def __init__(
             self,
             img: np.ndarray,
-            channel_to_index: Dict[LEDType, int],
+            channel_to_index: dict[LEDType, int],
             width: int = 12,
             height: int = 12,
             title_prefix: str = "",
@@ -451,9 +451,9 @@ class ImagePlotter(EvoPanelTemplate):
 
         self.channel_to_index: dict[LEDType, int] = self.processor_config.channel_to_index
         "Dictionary mapping LEDChannel type to index in 3D image array."
-        self.fovs: Dict[int, Coordinate] = {}
+        self.fovs: dict[int, Coordinate] = {}
         "Dictionary mapping from FoV ID to Coordinate"
-        self.rois: Dict[int, list[int]] = {}
+        self.rois: dict[int, list[int]] = {}
         "Dictionary mapping from FoV ID to RoI IDs"
         self.roi_data: dict[int, dict] = {}
         "Dictionary mapping from RoI ID to various data. See read_roi_data and read_seg_data."
@@ -535,7 +535,7 @@ class ImagePlotter(EvoPanelTemplate):
         self.save_frame: bool = False
         self.savepath_checkbox = self.make_checkbox(text="Save", font=SMALL, set_true=self.save_frame,
                                                     func=self.toggle_save)
-        self.current_filename: Union[str, None] = None
+        self.current_filename: str | None = None
         self.filename_label = self.make_label(text="Filename", font=SMALL)
         self.filename_value = self.make_label(text=str(self.current_filename), font=SMALL, width_px=400)
         self.filename_value.setWordWrap(True)
@@ -932,4 +932,3 @@ class FigureMultiWindow(QWidget):
         fig = self.fig_dict[self.current_index]
         self.canvas.figure = fig
         self.canvas.draw()
-

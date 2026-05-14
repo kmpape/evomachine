@@ -7,7 +7,6 @@ from PIL import Image, ImageFont, ImageDraw
 import skimage
 import subprocess
 import sys
-from typing import List, Optional, Union, Tuple
 
 import numpy as np
 import pickle as pkl
@@ -34,7 +33,7 @@ class DMDColor(Enum):
     BLUE = (0, 0, 255)
 
     @classmethod
-    def get_all_values(cls) -> List[Tuple[int, int, int]]:
+    def get_all_values(cls) -> list[tuple[int, int, int]]:
         return [member.value for member in cls]
 
     @classmethod
@@ -89,21 +88,21 @@ class DMDControl:
         "Deque to store all errors."
         self._dmd_is_alive: bool = False
         "Flag set in initialise."
-        self.offset_DMD: Tuple[int, int] = (0, 0)
+        self.offset_DMD: tuple[int, int] = (0, 0)
         "Offset to display PyGame window. Set in initialise."
-        self.width_height_DMD: Tuple[int, int] = DMD_WIDTH_HEIGHT
+        self.width_height_DMD: tuple[int, int] = DMD_WIDTH_HEIGHT
         "Size of DMD."
         self.width_height_CAM: tuple[int, int] = CAM_WIDTH_HEIGHT
         "Size of camera."
-        self.surface: Union[None, pygame.surface] = None
+        self.surface: None | pygame.surface = None
         "PyGame object to display images. Initialised in initialise."
         self.default_line_width: int = 5
         "Line width used for calibration and displaying lines. Use odd values."
-        self._calib_data: Optional[List[Tuple[Tuple[int, int], Tuple[int, int], Tuple[int, int]]]] = None
+        self._calib_data: list[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] | None = None
         "List containing calibration data."
         self._calib_file: Path = EVOMACHINE_DIR / 'dmd_calibration_data.pkl'
         "Path to calibration file."
-        self._homography_mat: Optional[np.ndarray] = None
+        self._homography_mat: np.ndarray | None = None
         "Homography matrix for mapping image to DMD coordinates."
         self._is_display_full: bool = False
         "Internal flag queried through is_full_display() that is set to True when displaying a full white screen."
@@ -203,7 +202,7 @@ class DMDControl:
     def display_image(
             self,
             img: np.ndarray[(int, int), int],
-            update_display: Optional[bool] = True,
+            update_display: bool | None = True,
     ):
         if self.debug_mode:
             return
@@ -224,8 +223,8 @@ class DMDControl:
 
     def display_full(
             self,
-            update_display: Optional[bool] = True,
-            color: Optional[DMDColor] = DMDColor.WHITE,
+            update_display: bool | None = True,
+            color: DMDColor | None = DMDColor.WHITE,
             force_display: bool = False,
     ):
         if self.debug_mode:
@@ -240,7 +239,7 @@ class DMDControl:
             pygame.display.update()
         self._is_display_full = color == DMDColor.WHITE
 
-    def display_none(self, update_display: Optional[bool] = True):
+    def display_none(self, update_display: bool | None = True):
         self.display_full(update_display=update_display, color=DMDColor.BLACK)
 
     def display_checkerboard(
@@ -277,11 +276,11 @@ class DMDControl:
 
     def display_line(
             self,
-            start_pos: Tuple[int, int],
-            end_pos: Tuple[int, int],
-            line_width: Optional[Union[int, None]] = None,
-            update_display: Optional[bool] = True,
-            color: Optional[DMDColor] = DMDColor.WHITE,
+            start_pos: tuple[int, int],
+            end_pos: tuple[int, int],
+            line_width: int | None | None = None,
+            update_display: bool | None = True,
+            color: DMDColor | None = DMDColor.WHITE,
     ):
         if self.debug_mode:
             return
@@ -304,9 +303,9 @@ class DMDControl:
     def display_line_horiz(
             self,
             at_pos: int,
-            line_width: Optional[Union[int, None]] = None,
-            update_display: Optional[bool] = True,
-            color: Optional[DMDColor] = DMDColor.WHITE,
+            line_width: int | None | None = None,
+            update_display: bool | None = True,
+            color: DMDColor | None = DMDColor.WHITE,
     ):
         self.display_line(
             start_pos=(0, at_pos),
@@ -319,9 +318,9 @@ class DMDControl:
     def display_line_vert(
             self,
             at_pos: int,
-            line_width: Optional[Union[int, None]] = None,
-            update_display: Optional[bool] = True,
-            color: Optional[DMDColor] = DMDColor.WHITE,
+            line_width: int | None | None = None,
+            update_display: bool | None = True,
+            color: DMDColor | None = DMDColor.WHITE,
     ):
         self.display_line(
             start_pos=(at_pos, 0),
@@ -331,7 +330,7 @@ class DMDControl:
             color=color,
         )
 
-    def display_crosshair(self, line_width: int = 1, update_display: Optional[bool] = True):
+    def display_crosshair(self, line_width: int = 1, update_display: bool | None = True):
         img = np.zeros((*self.width_height_DMD, 3), dtype=int)
         center = (np.floor_divide(self.width_height_DMD[0], 2), np.floor_divide(self.width_height_DMD[1], 2))
         img[center[0] - int(np.floor(line_width / 2)): center[0] + int(np.ceil(line_width / 2)), :, :] = 255
@@ -340,9 +339,9 @@ class DMDControl:
 
     def display_text(
             self,
-            text: Optional[str] = "Hello, World!",
-            img_fraction: Optional[float] = 0.5,
-            path_to_font: Optional[str] = "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+            text: str | None = "Hello, World!",
+            img_fraction: float | None = 0.5,
+            path_to_font: str | None = "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
     ):
         image_pil = Image.fromarray(np.transpose(np.zeros(self.width_height_DMD, dtype=np.uint8)))  # noqa
         img_height, img_width = self.width_height_DMD

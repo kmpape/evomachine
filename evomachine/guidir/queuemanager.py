@@ -1,13 +1,14 @@
+from collections.abc import Callable
 from multiprocessing import Event, Lock, Queue
 import queue
 import threading
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 from evomachine.commands import AutomatonCommand
 from evomachine.config import get_logger
-from evomachine.evotypes import AutomatonCommandType
+from evomachine.types import AutomatonCommandType
 
 
 logger = get_logger(name=__name__, is_gui=True)
@@ -22,7 +23,7 @@ class QueueManager:
             start_strategy_event: Event,
             stop_event: Event,
             shutdown_event: Event,
-            request_lock: Optional[Lock] = None,
+            request_lock: Lock | None = None,
             queue_timeout: float = 0,
             run_timeout: float = 0,
             use_threading: bool = True, 
@@ -34,7 +35,7 @@ class QueueManager:
         "Filled by QueueManager. Format: (cmd_id: UUID, cmd_str: str, kwargs_dict: Dict[str, Any])"
         self._automaton_to_gui_q: Queue = automaton_to_gui_q
         "Filled by Automaton. Format: (cmd_id: UUID, data: Any)"
-        self._request_lock: Optional[Lock] = request_lock
+        self._request_lock: Lock | None = request_lock
         "Locks _requests if not None."
         self._strategy_event: Event = start_strategy_event
         "Only used to check for bad gui-automaton communication."
@@ -42,11 +43,11 @@ class QueueManager:
         "Stops the event loop."
         self._shutdown_event: Event = shutdown_event
         "Shuts down process."
-        self._listeners: Dict[AutomatonCommandType, List[Callable[[AutomatonCommand], None]]] = {
+        self._listeners: dict[AutomatonCommandType, list[Callable[[AutomatonCommand], None]]] = {
             key: [] for key in AutomatonCommandType.get_all()
         }
         "Listeners (callbacks) for AutomatonCommandType messages during process."
-        self._requests: Dict[uuid.UUID, Tuple[Callable[[Any, Optional], None], Tuple[Any]]] = {}
+        self._requests: dict[uuid.UUID, tuple[Callable[..., None] | None, tuple[Any, ...] | None]] = {}
         "Request (callbacks) from GUI to Automaton."
         self.queue_timeout: float = queue_timeout
         "Timeout for polling all queues."
@@ -105,9 +106,9 @@ class QueueManager:
     def request(
             self,
             req_str: str,
-            kwargs_dict: Dict[str, Any],
-            callback: Optional[Callable[[Any], None]] = None,
-            callback_args: Optional[Tuple] = None,
+            kwargs_dict: dict[str, Any],
+            callback: Callable[[Any], None] | None = None,
+            callback_args: tuple | None = None,
     ):
         """
         Request an automaton function executed as result = eval(req_str(**kwargs_dict)) and provide a callback

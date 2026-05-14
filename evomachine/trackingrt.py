@@ -1,5 +1,4 @@
 import logging
-from typing import Dict, List, Optional, Tuple, Union
 
 import cv2
 from numba import jit
@@ -40,7 +39,7 @@ def is_division(
     return cell_division_occurred
 
 
-def get_tracking_inputs_rt(seg_mask: np.typing.NDArray[np.uint8]) -> List[Dict[str, float]]:
+def get_tracking_inputs_rt(seg_mask: np.typing.NDArray[np.uint8]) -> list[dict[str, float]]:
     """
     Computes the inputs for track_trench_rt. Assumes that the cells grow from top to bottom.
 
@@ -64,10 +63,10 @@ def get_tracking_inputs_rt(seg_mask: np.typing.NDArray[np.uint8]) -> List[Dict[s
 
 
 def track_trench_rt(
-        x_old: List[Dict[str, Union[float, int, bool]]],
-        u_new: List[Dict[str, float]],
+        x_old: list[dict[str, float | int | bool]],
+        u_new: list[dict[str, float]],
         max_id: int,
-) -> Tuple[List[Dict[str, Union[float, int, bool]]], np.typing.NDArray[bool], ImageProcessingError]:
+) -> tuple[list[dict[str, float | int | bool]], np.typing.NDArray[bool], ImageProcessingError]:
     """
     Function for tracking cells in mother machine trenches.
 

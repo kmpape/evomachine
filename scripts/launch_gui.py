@@ -25,8 +25,9 @@ else:
     from evomachine.dmd import DMDControl  # noqa
     import pygame  # noqa
 from evomachine.coordinates import Coordinate
-from evomachine.evotypes import AutoFocusStatusType, FilterWheelType, FocusAlgorithmType, ImageConfigType, LEDType, \
-    FocusStatusType, FocusCurveType
+from evomachine.types import AutoFocusStatusType, FilterWheelType, FocusAlgorithmType, LEDType, FocusStatusType, \
+    FocusCurveType
+from evomachine.config_types import ImageConfigType
 from evomachine.guidir.newgui import EvoGUI  # noqa
 from evomachine.guidir.queuemanager import QueueManager  # noqa
 from evomachine.strategy import AbstractStrategy, BasicStrategy  # TODO add dropdown in GUI  # noqa

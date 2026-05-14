@@ -1,7 +1,7 @@
 from multiprocessing import Event, Queue
 import numpy as np
 import matplotlib.pyplot as plt
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, QEventLoop, QThread, QTimer, QObject, QRegExp, Qt
 from PyQt5 import QtGui
 from PyQt5.QtGui import QRegExpValidator, QDoubleValidator, QFont, QPalette, QColor, QValidator
@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
 
 from evomachine.acquisition import AbstractCamera
 from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, ConfigImageProcessor, get_logger
-from evomachine.evotypes import FocusAlgorithmType, LEDType
+from evomachine.types import FocusAlgorithmType, LEDType
 from evomachine.guidir.figures import FigureWindow
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
 from evomachine.guidir.guitypes import SMALL, CENTER, LEFT, RIGHT, NORMAL
@@ -29,22 +29,22 @@ logger = get_logger(name=__name__, is_gui=True)
 class FocusWorker(EvoWorkerTemplate):
     def __init__(
             self,
-            labels_values: Dict[str, List[Union[QLabel, QLineEdit]]],
+            labels_values: dict[str, list[QLabel | QLineEdit]],
             this_cfg: ConfigFocus,
-            parent: Optional[QObject] = None,
+            parent: QObject | None = None,
     ):
         super().__init__(parent)
-        self.this_cfg: Union[ConfigFocus, ConfigCRISP] = this_cfg
-        self.labels_values: Dict[str, List[QLabel, QLineEdit]] = labels_values
+        self.this_cfg: ConfigFocus | ConfigCRISP = this_cfg
+        self.labels_values: dict[str, list[QLabel, QLineEdit]] = labels_values
 
         # Available after calling the focus routine
-        self.focus_curve_window: Union[FigureWindow, None] = None
-        self.focus_z_coords: Union[np.ndarray, None] = None
-        self.focus_scores: Union[np.ndarray, None] = None
-        self.focus_stack: Union[np.ndarray, None] = None
-        self.prev_image: Union[np.ndarray, None] = None
-        self.prev_z: Union[float, None] = None
-        self.new_z: Union[float, None] = None
+        self.focus_curve_window: FigureWindow | None = None
+        self.focus_z_coords: np.ndarray | None = None
+        self.focus_scores: np.ndarray | None = None
+        self.focus_stack: np.ndarray | None = None
+        self.prev_image: np.ndarray | None = None
+        self.prev_z: float | None = None
+        self.new_z: float | None = None
 
     @pyqtSlot()
     def clear_config(self):
@@ -56,7 +56,7 @@ class FocusWorker(EvoWorkerTemplate):
             else:
                 self.labels_values[param_name][1].setText(str(getattr(self.this_cfg, param_name)))
 
-    def read_focus_data(self, data: Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]):
+    def read_focus_data(self, data: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]):
         self.focus_z_coords, self.focus_scores, self.focus_stack, self.prev_image, self.prev_z, self.new_z = data
 
     @pyqtSlot()
@@ -115,8 +115,8 @@ class FocusPanel(EvoPanelTemplate):
         )
         self.cfg_focus = self.camera_config.focus
         self.cfg_focus_default = self.camera_config.focus.copy()
-        self.cropping_box: Union[None, EvoCroppingBox] = None
-        self.focus_data: Union[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float], None] = None
+        self.cropping_box: None | EvoCroppingBox = None
+        self.focus_data: tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float] | None = None
 
         self.algorithm_dropdown_options = FocusAlgorithmType.get_all_names()
         curr_algorithm_name = FocusAlgorithmType.get_name(self.cfg_focus.algorithm.value)

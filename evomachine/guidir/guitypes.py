@@ -1,5 +1,4 @@
 from enum import Enum, auto
-from typing import List
 
 from PyQt5.QtGui import QFont
 from PyQt5.QtCore import Qt
@@ -35,7 +34,7 @@ class Direction(Enum):
     MOVETO = 7
 
     @classmethod
-    def get_all_values(cls) -> List[int]:
+    def get_all_values(cls) -> list[int]:
         return [member.value for member in cls]
 
 
@@ -55,7 +54,7 @@ class DisplayMode(Enum):
     UNKNOWN = 3
 
     @classmethod
-    def get_all_values(cls) -> List[int]:
+    def get_all_values(cls) -> list[int]:
         return [member.value for member in cls]
 
     def get_string(self) -> str:

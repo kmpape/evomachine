@@ -7,7 +7,7 @@ sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/asitiger")
 sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo")
 sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/de-lta-rt")
 
-from evomachine.evotypes import LEDType  # noqa
+from evomachine.types import LEDType  # noqa
 from syncboard.syncboardcontroller import SyncBoardController  # noqa
 from syncboard.command import Command
 from evomachine.dmd_socket import DMDControl  # noqa

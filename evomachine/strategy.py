@@ -8,13 +8,12 @@ from pathlib import Path
 import sys
 import time
 import traceback
-from typing import Dict, List, Tuple, Type, Union
 
 from evomachine.commands import AutomatonCommand, CommandFactory
 from evomachine.config import get_logger, ConfigCamera, ConfigCameraFactory, USE_DMD_SOCKET, ConfigImageProcessor
 from evomachine.coordinates import Coordinate
 from evomachine.exceptions import ConfigError, ErrorCode, EvoMachineError, StrategyError
-from evomachine.evotypes import AutomatonCommandType, LEDType
+from evomachine.types import AutomatonCommandType, LEDType
 from evomachine.utils import normalise_frame
 from evomachine.coordinates import Coordinate
 if USE_DMD_SOCKET:
@@ -418,7 +417,7 @@ class BasicStrategy(AbstractStrategy):
         return [cmd_live_mode_on]
 
 
-def get_all_strategies() -> list[tuple[Type[AbstractStrategy], str]]:
+def get_all_strategies() -> list[tuple[type[AbstractStrategy], str]]:
     subclasses = []
 
 
