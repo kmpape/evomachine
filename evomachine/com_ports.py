@@ -1,5 +1,6 @@
 import re
 import serial.tools.list_ports
+from serial.tools.list_ports_common import ListPortInfo
 
 def get_pid(in_str):
     match = re.search(r'VID:PID=(\w+:\w+)', in_str)
@@ -8,8 +9,8 @@ def get_pid(in_str):
     else:
         return None
 
-def listPorts():
-    ports = list(serial.tools.list_ports.comports())
+def listPorts() -> str:
+    ports: list[ListPortInfo] = list(serial.tools.list_ports.comports())
     for port in ports:
         print("="*20)
         print("Device", port.device)
@@ -20,26 +21,25 @@ def listPorts():
         print("Manufacturer", port.manufacturer)
         print("Product", port.product)
 
+def get_port(hwid: str, display_name: str = ""):
+    ports: list[ListPortInfo] = [port for port in list(serial.tools.list_ports.comports()) if port.hwid == hwid]
+    if not ports:
+        msg = f"No port with hwid {hwid} found for {display_name}."
+        raise RuntimeError(msg)
+    if len(ports) > 1:
+        ports_str = "\n | ".join([str(port) for port in ports])
+        msg = f"Multiple ports with hwid {hwid} found for {display_name}: {ports_str}"
+        raise RuntimeError(msg)
+    return ports[0].device
+
 def get_syncboard_port():
-    ports = list(serial.tools.list_ports.comports())
-    for port in ports:
-        if get_pid(port.hwid) == "16C0:0483":
-            return port.device
-    raise RuntimeError("Syncboard not found")
+    return get_port(hwid="16C0:0483", name="Syncboard")
 
 def get_asitiger_port():
-    ports = list(serial.tools.list_ports.comports())
-    for port in ports:
-        if get_pid(port.hwid) == "10C4:EA60":
-            return port.device
-    raise RuntimeError("ASITiger not found")
+    return get_port(hwid="10C4:EA60", name="ASITiger")
 
 def get_nvpro_port():
-    ports = list(serial.tools.list_ports.comports())
-    for port in ports:
-        if get_pid(port.hwid) == "0483:A3E7":
-            return port.device
-    raise RuntimeError("NVPro not found")
+    return get_port(hwid="0483:A3E7", name="NVPro")
 
 if __name__ == "__main__":
     listPorts()
