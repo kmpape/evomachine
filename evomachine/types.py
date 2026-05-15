@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import Enum, auto
 import numpy as np
@@ -142,6 +144,28 @@ class AxisType(EvoType):
     Z = 2
 
 
+class StageBindingType(EvoType):
+    """Stage binding identifiers used by StageFactory."""
+
+    VIRTUAL = auto()
+    ASI_TIGER = auto()
+
+
+class FilterWheelBindingType(EvoType):
+    """Filter wheel binding identifiers used by FilterWheelFactory."""
+
+    VIRTUAL = auto()
+    ASI_TIGER = auto()
+
+
+class PeripheralControllerBindingType(EvoType):
+    """Peripheral controller binding identifiers used by PeripheralControllerFactory."""
+
+    VIRTUAL = auto()
+    ASI_TIGER = auto()
+    SYNCBOARD = auto()
+
+
 class FocusAlgorithmType(EvoType):
     """Software focus scoring algorithm selection used by focus configuration and routines."""
 
@@ -172,6 +196,7 @@ class LEDType(EvoType):
 class FilterWheelType(EvoType):
     """Filter wheel positions used when acquiring fluorescence and brightfield images."""
 
+    UNKNOWN = -1
     FILTER = 0          # non-specific
     FILTER_465nm = 1
     FILTER_527nm = 2
