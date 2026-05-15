@@ -4,10 +4,11 @@ from typing import Any
 
 from syncboard.syncboardcontroller import SyncBoardController
 
-from evomachine.peripherals import PeripheralController
+from evomachine.peripherals import SerialPeripheralController, SerialPeripheralControllerConfig
+from evomachine.types import PeripheralControllerBindingType
 
 
-class SyncBoardPeripheralController(PeripheralController):
+class SyncBoardPeripheralController(SerialPeripheralController):
     """
     Peripheral controller for a SyncBoard serial controller.
 
@@ -15,26 +16,39 @@ class SyncBoardPeripheralController(PeripheralController):
     SyncBoard connection through the syncboard attribute.
     """
 
+    DEFAULT_NAME = "SyncBoard Peripheral Controller"
+    DEFAULT_HWID = "16C0:0483"
+
     def __init__(
             self,
             syncboard: SyncBoardController,
-            name: str = "SyncBoard Peripheral Controller",
+            name: str = "",
             close_on_shutdown: bool = True,
     ):
         self.syncboard: SyncBoardController = syncboard
-        self.close_on_shutdown: bool = close_on_shutdown
-        super().__init__(name=name)
+        super().__init__(name=name or self.DEFAULT_NAME, close_on_shutdown=close_on_shutdown)
+
+    @classmethod
+    def default_config(cls) -> SerialPeripheralControllerConfig:
+        return SerialPeripheralControllerConfig(
+            binding=PeripheralControllerBindingType.SYNCBOARD,
+            name=cls.DEFAULT_NAME,
+            hwid=cls.DEFAULT_HWID,
+        )
 
     @classmethod
     def from_serial_port(
             cls,
             port: str,
-            name: str = "SyncBoard Peripheral Controller",
+            name: str = "",
             close_on_shutdown: bool = True,
             **syncboard_options: Any,
     ) -> "SyncBoardPeripheralController":
         syncboard = SyncBoardController.from_serial_port(port=port, **syncboard_options)
-        return cls(syncboard=syncboard, name=name, close_on_shutdown=close_on_shutdown)
+        return cls(syncboard=syncboard, name=name or cls.DEFAULT_NAME, close_on_shutdown=close_on_shutdown)
+
+    def _get_serial_controller(self) -> SyncBoardController:
+        return self.syncboard
 
     def _initialise(self, force: bool = False) -> bool:
         self.syncboard.initialise(force_init=force)
@@ -51,12 +65,6 @@ class SyncBoardPeripheralController(PeripheralController):
     def _stop(self) -> None:
         self.syncboard.disable_system()
 
-    def _shutdown(self, force: bool = False) -> None:
+    def _before_disconnect(self, force: bool = False) -> None:
         if self.syncboard.is_initialised():
             self.syncboard.finalise()
-        if not (force or self.close_on_shutdown):
-            return
-        connection = getattr(self.syncboard, "connection", None)
-        disconnect = getattr(connection, "disconnect", None)
-        if callable(disconnect):
-            disconnect()

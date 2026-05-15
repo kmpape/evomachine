@@ -31,6 +31,9 @@ from evomachine.types import AutoFocusStatusType, FilterWheelType, FocusAlgorith
 from evomachine.config_types import ImageConfigType
 
 
+# TODO(Codex): You have left a few bogus type annotations here. It must work for Python 3.11. Please check. I saw [LEDType] but it should have been list[LEDType]
+
+
 logger = get_logger(name=__name__)
 
 
@@ -1727,10 +1730,10 @@ class EvoCamerav2(EvoCamera):
             LEDType.LED_OVERHEAD: -99,
             LEDType.LED_OVERHEAD_TIGER: -98,
         }
-        self._syncboard_leds: [LEDType] = [LEDType.LED_385_NM, LEDType.LED_450_NM, LEDType.LED_515_NM,
+        self._syncboard_leds: list[LEDType] = [LEDType.LED_385_NM, LEDType.LED_450_NM, LEDType.LED_515_NM,
                                            LEDType.LED_565_NM, LEDType.LED_645_NM]
-        self._tiger_leds: [LEDType] = [LEDType.LED_OVERHEAD_TIGER]
-        self._psu_leds: [LEDType] = [LEDType.LED_OVERHEAD]
+        self._tiger_leds: list[LEDType] = [LEDType.LED_OVERHEAD_TIGER]
+        self._psu_leds: list[LEDType] = [LEDType.LED_OVERHEAD]
         self._tiger_led_channel_keys: dict[LEDType, str | None] = {
             LEDType.TIGER_LED_1: "X",
             LEDType.TIGER_LED_2: "Y",

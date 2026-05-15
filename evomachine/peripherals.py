@@ -39,9 +39,19 @@ class PeripheralController(ABC):
         self._stop()
 
     def shutdown(self, force: bool = False) -> None:
-        self._shutdown(force=force)
-        self._is_initialised = False
-        self._is_alive = False
+        stop_error: Exception | None = None
+        try:
+            self.stop()
+        except Exception as error:
+            stop_error = error
+        finally:
+            try:
+                self._shutdown(force=force)
+            finally:
+                self._is_initialised = False
+                self._is_alive = False
+        if stop_error is not None:
+            raise stop_error
 
     @abstractmethod
     def _initialise(self, force: bool = False) -> bool:
@@ -65,9 +75,7 @@ class PeripheralControllerConfig:
     """Configuration object used by PeripheralControllerFactory."""
 
     binding: PeripheralControllerBindingType
-    name: str | None = None
-    port: str | None = None
-    use_thread: bool = False
+    name: str = ""
     initialise: bool = True
 
     def __post_init__(self) -> None:
@@ -76,6 +84,196 @@ class PeripheralControllerConfig:
                 f"PeripheralControllerConfig: binding must be PeripheralControllerBindingType, "
                 f"received {type(self.binding)}."
             )
+        if not isinstance(self.name, str):
+            raise TypeError(f"PeripheralControllerConfig: name must be str, received {type(self.name)}.")
+
+
+@dataclass
+class SerialPeripheralControllerConfig(PeripheralControllerConfig):
+    """Configuration object for serial PeripheralController bindings."""
+
+    port: str | None = None
+    hwid: str | None = None
+    close_on_shutdown: bool = True
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.binding not in {
+            PeripheralControllerBindingType.ASI_TIGER,
+            PeripheralControllerBindingType.SYNCBOARD,
+            PeripheralControllerBindingType.KWR103,
+        }:
+            raise ValueError(
+                f"SerialPeripheralControllerConfig: binding must be a serial binding, received {self.binding}."
+            )
+        if (self.port is None) == (self.hwid is None):
+            raise ValueError("SerialPeripheralControllerConfig: exactly one of port or hwid must be provided.")
+
+    def resolve_port(self, display_name: str = "") -> str:
+        """
+        Return the configured serial port or resolve the configured HWID.
+
+        Parameters
+        ----------
+        display_name
+            Human-readable device name used in errors raised during HWID
+            lookup.
+
+        Returns
+        -------
+        str
+            Serial port path to use when constructing the controller.
+        """
+        if self.port is not None:
+            return self.port
+        if self.hwid is None:
+            raise ValueError("SerialPeripheralControllerConfig.resolve_port: hwid is required when port is absent.")
+
+        from evomachine.com_ports import get_port
+
+        return get_port(hwid=self.hwid, display_name=display_name)
+
+
+class SerialPeripheralController(PeripheralController):
+    """Base class for PeripheralController implementations backed by a serial connection."""
+
+    def __init__(
+            self,
+            name: str,
+            close_on_shutdown: bool = True,
+    ):
+        """
+        Initialise common serial controller lifecycle state.
+
+        Parameters
+        ----------
+        name
+            Human-readable controller name used in error messages.
+        close_on_shutdown
+            If True, shutdown closes the underlying serial connection.
+            Force shutdown closes it regardless of this setting.
+        """
+        self.close_on_shutdown: bool = close_on_shutdown
+        super().__init__(name=name)
+
+    @abstractmethod
+    def _get_serial_controller(self) -> Any:
+        """
+        Return the wrapped binding-specific serial controller object.
+
+        Returns
+        -------
+        Any
+            Object that owns or exposes the binding's serial connection.
+        """
+        raise NotImplementedError
+
+    def _get_connection(self) -> Any:
+        """
+        Return the object that provides the serial disconnect method.
+
+        Returns
+        -------
+        Any
+            Connection-like object with an optional disconnect method.
+        """
+        return getattr(self._get_serial_controller(), "connection", None)
+
+    def _before_disconnect(self, force: bool = False) -> None:
+        """
+        Run binding-specific shutdown work before closing the connection.
+
+        Parameters
+        ----------
+        force
+            True when shutdown should close the connection even if
+            close_on_shutdown is False.
+        """
+        return
+
+    def _disconnect(self) -> None:
+        """
+        Close the wrapped serial connection if it exposes disconnect().
+
+        Parameters
+        ----------
+        None
+        """
+        connection = self._get_connection()
+        disconnect = getattr(connection, "disconnect", None)
+        if callable(disconnect):
+            disconnect()
+
+    def _shutdown(self, force: bool = False) -> None:
+        """
+        Run serial shutdown hooks and optionally close the connection.
+
+        Parameters
+        ----------
+        force
+            True to close the serial connection regardless of
+            close_on_shutdown.
+        """
+        self._before_disconnect(force=force)
+        if not (force or self.close_on_shutdown):
+            return
+        self._disconnect()
+
+
+@dataclass
+class SocketPeripheralControllerConfig(PeripheralControllerConfig):
+    """Configuration object for socket-backed PeripheralController bindings."""
+
+    host: str = "127.0.0.1"
+    port: int = 0
+    close_on_shutdown: bool = True
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if not isinstance(self.host, str):
+            raise TypeError(f"SocketPeripheralControllerConfig: host must be str, received {type(self.host)}.")
+        if not isinstance(self.port, int):
+            raise TypeError(f"SocketPeripheralControllerConfig: port must be int, received {type(self.port)}.")
+
+
+class SocketPeripheralController(PeripheralController):
+    """Base class for PeripheralController implementations backed by a socket connection."""
+
+    def __init__(
+            self,
+            name: str,
+            close_on_shutdown: bool = True,
+    ):
+        self.close_on_shutdown: bool = close_on_shutdown
+        super().__init__(name=name)
+
+    @abstractmethod
+    def _get_socket_controller(self) -> Any:
+        """Return the wrapped binding-specific socket controller object."""
+        raise NotImplementedError
+
+    def _get_socket(self) -> Any:
+        """Return the socket-like object exposed by the wrapped controller, if any."""
+        controller = self._get_socket_controller()
+        return getattr(controller, "s", getattr(controller, "socket", None))
+
+    def _before_disconnect(self, force: bool = False) -> None:
+        """Run binding-specific shutdown work before closing the socket."""
+        return
+
+    def _disconnect(self) -> None:
+        """Close the wrapped socket if it exposes close()."""
+        socket = self._get_socket()
+        close = getattr(socket, "close", None)
+        if callable(close):
+            close()
+
+    def _shutdown(self, force: bool = False) -> None:
+        """Run socket shutdown hooks and optionally close the socket."""
+        self._before_disconnect(force=force)
+        if not (force or self.close_on_shutdown):
+            return
+        self._disconnect()
 
 
 class PeripheralControllerFactory:
@@ -92,28 +290,48 @@ class PeripheralControllerFactory:
             from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
 
             controller = VirtualPeripheralController(
-                name=config.name or "Virtual Peripheral Controller",
+                name=config.name or VirtualPeripheralController.DEFAULT_NAME,
                 **binding_options,
             )
         elif config.binding == PeripheralControllerBindingType.ASI_TIGER:
-            if config.port is None:
-                raise ValueError("PeripheralControllerFactory.create: port is required for ASI_TIGER controllers.")
+            if not isinstance(config, SerialPeripheralControllerConfig):
+                raise TypeError(
+                    "PeripheralControllerFactory.create: ASI_TIGER requires SerialPeripheralControllerConfig."
+                )
+            if "use_thread" in binding_options:
+                raise TypeError("PeripheralControllerFactory.create: use_thread is not supported.")
             from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
 
             controller = TigerPeripheralController.from_serial_port(
-                port=config.port,
-                name=config.name or "ASI Tiger Peripheral Controller",
-                use_thread=config.use_thread,
+                port=config.resolve_port(display_name="ASI Tiger"),
+                name=config.name or TigerPeripheralController.DEFAULT_NAME,
+                close_on_shutdown=config.close_on_shutdown,
                 **binding_options,
             )
         elif config.binding == PeripheralControllerBindingType.SYNCBOARD:
-            if config.port is None:
-                raise ValueError("PeripheralControllerFactory.create: port is required for SYNCBOARD controllers.")
+            if not isinstance(config, SerialPeripheralControllerConfig):
+                raise TypeError(
+                    "PeripheralControllerFactory.create: SYNCBOARD requires SerialPeripheralControllerConfig."
+                )
             from evomachine.bindings.syncboard.peripheralcontroller import SyncBoardPeripheralController
 
             controller = SyncBoardPeripheralController.from_serial_port(
-                port=config.port,
-                name=config.name or "SyncBoard Peripheral Controller",
+                port=config.resolve_port(display_name="SyncBoard"),
+                name=config.name or SyncBoardPeripheralController.DEFAULT_NAME,
+                close_on_shutdown=config.close_on_shutdown,
+                **binding_options,
+            )
+        elif config.binding == PeripheralControllerBindingType.KWR103:
+            if not isinstance(config, SerialPeripheralControllerConfig):
+                raise TypeError(
+                    "PeripheralControllerFactory.create: KWR103 requires SerialPeripheralControllerConfig."
+                )
+            from evomachine.bindings.kwr103.peripheralcontroller import KWR103PeripheralController
+
+            controller = KWR103PeripheralController.from_serial_port(
+                port=config.resolve_port(display_name="KWR103"),
+                name=config.name or KWR103PeripheralController.DEFAULT_NAME,
+                close_on_shutdown=config.close_on_shutdown,
                 **binding_options,
             )
         else:

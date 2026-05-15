@@ -33,13 +33,16 @@ def get_port(hwid: str, display_name: str = ""):
     return ports[0].device
 
 def get_syncboard_port():
-    return get_port(hwid="16C0:0483", name="Syncboard")
+    return get_port(hwid="16C0:0483", display_name="Syncboard")
 
 def get_asitiger_port():
-    return get_port(hwid="10C4:EA60", name="ASITiger")
+    return get_port(hwid="10C4:EA60", display_name="ASITiger")
 
 def get_nvpro_port():
-    return get_port(hwid="0483:A3E7", name="NVPro")
+    return get_port(hwid="0483:A3E7", display_name="NVPro")
+
+def get_kwr103_port():
+    return get_port(hwid="16C0:0483", display_name="KWR103")
 
 if __name__ == "__main__":
     listPorts()

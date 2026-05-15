@@ -4,10 +4,11 @@ from typing import Any
 
 from asitiger.tigercontroller import TigerController
 
-from evomachine.peripherals import PeripheralController
+from evomachine.peripherals import SerialPeripheralController, SerialPeripheralControllerConfig
+from evomachine.types import PeripheralControllerBindingType
 
 
-class TigerPeripheralController(PeripheralController):
+class TigerPeripheralController(SerialPeripheralController):
     """
     Peripheral controller for an ASI Tiger serial controller.
 
@@ -15,21 +16,31 @@ class TigerPeripheralController(PeripheralController):
     connection through the tiger attribute.
     """
 
+    DEFAULT_NAME = "ASI Tiger Peripheral Controller"
+    DEFAULT_HWID = "10C4:EA60"
+
     def __init__(
             self,
             tiger: TigerController,
-            name: str = "ASI Tiger Peripheral Controller",
+            name: str = "",
             close_on_shutdown: bool = True,
     ):
         self.tiger: TigerController = tiger
-        self.close_on_shutdown: bool = close_on_shutdown
-        super().__init__(name=name)
+        super().__init__(name=name or self.DEFAULT_NAME, close_on_shutdown=close_on_shutdown)
+
+    @classmethod
+    def default_config(cls) -> SerialPeripheralControllerConfig:
+        return SerialPeripheralControllerConfig(
+            binding=PeripheralControllerBindingType.ASI_TIGER,
+            name=cls.DEFAULT_NAME,
+            hwid=cls.DEFAULT_HWID,
+        )
 
     @classmethod
     def from_serial_port(
             cls,
             port: str,
-            name: str = "ASI Tiger Peripheral Controller",
+            name: str = "",
             use_thread: bool = False,
             close_on_shutdown: bool = True,
             **tiger_options: Any,
@@ -40,7 +51,10 @@ class TigerPeripheralController(PeripheralController):
             tiger = TigerThread(port=port)
         else:
             tiger = TigerController.from_serial_port(port=port, **tiger_options)
-        return cls(tiger=tiger, name=name, close_on_shutdown=close_on_shutdown)
+        return cls(tiger=tiger, name=name or cls.DEFAULT_NAME, close_on_shutdown=close_on_shutdown)
+
+    def _get_serial_controller(self) -> TigerController:
+        return self.tiger
 
     def _initialise(self, force: bool = False) -> bool:
         return self._check_is_alive()
@@ -54,11 +68,3 @@ class TigerPeripheralController(PeripheralController):
 
     def _stop(self) -> None:
         self.tiger.halt()
-
-    def _shutdown(self, force: bool = False) -> None:
-        if not (force or self.close_on_shutdown):
-            return
-        connection = getattr(self.tiger, "connection", None)
-        disconnect = getattr(connection, "disconnect", None)
-        if callable(disconnect):
-            disconnect()

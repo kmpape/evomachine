@@ -1,0 +1,80 @@
+from __future__ import annotations
+
+import os
+from typing import Any
+
+from evomachine.dmd import DMD_WIDTH_HEIGHT
+from evomachine.peripherals import PeripheralController
+
+
+class PygameDmdPeripheralController(PeripheralController):
+    """Peripheral controller for a pygame DMD display window."""
+
+    DEFAULT_NAME: str = "pygame DMD Peripheral Controller"
+
+    def __init__(
+            self,
+            name: str = DEFAULT_NAME,
+            debug_mode: bool = False,
+            size: tuple[int, int] = DMD_WIDTH_HEIGHT,
+            surface: Any | None = None,
+            pygame_module: Any | None = None,
+    ):
+        self.debug_mode: bool = debug_mode
+        self.size: tuple[int, int] = size
+        self.surface: Any | None = surface
+        self._pygame: Any | None = pygame_module
+        super().__init__(name=name)
+
+    @classmethod
+    def from_default(
+            cls,
+            name: str = DEFAULT_NAME,
+            **dmd_options: Any,
+    ) -> PygameDmdPeripheralController:
+        """Create a pygame-backed DMD peripheral controller."""
+        return cls(name=name, **dmd_options)
+
+    def get_pygame(self) -> Any:
+        """Return the pygame module, importing it lazily."""
+        if self._pygame is None:
+            import pygame
+
+            self._pygame = pygame
+        return self._pygame
+
+    def display_array(self, img, update_display: bool = True) -> None:
+        """Blit a 2D or 3D DMD array to the pygame surface."""
+        if self.debug_mode:
+            return
+        pygame = self.get_pygame()
+        if img.ndim == 2:
+            img = img[:, :, None].repeat(3, axis=2)
+        self.surface.blit(pygame.surfarray.make_surface(img), (0, 0))
+        if update_display:
+            pygame.display.update()
+
+    def _initialise(self, force: bool = False) -> bool:
+        if self.debug_mode:
+            return True
+        pygame = self.get_pygame()
+        pygame.init()
+        if self.surface is None:
+            flags = getattr(pygame, "NOFRAME", 0) | getattr(pygame, "FULLSCREEN", 0)
+            try:
+                os.environ.setdefault("SDL_VIDEO_WINDOW_POS", "0,0")
+                self.surface = pygame.display.set_mode(size=self.size, flags=flags)
+            except Exception:
+                self.surface = pygame.display.set_mode(size=(300, 300), flags=getattr(pygame, "NOFRAME", 0))
+        return self.surface is not None
+
+    def _check_is_alive(self) -> bool:
+        return self.debug_mode or self.surface is not None
+
+    def _stop(self) -> None:
+        return
+
+    def _shutdown(self, force: bool = False) -> None:
+        if not self.debug_mode:
+            self.get_pygame().quit()
+        self.surface = None

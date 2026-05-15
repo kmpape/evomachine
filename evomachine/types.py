@@ -158,12 +158,30 @@ class FilterWheelBindingType(EvoType):
     ASI_TIGER = auto()
 
 
+class LedBindingType(EvoType):
+    """LED source binding identifiers used by LedFactory."""
+
+    VIRTUAL = auto()
+    ASI_TIGER = auto()
+    SYNCBOARD = auto()
+    KWR103 = auto()
+
+
+class DmdBindingType(EvoType):
+    """DMD binding identifiers used by DmdFactory."""
+
+    EM_DMD_WINDOW = auto()
+    PYGAME = auto()
+    VIRTUAL = auto()
+
+
 class PeripheralControllerBindingType(EvoType):
     """Peripheral controller binding identifiers used by PeripheralControllerFactory."""
 
     VIRTUAL = auto()
     ASI_TIGER = auto()
     SYNCBOARD = auto()
+    KWR103 = auto()
 
 
 class FocusAlgorithmType(EvoType):
