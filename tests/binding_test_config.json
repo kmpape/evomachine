@@ -1,0 +1,10 @@
+{
+  "use_real_bindings": false,
+  "stage_bindings": ["virtual", "asitiger_fake"],
+  "led_bindings": ["virtual", "asitiger_fake", "syncboard_fake", "kwr103_fake"],
+  "filterwheel_bindings": ["virtual", "asitiger_fake"],
+  "dmd_bindings": ["virtual", "em_dmd_window_fake", "pygame_fake"],
+  "camera_bindings": ["virtual", "mmc_fake", "pvcam_fake"],
+  "autofocus_bindings": ["virtual", "asitiger_fake"],
+  "peripheral_bindings": ["virtual", "asitiger_fake", "syncboard_fake", "kwr103_fake"]
+}
