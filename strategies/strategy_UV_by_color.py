@@ -17,6 +17,7 @@ else:
 from evomachine.exceptions import EvoMachineError
 from evomachine.types import LEDType, FilterWheelType
 from evomachine.strategy import AbstractStrategy
+IMAGE_DIR = Path(__file__).resolve().parents[1] / "images"
 
 from delta.rt import ROIRT
 
@@ -36,7 +37,7 @@ class ROIbyColorStrategyv2(AbstractStrategy):
     def __init__(self, cfg: ConfigImageProcessor):
         super().__init__(cfg=cfg)
         datestr = datetime.today().strftime('%Y-%m-%d')
-        self.path_to_save = Path("/mnt/nvme1/data/ImageData/UV_by_color_" + datestr)
+        self.path_to_save = IMAGE_DIR / ("UV_by_color_" + datestr)
         self.path_to_save.mkdir(parents=False, exist_ok=True)
 
         self.debug = False
@@ -348,7 +349,7 @@ class ROIbyColorStrategy(AbstractStrategy):
     def __init__(self, cfg: ConfigImageProcessor):
         super().__init__(cfg=cfg)
         datestr = datetime.today().strftime('%Y-%m-%d')
-        self.path_to_save = Path("/mnt/nvme1/data/ImageData/UV_by_color_" + datestr)
+        self.path_to_save = IMAGE_DIR / ("UV_by_color_" + datestr)
         self.path_to_save.mkdir(parents=False, exist_ok=True)
 
         # Imaging properties
@@ -549,7 +550,7 @@ class ROIbyColorStrategy_v20250301(AbstractStrategy):
     def __init__(self, cfg: ConfigImageProcessor):
         super().__init__(cfg=cfg)
         datestr = datetime.today().strftime('%Y-%m-%d')
-        self.path_to_save = Path("/mnt/nvme1/data/ImageData/UV_by_color_" + datestr)
+        self.path_to_save = IMAGE_DIR / ("UV_by_color_" + datestr)
         self.path_to_save.mkdir(parents=False, exist_ok=True)
 
         # Imaging properties

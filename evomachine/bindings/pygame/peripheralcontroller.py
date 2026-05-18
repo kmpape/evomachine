@@ -7,6 +7,52 @@ from evomachine.dmd import DMD_WIDTH_HEIGHT
 from evomachine.peripherals import PeripheralController
 
 
+class FakeSurface:
+    """Pygame surface-like object that records blit calls."""
+
+    def __init__(self):
+        """Initialise fake blit recording."""
+        self.blits = []
+
+    def blit(self, surface, position) -> None:
+        """Record a fake blit call."""
+        self.blits.append((surface, position))
+
+
+class FakePygame:
+    """Small pygame-like module used by DMD tests."""
+
+    NOFRAME = 1
+    FULLSCREEN = 2
+
+    def __init__(self):
+        """Initialise fake pygame display state."""
+        self.updated = False
+        self.quit_called = False
+        self.surfarray = type("FakeSurfArray", (), {"make_surface": lambda _, img: ("surface", img.copy())})()
+        self.display = type(
+            "FakeDisplay",
+            (),
+            {"update": lambda _: self.update(), "set_mode": lambda _, size, flags=0: self.set_mode(size, flags)},
+        )()
+
+    def init(self) -> None:
+        """Accept fake pygame initialisation."""
+        return
+
+    def set_mode(self, size, flags=0) -> FakeSurface:
+        """Return a fake surface for the requested display mode."""
+        return FakeSurface()
+
+    def update(self) -> None:
+        """Record a fake display update."""
+        self.updated = True
+
+    def quit(self) -> None:
+        """Record a fake pygame shutdown."""
+        self.quit_called = True
+
+
 class PygameDmdPeripheralController(PeripheralController):
     """Peripheral controller for a pygame DMD display window."""
 

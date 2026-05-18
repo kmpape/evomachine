@@ -1,6 +1,6 @@
 import pytest
 
-from evomachine.coordinates import Coordinate, CoordinateFactory
+from evomachine.coordinates import Coordinate, CoordinateBounds, CoordinateFactory
 
 
 def test_coordinate_copy_and_equality_are_value_based():
@@ -81,6 +81,28 @@ def test_coordinate_ordering_ignores_none_z():
     assert low <= high
     assert high > low
     assert high >= low
+
+
+def test_coordinate_bounds_skip_none_bounds():
+    bounds = CoordinateBounds(
+        low=Coordinate(None, -5, None),
+        high=Coordinate(10, None, 5),
+    )
+
+    assert bounds.contains(Coordinate(-1e6, -5, 5))
+    assert bounds.contains(Coordinate(10, 1e6, None))
+    assert bounds.is_out_of_bounds(Coordinate(11, 0, 0))
+    assert bounds.is_out_of_bounds(Coordinate(0, -6, 0))
+
+
+def test_coordinate_bounds_from_limits_and_as_limits_copy_values():
+    low = Coordinate(0, 1, 2)
+    high = Coordinate(3, 4, 5)
+
+    bounds = CoordinateBounds.from_limits((low, high))
+    low.x = -100
+
+    assert bounds.as_limits() == (Coordinate(0, 1, 2), Coordinate(3, 4, 5))
 
 
 def test_coordinate_factory_make_grid_returns_single_copy_for_identical_points():

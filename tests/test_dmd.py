@@ -11,8 +11,9 @@ from evomachine.bindings.pygame.peripheralcontroller import PygameDmdPeripheralC
 from evomachine.bindings.virtual.dmd import VirtualDmd, VirtualDmdPeripheralController
 from evomachine.dmd import Dmd, DmdConfig, DmdFactory
 from evomachine.peripherals import PeripheralController, SocketPeripheralController
-from evomachine.types import DmdBindingType
+from evomachine.bindings.binding_types import BindingType
 
+# TODO(CODEX): Make these Fake classes import dependent. If some global variable is true, the real classes are imported and the real bindings tested. For security reasons, we need test settings defined somewhere.
 
 class FakeSocket:
     def __init__(self):
@@ -135,6 +136,15 @@ def make_recording_dmd(tmp_path, width_height=(10, 10), initialise=True) -> Reco
     )
 
 
+def test_dmd_config_validates_fields():
+    with pytest.raises(TypeError):
+        DmdConfig(binding="virtual")
+    with pytest.raises(TypeError):
+        DmdConfig(binding=BindingType.VIRTUAL, name=123)
+    with pytest.raises(TypeError):
+        DmdConfig(binding=BindingType.VIRTUAL, check_alive="yes")
+
+
 def test_shared_display_helpers_generate_arrays_and_call_display_image(tmp_path):
     dmd = make_recording_dmd(tmp_path)
 
@@ -206,27 +216,40 @@ def test_load_image_and_display_loaded_image_use_shared_state(tmp_path):
     assert np.array_equal(dmd.images[-1], loaded)
 
 
+def test_load_constant_non_uint8_image_normalises_without_nan(tmp_path):
+    dmd = make_recording_dmd(tmp_path)
+    image_file = tmp_path / "image.tif"
+    import skimage.io
+
+    skimage.io.imsave(image_file, np.ones((10, 10), dtype=np.uint16) * 5)
+
+    loaded = dmd.load_image(str(image_file), display_image=False)
+
+    assert loaded.dtype == np.uint8
+    assert np.all(loaded == 0)
+
+
 def test_dmd_factory_creates_socket_pygame_and_virtual_wrappers(tmp_path):
     socket_controller = EmDmdWindowPeripheralController(socket_obj=FakeSocket(), debug_mode=True)
     pygame_controller = PygameDmdPeripheralController(debug_mode=True)
     virtual_controller = VirtualDmdPeripheralController()
 
     assert isinstance(DmdFactory.create(
-        DmdConfig(binding=DmdBindingType.EM_DMD_WINDOW),
+        DmdConfig(binding=BindingType.EM_DMD_WINDOW),
         peripheral_controllers=[socket_controller],
         width_height_DMD=(10, 10),
         width_height_CAM=(10, 10),
         calibration_file=make_calibration_file(tmp_path),
     ), EmDmdWindowDmd)
     assert isinstance(DmdFactory.create(
-        DmdConfig(binding=DmdBindingType.PYGAME),
+        DmdConfig(binding=BindingType.PYGAME),
         peripheral_controllers=[pygame_controller],
         width_height_DMD=(10, 10),
         width_height_CAM=(10, 10),
         calibration_file=make_calibration_file(tmp_path),
     ), PygameDmd)
     assert isinstance(DmdFactory.create(
-        DmdConfig(binding=DmdBindingType.VIRTUAL),
+        DmdConfig(binding=BindingType.VIRTUAL),
         peripheral_controllers=[virtual_controller],
         width_height_DMD=(10, 10),
         width_height_CAM=(10, 10),
@@ -236,7 +259,13 @@ def test_dmd_factory_creates_socket_pygame_and_virtual_wrappers(tmp_path):
 
 def test_dmd_factory_raises_for_missing_controller():
     with pytest.raises(ValueError, match="EmDmdWindowPeripheralController is required"):
-        DmdFactory.create(DmdConfig(binding=DmdBindingType.EM_DMD_WINDOW), peripheral_controllers=[])
+        DmdFactory.create(DmdConfig(binding=BindingType.EM_DMD_WINDOW), peripheral_controllers=[])
+
+
+def test_dmd_factory_rejects_unsupported_shared_binding():
+    """Check that shared BindingType values are still scoped per DMD factory."""
+    with pytest.raises(ValueError, match="unsupported binding"):
+        DmdFactory.create(DmdConfig(binding=BindingType.ASI_TIGER), peripheral_controllers=[])
 
 
 def test_socket_controller_shutdown_honours_close_on_shutdown():

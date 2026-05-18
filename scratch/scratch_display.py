@@ -1,7 +1,7 @@
 import sys
 sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/asitiger")
 sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo")
-from evomachine.acquisition import EvoCamera, DMDControl
+from evomachine.acquisition_bkp import EvoCamera, DMDControl
 from evomachine.config import DEVICE_CONFIG_EVO_TEST
 import pygame
 import sys

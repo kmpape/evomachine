@@ -15,6 +15,9 @@ BrightnessType = Annotated[float, "0 <= value <= 100"]
 ExposureType = Annotated[float, "1 <= value in ms <= 1000"]
 """Camera exposure duration in milliseconds for imaging and calibration settings."""
 
+PositiveScalingType = Annotated[float, "value > 0"]
+"""Positive scale factor used for relative movement and other multiplicative settings."""
+
 
 class EvoType(Enum):
     """Base enum with helper methods used by evomachine UI, config, and command types."""
@@ -143,46 +146,14 @@ class AxisType(EvoType):
     Y = 1
     Z = 2
 
+class FovDirectionType(EvoType):
+    """FOV movement directions."""
 
-class StageBindingType(EvoType):
-    """Stage binding identifiers used by StageFactory."""
-
-    VIRTUAL = auto()
-    ASI_TIGER = auto()
-
-
-class FilterWheelBindingType(EvoType):
-    """Filter wheel binding identifiers used by FilterWheelFactory."""
-
-    VIRTUAL = auto()
-    ASI_TIGER = auto()
-
-
-class LedBindingType(EvoType):
-    """LED source binding identifiers used by LedFactory."""
-
-    VIRTUAL = auto()
-    ASI_TIGER = auto()
-    SYNCBOARD = auto()
-    KWR103 = auto()
-
-
-class DmdBindingType(EvoType):
-    """DMD binding identifiers used by DmdFactory."""
-
-    EM_DMD_WINDOW = auto()
-    PYGAME = auto()
-    VIRTUAL = auto()
-
-
-class PeripheralControllerBindingType(EvoType):
-    """Peripheral controller binding identifiers used by PeripheralControllerFactory."""
-
-    VIRTUAL = auto()
-    ASI_TIGER = auto()
-    SYNCBOARD = auto()
-    KWR103 = auto()
-
+    UP = auto()
+    DOWN = auto()
+    LEFT = auto()
+    RIGHT = auto()
+    HOME = auto()
 
 class FocusAlgorithmType(EvoType):
     """Software focus scoring algorithm selection used by focus configuration and routines."""
@@ -204,6 +175,7 @@ class LEDType(EvoType):
     LED_OVERHEAD = 5
     LED_OVERHEAD_TIGER = 6
 
+    # TODO(CODEX): are the TIGER_LED_1-4 used anywhere? If not remove them.
     # TIGER
     TIGER_LED_1 = auto()
     TIGER_LED_2 = auto()

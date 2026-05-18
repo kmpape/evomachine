@@ -10,7 +10,7 @@ import time
 sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/asitiger")
 sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo")
 from asitiger.command import CRISPState, Command
-from evomachine.acquisition import EvoCamera
+from evomachine.acquisition_bkp import EvoCamera
 from evomachine.config import EVOMACHINE_DIR
 
 from skimage.io import imread

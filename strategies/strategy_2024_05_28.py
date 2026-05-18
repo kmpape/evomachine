@@ -14,6 +14,7 @@ else:
 from evomachine.exceptions import EvoMachineError
 from evomachine.types import LEDType
 from evomachine.strategy import AbstractStrategy
+IMAGE_DIR = Path(__file__).resolve().parents[1] / "images"
 
 
 logger = get_logger(name=__name__)
@@ -30,7 +31,7 @@ class UVTestingStrategyv5(AbstractStrategy):
     """
     def __init__(self, cfg: ConfigImageProcessor):
         super().__init__(cfg=cfg)
-        self.path_to_save = Path("/media/hslab/Data/ImageData/Vicente/2024-06-25")
+        self.path_to_save = IMAGE_DIR / "Vicente/2024-06-25"
 
         # Imaging properties
         self.exposure_time: int = 100  # in ms

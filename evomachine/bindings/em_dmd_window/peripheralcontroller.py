@@ -22,6 +22,33 @@ CHUNK_ROWS = int(DMD_WIDTH_HEIGHT[0] / NUM_CHUNKS)
 EM_DMD_PROGRAM_PATH = Path(__file__).resolve().parents[4] / "em_dmd_window/Release/evomachine_dmd_window"
 
 
+class FakeSocket:
+    """Socket-like object that records bytes sent by DMD tests."""
+
+    def __init__(self):
+        """
+        Initialise fake socket state.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.closed = False
+        self.sent: list[bytes] = []
+
+    def sendall(self, data: bytes) -> None:
+        """Record bytes sent through the fake socket."""
+        self.sent.append(data)
+
+    def close(self) -> None:
+        """Mark the fake socket as closed."""
+        self.closed = True
+
+
 class EmDmdWindowPeripheralController(SocketPeripheralController):
     """Peripheral controller for the socket-backed em_dmd_window DMD."""
 

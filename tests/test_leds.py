@@ -2,19 +2,21 @@ from typing import get_type_hints
 
 import pytest
 
-from evomachine.bindings.asitiger.leds import TigerLedSource
+from evomachine.bindings.asitiger.leds import FakeTigerLedController, TigerLedSource
 from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
-from evomachine.bindings.kwr103.leds import KWR103LedSource
+from evomachine.bindings.kwr103.leds import FakeKWR103, KWR103LedSource
 from evomachine.bindings.kwr103.peripheralcontroller import KWR103PeripheralController
-from evomachine.bindings.syncboard.leds import SyncBoardLedSource
+from evomachine.bindings.syncboard.leds import FakeSyncBoardController, SyncBoardLedSource
 from evomachine.bindings.syncboard.peripheralcontroller import SyncBoardPeripheralController
 from evomachine.bindings.virtual.leds import VirtualLedSource
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
 from evomachine.leds import LedConfig, LedFactory, LedManager, LedSource
 from evomachine.peripherals import PeripheralController
-from evomachine.types import BrightnessType, LedBindingType, LEDType
+from evomachine.bindings.binding_types import BindingType
+from evomachine.types import BrightnessType, LEDType
 
 
+# TODO(CODEX): Make these Fake classes import dependent. If some global variable is true, the real classes are imported and the real bindings tested. For security reasons, we need test settings defined somewhere.
 class FakeTimer:
     instances = []
 
@@ -35,77 +37,6 @@ class FakeTimer:
 
     def fire(self):
         self.function(**self.kwargs)
-
-
-class FakeTigerController:
-    def __init__(self):
-        self.led_calls = []
-        self.connection = None
-
-    def status(self):
-        return True
-
-    def halt(self):
-        return
-
-    def led(self, led_brightnesses, card_address=None):
-        self.led_calls.append((dict(led_brightnesses), card_address))
-
-
-class FakeSyncBoardController:
-    def __init__(self):
-        self.enabled_leds = []
-        self.disabled_leds = []
-        self._is_initialised = False
-        self.connection = type(
-            "FakeConnection",
-            (),
-            {"connection": type("FakeSerialConnection", (), {"is_open": True})()},
-        )()
-
-    def initialise(self, force_init=False):
-        self._is_initialised = True
-
-    def is_initialised(self):
-        return self._is_initialised
-
-    def disable_system(self):
-        return
-
-    def finalise(self):
-        self._is_initialised = False
-
-    def enable_led(self, led_id, intensity=0.1, duration=None):
-        self.enabled_leds.append((led_id, intensity, duration))
-
-    def disable_led(self, led_id=None):
-        self.disabled_leds.append(led_id)
-
-
-class FakeKWR103:
-    def __init__(self):
-        self.connected = False
-        self.output_calls = []
-        self.voltage_calls = []
-        self.current_calls = []
-
-    def connect(self):
-        self.connected = True
-
-    def is_connected(self):
-        return self.connected
-
-    def disconnect(self):
-        self.connected = False
-
-    def set_output(self, status=True):
-        self.output_calls.append(status)
-
-    def set_voltage(self, val):
-        self.voltage_calls.append(val)
-
-    def set_current(self, val):
-        self.current_calls.append(val)
 
 
 class CountingPeripheralController(PeripheralController):
@@ -140,9 +71,15 @@ def make_virtual_source() -> VirtualLedSource:
 
 
 def test_led_config_rejects_missing_internal_mapping():
+    with pytest.raises(TypeError):
+        LedConfig(binding="virtual", available_leds=[LEDType.LED_450_NM])
+
+    with pytest.raises(ValueError):
+        LedConfig(binding=BindingType.VIRTUAL, available_leds=[LEDType.NO_LED])
+
     with pytest.raises(ValueError, match="missing mappings"):
         LedConfig(
-            binding=LedBindingType.VIRTUAL,
+            binding=BindingType.VIRTUAL,
             available_leds=[LEDType.LED_450_NM, LEDType.LED_515_NM],
             led_to_internal={LEDType.LED_450_NM: "450"},
         )
@@ -150,7 +87,7 @@ def test_led_config_rejects_missing_internal_mapping():
 
 def test_led_config_allows_extra_internal_mappings():
     config = LedConfig(
-        binding=LedBindingType.VIRTUAL,
+        binding=BindingType.VIRTUAL,
         available_leds=[LEDType.LED_450_NM],
         led_to_internal={
             LEDType.LED_450_NM: "450",
@@ -209,6 +146,15 @@ def test_disabling_led_cancels_existing_timer(monkeypatch):
     assert FakeTimer.instances[0].cancelled
 
 
+def test_led_source_rejects_negative_duration_before_command():
+    source = make_virtual_source()
+
+    with pytest.raises(ValueError, match="duration"):
+        source.set_led(LEDType.LED_450_NM, brightness=25, duration=-1)
+
+    assert source.commands == []
+
+
 def test_led_manager_routes_leds_and_no_led_disables_all():
     source_450 = make_virtual_source()
     peripheral_ctrl = VirtualPeripheralController()
@@ -226,6 +172,18 @@ def test_led_manager_routes_leds_and_no_led_disables_all():
     assert source_515.commands[-2] == (LEDType.LED_515_NM, 33.0)
     assert source_450.commands[-1] == (LEDType.LED_450_NM, 0.0)
     assert source_515.commands[-1] == (LEDType.LED_515_NM, 0.0)
+
+
+def test_led_manager_rejects_empty_duplicate_and_unknown_sources():
+    source = make_virtual_source()
+    duplicate = make_virtual_source()
+
+    with pytest.raises(ValueError):
+        LedManager([])
+    with pytest.raises(ValueError):
+        LedManager([source, duplicate])
+    with pytest.raises(ValueError):
+        LedManager([source]).set_led(LEDType.LED_515_NM)
 
 
 def test_led_source_is_alive_queries_peripheral_when_check_alive_is_false():
@@ -265,13 +223,12 @@ def test_led_manager_is_alive_queries_all_sources():
 
 
 def test_tiger_led_source_sends_full_brightness_mapping():
-    tiger = FakeTigerController()
-    peripheral_ctrl = TigerPeripheralController(tiger=tiger)
+    tiger = FakeTigerLedController()
+    peripheral_ctrl = TigerPeripheralController(tiger=tiger, card_address_led=7)
     peripheral_ctrl.initialise()
     source = TigerLedSource(
         peripheral_ctrl=peripheral_ctrl,
         available_leds=[LEDType.TIGER_LED_1, LEDType.TIGER_LED_2],
-        card_address=7,
     )
     source.initialise()
 
@@ -321,7 +278,7 @@ def test_led_factory_creates_binding_sources():
     virtual_ctrl.initialise()
     source = LedFactory.create(
         LedConfig(
-            binding=LedBindingType.VIRTUAL,
+            binding=BindingType.VIRTUAL,
             available_leds=[LEDType.LED_450_NM],
         ),
         peripheral_controllers=virtual_ctrl,

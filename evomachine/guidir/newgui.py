@@ -8,6 +8,7 @@ from multiprocessing import Event, Lock, Process, Queue
 import numpy as np
 import os
 import PIL
+from pathlib import Path
 import queue
 import re
 from serial import SerialException
@@ -26,10 +27,12 @@ from PyQt5.QtWidgets import (
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
 
+WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
 
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/de-lta-rt')
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger' )
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
+
+sys.path.append(str(WORKSPACE_ROOT / "de-lta-rt"))
+sys.path.append(str(WORKSPACE_ROOT / "asitiger"))
+sys.path.append(str(WORKSPACE_ROOT / "evomachine_repo"))
 
 
 from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
@@ -272,5 +275,3 @@ class EvoGUI(QMainWindow):
             for panel in self.panels:
                 panel.close_threads()
             event.accept()
-
-

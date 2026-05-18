@@ -11,11 +11,14 @@ import sys
 import time
 import tensorrt  # noqa
 
-sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/asitiger")
-sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo")
-sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/de-lta-rt")
+from pathlib import Path
+WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+sys.path.append(str(WORKSPACE_ROOT / "asitiger"))
+sys.path.append(str(WORKSPACE_ROOT / "evomachine_repo"))
+sys.path.append(str(WORKSPACE_ROOT / "de-lta-rt"))
 
-from evomachine.acquisition import TestCamera, EvoCamera, EvoCamerav2
+IMAGE_DIR = Path(__file__).resolve().parents[1] / "images"
+from evomachine.acquisition_bkp import TestCamera, EvoCamera, EvoCamerav2
 from evomachine.automaton import Automaton
 from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, ConfigImageProcessorFactory, \
     EVOMACHINE_DIR, USE_DMD_SOCKET, USE_SYNC_BOARD
@@ -62,7 +65,7 @@ dmd = DMDControl()
 dmd.initialise()
 dmd.display_calibration_image()
 
-save_path: str = "/media/hslab/Data/ImageData/DEFAULT"
+save_path: str = str(IMAGE_DIR / "DEFAULT")
 cam.studio.live().set_live_mode(False)
 assert cfg.end_col < dmd.width_height_DMD[0]
 assert cfg.end_col < dmd.width_height_DMD[1]

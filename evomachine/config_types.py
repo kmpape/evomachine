@@ -432,28 +432,51 @@ class ConfigCRISP:
 
 
 class ConfigCRISPFactory:
+    """
+    Compatibility factory for legacy CRISP configuration callers.
+
+    New ASI Tiger autofocus code should use
+    evomachine.bindings.asitiger.autofocus.TigerAutofocusConfigFactory.
+    """
+
     @staticmethod
     def default_config() -> ConfigCRISP:
-        return ConfigCRISP(
-            led_intensity=70,
-            loop_gain=10,
-            averaging=5,
-            update_rate=10,
-            # objective_na=0.65,
-            objective_na=0.9,
-            lock_range=0.1,
-        )
+        """
+        Return the legacy default CRISP configuration.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        ConfigCRISP
+            Legacy CRISP configuration with compatibility pause fields.
+        """
+        from evomachine.bindings.asitiger.autofocus import TigerAutofocusConfigFactory
+
+        tiger_config = TigerAutofocusConfigFactory.default_config()
+        return ConfigCRISP(**tiger_config.__dict__)
 
     @staticmethod
     def default_oil_config() -> ConfigCRISP:
-        return ConfigCRISP(
-            led_intensity=70,
-            loop_gain=10,
-            averaging=5,
-            update_rate=10,
-            objective_na=1.4,
-            lock_range=0.1,
-        )
+        """
+        Return the legacy oil-objective CRISP configuration.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        ConfigCRISP
+            Legacy oil-objective CRISP configuration with compatibility pause
+            fields.
+        """
+        from evomachine.bindings.asitiger.autofocus import TigerAutofocusConfigFactory
+
+        tiger_config = TigerAutofocusConfigFactory.default_oil_config()
+        return ConfigCRISP(**tiger_config.__dict__)
 
 
 @dataclass
@@ -692,4 +715,40 @@ class ConfigFrame:
     "Will send commands to disable all available LEDs after taking the frame."
     reset_leds_after: bool = False
     "Will restore LED/brightness as it thinks it was before."
+
+    def __post_init__(self) -> None:
+        """
+        Validate frame acquisition settings after construction.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            The dataclass fields are validated in place.
+        """
+        if self.leds is not None:
+            if not isinstance(self.leds, dict):
+                raise TypeError(f"ConfigFrame: leds must be dict[LEDType, BrightnessType] or None, received {type(self.leds)}.")
+            for led_type, brightness in self.leds.items():
+                if not isinstance(led_type, LEDType):
+                    raise TypeError(f"ConfigFrame: LED keys must be LEDType, received {type(led_type)}.")
+                if not isinstance(brightness, int | float):
+                    raise TypeError(f"ConfigFrame: LED brightness must be numeric, received {type(brightness)}.")
+                if not 0 <= float(brightness) <= 100:
+                    raise ValueError(f"ConfigFrame: LED brightness must be in [0, 100], received {brightness}.")
+        if self.filter_wheel is not None and not isinstance(self.filter_wheel, FilterWheelType):
+            raise TypeError(
+                f"ConfigFrame: filter_wheel must be FilterWheelType or None, received {type(self.filter_wheel)}."
+            )
+        if self.exposure is not None:
+            if not isinstance(self.exposure, int | float):
+                raise TypeError(f"ConfigFrame: exposure must be numeric or None, received {type(self.exposure)}.")
+            if not 1 <= float(self.exposure) <= 1000:
+                raise ValueError(f"ConfigFrame: exposure must be in [1, 1000], received {self.exposure}.")
+        for field_name in ["force_settings", "disable_leds_before", "disable_leds_after", "reset_leds_after"]:
+            if not isinstance(getattr(self, field_name), bool):
+                raise TypeError(f"ConfigFrame: {field_name} must be bool, received {type(getattr(self, field_name))}.")
     

@@ -18,7 +18,7 @@ import delta
 from delta.rt import PositionRT
 from delta.rttypes import TrackingSetting
 
-from evomachine.acquisition import AbstractCamera, EvoCamera, EvoCamerav3
+from evomachine.acquisition_bkp import AbstractCamera, EvoCamera, EvoCamerav3
 from evomachine.commands import AutomatonCommand, CommandFactory
 from evomachine.config import ConfigFocus, ConfigImageProcessor, EVO_GUI_LOGGING_LEVEL, get_logger, EVOMACHINE_DIR,\
     USE_DMD_SOCKET
@@ -557,7 +557,7 @@ class Automaton:
                 if self.stopped():
                     logger.warning("Automaton.initialise_position_list: stopping initialisation.")
                     return
-                self.cam.move_to(coordinate=coord, block=True)
+                self.cam.move(target=coord, block=True)
                 self._run_software_focus(cfg_focus=cfg_focus, curr_fov_id=i_fov)
                 coord.z = self.cam.get_software_focus_z_coord()
 
@@ -599,7 +599,7 @@ class Automaton:
             if has_different_channels:
                 self._curr_fov_id = None  # This will trigger a software focus below
         for i_fov in self._fovs.keys():
-            self._move_to_pos(pos_id=i_fov)
+            self._move(pos_id=i_fov)
             # self._fovs_full_coords[i_fov].z = self.cam.get_coordinates(['Z'])['Z']
             for channel_type, ind in self._channel_to_index.items():
                 if not channel_type == LEDType.LED_385_NM:
@@ -613,7 +613,7 @@ class Automaton:
                             filename_suffix="_ref",
                         )
             # self.increment_pos()
-        self._move_to_pos(pos_id=0)
+        self._move(pos_id=0)
         self.cam.reset_counter()
         self._reference_frames_is_initialised = True
         norm_frames = {i_fov: normalise_frame(frame) for i_fov, frame in zip(self._fovs.keys(), self._ref_frames)}
@@ -758,7 +758,7 @@ class Automaton:
                                     f"{self._fovs_full_coords[prev_pos]}.")
 
                         # Move to previous position
-                        self.cam.move_to(coordinate=self._fovs_full_coords[prev_pos], block=True)
+                        self.cam.move(target=self._fovs_full_coords[prev_pos], block=True)
 
                         # Run autofocus configuration and lock autofocus if successful.
                         is_success = self.cam.autofocus_initialise(
@@ -768,7 +768,7 @@ class Automaton:
                             self.cam.autofocus_lock()
                             time.sleep(3)  # give the tiger box some time to update the autofocus status
                             logger.info(f"manage_autofocus: Successfully locked on previous position. Moving back.")
-                            self._move_to_pos(curr_fov_id, do_manage_autofocus=False)
+                            self._move(curr_fov_id, do_manage_autofocus=False)
                             self._fovs_full_coords[curr_fov_id].z = self.cam.get_coordinates(['Z'])['Z']
                             logger.info(f"manage_autofocus: successfully re-initialised autofocus. "
                                         f"Old Z coordinate was {old_z_coord}. "
@@ -792,7 +792,7 @@ class Automaton:
                             # Move to previously recorded Z coordinate (X and Y should be current)
                             logger.info(f"manage_autofocus: At iteration {i_sf_trial+1} of {num_iter} and "
                                         f"fov_id={next_fov_id}. Moving back to {self._fovs_full_coords[next_fov_id]}.")
-                            self.cam.move_to(coordinate=self._fovs_full_coords[next_fov_id], block=True)
+                            self.cam.move(target=self._fovs_full_coords[next_fov_id], block=True)
                             this_old_z_coord = self._fovs_full_coords[next_fov_id].z
 
                             # Run software focus and lock autofocus if successful.
@@ -811,7 +811,7 @@ class Automaton:
                                     if next_fov_id != curr_fov_id:
                                         logger.info(f"manage_autofocus: moving back to fov_id={curr_fov_id} from "
                                                     f"fov_id={next_fov_id} before proceeding.")
-                                        self._move_to_pos(pos_id=curr_fov_id, do_manage_autofocus=False)
+                                        self._move(pos_id=curr_fov_id, do_manage_autofocus=False)
                                     break
                                 else:
                                     logger.error(f"manage_autofocus: Error initialising autofocus. Halting execution.")
@@ -957,7 +957,7 @@ class Automaton:
             cmd.command_data = None  # Overwritten by AutomatonCommandType.IMAGE
 
             if cmd.command_type == AutomatonCommandType.MOVE:
-                self._move_to_pos(pos_id=cmd.command_args)
+                self._move(pos_id=cmd.command_args)
                 if self._cfg.refocus and self._cfg.refocus_on_all_positions:
                     # If we refocused on a different position we might've lost autofocus again moving back. In this
                     # case, refocus on the current position.
@@ -1197,7 +1197,7 @@ class Automaton:
                 self.save_state(filename_suffix='initialise')
                 logger.info(f"Automaton.run: Starting strategy loop. Moving to fov {self._curr_fov_id}.")
                 self.cam.disable_led()
-                self._move_to_pos(pos_id=self._curr_fov_id)
+                self._move(pos_id=self._curr_fov_id)
                 self._dmd.display_full()  # FIXME temporary statement
 
             self._num_refocus = 0
@@ -1251,10 +1251,10 @@ class Automaton:
         self._strategy = strategy
         self._initialise_strategy()
 
-    def _move_to_pos(self, pos_id: int | None = -1, do_manage_autofocus: bool = True):
+    def _move(self, pos_id: int | None = -1, do_manage_autofocus: bool = True):
         """
         Move to position pos_id. Implements logic for toggling autofocus if the channel_ids for the current and new
-        position are different. Flag do_manage_autofocus serves to avoid infinite recursive calls as _move_to_pos is
+        position are different. Flag do_manage_autofocus serves to avoid infinite recursive calls as _move is
         also used in manage_autofocus.
 
         Parameters
@@ -1285,14 +1285,14 @@ class Automaton:
                 (self._fovs[old_pos_id].get_channel_id() != self._fovs[self._curr_fov_id].get_channel_id())
         )
         if not toggle_autofocus:
-            self.cam.move_to_pos(i_pos=pos_id)
+            self.cam.move(target=pos_id)
         else:
             msg = f"Toggling autofocus to move from pos_id {old_pos_id} " \
                   f"({self._fovs_full_coords[old_pos_id] if old_pos_id is not None else '?'}) to " \
                   f"{pos_id} ({self._fovs_full_coords[pos_id]})."
             logger.info(msg)
             self.cam.autofocus_unlock()
-            self.cam.move_to(coordinate=self._fovs_full_coords[pos_id], block=True)
+            self.cam.move(target=self._fovs_full_coords[pos_id], block=True)
             self._run_software_focus(cfg_focus=self.cam.cfg.focus, curr_fov_id=pos_id)
             time.sleep(1)  # give the stage some time to move to new position
             # Note: locking and unlocking does not seem to work

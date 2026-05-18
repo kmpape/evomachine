@@ -14,6 +14,7 @@ else:
 from evomachine.exceptions import EvoMachineError
 from evomachine.types import LEDType
 from evomachine.strategy import AbstractStrategy
+IMAGE_DIR = Path(__file__).resolve().parents[1] / "images"
 from skimage.io import imread_collection
 
 
@@ -31,7 +32,7 @@ class DMD_UV_select(AbstractStrategy):
     """
     def __init__(self, cfg: ConfigImageProcessor):
         super().__init__(cfg=cfg)
-        self.path_to_save = Path("/media/hslab/Data/ImageData/Idris/2024-XX-XX-mCherry_GFP_select")
+        self.path_to_save = IMAGE_DIR / "Idris/2024-XX-XX-mCherry_GFP_select"
 
         self.callback_counter: int = 0  # TODO add this to base class and reset after testing routine
 

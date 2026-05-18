@@ -1,13 +1,18 @@
 import time
 
 import sys, os
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger')
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
+from pathlib import Path
+WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+sys.path.append(str(WORKSPACE_ROOT / "asitiger"))
+sys.path.append(str(WORKSPACE_ROOT / "evomachine_repo"))
+sys.path.append(str(WORKSPACE_ROOT / "de-lta-rt"))
 
 from asitiger.command import CRISPState, Command
-from evomachine.acquisition import EvoCamera
+IMAGE_DIR = Path(__file__).resolve().parents[1] / "images"
+from evomachine.acquisition_bkp import EvoCamera
 from evomachine.config import DEVICE_CONFIG_EVO_TEST, CRISP_CONFIG_DEFAULT, OBJECTIVE_CONFIG_OIL, \
     OBJECTIVE_CONFIG_AIR, IMAGE_CONFIG_DEFAULT, ConfigDevice, ConfigFocus, ConfigLED, ConfigCRISP, EVOMACHINE_DIR
+from evomachine.coordinates import Coordinate
 from evomachine.dmd import DMDControl, DMDColor
 from evomachine.software_focus import get_focus_score_steel
 
@@ -25,8 +30,7 @@ DEVICE_CONFIG_MOTHERMACHINE = ConfigDevice(
     num_periods=None,
     read_from_disk=False,
     path_to_images=None,
-    path_to_save=Path("/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo/images/"
-                      "2023-11-17-MM"),
+    path_to_save=IMAGE_DIR / "2023-11-17-MM",
     image_processing_verbosity=1,
     tiger_port="/dev/ttyUSB0",
 )
@@ -145,7 +149,7 @@ for ipos, z_coord in enumerate(coords):
     if load_images:
         images[:, :, ipos] = skimage.io.imread(path_to_save / filenames[ipos])
     else:
-        cam.move_to({'Z': z_coord}, block=True)
+        cam.move(Coordinate(None, None, z_coord), block=True)
         time.sleep(0.1)
         # Save images without displaying
         images[:, :, ipos] = cam.display_save_frame(
@@ -159,7 +163,7 @@ for ipos, z_coord in enumerate(coords):
     for ialg, alg in enumerate(focus_algs):
         focus_scores[ipos, ialg] = alg(images[row_min:row_max, col_min:col_max, ipos])
 
-cam.move_to({'Z': curr_z}, block=True)
+cam.move(Coordinate(None, None, curr_z), block=True)
 cam.disable_led()
 
 best_focus_positions = np.argmax(focus_scores, axis=0)

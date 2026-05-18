@@ -6,11 +6,13 @@ import pygame
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtGui import QIcon
 
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger')
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/de-lta-rt')
+from pathlib import Path
+WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+sys.path.append(str(WORKSPACE_ROOT / "asitiger"))
+sys.path.append(str(WORKSPACE_ROOT / "evomachine_repo"))
+sys.path.append(str(WORKSPACE_ROOT / "de-lta-rt"))
 
-from evomachine.acquisition import TestCamera
+from evomachine.acquisition_bkp import TestCamera
 from evomachine.automaton import Automaton
 from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, ConfigImageProcessorFactory, \
     EVOMACHINE_DIR, USE_DMD_SOCKET
@@ -65,9 +67,10 @@ if __name__ == '__main__':
     camera_config = ConfigCameraFactory.default_air_config()
     camera_config.focus.rel_range = 10
     processor_config = ConfigImageProcessorFactory.default_config()
-    processor_config.cfg_delta.model_file_seg = "/home/idris/.cache/delta/models/unet_moma_seg.hdf5"
-    processor_config.cfg_delta.model_file_rois = "/home/idris/.cache/delta/models/unet_momachambers_seg.hdf5"
-    processor_config.cfg_delta.model_file_track = "/home/idris/.cache/delta/models/unet_moma_track.hdf5"
+    model_dir = Path(os.environ.get("DELTA_MODEL_DIR", WORKSPACE_ROOT / "evomachine_repo" / "delta_models"))
+    processor_config.cfg_delta.model_file_seg = model_dir / "unet_moma_seg.hdf5"
+    processor_config.cfg_delta.model_file_rois = model_dir / "unet_momachambers_seg.hdf5"
+    processor_config.cfg_delta.model_file_track = model_dir / "unet_moma_track.hdf5"
 
     # Create queues and events for multiprocessing
     process_queue = Queue()

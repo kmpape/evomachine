@@ -15,6 +15,7 @@ else:
 from evomachine.exceptions import EvoMachineError
 from evomachine.types import LEDType
 from evomachine.strategy import AbstractStrategy
+IMAGE_DIR = Path(__file__).resolve().parents[1] / "images"
 
 
 logger = get_logger(name=__name__)
@@ -32,7 +33,7 @@ class ROITestingStrategy(AbstractStrategy):
     def __init__(self, cfg: ConfigImageProcessor):
         super().__init__(cfg=cfg)
         datestr = datetime.today().strftime('%Y-%m-%d')
-        self.path_to_save = Path("/mnt/nvme1/data/ImageData/UV_by_ROI_" + datestr + "-b")
+        self.path_to_save = IMAGE_DIR / ("UV_by_ROI_" + datestr + "-b")
         self.path_to_save.mkdir(parents=False, exist_ok=True)
 
         # Imaging properties

@@ -3,6 +3,65 @@ from evomachine.coordinates import Coordinate
 from evomachine.stage import Stage
 
 
+class FakeTigerStageController:
+    """Deterministic Tiger-like controller for stage tests and dry runs."""
+
+    def __init__(self):
+        """
+        Initialise fake Tiger stage state.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.coordinates = {"X": 0, "Y": 0, "Z": 0}
+        self.connection = None
+        self.move_calls: list[dict[str, float | int]] = []
+        self.wait_calls: list[int | None] = []
+        self.halt_was_called = False
+        self.home_was_called = False
+        self.zero_was_called = False
+
+    def status(self) -> bool:
+        """Return True to indicate that the fake controller is alive."""
+        return True
+
+    def where(self) -> dict[str, float | int]:
+        """Return a copy of the current fake coordinates."""
+        return self.coordinates.copy()
+
+    def get_stage_limits(self) -> dict[str, tuple[float | int, float | int]]:
+        """Return broad fake stage limits for X, Y, and Z."""
+        return {"X": (-1000, 1000), "Y": (-1000, 1000), "Z": (-1000, 1000)}
+
+    def move(self, coordinates: dict[str, float | int]) -> None:
+        """Record and apply a fake move command."""
+        self.move_calls.append(coordinates.copy())
+        self.coordinates.update(coordinates)
+
+    def home(self) -> None:
+        """Record homing and reset fake coordinates to the origin."""
+        self.home_was_called = True
+        self.coordinates = {"X": 0, "Y": 0, "Z": 0}
+
+    def wait_until_idle(self, card_address_crisp: int | None = None) -> None:
+        """Record a fake wait-until-idle call."""
+        self.wait_calls.append(card_address_crisp)
+
+    def halt(self) -> None:
+        """Record a fake halt command."""
+        self.halt_was_called = True
+
+    def zero(self) -> None:
+        """Record zeroing and reset fake coordinates to the origin."""
+        self.zero_was_called = True
+        self.coordinates = {"X": 0, "Y": 0, "Z": 0}
+
+
 class TigerStage(Stage):
     """
     Stage implementation backed by an ASI TigerController.
@@ -16,7 +75,6 @@ class TigerStage(Stage):
             peripheral_ctrl: TigerPeripheralController,
             delta_fov: float,
             name: str = "ASI Tiger Stage",
-            card_address_crisp: int | None = None,
             check_initialised: bool = True,
             check_alive: bool = True,
     ):
@@ -31,8 +89,6 @@ class TigerStage(Stage):
             Field-of-view movement size in ASI stage units.
         name
             Human-readable stage name.
-        card_address_crisp
-            Optional CRISP card address passed to wait_until_idle.
         check_initialised
             If True, inherited public methods require successful initialise().
         check_alive
@@ -45,10 +101,9 @@ class TigerStage(Stage):
             raise TypeError(
                 f"TigerStage.__init__: peripheral_ctrl must be TigerPeripheralController, "
                 f"received {type(peripheral_ctrl)}."
-            )
+        )
         self.peripheral_ctrl: TigerPeripheralController = peripheral_ctrl
         self.tiger = self.peripheral_ctrl.tiger
-        self.card_address_crisp: int | None = card_address_crisp
         super().__init__(
             name=name,
             delta_fov=delta_fov,
@@ -102,7 +157,7 @@ class TigerStage(Stage):
         -------
         None
         """
-        self.tiger.wait_until_idle(card_address_crisp=self.card_address_crisp)
+        self.tiger.wait_until_idle(card_address_crisp=self.peripheral_ctrl.card_address_crisp)
 
     def _initialise(self, force: bool = False) -> bool:
         """

@@ -7,7 +7,8 @@ import time
 from typing import Any
 
 from evomachine.peripherals import Peripheral, PeripheralController, get_peripheral_controller
-from evomachine.types import BrightnessType, LedBindingType, LEDType
+from evomachine.bindings.binding_types import BindingType
+from evomachine.types import BrightnessType, LEDType
 
 
 @dataclass
@@ -24,7 +25,7 @@ class LedState:
 class LedConfig:
     """Configuration object used by LedFactory to create LED sources."""
 
-    binding: LedBindingType
+    binding: BindingType
     available_leds: list[LEDType]
     name: str | None = None
     check_initialised: bool = True
@@ -45,8 +46,14 @@ class LedConfig:
             The dataclass fields are validated in place. available_leds is
             normalised to a copied list.
         """
-        if not isinstance(self.binding, LedBindingType):
-            raise TypeError(f"LedConfig: binding must be LedBindingType, received {type(self.binding)}.")
+        if not isinstance(self.binding, BindingType):
+            raise TypeError(f"LedConfig: binding must be BindingType, received {type(self.binding)}.")
+        if self.name is not None and not isinstance(self.name, str):
+            raise TypeError(f"LedConfig: name must be str or None, received {type(self.name)}.")
+        if not isinstance(self.check_initialised, bool):
+            raise TypeError(f"LedConfig: check_initialised must be bool, received {type(self.check_initialised)}.")
+        if not isinstance(self.check_alive, bool):
+            raise TypeError(f"LedConfig: check_alive must be bool, received {type(self.check_alive)}.")
         self.available_leds = LedSource.validate_available_leds(self.available_leds)
         if self.led_to_internal is not None:
             if not isinstance(self.led_to_internal, dict):
@@ -297,6 +304,8 @@ class LedSource(Peripheral):
         if led_type not in self.available_leds:
             raise ValueError(f"LedSource.set_led: {led_type} is not available for {self.name}.")
         brightness = self._validate_brightness(brightness=brightness)
+        if duration is not None and duration < 0:
+            raise ValueError(f"LedSource: duration must be non-negative, received {duration}.")
 
         self._cancel_timer(led_type=led_type)
         self._set_led(led_type=led_type, brightness=brightness, duration=duration)
@@ -804,7 +813,7 @@ class LedFactory:
         if not isinstance(config, LedConfig):
             raise TypeError(f"LedFactory.create: expected LedConfig, received {type(config)}.")
 
-        if config.binding == LedBindingType.VIRTUAL:
+        if config.binding == BindingType.VIRTUAL:
             from evomachine.bindings.virtual.leds import VirtualLedSource
             from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
 
@@ -823,7 +832,7 @@ class LedFactory:
                 **binding_options,
             )
 
-        if config.binding == LedBindingType.ASI_TIGER:
+        if config.binding == BindingType.ASI_TIGER:
             from evomachine.bindings.asitiger.leds import TigerLedSource
             from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
 
@@ -842,7 +851,7 @@ class LedFactory:
                 **binding_options,
             )
 
-        if config.binding == LedBindingType.SYNCBOARD:
+        if config.binding == BindingType.SYNCBOARD:
             from evomachine.bindings.syncboard.leds import SyncBoardLedSource
             from evomachine.bindings.syncboard.peripheralcontroller import SyncBoardPeripheralController
 
@@ -861,7 +870,7 @@ class LedFactory:
                 **binding_options,
             )
 
-        if config.binding == LedBindingType.KWR103:
+        if config.binding == BindingType.KWR103:
             from evomachine.bindings.kwr103.leds import KWR103LedSource
             from evomachine.bindings.kwr103.peripheralcontroller import KWR103PeripheralController
 

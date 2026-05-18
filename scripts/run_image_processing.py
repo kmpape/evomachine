@@ -11,11 +11,13 @@ import sys
 import time
 import tensorrt  # noqa
 
-sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/asitiger")
-sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo")
-sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/de-lta-rt")
+from pathlib import Path
+WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+sys.path.append(str(WORKSPACE_ROOT / "asitiger"))
+sys.path.append(str(WORKSPACE_ROOT / "evomachine_repo"))
+sys.path.append(str(WORKSPACE_ROOT / "de-lta-rt"))
 
-from evomachine.acquisition import TestCamera, EvoCamera, EvoCamerav2
+from evomachine.acquisition_bkp import TestCamera, EvoCamera, EvoCamerav2
 from evomachine.automaton import Automaton
 from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, ConfigImageProcessorFactory, \
     EVOMACHINE_DIR, USE_DMD_SOCKET, USE_SYNC_BOARD
@@ -78,9 +80,9 @@ cam = TestCamera(
     pos_to_filename=pos_to_filename
 )
 
-cam.move_to_pos(0)
+cam.move(0)
 frame_0 = cam.get_frame(i_chan=None)
-cam.move_to_pos(1)
+cam.move(1)
 frame_1 = cam.get_frame(i_chan=None)
 frames = [frame_0, frame_1]
 

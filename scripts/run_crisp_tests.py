@@ -11,11 +11,13 @@ import sys
 import time
 import tensorrt  # noqa
 
-sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/asitiger")
-sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo")
-sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/de-lta-rt")
+from pathlib import Path
+WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+sys.path.append(str(WORKSPACE_ROOT / "asitiger"))
+sys.path.append(str(WORKSPACE_ROOT / "evomachine_repo"))
+sys.path.append(str(WORKSPACE_ROOT / "de-lta-rt"))
 
-from evomachine.acquisition import TestCamera, EvoCamera, EvoCamerav2
+from evomachine.acquisition_bkp import TestCamera, EvoCamera, EvoCamerav2
 from evomachine.automaton import Automaton
 from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, ConfigImageProcessorFactory, \
     EVOMACHINE_DIR, USE_DMD_SOCKET, USE_SYNC_BOARD
@@ -64,9 +66,9 @@ duration = 5
 now = time.perf_counter()
 end = now + duration
 
-cam.move_to(coordinate=pos0, block=False)
+cam.move(target=pos0, block=False)
 
-cam.move_to(coordinate=pos1, block=False)
+cam.move(target=pos1, block=False)
 while now < end:
     print("STAGE=" + str(cam.tiger.status()) + ", CRISP=" +
           cam.tiger.crisp_get_set_state(card_address=cam.card_address_crisp, value=None))

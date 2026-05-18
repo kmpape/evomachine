@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import QWidget, QPushButton, QDialog, QComboBox, QLabel, QG
 import delta.utils
 from delta.utils import CroppingBox as DeltaCroppingBox
 
-from evomachine.acquisition import AbstractCamera
+from evomachine.acquisition_bkp import AbstractCamera
 from evomachine.commands import AutomatonCommand, AutomatonCommandType
 from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
 from evomachine.coordinates import Coordinate, CoordinateFactory

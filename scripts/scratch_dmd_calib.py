@@ -4,9 +4,11 @@ import pickle as pkl
 import matplotlib.pyplot as plt
 import os
 import sys
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger')
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/de-lta-rt')
+from pathlib import Path
+WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+sys.path.append(str(WORKSPACE_ROOT / "asitiger"))
+sys.path.append(str(WORKSPACE_ROOT / "evomachine_repo"))
+sys.path.append(str(WORKSPACE_ROOT / "de-lta-rt"))
 from evomachine.config import EVOMACHINE_DIR
 from evomachine.dmd_socket import DMDControl, DMD_WIDTH_HEIGHT
 

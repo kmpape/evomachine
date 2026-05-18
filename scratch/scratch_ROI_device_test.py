@@ -19,7 +19,7 @@ from delta.config import DEFAULT_CONFIG_MOTHERMACHINE
 from delta.pipeline import TIMER_ROI
 
 from evomachine.strategy import NoStrategy
-from evomachine.acquisition import DeltaCamera
+from evomachine.acquisition_bkp import DeltaCamera
 from evomachine.automaton import Automaton
 from evomachine.config import EVOMACHINE_DIR, ConfigDevice, ConfigImage
 from evomachine.positionrt import TIMER_POSITION

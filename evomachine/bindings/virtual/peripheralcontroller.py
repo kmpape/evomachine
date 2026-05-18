@@ -1,5 +1,5 @@
 from evomachine.peripherals import PeripheralController, PeripheralControllerConfig
-from evomachine.types import PeripheralControllerBindingType
+from evomachine.bindings.binding_types import BindingType
 
 
 class VirtualPeripheralController(PeripheralController):
@@ -16,7 +16,7 @@ class VirtualPeripheralController(PeripheralController):
     @classmethod
     def default_config(cls) -> PeripheralControllerConfig:
         return PeripheralControllerConfig(
-            binding=PeripheralControllerBindingType.VIRTUAL,
+            binding=BindingType.VIRTUAL,
             name=cls.DEFAULT_NAME,
         )
 

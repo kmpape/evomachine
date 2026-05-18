@@ -14,6 +14,7 @@ else:
 from evomachine.exceptions import EvoMachineError
 from evomachine.types import LEDType
 from evomachine.strategy import AbstractStrategy
+IMAGE_DIR = Path(__file__).resolve().parents[1] / "images"
 
 
 logger = get_logger(name=__name__)
@@ -32,7 +33,7 @@ class JessStrategy(AbstractStrategy):
     """
     def __init__(self, cfg: ConfigImageProcessor):
         super().__init__(cfg=cfg)
-        self.path_to_save = Path("/media/hslab/Data/ImageData/Idris/2024-03-14")
+        self.path_to_save = IMAGE_DIR / "Idris/2024-03-14"
 
         self.exposure_time: int = 2000  # in ms
         self.imaging_channel: LEDType = LEDType.LED_505_NM

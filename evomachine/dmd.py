@@ -15,7 +15,7 @@ import skimage.color
 import skimage.io
 
 from evomachine.peripherals import Peripheral, PeripheralController, get_peripheral_controller
-from evomachine.types import DmdBindingType
+from evomachine.bindings.binding_types import BindingType
 
 logger = logging.getLogger(__name__)
 EVOMACHINE_DIR = Path(__file__).resolve().parent
@@ -31,16 +31,22 @@ ARR_TYPE = np.uint8
 class DmdConfig:
     """Configuration for creating a DMD wrapper from a peripheral controller."""
 
-    binding: DmdBindingType
+    binding: BindingType
     name: str = ""
     check_initialised: bool = True
     check_alive: bool = True
 
     def __post_init__(self) -> None:
-        if not isinstance(self.binding, DmdBindingType):
-            raise TypeError(f"DmdConfig: binding must be DmdBindingType, received {type(self.binding)}.")
+        if not isinstance(self.binding, BindingType):
+            raise TypeError(f"DmdConfig: binding must be BindingType, received {type(self.binding)}.")
         if not isinstance(self.name, str):
             raise TypeError(f"DmdConfig: name must be str, received {type(self.name)}.")
+        if not isinstance(self.check_initialised, bool):
+            raise TypeError(
+                f"DmdConfig: check_initialised must be bool, received {type(self.check_initialised)}."
+            )
+        if not isinstance(self.check_alive, bool):
+            raise TypeError(f"DmdConfig: check_alive must be bool, received {type(self.check_alive)}.")
 
 
 class Dmd(Peripheral):
@@ -506,8 +512,12 @@ class Dmd(Peripheral):
         if img.ndim == 2:
             if img.dtype != np.uint8:
                 img = img.astype(np.float32)
-                img = (img - np.min(img)) / (np.max(img) - np.min(img))
-                img = (img * 255).astype(np.uint8)
+                img_range = np.max(img) - np.min(img)
+                if img_range == 0:
+                    img = np.zeros(img.shape, dtype=np.uint8)
+                else:
+                    img = (img - np.min(img)) / img_range
+                    img = (img * 255).astype(np.uint8)
         elif img.ndim == 3:
             logger.info("load_image: Converting image using rgb2gray.")
             img = skimage.color.rgb2gray(img)
@@ -539,7 +549,7 @@ class DmdFactory:
         if not isinstance(config, DmdConfig):
             raise TypeError(f"DmdFactory.create: expected DmdConfig, received {type(config)}.")
 
-        if config.binding == DmdBindingType.EM_DMD_WINDOW:
+        if config.binding == BindingType.EM_DMD_WINDOW:
             from evomachine.bindings.em_dmd_window.dmd import EmDmdWindowDmd
             from evomachine.bindings.em_dmd_window.peripheralcontroller import EmDmdWindowPeripheralController
 
@@ -555,7 +565,7 @@ class DmdFactory:
                 check_alive=config.check_alive,
                 **binding_options,
             )
-        if config.binding == DmdBindingType.PYGAME:
+        if config.binding == BindingType.PYGAME:
             from evomachine.bindings.pygame.dmd import PygameDmd
             from evomachine.bindings.pygame.peripheralcontroller import PygameDmdPeripheralController
 
@@ -571,7 +581,7 @@ class DmdFactory:
                 check_alive=config.check_alive,
                 **binding_options,
             )
-        if config.binding == DmdBindingType.VIRTUAL:
+        if config.binding == BindingType.VIRTUAL:
             from evomachine.bindings.virtual.dmd import VirtualDmd
             from evomachine.bindings.virtual.dmd import VirtualDmdPeripheralController
 

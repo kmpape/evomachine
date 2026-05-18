@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from dataclasses import dataclass
-from evomachine.coordinates import Coordinate
+from evomachine.coordinates import Coordinate, CoordinateBounds
 from evomachine.peripherals import Peripheral, PeripheralController, get_peripheral_controller
-from evomachine.types import AxisType, StageBindingType
+from evomachine.bindings.binding_types import BindingType
+from evomachine.types import AxisType, FovDirectionType, PositiveScalingType
 
 
 class Stage(Peripheral):
@@ -23,6 +24,7 @@ class Stage(Peripheral):
             self,
             name: str,
             delta_fov: float,
+            coordinate_bounds: CoordinateBounds | None = None,
             check_initialised: bool = True,
             check_alive: bool = True,
     ):
@@ -35,6 +37,9 @@ class Stage(Peripheral):
             Human-readable stage name.
         delta_fov
             Field-of-view step size in stage coordinate units.
+        coordinate_bounds
+            Optional software movement bounds. If None, hardware-reported limits
+            are used when validating moves.
         check_initialised
             If True, public hardware-querying methods raise RuntimeError when the
             stage has not been initialised.
@@ -57,9 +62,16 @@ class Stage(Peripheral):
         self._curr_pos: int = self.UNKNOWN_POSITION_ID
         self._pos_id_to_coordinate: dict[int, Coordinate] = {}
         self._delta_fov: float = delta_fov
+        self._coordinate_bounds: CoordinateBounds | None = coordinate_bounds.copy() if coordinate_bounds else None
+        self._fov_direction_to_axis_sign: dict[FovDirectionType, tuple[AxisType, int]] = {
+            FovDirectionType.UP: (AxisType.Y, -1),
+            FovDirectionType.DOWN: (AxisType.Y, +1),
+            FovDirectionType.LEFT: (AxisType.X, -1),
+            FovDirectionType.RIGHT: (AxisType.X, +1),
+        }
 
     @classmethod
-    def _normalise_axes(cls, axes: list[AxisType] | None = None) -> list[AxisType]:
+    def _validate_axes(cls, axes: list[AxisType] | None = None) -> list[AxisType]:
         """
         Validate and de-duplicate a list of stage axes.
 
@@ -78,9 +90,9 @@ class Stage(Peripheral):
         axes_norm: list[AxisType] = []
         for axis in axes:
             if not isinstance(axis, AxisType):
-                raise TypeError(f"Stage._normalise_axes: expected AxisType, received {type(axis)}.")
+                raise TypeError(f"Stage._validate_axes: expected AxisType, received {type(axis)}.")
             if axis not in cls.AXES:
-                raise ValueError(f"Stage._normalise_axes: unsupported axis {axis}.")
+                raise ValueError(f"Stage._validate_axes: unsupported axis {axis}.")
             if axis not in axes_norm:
                 axes_norm.append(axis)
         return axes_norm
@@ -347,7 +359,7 @@ class Stage(Peripheral):
         Coordinate
             Coordinate containing the requested axes.
         """
-        axes_norm = self._normalise_axes(axes=axes)
+        axes_norm = self._validate_axes(axes=axes)
         if query_hardware:
             self._require_ready(action="get_coordinates")
             self._update_current_pos(coordinate=self._get_coordinates())
@@ -401,9 +413,27 @@ class Stage(Peripheral):
             raise ValueError(f"Stage.set_delta_fov: delta_fov must be positive, received {delta_fov}.")
         self._delta_fov = delta_fov
 
+    def get_coordinate_bounds(self) -> CoordinateBounds:
+        """
+        Return the active software or hardware coordinate bounds.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        CoordinateBounds
+            Coordinate bounds used for movement validation.
+        """
+        if self._coordinate_bounds is not None:
+            return self._coordinate_bounds.copy()
+        self._require_ready(action="get_coordinate_bounds")
+        return CoordinateBounds.from_limits(limits=self._get_stage_limits())
+
     def get_stage_limits(self) -> tuple[Coordinate, Coordinate]:
         """
-        Return lower and upper hardware coordinate limits.
+        Return lower and upper coordinate limits.
 
         Parameters
         ----------
@@ -412,17 +442,9 @@ class Stage(Peripheral):
         Returns
         -------
         tuple[Coordinate, Coordinate]
-            Minimum and maximum coordinates. Both Coordinates must contain X, Y, and Z.
+            Minimum and maximum coordinates. Axes set to None are unchecked.
         """
-        self._require_ready(action="get_stage_limits")
-        low, high = self._get_stage_limits()
-        missing_axes = [
-            axis for axis in self.AXES
-            if self._axis_value(low, axis) is None or self._axis_value(high, axis) is None
-        ]
-        if missing_axes:
-            raise RuntimeError(f"Stage.get_stage_limits: limits must contain X, Y, and Z. Missing {missing_axes}.")
-        return low.copy(), high.copy()
+        return self.get_coordinate_bounds().as_limits()
 
     def coordinate_is_out_of_bounds(self, coordinate: Coordinate) -> bool:
         """
@@ -440,15 +462,7 @@ class Stage(Peripheral):
         """
         if not isinstance(coordinate, Coordinate):
             raise TypeError(f"Stage.coordinate_is_out_of_bounds: expected Coordinate, received {type(coordinate)}.")
-        low, high = self.get_stage_limits()
-        return any(
-            self._axis_value(coordinate, axis) is not None and
-            (
-                self._axis_value(coordinate, axis) < self._axis_value(low, axis) or
-                self._axis_value(coordinate, axis) > self._axis_value(high, axis)
-            )
-            for axis in self.AXES
-        )
+        return self.get_coordinate_bounds().is_out_of_bounds(coordinate=coordinate)
 
     def set_pos_id_to_coordinate(
             self,
@@ -485,14 +499,141 @@ class Stage(Peripheral):
         self._pos_id_to_coordinate = coordinates
         return True
 
-    def move_to_pos(self, i_pos: int, block: bool = True) -> None:
+    @staticmethod
+    def _fov_multiplier_value(multiplier: PositiveScalingType) -> float:
         """
-        Move to a registered position ID.
+        Return a validated field-of-view movement multiplier.
 
         Parameters
         ----------
-        i_pos
-            Registered position ID.
+        multiplier
+            Positive numeric multiplier for delta_fov.
+
+        Returns
+        -------
+        float
+            Validated multiplier.
+        """
+        if not isinstance(multiplier, int | float) or isinstance(multiplier, bool):
+            raise TypeError(f"Stage._fov_multiplier_value: multiplier must be a positive number, received {type(multiplier)}.")
+        if multiplier <= 0:
+            raise ValueError(f"Stage._fov_multiplier_value: multiplier must be positive, received {multiplier}.")
+        return float(multiplier)
+
+    def _coordinate_from_fov_moves(
+            self,
+            fov_moves: list[tuple[FovDirectionType, PositiveScalingType]],
+    ) -> Coordinate:
+        """
+        Convert a list of field-of-view movements into one absolute Coordinate.
+
+        Parameters
+        ----------
+        fov_moves
+            List of (FovDirectionType, multiplier) movement requests. Multipliers
+            must be positive and scale delta_fov. HOME is not allowed in a list
+            because it is an absolute hardware command.
+
+        Returns
+        -------
+        Coordinate
+            Partial absolute Coordinate containing the X/Y target axes.
+        """
+        if len(fov_moves) == 0:
+            return Coordinate.none_coordinate()
+
+        axis_deltas = {AxisType.X: 0, AxisType.Y: 0}
+        for fov_move in fov_moves:
+            if not isinstance(fov_move, tuple) or len(fov_move) != 2:
+                raise TypeError("Stage._coordinate_from_fov_moves: each FoV move must be a tuple(direction, multiplier).")
+            direction, multiplier = fov_move
+            if not isinstance(direction, FovDirectionType):
+                raise TypeError(
+                    f"Stage._coordinate_from_fov_moves: direction must be FovDirectionType, received {type(direction)}."
+                )
+            if direction == FovDirectionType.HOME:
+                raise ValueError("Stage._coordinate_from_fov_moves: HOME must be used as a single move target.")
+            axis, sign = self._fov_direction_to_axis_sign[direction]
+            axis_deltas[axis] += int(sign * self.get_delta_fov() * self._fov_multiplier_value(multiplier))
+
+        current = self.get_coordinates(axes=[AxisType.X, AxisType.Y], query_hardware=True)
+        current_x = self._axis_value(coordinate=current, axis=AxisType.X)
+        current_y = self._axis_value(coordinate=current, axis=AxisType.Y)
+        if current_x is None or current_y is None:
+            raise RuntimeError("Stage._coordinate_from_fov_moves: current X/Y coordinates are not initialised.")
+        return Coordinate(
+            x=current_x + axis_deltas[AxisType.X],
+            y=current_y + axis_deltas[AxisType.Y],
+            z=None,
+            channel_id=current.get_channel_id(),
+        )
+
+    def _coordinate_from_move_target(
+            self,
+            target: int | Coordinate | tuple[FovDirectionType, PositiveScalingType] | list[tuple[FovDirectionType, PositiveScalingType]],
+    ) -> tuple[int, Coordinate, bool]:
+        """
+        Convert a public movement target into a position ID and Coordinate.
+
+        Parameters
+        ----------
+        target
+            Position ID, Coordinate, single FoV movement tuple, or FoV movement
+            list.
+
+        Returns
+        -------
+        tuple[int, Coordinate, bool]
+            Position ID to cache, Coordinate to move to, and whether to run a
+            hardware home command.
+        """
+        if isinstance(target, int) and not isinstance(target, bool):
+            if target not in self._pos_id_to_coordinate:
+                raise IndexError(f"Stage.move: position index {target} out of range.")
+            return target, self._pos_id_to_coordinate[target].copy(), False
+        if isinstance(target, Coordinate):
+            return self.UNKNOWN_POSITION_ID, target.copy(), False
+        if isinstance(target, tuple):
+            if len(target) != 2:
+                raise TypeError("Stage.move: FoV tuple target must be tuple(direction, multiplier).")
+            direction, multiplier = target
+            if not isinstance(direction, FovDirectionType):
+                raise TypeError(f"Stage.move: direction must be FovDirectionType, received {type(direction)}.")
+            if direction == FovDirectionType.HOME:
+                self._fov_multiplier_value(multiplier)
+                return 0, Coordinate.none_coordinate(), True
+            return self.UNKNOWN_POSITION_ID, self._coordinate_from_fov_moves(fov_moves=[target]), False
+        if isinstance(target, list):
+            return self.UNKNOWN_POSITION_ID, self._coordinate_from_fov_moves(fov_moves=target), False
+        raise TypeError(
+            f"Stage.move: expected int, Coordinate, tuple[FovDirectionType, PositiveScalingType], "
+            f"or list[tuple[FovDirectionType, PositiveScalingType]], "
+            f"received {type(target)}."
+        )
+
+    def move(
+            self,
+            target: int | Coordinate | tuple[FovDirectionType, PositiveScalingType] | list[tuple[FovDirectionType, PositiveScalingType]],
+            block: bool = True,
+    ) -> None:
+        """
+        Move the stage through the single public stage movement interface.
+
+        Parameters
+        ----------
+        target
+            Supported movement target. An int moves to a registered position ID
+            configured by set_pos_id_to_coordinate. A Coordinate is an absolute
+            full or partial stage coordinate; axes set to None are not moved. A
+            tuple[FovDirectionType, PositiveScalingType] moves one field-of-view
+            step in the requested direction by multiplier * delta_fov. A list of
+            those tuples combines all UP/DOWN/LEFT/RIGHT FoV deltas into one
+            absolute X/Y move, allowing diagonal or repeated-direction movement
+            with a single hardware move. FovDirectionType.HOME is accepted only
+            as a single tuple target, runs the hardware home command, and uses an
+            implicit positive scaling of 1.0 because home is absolute rather than
+            relative. HOME is not valid inside a FoV movement list. Positive
+            scaling values must be numeric, non-bool, and greater than zero.
         block
             If True, wait until the hardware move has completed.
 
@@ -500,179 +641,18 @@ class Stage(Peripheral):
         -------
         None
         """
-        self.move_to(coordinate=i_pos, block=block)
-
-    def move_to_id(self, i_pos: int, block: bool = True) -> None:
-        """
-        Move to a registered position ID.
-
-        Parameters
-        ----------
-        i_pos
-            Registered position ID.
-        block
-            If True, wait until the hardware move has completed.
-
-        Returns
-        -------
-        None
-        """
-        self.move_to(coordinate=i_pos, block=block)
-
-    def move_to(self, coordinate: int | Coordinate, block: bool = True) -> None:
-        """
-        Move the stage either to a registered position ID or to a Coordinate.
-
-        Parameters
-        ----------
-        coordinate
-            Position ID or full/partial Coordinate. A partial Coordinate moves only
-            the axes that are not None.
-        block
-            If True, wait until the hardware move has completed.
-
-        Returns
-        -------
-        None
-        """
-        self._require_ready(action="move_to")
-        if isinstance(coordinate, int):
-            if coordinate not in self._pos_id_to_coordinate:
-                raise IndexError(f"Stage.move_to: position index {coordinate} out of range.")
-            pos_id = coordinate
-            move_coordinate = self._pos_id_to_coordinate[coordinate].copy()
-        elif isinstance(coordinate, Coordinate):
-            pos_id = self.UNKNOWN_POSITION_ID
-            move_coordinate = coordinate.copy()
-        else:
-            raise TypeError(f"Stage.move_to: expected int or Coordinate, received {type(coordinate)}.")
+        self._require_ready(action="move")
+        pos_id, move_coordinate, use_home = self._coordinate_from_move_target(target=target)
+        if use_home:
+            self._current_pos = self._home(block=block)
+            self._curr_pos = pos_id
+            return
         if not self._coordinate_has_value(coordinate=move_coordinate):
             return
         if self.coordinate_is_out_of_bounds(coordinate=move_coordinate):
-            raise ValueError(f"Stage.move_to: coordinate is out of bounds: {move_coordinate}.")
+            raise ValueError(f"Stage.move: coordinate is out of bounds: {move_coordinate}.")
         self._update_current_pos(coordinate=self._move(coordinate=move_coordinate, block=block))
         self._curr_pos = pos_id
-
-    def _move_fov(self, axis: AxisType, sign: int, multiplier: float | None = 1.0, block: bool = False) -> None:
-        """
-        Move by a field-of-view step along one X/Y axis.
-
-        Parameters
-        ----------
-        axis
-            AxisType.X or AxisType.Y.
-        sign
-            Direction of movement, typically -1 or +1.
-        multiplier
-            Scale factor for delta_fov. None is treated as 1.0.
-        block
-            If True, wait until the hardware move has completed.
-
-        Returns
-        -------
-        None
-        """
-        if axis not in [AxisType.X, AxisType.Y]:
-            raise ValueError(f"Stage._move_fov: FoV moves only support X/Y axes, received {axis}.")
-        current = self.get_coordinates(axes=[axis], query_hardware=True)
-        current_value = self._axis_value(coordinate=current, axis=axis)
-        if current_value is None:
-            raise RuntimeError(f"Stage._move_fov: current {axis} coordinate is not initialised.")
-        multiplier = 1.0 if multiplier is None else multiplier
-        target_value = current_value + int(sign * self.get_delta_fov() * multiplier)
-        self.move_to(
-            coordinate=self._coordinate_from_axis(
-                axis=axis,
-                value=target_value,
-                channel_id=current.get_channel_id(),
-            ),
-            block=block,
-        )
-
-    def move_home(self, block: bool = False) -> None:
-        """
-        Move the stage to its hardware home position.
-
-        Parameters
-        ----------
-        block
-            If True, wait until the hardware move has completed.
-
-        Returns
-        -------
-        None
-        """
-        self._require_ready(action="move_home")
-        self._current_pos = self._home(block=block)
-        self._curr_pos = 0
-
-    def move_fov_up(self, multiplier: float | None = 1.0, block: bool = False) -> None:
-        """
-        Move one field of view up in camera/stage convention.
-
-        Parameters
-        ----------
-        multiplier
-            Scale factor for delta_fov. None is treated as 1.0.
-        block
-            If True, wait until the hardware move has completed.
-
-        Returns
-        -------
-        None
-        """
-        self._move_fov(axis=AxisType.Y, sign=-1, multiplier=multiplier, block=block)
-
-    def move_fov_down(self, multiplier: float | None = 1.0, block: bool = False) -> None:
-        """
-        Move one field of view down in camera/stage convention.
-
-        Parameters
-        ----------
-        multiplier
-            Scale factor for delta_fov. None is treated as 1.0.
-        block
-            If True, wait until the hardware move has completed.
-
-        Returns
-        -------
-        None
-        """
-        self._move_fov(axis=AxisType.Y, sign=+1, multiplier=multiplier, block=block)
-
-    def move_fov_left(self, multiplier: float | None = 1.0, block: bool = False) -> None:
-        """
-        Move one field of view left in camera/stage convention.
-
-        Parameters
-        ----------
-        multiplier
-            Scale factor for delta_fov. None is treated as 1.0.
-        block
-            If True, wait until the hardware move has completed.
-
-        Returns
-        -------
-        None
-        """
-        self._move_fov(axis=AxisType.X, sign=-1, multiplier=multiplier, block=block)
-
-    def move_fov_right(self, multiplier: float | None = 1.0, block: bool = False) -> None:
-        """
-        Move one field of view right in camera/stage convention.
-
-        Parameters
-        ----------
-        multiplier
-            Scale factor for delta_fov. None is treated as 1.0.
-        block
-            If True, wait until the hardware move has completed.
-
-        Returns
-        -------
-        None
-        """
-        self._move_fov(axis=AxisType.X, sign=+1, multiplier=multiplier, block=block)
 
     @abstractmethod
     def halt(self) -> None:
@@ -893,14 +873,53 @@ class Stage(Peripheral):
 class StageConfig:
     """Configuration object used by StageFactory to create Stage instances."""
 
-    binding: StageBindingType
+    binding: BindingType
     delta_fov: float
     name: str | None = None
     check_initialised: bool = True
     check_alive: bool = True
     initial_coordinate: Coordinate | None = None
-    stage_limits: tuple[Coordinate, Coordinate] | None = None
-    card_address_crisp: int | None = None
+    coordinate_bounds: CoordinateBounds | None = None
+
+    def __post_init__(self) -> None:
+        """
+        Validate stage factory configuration after construction.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            The dataclass fields are validated in place.
+        """
+        if not isinstance(self.binding, BindingType):
+            raise TypeError(f"StageConfig: binding must be BindingType, received {type(self.binding)}.")
+        if not isinstance(self.delta_fov, int | float):
+            raise TypeError(f"StageConfig: delta_fov must be numeric, received {type(self.delta_fov)}.")
+        if self.delta_fov <= 0:
+            raise ValueError(f"StageConfig: delta_fov must be positive, received {self.delta_fov}.")
+        self.delta_fov = float(self.delta_fov)
+        if self.name is not None and not isinstance(self.name, str):
+            raise TypeError(f"StageConfig: name must be str or None, received {type(self.name)}.")
+        if not isinstance(self.check_initialised, bool):
+            raise TypeError(
+                f"StageConfig: check_initialised must be bool, received {type(self.check_initialised)}."
+            )
+        if not isinstance(self.check_alive, bool):
+            raise TypeError(f"StageConfig: check_alive must be bool, received {type(self.check_alive)}.")
+        if self.initial_coordinate is not None and not isinstance(self.initial_coordinate, Coordinate):
+            raise TypeError(
+                f"StageConfig: initial_coordinate must be Coordinate or None, "
+                f"received {type(self.initial_coordinate)}."
+            )
+        if self.coordinate_bounds is not None and not isinstance(self.coordinate_bounds, CoordinateBounds):
+            raise TypeError(
+                f"StageConfig: coordinate_bounds must be CoordinateBounds or None, "
+                f"received {type(self.coordinate_bounds)}."
+            )
+
 
 class StageFactory:
     """Factory for creating Stage instances from a typed StageConfig."""
@@ -931,7 +950,7 @@ class StageFactory:
         if not isinstance(config, StageConfig):
             raise TypeError(f"StageFactory.create: expected StageConfig, received {type(config)}.")
 
-        if config.binding == StageBindingType.VIRTUAL:
+        if config.binding == BindingType.VIRTUAL:
             from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
             from evomachine.bindings.virtual.stage import VirtualStage
 
@@ -945,12 +964,12 @@ class StageFactory:
                 delta_fov=config.delta_fov,
                 name=config.name or "Virtual Stage",
                 initial_coordinate=config.initial_coordinate,
-                stage_limits=config.stage_limits,
+                coordinate_bounds=config.coordinate_bounds,
                 check_initialised=config.check_initialised,
                 check_alive=config.check_alive,
             )
 
-        if config.binding == StageBindingType.ASI_TIGER:
+        if config.binding == BindingType.ASI_TIGER:
             from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
             from evomachine.bindings.asitiger.stage import TigerStage
 
@@ -963,7 +982,6 @@ class StageFactory:
                 peripheral_ctrl=peripheral_ctrl,
                 delta_fov=config.delta_fov,
                 name=config.name or "ASI Tiger Stage",
-                card_address_crisp=config.card_address_crisp,
                 check_initialised=config.check_initialised,
                 check_alive=config.check_alive,
             )

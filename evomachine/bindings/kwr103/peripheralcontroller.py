@@ -4,7 +4,7 @@ from typing import Any
 
 from evomachine.bindings.kwr103.KWR103Driver import KWR103
 from evomachine.peripherals import SerialPeripheralController, SerialPeripheralControllerConfig
-from evomachine.types import PeripheralControllerBindingType
+from evomachine.bindings.binding_types import BindingType
 
 
 class KWR103PeripheralController(SerialPeripheralController):
@@ -27,7 +27,7 @@ class KWR103PeripheralController(SerialPeripheralController):
     @classmethod
     def default_config(cls) -> SerialPeripheralControllerConfig:
         return SerialPeripheralControllerConfig(
-            binding=PeripheralControllerBindingType.KWR103,
+            binding=BindingType.KWR103,
             name=cls.DEFAULT_NAME,
             hwid=cls.DEFAULT_HWID,
         )

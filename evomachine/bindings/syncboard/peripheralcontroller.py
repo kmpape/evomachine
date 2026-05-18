@@ -5,7 +5,7 @@ from typing import Any
 from syncboard.syncboardcontroller import SyncBoardController
 
 from evomachine.peripherals import SerialPeripheralController, SerialPeripheralControllerConfig
-from evomachine.types import PeripheralControllerBindingType
+from evomachine.bindings.binding_types import BindingType
 
 
 class SyncBoardPeripheralController(SerialPeripheralController):
@@ -31,7 +31,7 @@ class SyncBoardPeripheralController(SerialPeripheralController):
     @classmethod
     def default_config(cls) -> SerialPeripheralControllerConfig:
         return SerialPeripheralControllerConfig(
-            binding=PeripheralControllerBindingType.SYNCBOARD,
+            binding=BindingType.SYNCBOARD,
             name=cls.DEFAULT_NAME,
             hwid=cls.DEFAULT_HWID,
         )

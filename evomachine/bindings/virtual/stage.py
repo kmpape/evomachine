@@ -1,5 +1,5 @@
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
-from evomachine.coordinates import Coordinate
+from evomachine.coordinates import Coordinate, CoordinateBounds
 from evomachine.stage import Stage
 
 
@@ -17,7 +17,7 @@ class VirtualStage(Stage):
             delta_fov: float,
             name: str = "Virtual Stage",
             initial_coordinate: Coordinate | None = None,
-            stage_limits: tuple[Coordinate, Coordinate] | None = None,
+            coordinate_bounds: CoordinateBounds | None = None,
             check_initialised: bool = True,
             check_alive: bool = True,
     ):
@@ -34,8 +34,8 @@ class VirtualStage(Stage):
             Human-readable stage name.
         initial_coordinate
             Starting coordinate. If None, Coordinate(0, 0, 0) is used.
-        stage_limits
-            Lower and upper movement limits. If None, broad default limits are used.
+        coordinate_bounds
+            Movement bounds. If None, broad default bounds are used.
         check_initialised
             If True, inherited public methods require successful initialise().
         check_alive
@@ -49,17 +49,18 @@ class VirtualStage(Stage):
             raise TypeError(
                 f"VirtualStage.__init__: peripheral_ctrl must be VirtualPeripheralController, "
                 f"received {type(peripheral_ctrl)}."
-            )
+        )
         self.peripheral_ctrl: VirtualPeripheralController = peripheral_ctrl
         self._virtual_coordinate: Coordinate = initial_coordinate.copy() if initial_coordinate else Coordinate(0, 0, 0)
-        self._stage_limits: tuple[Coordinate, Coordinate] = stage_limits if stage_limits else (
-            Coordinate(-1e7, -1e7, -1e7),
-            Coordinate(1e7, 1e7, 1e7),
+        self._stage_bounds: CoordinateBounds = coordinate_bounds.copy() if coordinate_bounds else CoordinateBounds(
+            low=Coordinate(-1e7, -1e7, -1e7),
+            high=Coordinate(1e7, 1e7, 1e7),
         )
         self._halt_was_called: bool = False
         super().__init__(
             name=name,
             delta_fov=delta_fov,
+            coordinate_bounds=coordinate_bounds,
             check_initialised=check_initialised,
             check_alive=check_alive,
         )
@@ -153,7 +154,7 @@ class VirtualStage(Stage):
         tuple[Coordinate, Coordinate]
             Lower and upper coordinate limits.
         """
-        return self._stage_limits[0].copy(), self._stage_limits[1].copy()
+        return self._stage_bounds.as_limits()
 
     def _move(self, coordinate: Coordinate, block: bool = True) -> Coordinate:
         """

@@ -1,17 +1,18 @@
 import sys
 import os
 import logging
+from pathlib import Path
 import matplotlib.pyplot as plt
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
+WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 
-delta_path = os.path.join(current_dir, '..', '..', 'de-lta-rt')
+delta_path = str(WORKSPACE_ROOT / "de-lta-rt")
 sys.path.append(delta_path)
 
-asitiger_path = os.path.join(current_dir, '..', '..', 'asitiger')
+asitiger_path = str(WORKSPACE_ROOT / "asitiger")
 sys.path.append(asitiger_path)
 
-sync_board_path = os.path.join(current_dir, '..', '..', 'sync_board')
+sync_board_path = str(WORKSPACE_ROOT / "sync_board")
 sys.path.append(sync_board_path)
 
 # Set TF logging level:

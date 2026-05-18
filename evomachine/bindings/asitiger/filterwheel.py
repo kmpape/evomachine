@@ -3,6 +3,37 @@ from evomachine.filterwheel import FilterWheel
 from evomachine.types import FilterWheelType
 
 
+class FakeTigerFilterWheelController:
+    """Deterministic Tiger-like controller for filter wheel tests."""
+
+    def __init__(self):
+        """
+        Initialise fake filter wheel command recording.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.connection = None
+        self.filter_wheel_calls: list[tuple[int, int]] = []
+
+    def status(self) -> bool:
+        """Return True to indicate that the fake controller is alive."""
+        return True
+
+    def halt(self) -> None:
+        """Accept a fake halt command."""
+        return
+
+    def filter_wheel(self, position: int, card_address: int = 8) -> None:
+        """Record a fake filter wheel command."""
+        self.filter_wheel_calls.append((position, card_address))
+
+
 class TigerFilterWheel(FilterWheel):
     """
     Filter wheel implementation backed by an ASI TigerController.
@@ -25,7 +56,6 @@ class TigerFilterWheel(FilterWheel):
             peripheral_ctrl: TigerPeripheralController,
             available_filters: list[FilterWheelType],
             name: str = "ASI Tiger Filter Wheel",
-            card_address: int = 8,
             filter_wheel_settings: dict[FilterWheelType, int] | None = None,
             check_initialised: bool = True,
             check_alive: bool = True,
@@ -41,8 +71,6 @@ class TigerFilterWheel(FilterWheel):
             Non-empty list of filters that can be set.
         name
             Human-readable filter wheel name.
-        card_address
-            ASI Tiger card address for the filter wheel.
         filter_wheel_settings
             Optional mapping from FilterWheelType to ASI Tiger filter wheel position.
         check_initialised
@@ -58,10 +86,9 @@ class TigerFilterWheel(FilterWheel):
             raise TypeError(
                 f"TigerFilterWheel.__init__: peripheral_ctrl must be TigerPeripheralController, "
                 f"received {type(peripheral_ctrl)}."
-            )
+        )
         self.peripheral_ctrl: TigerPeripheralController = peripheral_ctrl
         self.tiger = self.peripheral_ctrl.tiger
-        self.card_address: int = card_address
         self.filter_wheel_settings: dict[FilterWheelType, int] = (
             filter_wheel_settings.copy() if filter_wheel_settings else self.DEFAULT_FILTER_WHEEL_SETTINGS.copy()
         )
@@ -181,5 +208,5 @@ class TigerFilterWheel(FilterWheel):
             raise ValueError(f"TigerFilterWheel._set_filter_wheel: no Tiger position for {filter_type}.")
         self.tiger.filter_wheel(
             position=self.filter_wheel_settings[filter_type],
-            card_address=self.card_address,
+            card_address=self.peripheral_ctrl.card_address_filter_wheel,
         )

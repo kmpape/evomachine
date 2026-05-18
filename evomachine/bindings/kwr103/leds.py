@@ -7,6 +7,55 @@ from evomachine.leds import LedSource
 from evomachine.types import BrightnessType, LEDType
 
 
+class FakeKWR103:
+    """Deterministic KWR103-like power supply for tests."""
+
+    def __init__(self):
+        """
+        Initialise fake KWR103 connection and command recording.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.connected = False
+        self.output_calls: list[bool] = []
+        self.voltage_calls: list[float] = []
+        self.current_calls: list[float] = []
+
+    def connect(self) -> None:
+        """Mark the fake power supply as connected."""
+        self.connected = True
+
+    def is_connected(self) -> bool:
+        """Return whether the fake power supply is connected."""
+        return self.connected
+
+    def disconnect(self) -> None:
+        """Mark the fake power supply as disconnected."""
+        self.connected = False
+
+    def close(self) -> None:
+        """Close the fake power supply connection."""
+        self.disconnect()
+
+    def set_output(self, status: bool = True) -> None:
+        """Record a fake output enable/disable command."""
+        self.output_calls.append(status)
+
+    def set_voltage(self, val: float) -> None:
+        """Record a fake voltage set command."""
+        self.voltage_calls.append(val)
+
+    def set_current(self, val: float) -> None:
+        """Record a fake current set command."""
+        self.current_calls.append(val)
+
+
 class KWR103LedSource(LedSource):
     """LED source controlled through a KWR103 power supply."""
 

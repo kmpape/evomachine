@@ -14,6 +14,7 @@ else:
 from evomachine.exceptions import EvoMachineError
 from evomachine.types import LEDType, MagnetModeType
 from evomachine.strategy import AbstractStrategy
+IMAGE_DIR = Path(__file__).resolve().parents[1] / "images"
 import delta
 
 from datetime import datetime
@@ -49,7 +50,7 @@ class MagnetOnOffStrategy(AbstractStrategy):
 
         i = 0
         while True:
-            self.path_to_save = Path("/media/hslab/Data/ImageData/Gabi/"+datetime.today().strftime('%Y_%m_%d')+f"/FMN_HEWL_{i:02d}/")
+            self.path_to_save = IMAGE_DIR / "Gabi" / datetime.today().strftime('%Y_%m_%d') / f"FMN_HEWL_{i:02d}"
             if not os.path.exists(self.path_to_save):
                 os.mkdir(self.path_to_save)
                 break

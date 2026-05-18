@@ -14,10 +14,10 @@ from evomachine.config_types import ImageConfigType, ImageConfigTypeFactory, Obj
     ObjectiveConfigTypeFactory
 
 # Path to large data storage to store logs and files
-DATA_DIR = Path("/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo/images")
+EVOMACHINE_DIR: Path = Path(__file__).resolve().parents[1]
+DATA_DIR = EVOMACHINE_DIR / "images"
 
 # DeLTA/evomachine/asitiger/syncboard/dmdwindow lib install directory
-EVOMACHINE_DIR: Path = Path(__file__).parent
 
 # Switch between pygame dmd.py and dmd_socket.py
 USE_DMD_SOCKET: bool = True
@@ -37,7 +37,9 @@ consolidated_logger.setLevel(EVO_LOGGING_LEVEL)
 
 # Add a file handler for consolidated logging
 filename = "evom_{}.log".format(datetime.now().strftime("%Y-%m-%d_%H:%M:%S.%f"))
-file_handler = RotatingFileHandler(f"{DATA_DIR}/Logs/{filename}", maxBytes=1000000, backupCount=20)
+LOG_DIR = EVOMACHINE_DIR / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+file_handler = RotatingFileHandler(LOG_DIR / filename, maxBytes=1000000, backupCount=20)
 file_handler.setFormatter(EVO_FORMATTER)
 file_handler.setLevel(logging.INFO)
 

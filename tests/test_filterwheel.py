@@ -1,30 +1,20 @@
 import pytest
 
-from evomachine.bindings.asitiger.filterwheel import TigerFilterWheel
+from evomachine.bindings.asitiger.filterwheel import FakeTigerFilterWheelController, TigerFilterWheel
 from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
 from evomachine.bindings.virtual.filterwheel import VirtualFilterWheel
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
 from evomachine.filterwheel import FilterWheelConfig, FilterWheelFactory
-from evomachine.types import FilterWheelBindingType, FilterWheelType
+from evomachine.bindings.binding_types import BindingType
+from evomachine.types import FilterWheelType
 
 
+# TODO(CODEX): This and all other test files should grab the settings from evomachine
 AVAILABLE_FILTERS = [
     FilterWheelType.FILTER,
     FilterWheelType.FILTER_527nm,
     FilterWheelType.BLOCKING,
 ]
-
-
-class FakeTigerController:
-    def __init__(self):
-        self.filter_wheel_calls: list[tuple[int, int]] = []
-
-    def status(self):
-        return True
-
-    def filter_wheel(self, position: int, card_address: int = 8):
-        self.filter_wheel_calls.append((position, card_address))
-
 
 def make_virtual_filter_wheel(
         current_filter_type: FilterWheelType = FilterWheelType.UNKNOWN,
@@ -45,19 +35,32 @@ def make_virtual_filter_wheel(
 def test_filter_wheel_config_requires_non_empty_filter_list():
     with pytest.raises(TypeError):
         FilterWheelConfig(
-            binding=FilterWheelBindingType.VIRTUAL,
+            binding="virtual",
+            available_filters=[FilterWheelType.FILTER],
+        )
+
+    with pytest.raises(TypeError):
+        FilterWheelConfig(
+            binding=BindingType.VIRTUAL,
+            available_filters=[FilterWheelType.FILTER],
+            check_alive="yes",
+        )
+
+    with pytest.raises(TypeError):
+        FilterWheelConfig(
+            binding=BindingType.VIRTUAL,
             available_filters=FilterWheelType.FILTER,
         )
 
     with pytest.raises(ValueError):
         FilterWheelConfig(
-            binding=FilterWheelBindingType.VIRTUAL,
+            binding=BindingType.VIRTUAL,
             available_filters=[],
         )
 
     with pytest.raises(TypeError):
         FilterWheelConfig(
-            binding=FilterWheelBindingType.VIRTUAL,
+            binding=BindingType.VIRTUAL,
             available_filters=[FilterWheelType.FILTER, "bad"],
         )
 
@@ -114,7 +117,7 @@ def test_filter_wheel_set_before_initialise_raises_by_default():
 
 
 def test_tiger_filter_wheel_initialise_reads_without_setting():
-    tiger = FakeTigerController()
+    tiger = FakeTigerFilterWheelController()
     peripheral_ctrl = TigerPeripheralController(tiger=tiger)
     peripheral_ctrl.initialise()
     filter_wheel = TigerFilterWheel(peripheral_ctrl=peripheral_ctrl, available_filters=AVAILABLE_FILTERS)
@@ -126,13 +129,12 @@ def test_tiger_filter_wheel_initialise_reads_without_setting():
 
 
 def test_tiger_filter_wheel_skips_same_filter_unless_forced():
-    tiger = FakeTigerController()
-    peripheral_ctrl = TigerPeripheralController(tiger=tiger)
+    tiger = FakeTigerFilterWheelController()
+    peripheral_ctrl = TigerPeripheralController(tiger=tiger, card_address_filter_wheel=9)
     peripheral_ctrl.initialise()
     filter_wheel = TigerFilterWheel(
         peripheral_ctrl=peripheral_ctrl,
         available_filters=AVAILABLE_FILTERS,
-        card_address=9,
     )
     filter_wheel.initialise()
 
@@ -145,13 +147,12 @@ def test_tiger_filter_wheel_skips_same_filter_unless_forced():
 
 
 def test_tiger_filter_wheel_uses_custom_position_mapping():
-    tiger = FakeTigerController()
-    peripheral_ctrl = TigerPeripheralController(tiger=tiger)
+    tiger = FakeTigerFilterWheelController()
+    peripheral_ctrl = TigerPeripheralController(tiger=tiger, card_address_filter_wheel=10)
     peripheral_ctrl.initialise()
     filter_wheel = TigerFilterWheel(
         peripheral_ctrl=peripheral_ctrl,
         available_filters=AVAILABLE_FILTERS,
-        card_address=10,
         filter_wheel_settings={FilterWheelType.FILTER: 42},
     )
     filter_wheel.initialise()
@@ -166,7 +167,7 @@ def test_filter_wheel_factory_creates_virtual_filter_wheel():
     peripheral_ctrl.initialise()
     filter_wheel = FilterWheelFactory.create(
         FilterWheelConfig(
-            binding=FilterWheelBindingType.VIRTUAL,
+            binding=BindingType.VIRTUAL,
             available_filters=AVAILABLE_FILTERS,
             name="Debug Filter Wheel",
         ),
@@ -184,27 +185,26 @@ def test_filter_wheel_factory_requires_tiger_peripheral_controller_for_asitiger(
     with pytest.raises(ValueError):
         FilterWheelFactory.create(
             FilterWheelConfig(
-                binding=FilterWheelBindingType.ASI_TIGER,
+                binding=BindingType.ASI_TIGER,
                 available_filters=AVAILABLE_FILTERS,
             )
         )
 
 
 def test_filter_wheel_factory_creates_asitiger_filter_wheel():
-    tiger = FakeTigerController()
-    peripheral_ctrl = TigerPeripheralController(tiger=tiger)
+    tiger = FakeTigerFilterWheelController()
+    peripheral_ctrl = TigerPeripheralController(tiger=tiger, card_address_filter_wheel=11)
     peripheral_ctrl.initialise()
 
     filter_wheel = FilterWheelFactory.create(
         FilterWheelConfig(
-            binding=FilterWheelBindingType.ASI_TIGER,
+            binding=BindingType.ASI_TIGER,
             available_filters=AVAILABLE_FILTERS,
             name="Fake Tiger Filter Wheel",
         ),
         peripheral_controllers=peripheral_ctrl,
-        card_address=11,
     )
 
     assert isinstance(filter_wheel, TigerFilterWheel)
     assert filter_wheel.name == "Fake Tiger Filter Wheel"
-    assert filter_wheel.card_address == 11
+    assert filter_wheel.peripheral_ctrl.card_address_filter_wheel == 11

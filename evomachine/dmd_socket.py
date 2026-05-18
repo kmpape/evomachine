@@ -12,7 +12,7 @@ import socket
 import time
 from threading import Thread
 
-from evomachine.config import get_logger, EVOMACHINE_DIR
+from evomachine.config import get_logger
 from evomachine.exceptions import DMDError, ErrorCode, ErrorContainer
 
 from delta.utils import CroppingBox
@@ -30,8 +30,7 @@ MAX_BYTE_SIZE = 65482
 NUM_CHUNKS = 97
 CHUNK_ROWS = int(DMD_WIDTH_HEIGHT[0] / NUM_CHUNKS)
 ARR_TYPE = np.uint8
-EM_DMD_PROGRAM_PATH = EVOMACHINE_DIR.resolve().parent.parent / "em_dmd_window/Release/evomachine_dmd_window"
-# /home/hslab/workspace_python/evomachine_v0/evomachine/scripts/../evomachine.
+EM_DMD_PROGRAM_PATH = Path(__file__).resolve().parents[2] / "em_dmd_window/Release/evomachine_dmd_window"
 # TODO make test version that opens on the same screen
 
 

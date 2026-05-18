@@ -19,7 +19,7 @@ from delta.config import DEFAULT_CONFIG_MOTHERMACHINE
 from delta.pipeline import TIMER_ROI
 
 from evomachine.strategy import NoStrategy
-from evomachine.acquisition import TestCamera, DeltaCamera
+from evomachine.acquisition_bkp import TestCamera, DeltaCamera
 from evomachine.automaton import Automaton
 from evomachine.config import ConfigCRISP, ConfigFocus, ConfigFocusAlgorithm, DEVICE_CONFIG_EVO_TEST, \
     CRISP_CONFIG_DEFAULT, FOCUS_CONFIG_DEFAULT, IMAGE_CONFIG_DEFAULT, DEVICE_CONFIG_DELTA_SIM,\

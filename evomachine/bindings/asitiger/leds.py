@@ -7,6 +7,37 @@ from evomachine.leds import LedSource
 from evomachine.types import BrightnessType, LEDType
 
 
+class FakeTigerLedController:
+    """Deterministic Tiger-like controller for LED tests."""
+
+    def __init__(self):
+        """
+        Initialise fake LED command recording.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.connection = None
+        self.led_calls: list[tuple[dict[str, int], int | None]] = []
+
+    def status(self) -> bool:
+        """Return True to indicate that the fake controller is alive."""
+        return True
+
+    def halt(self) -> None:
+        """Accept a fake halt command."""
+        return
+
+    def led(self, led_brightnesses: dict[str, int], card_address: int | None = None) -> None:
+        """Record a fake Tiger LED command."""
+        self.led_calls.append((dict(led_brightnesses), card_address))
+
+
 class TigerLedSource(LedSource):
     """LED source controlled through ASI Tiger LED channels."""
 
@@ -26,9 +57,7 @@ class TigerLedSource(LedSource):
             name: str = "ASI Tiger LED Source",
             check_initialised: bool = True,
             check_alive: bool = True,
-            card_address: int = 7,
     ):
-        self.card_address: int = card_address
         led_to_internal = led_to_internal or {
             led_type: self.DEFAULT_LED_TO_INTERNAL[led_type] for led_type in available_leds
         }
@@ -60,8 +89,14 @@ class TigerLedSource(LedSource):
             internal: brightness_int if current_led_type == led_type else 0
             for current_led_type, internal in self.led_to_internal.items()
         }
-        self.peripheral_ctrl.tiger.led(led_brightnesses=led_brightnesses, card_address=self.card_address)
+        self.peripheral_ctrl.tiger.led(
+            led_brightnesses=led_brightnesses,
+            card_address=self.peripheral_ctrl.card_address_led,
+        )
 
     def _disable_led(self, led_type: LEDType) -> None:
         led_brightnesses = {internal: 0 for internal in self.led_to_internal.values()}
-        self.peripheral_ctrl.tiger.led(led_brightnesses=led_brightnesses, card_address=self.card_address)
+        self.peripheral_ctrl.tiger.led(
+            led_brightnesses=led_brightnesses,
+            card_address=self.peripheral_ctrl.card_address_led,
+        )

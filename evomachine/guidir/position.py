@@ -15,7 +15,7 @@ from serial import SerialException
 from evomachine.commands import AutomatonCommand
 from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, ConfigImageProcessor, get_logger
 from evomachine.coordinates import Coordinate, CoordinateFactory
-from evomachine.types import AutomatonCommandType
+from evomachine.types import AutomatonCommandType, FovDirectionType
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
 from evomachine.guidir.guitypes import DisplayMode, Direction, ARROW_LEFT, ARROW_RIGHT, ARROW_UP, ARROW_DOWN, AXES, \
     SMALL, CENTER, LEFT, RIGHT, NORMAL
@@ -41,48 +41,54 @@ class PositionWorker(EvoWorkerTemplate):
     def move_fov(self, direction: Direction):
         logger.debug(f"move_fov: Move stage direction {direction}.")
         if self.is_disabled():
-            logger.warning("MoveThread.move_to: Thread is disabled.")
+            logger.warning("MoveThread.move: Thread is disabled.")
             return
+        fov_directions = {
+            Direction.LEFT: FovDirectionType.LEFT,
+            Direction.RIGHT: FovDirectionType.RIGHT,
+            Direction.UP: FovDirectionType.UP,
+            Direction.DOWN: FovDirectionType.DOWN,
+        }
         if direction == Direction.LEFT:
             self.queue_manager.request(
-                req_str='self.cam.move_fov_left',
-                kwargs_dict={'block': True},
+                req_str='self.cam.move',
+                kwargs_dict={'target': [(fov_directions[direction], 1.0)], 'block': True},
                 callback=self.update_position,
             )
         elif direction == Direction.RIGHT:
             self.queue_manager.request(
-                req_str='self.cam.move_fov_right',
-                kwargs_dict={'block': True},
+                req_str='self.cam.move',
+                kwargs_dict={'target': [(fov_directions[direction], 1.0)], 'block': True},
                 callback=self.update_position,
             )
         elif direction == Direction.UP:
             self.queue_manager.request(
-                req_str='self.cam.move_fov_up',
-                kwargs_dict={'block': True},
+                req_str='self.cam.move',
+                kwargs_dict={'target': [(fov_directions[direction], 1.0)], 'block': True},
                 callback=self.update_position,
             )
         elif direction == Direction.DOWN:
             self.queue_manager.request(
-                req_str='self.cam.move_fov_down',
-                kwargs_dict={'block': True},
+                req_str='self.cam.move',
+                kwargs_dict={'target': [(fov_directions[direction], 1.0)], 'block': True},
                 callback=self.update_position,
             )
         elif direction == Direction.HOME:
             self.queue_manager.request(
-                req_str='self.cam.move_home',
-                kwargs_dict={'block': True},
+                req_str='self.cam.move',
+                kwargs_dict={'target': (FovDirectionType.HOME, 1.0), 'block': True},
                 callback=self.update_position,
             )
 
     @pyqtSlot(Coordinate)
-    def move_to_coord(self, coordinate: Coordinate):
-        logger.debug(f"move_to_coord: Move stage direction {coordinate}.")
+    def move_coord(self, coordinate: Coordinate):
+        logger.debug(f"move_coord: Move stage direction {coordinate}.")
         if self.is_disabled():
-            logger.warning("MoveThread.move_to: Thread is disabled.")
+            logger.warning("MoveThread.move: Thread is disabled.")
             return
         self.queue_manager.request(
-            req_str='self.cam.move_to',
-            kwargs_dict={'block': True, 'coordinate': coordinate},
+            req_str='self.cam.move',
+            kwargs_dict={'block': True, 'target': coordinate},
             callback=self.update_position,
         )
 
@@ -135,11 +141,11 @@ class PositionPanel(EvoPanelTemplate):
     # Move FoV HOME.
     request_move_home = pyqtSignal(Direction)
     # Move FoV LEFT/RIGHT/UP/DOWN/HOME.
-    request_move_to_coord = pyqtSignal(Coordinate)
+    request_move_coord = pyqtSignal(Coordinate)
     # Zero position.
     request_zero_position = pyqtSignal()
     # Move FoV to FoV ID.
-    request_move_to_fov = pyqtSignal(int)
+    request_move_selected_fov = pyqtSignal(int)
 
     MOVES = [Direction.LEFT.value, Direction.RIGHT.value, Direction.UP.value, Direction.DOWN.value,
              Direction.DOWN_Z.value, Direction.UP_Z.value]
@@ -222,15 +228,15 @@ class PositionPanel(EvoPanelTemplate):
 
         self.current_moveto = {'X': None, 'Y': None, 'Z': None}
         self.pos_move_lineedits = {key: self.make_lineedit(text=str(self.current_moveto[key]),
-                                                           func=self.update_current_move_to,
+                                                           func=self.update_current_move,
                                                            param=key)
                                    for key in AXES}
-        "Lineedits for entering move_to coordinates."
+        "Lineedits for entering move coordinates."
 
-        self.request_move_to_coord.connect(self.worker.move_to_coord)
+        self.request_move_coord.connect(self.worker.move_coord)
         self.pos_move_button = self.make_button(
             text="Move to",
-            func=lambda: self.request_move_to_coord.emit(Coordinate.from_dict(self.current_moveto)),
+            func=lambda: self.request_move_coord.emit(Coordinate.from_dict(self.current_moveto)),
             font=SMALL)
         "Move to entered coordinates."
 
@@ -242,7 +248,7 @@ class PositionPanel(EvoPanelTemplate):
         self.fov_combo_box.currentIndexChanged.connect(self.update_current_fov)
         self.pos_move_fov_button = self.make_button(
             text="Move to FoV",
-            func=self.move_to_fov,
+            func=self.move_fov,
             font=SMALL)
         "Move to selected FoV ID."
         self.pos_move_fov_button.setEnabled(False)
@@ -272,17 +278,17 @@ class PositionPanel(EvoPanelTemplate):
         # This will catch FoV list after initialisation.
         queue_manager.register(self.update_fovs, AutomatonCommandType.FOV_DATA)
 
-    def move_to_coordinate(self):
+    def move_coordinate(self):
         coord = Coordinate.from_dict(self.current_moveto)
-        self.request_move_to_coord.emit(coord)
-        logger.debug(f"move_to_coordinate {coord}.")
+        self.request_move_coord.emit(coord)
+        logger.debug(f"move_coordinate {coord}.")
 
-    def move_to_fov(self):
+    def move_fov(self):
         if (self.fovs is None) or (self.curr_fov not in self.fovs):
             logger.error(f"Cannot move to FoV {self.curr_fov}. Available = {self.fovs}")
             return
         logger.info(f"Moving stage to FoV {self.curr_fov} at {self.fovs[self.curr_fov]}.")
-        self.request_move_to_coord.emit(self.fovs[self.curr_fov])
+        self.request_move_coord.emit(self.fovs[self.curr_fov])
 
     def update_current_fov(self):
         self.curr_fov = None if self.fov_combo_box.currentText() in ["None", ""] \
@@ -296,7 +302,7 @@ class PositionPanel(EvoPanelTemplate):
         self.fov_combo_box.setEnabled(True)
         self.pos_move_fov_button.setEnabled(True)
 
-    def update_current_move_to(self, key: str):
+    def update_current_move(self, key: str):
         try:
             self.current_moveto[key] = float(self.pos_move_lineedits[key].text())
         except ValueError:

@@ -146,6 +146,176 @@ class Coordinate:
         return Coordinate(None, None, None, None)
 
 
+@dataclass
+class CoordinateBounds:
+    """
+    Coordinate lower and upper bounds with optional per-axis checks.
+
+    Parameters
+    ----------
+    low
+        Optional lower coordinate bounds. Axes set to None are not checked from
+        below.
+    high
+        Optional upper coordinate bounds. Axes set to None are not checked from
+        above.
+
+    Returns
+    -------
+    CoordinateBounds
+        Bounds object that can validate partial Coordinates.
+    """
+
+    low: Coordinate | None = None
+    high: Coordinate | None = None
+
+    def __post_init__(self) -> None:
+        """
+        Validate coordinate bounds after construction.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        if self.low is not None and not isinstance(self.low, Coordinate):
+            raise TypeError(f"CoordinateBounds: low must be Coordinate or None, received {type(self.low)}.")
+        if self.high is not None and not isinstance(self.high, Coordinate):
+            raise TypeError(f"CoordinateBounds: high must be Coordinate or None, received {type(self.high)}.")
+
+    @classmethod
+    def from_limits(cls, limits: tuple[Coordinate, Coordinate]) -> 'CoordinateBounds':
+        """
+        Create CoordinateBounds from a two-coordinate limit tuple.
+
+        Parameters
+        ----------
+        limits
+            Tuple containing lower and upper Coordinate objects.
+
+        Returns
+        -------
+        CoordinateBounds
+            Bounds object with copied lower and upper coordinates.
+        """
+        if not isinstance(limits, tuple) or len(limits) != 2:
+            raise TypeError("CoordinateBounds.from_limits: limits must be tuple[Coordinate, Coordinate].")
+        low, high = limits
+        if not isinstance(low, Coordinate) or not isinstance(high, Coordinate):
+            raise TypeError("CoordinateBounds.from_limits: limits entries must be Coordinate.")
+        return cls(low=low.copy(), high=high.copy())
+
+    def copy(self) -> 'CoordinateBounds':
+        """
+        Return a deep copy of the coordinate bounds.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        CoordinateBounds
+            Copied bounds.
+        """
+        return CoordinateBounds(
+            low=None if self.low is None else self.low.copy(),
+            high=None if self.high is None else self.high.copy(),
+        )
+
+    @staticmethod
+    def _axis_value(coordinate: Coordinate | None, axis: str) -> float | int | None:
+        """
+        Return one axis value from a coordinate.
+
+        Parameters
+        ----------
+        coordinate
+            Coordinate to inspect, or None.
+        axis
+            One of X, Y, or Z.
+
+        Returns
+        -------
+        float | int | None
+            Axis value, or None when unchecked.
+        """
+        if coordinate is None:
+            return None
+        if axis == "X":
+            return coordinate.x
+        if axis == "Y":
+            return coordinate.y
+        if axis == "Z":
+            return coordinate.z
+        raise ValueError(f"CoordinateBounds._axis_value: unsupported axis {axis}.")
+
+    def contains(self, coordinate: Coordinate) -> bool:
+        """
+        Check whether a coordinate is inside the configured bounds.
+
+        Parameters
+        ----------
+        coordinate
+            Full or partial Coordinate to validate. Axes set to None are ignored.
+
+        Returns
+        -------
+        bool
+            True when all provided coordinate axes satisfy checked bounds.
+        """
+        if not isinstance(coordinate, Coordinate):
+            raise TypeError(f"CoordinateBounds.contains: coordinate must be Coordinate, received {type(coordinate)}.")
+        for axis, value in (("X", coordinate.x), ("Y", coordinate.y), ("Z", coordinate.z)):
+            if value is None:
+                continue
+            low_value = self._axis_value(coordinate=self.low, axis=axis)
+            high_value = self._axis_value(coordinate=self.high, axis=axis)
+            if low_value is not None and value < low_value:
+                return False
+            if high_value is not None and value > high_value:
+                return False
+        return True
+
+    def is_out_of_bounds(self, coordinate: Coordinate) -> bool:
+        """
+        Check whether a coordinate is outside the configured bounds.
+
+        Parameters
+        ----------
+        coordinate
+            Full or partial Coordinate to validate.
+
+        Returns
+        -------
+        bool
+            True when any checked axis is outside bounds.
+        """
+        return not self.contains(coordinate=coordinate)
+
+    def as_limits(self) -> tuple[Coordinate, Coordinate]:
+        """
+        Return lower and upper Coordinate objects.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        tuple[Coordinate, Coordinate]
+            Lower and upper bounds. Missing sides are represented by
+            Coordinate.none_coordinate().
+        """
+        return (
+            Coordinate.none_coordinate() if self.low is None else self.low.copy(),
+            Coordinate.none_coordinate() if self.high is None else self.high.copy(),
+        )
+
+
 class CoordinateFactory:
     def __init__(
             self,
@@ -196,6 +366,10 @@ class CoordinateFactory:
         return [start + (delta * i) for i in range(max(num_pos_x, num_pos_y))]
 
 
+# TODO(CODEX):
+# - We used to make a difference between FieldOfView and Position as the former being a cropping box within an FieldOfView.
+#   However, this distinction is not really used anywhere, and we now only have FieldsOfView, althoug they're called position everywhere.
+#   I would like to remove this distinction everywhere and just remove FieldOfView entirely, and only have position_id. No need for classes for this.
 @dataclass
 class FieldOfView:
     fov_id: int

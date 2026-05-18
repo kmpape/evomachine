@@ -1,14 +1,19 @@
 import time
 
 import sys, os
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/asitiger')
-sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9/evomachine_repo')
+from pathlib import Path
+WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+sys.path.append(str(WORKSPACE_ROOT / "asitiger"))
+sys.path.append(str(WORKSPACE_ROOT / "evomachine_repo"))
+sys.path.append(str(WORKSPACE_ROOT / "de-lta-rt"))
 
 from asitiger.command import CRISPState, Command
-from evomachine.acquisition import EvoCamera
+IMAGE_DIR = Path(__file__).resolve().parents[1] / "images"
+from evomachine.acquisition_bkp import EvoCamera
 from evomachine.config import DEVICE_CONFIG_EVO_TEST, CRISP_CONFIG_DEFAULT, OBJECTIVE_CONFIG_OIL, \
     OBJECTIVE_CONFIG_AIR, IMAGE_CONFIG_DEFAULT, ConfigDevice, ConfigFocus, ConfigLED, ConfigCRISP
 from evomachine.dmd import DMDControl
+from evomachine.types import FovDirectionType
 from pathlib import Path
 
 test_pos_list = [(-10000, 0, 0), (0, 0, 0), (0, 10000, 0)]
@@ -19,8 +24,7 @@ DEVICE_CONFIG_RASTONIA = ConfigDevice(
     num_periods=None,
     read_from_disk=False,
     path_to_images=None,
-    path_to_save=Path("/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo/images/"
-                      "2023-10-12-rastonia-bacillus-405nm"),
+    path_to_save=IMAGE_DIR / "2023-10-12-rastonia-bacillus-405nm",
     image_processing_verbosity=1,
     tiger_port="/dev/ttyUSB0",
 )
@@ -61,11 +65,9 @@ for i_vert in move_vert:
         print(f"At i_vert={i_vert}/{len(move_vert)}, i_vert={i_horiz}/{len(move_horiz)}", end='\r')
         _ = cam.display_save_frame(i_chan=img_channel, path_to_save=True, display_frame=False)
         if i_horiz % 2 == 0:
-            cam.move_fov_right()
+            cam.move([(FovDirectionType.RIGHT, 1.0)])
         else:
-            cam.move_fov_left()
+            cam.move([(FovDirectionType.LEFT, 1.0)])
         time.sleep(1)
-    cam.move_fov_up()
+    cam.move([(FovDirectionType.UP, 1.0)])
     time.sleep(1)
-
-

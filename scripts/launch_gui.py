@@ -14,7 +14,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'sync_board'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'de-lta-rt'))
 
-from evomachine.acquisition import TestCamera, EvoCamera, EvoCamerav2  # , EvoCamerav3  # noqa
+IMAGE_DIR = Path(__file__).resolve().parents[1] / "images"
+from evomachine.acquisition_bkp import TestCamera, EvoCamera, EvoCamerav2  # , EvoCamerav3  # noqa
 from evomachine.automaton import Automaton  # noqa
 from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, ConfigImageProcessorFactory, \
     EVOMACHINE_DIR, USE_DMD_SOCKET, USE_SYNC_BOARD  # noqa
@@ -95,9 +96,7 @@ if __name__ == '__main__':
     print(f"Launching evomachine GUI from {EVOMACHINE_DIR}.")
 
     # Provide strategy that will be loaded by GUI
-    # save_path: str = "/media/hslab/Data/ImageData/Idris/2024-07-04"
-    # save_path = "/home/hslab/Documents/Gabi/GUI_SaveDir"
-    save_path = "/mnt/nvme1/data/ImageData/Bs_growth_backport"
+    save_path = str(IMAGE_DIR / "Bs_growth_backport")
     if not os.path.exists(save_path):
         current_folder = os.path.dirname(os.path.abspath(__file__))
         save_path = os.path.join(current_folder, "DEFAULT")

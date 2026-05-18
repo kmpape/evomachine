@@ -13,7 +13,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'de-lta-rt'))
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'sync_board'))
 
-from evomachine.acquisition import TestCamera
+IMAGE_DIR = Path(__file__).resolve().parents[1] / "images"
+from evomachine.acquisition_bkp import TestCamera
 from evomachine.automaton import Automaton
 from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, ConfigImageProcessorFactory, \
     EVOMACHINE_DIR, USE_DMD_SOCKET, USE_SYNC_BOARD, DATA_DIR
@@ -137,8 +138,7 @@ def create_automaton_process(
         return datetime.datetime.strptime(time_str, '%Y-%m-%d_%H:%M:%S.%f')
 
     # folder_path = str(EVOMACHINE_DIR.parent / "data")
-    # folder_path = "/mnt/nvme1/data/ImageData/mCherry_Images_2024-12-19"
-    folder_path = "/mnt/nvme1/data/ImageData/UV_by_ROI_2025-02-14"
+    folder_path = str(IMAGE_DIR / "UV_by_ROI_2025-02-14")
     filenames = [filename for filename in os.listdir(folder_path)
                  if filename.lower().endswith('.tiff') and "preproc" not in filename]
     filenames = sorted(filenames, key=lambda x: (get_position(x), get_time(x)))

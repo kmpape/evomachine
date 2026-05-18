@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from evomachine.peripherals import Peripheral, PeripheralController, get_peripheral_controller
-from evomachine.types import FilterWheelBindingType, FilterWheelType
+from evomachine.bindings.binding_types import BindingType
+from evomachine.types import FilterWheelType
 
 
 class FilterWheel(Peripheral):
@@ -361,7 +362,7 @@ class FilterWheel(Peripheral):
 class FilterWheelConfig:
     """Configuration object used by FilterWheelFactory to create filter wheels."""
 
-    binding: FilterWheelBindingType
+    binding: BindingType
     available_filters: list[FilterWheelType]
     name: str | None = None
     check_initialised: bool = True
@@ -379,8 +380,16 @@ class FilterWheelConfig:
         -------
         None
         """
-        if not isinstance(self.binding, FilterWheelBindingType):
-            raise TypeError(f"FilterWheelConfig: binding must be FilterWheelBindingType, received {type(self.binding)}.")
+        if not isinstance(self.binding, BindingType):
+            raise TypeError(f"FilterWheelConfig: binding must be BindingType, received {type(self.binding)}.")
+        if self.name is not None and not isinstance(self.name, str):
+            raise TypeError(f"FilterWheelConfig: name must be str or None, received {type(self.name)}.")
+        if not isinstance(self.check_initialised, bool):
+            raise TypeError(
+                f"FilterWheelConfig: check_initialised must be bool, received {type(self.check_initialised)}."
+            )
+        if not isinstance(self.check_alive, bool):
+            raise TypeError(f"FilterWheelConfig: check_alive must be bool, received {type(self.check_alive)}.")
         self.available_filters = FilterWheel._validate_available_filters(
             available_filters=self.available_filters,
         )
@@ -419,7 +428,7 @@ class FilterWheelFactory:
         if not isinstance(config, FilterWheelConfig):
             raise TypeError(f"FilterWheelFactory.create: expected FilterWheelConfig, received {type(config)}.")
 
-        if config.binding == FilterWheelBindingType.VIRTUAL:
+        if config.binding == BindingType.VIRTUAL:
             from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
             from evomachine.bindings.virtual.filterwheel import VirtualFilterWheel
 
@@ -437,7 +446,7 @@ class FilterWheelFactory:
                 **binding_options,
             )
 
-        if config.binding == FilterWheelBindingType.ASI_TIGER:
+        if config.binding == BindingType.ASI_TIGER:
             from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
             from evomachine.bindings.asitiger.filterwheel import TigerFilterWheel
 

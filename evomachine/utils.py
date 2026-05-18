@@ -119,6 +119,31 @@ class RotationParameters:
     max_exposure: float = 0.1
     hough_threshold: float = 0.7
 
+    def __post_init__(self) -> None:
+        """
+        Validate rotation correction parameters.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            The dataclass fields are validated in place.
+        """
+        for field_name in ["cutoff_frequency_ratio", "min_exposure", "max_exposure", "hough_threshold"]:
+            value = getattr(self, field_name)
+            if not isinstance(value, int | float):
+                raise TypeError(f"RotationParameters: {field_name} must be numeric, received {type(value)}.")
+            setattr(self, field_name, float(value))
+        if not 0 < self.cutoff_frequency_ratio < 1:
+            raise ValueError("RotationParameters: cutoff_frequency_ratio must be in (0, 1).")
+        if not 0 <= self.min_exposure <= self.max_exposure:
+            raise ValueError("RotationParameters: min_exposure must be <= max_exposure and both must be >= 0.")
+        if self.hough_threshold < 0:
+            raise ValueError("RotationParameters: hough_threshold must be non-negative.")
+
 
 def multipos_rotation_correction(imgs: list[np.ndarray], params: RotationParameters = RotationParameters()) -> float:
     rotations = [rotation_correction(img=img.astype(float), params=params) for img in imgs]
@@ -225,6 +250,26 @@ class EvoCroppingBox:
     xbr: int
     ybr: int
     is_none: bool = False
+
+    def __post_init__(self) -> None:
+        """
+        Validate cropping box coordinates after construction.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            The dataclass fields are validated in place.
+        """
+        for field_name in ["xtl", "ytl", "xbr", "ybr"]:
+            value = getattr(self, field_name)
+            if not isinstance(value, int):
+                raise TypeError(f"EvoCroppingBox: {field_name} must be int, received {type(value)}.")
+        if not isinstance(self.is_none, bool):
+            raise TypeError(f"EvoCroppingBox: is_none must be bool, received {type(self.is_none)}.")
 
     @property
     def shape(self) -> tuple[int, int]:

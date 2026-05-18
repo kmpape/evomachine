@@ -37,7 +37,7 @@ sys.path.append(os.path.expanduser('~') + '/workspace_python/conda_evomachine3.9
 from asitiger.errors import Errors as ASIErrors
 from asitiger.tigercontroller import SAFE_STAGE_LIMITS
 
-from evomachine.acquisition import AbstractCamera, EvoCamera
+from evomachine.acquisition_bkp import AbstractCamera, EvoCamera
 from evomachine.automaton import Automaton
 from evomachine.commands import AutomatonCommand, AutomatonCommandType
 from evomachine.config import ConfigCRISP, ConfigFocus, get_logger, USE_DMD_SOCKET

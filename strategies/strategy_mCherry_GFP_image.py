@@ -14,6 +14,7 @@ else:
 from evomachine.exceptions import EvoMachineError
 from evomachine.types import LEDType
 from evomachine.strategy import AbstractStrategy
+IMAGE_DIR = Path(__file__).resolve().parents[1] / "images"
 
 
 logger = get_logger(name=__name__)
@@ -30,7 +31,7 @@ class mCherry_GFP_Identify(AbstractStrategy):
     """
     def __init__(self, cfg: ConfigImageProcessor):
         super().__init__(cfg=cfg)
-        self.path_to_save = Path("/media/hslab/Data/ImageData/Idris/2024-XX-XX-mCherry_GFP_identify")
+        self.path_to_save = IMAGE_DIR / "Idris/2024-XX-XX-mCherry_GFP_identify"
 
         self.callback_counter: int = 0  # TODO add this to base class and reset after testing routine
 

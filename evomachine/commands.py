@@ -47,6 +47,41 @@ class AutomatonCommand:
     fov_id: int | None = None
     "Field of view ID. Used for commands sent to GUI."
 
+    def __post_init__(self) -> None:
+        """
+        Validate automaton command metadata after construction.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            The dataclass fields are validated in place.
+        """
+        if not isinstance(self.command_id, int):
+            raise TypeError(f"AutomatonCommand: command_id must be int, received {type(self.command_id)}.")
+        if not isinstance(self.command_type, AutomatonCommandType):
+            raise TypeError(
+                f"AutomatonCommand: command_type must be AutomatonCommandType, received {type(self.command_type)}."
+            )
+        if not isinstance(self.command_creation_time, int | float):
+            raise TypeError(
+                f"AutomatonCommand: command_creation_time must be numeric, "
+                f"received {type(self.command_creation_time)}."
+            )
+        self.command_creation_time = float(self.command_creation_time)
+        if self.command_execution_time is not None and not isinstance(self.command_execution_time, int | float):
+            raise TypeError(
+                f"AutomatonCommand: command_execution_time must be numeric or None, "
+                f"received {type(self.command_execution_time)}."
+            )
+        if self.command_execution_time is not None:
+            self.command_execution_time = float(self.command_execution_time)
+        if self.fov_id is not None and not isinstance(self.fov_id, int):
+            raise TypeError(f"AutomatonCommand: fov_id must be int or None, received {type(self.fov_id)}.")
+
     @staticmethod
     def _get_time(t: float | None) -> str:
         return "None" if t is None else strftime('%Y-%m-%d %H:%M:%S', gmtime(t))

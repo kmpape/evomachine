@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
 
-from evomachine.acquisition import AbstractCamera
+from evomachine.acquisition_bkp import AbstractCamera
 from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, ConfigImageProcessor, get_logger
 from evomachine.types import FocusAlgorithmType, LEDType
 from evomachine.guidir.figures import FigureWindow

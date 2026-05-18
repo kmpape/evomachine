@@ -7,6 +7,60 @@ from evomachine.leds import LedSource
 from evomachine.types import BrightnessType, LEDType
 
 
+class FakeSyncBoardController:
+    """Deterministic SyncBoard-like controller for LED and peripheral tests."""
+
+    def __init__(self):
+        """
+        Initialise fake SyncBoard state and command recording.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.enabled_leds: list[tuple[int, float, float | None]] = []
+        self.disabled_leds: list[int | None] = []
+        self.finalise_was_called = False
+        self._is_initialised = False
+        self.connection = type(
+            "FakeConnection",
+            (),
+            {
+                "connection": type("FakeSerialConnection", (), {"is_open": True})(),
+                "disconnect": lambda connection: setattr(connection.connection, "is_open", False),
+            },
+        )()
+
+    def initialise(self, force_init: bool = False) -> None:
+        """Mark the fake SyncBoard as initialised."""
+        self._is_initialised = True
+
+    def is_initialised(self) -> bool:
+        """Return whether the fake SyncBoard is initialised."""
+        return self._is_initialised
+
+    def disable_system(self) -> None:
+        """Accept a fake disable-system command."""
+        return
+
+    def finalise(self) -> None:
+        """Record fake finalisation and clear initialisation state."""
+        self.finalise_was_called = True
+        self._is_initialised = False
+
+    def enable_led(self, led_id: int, intensity: float = 0.1, duration: float | None = None) -> None:
+        """Record a fake native SyncBoard enable command."""
+        self.enabled_leds.append((led_id, intensity, duration))
+
+    def disable_led(self, led_id: int | None = None) -> None:
+        """Record a fake SyncBoard disable command."""
+        self.disabled_leds.append(led_id)
+
+
 class SyncBoardLedSource(LedSource):
     """LED source controlled through a SyncBoard."""
 

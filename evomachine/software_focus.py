@@ -7,6 +7,27 @@ from evomachine.exceptions import ConfigError, ErrorCode
 from evomachine.types import FocusAlgorithmType, FocusCurveType
 
 
+# TODO(CODEX) START
+# Following comments apply to refactor this file and include functions from acquisition.py.
+# - First, create a backup-copy software_focus_bkp.py before starting the refactor, so we can easily refer back to the original code and make sure we don't miss any important functions or logic. Fix the existing imports of software_focus.py to use software_focus_bkp.py, so we can make sure the existing code continues to work while we refactor.
+# - Rename this file as softwarefocus.py.
+# - The SoftwareFocus class will need to take the DMD, LEDManager, Camera, Autofocus, and Stage instances as constructor parameters, as it will need to control all of these components during the focus routines. We can pass these instances from the main code when we create the SoftwareFocus instance.
+# - Make a SoftwareFocus class that encapsulates all focus-related functions and state.
+# - Similar to stage.py, it should offer to initialise with a list of position IDs, and keep the software focus state for each of those.
+# - Refactor ConfigFocus and call it SoftwareFocusConfig. Leave it in config_types.py, make it a constructor parameter.
+# - Implement a function to update the SoftwareFocusConfig as this can happen through the GUI.
+# - Make an abstract class SoftwareFocusAlgorithm as a template for the focus routines, and implement the current software focus routines as a child classes of it. This will allow us to easily add new focus routines in the future.
+# - Move all specific focus computation routines/SoftwareFocusAlgorithms to bindings/software_focus/software_focus_algorithms.py. 
+# - Define a function in the bindings file that takes a SoftwareFocusAlgorithmType and returns the corresponding SoftwareFocusAlgorithm instance. This will allow us to easily call the focus algorithms from the main code without having to import all the specific algorithm classes. Allow it to take a SoftwareFocusConfig as an argument to pass any necessary parameters to the algorithm instance.
+# - Move get_focus_score and get_roi_focus_score to this class, and make them instance
+# - Make sure that after refactor there is a function that one can use to compute the focus score for a given image and algorithm, and that it can be easily called from the main code and GUI.
+# - Already start pulling a Stop event through the focus routines to allow them to be stopped early if needed.
+# - Remove the evomachine-specific exceptions. Use standard exceptions.
+# - Add type hints to all functions and classes. Also add doc strings.
+# - Extend/Refactor SoftwareFocusConfig to use ConfigFrame or a list of ConfigFrames, in which case it averages the images.
+# - Allow SoftwareFocusConfig to be updated during runtime.
+# TODO (CODEX) END
+
 DEFAULT_SQUARED_GRAD_THRESHOLD = 0
 
 def get_focus_score_is_good(focus_curve: np.array) -> bool:  # noqa

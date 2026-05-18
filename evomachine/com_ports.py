@@ -47,5 +47,19 @@ def get_kwr103_port():
 if __name__ == "__main__":
     listPorts()
     print("-"*20)
-    print("Syncboard port:", get_syncboard_port())
-    print("ASITiger port:", get_asitiger_port())
+    try:
+        print("Syncboard port:", get_syncboard_port())
+    except RuntimeError as e:
+        print(e)
+    try:        
+        print("ASITiger port:", get_asitiger_port())
+    except RuntimeError as e:
+        print(e)
+    try:        
+        print("NVPro port:", get_nvpro_port())
+    except RuntimeError as e:
+        print(e)
+    try:        
+        print("KWR103 port:", get_kwr103_port())
+    except RuntimeError as e:
+        print(e)

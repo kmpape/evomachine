@@ -1,6 +1,11 @@
 import pytest
 
 from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
+from evomachine.bindings.asitiger.card_addresses import (
+    CARD_ADDRESS_CRISP,
+    CARD_ADDRESS_FILTER_WHEEL,
+    CARD_ADDRESS_LED,
+)
 from evomachine.bindings.kwr103.KWR103Driver import KWR103
 from evomachine.bindings.kwr103.peripheralcontroller import KWR103PeripheralController
 from evomachine.bindings.syncboard.peripheralcontroller import SyncBoardPeripheralController
@@ -11,7 +16,7 @@ from evomachine.peripherals import (
     PeripheralControllerFactory,
     SerialPeripheralControllerConfig,
 )
-from evomachine.types import PeripheralControllerBindingType
+from evomachine.bindings.binding_types import BindingType
 
 
 class FakeInnerConnection:
@@ -118,19 +123,28 @@ def test_peripheral_controller_config_rejects_non_binding_type():
 
 def test_serial_peripheral_controller_config_requires_port_or_hwid():
     with pytest.raises(ValueError):
-        SerialPeripheralControllerConfig(binding=PeripheralControllerBindingType.ASI_TIGER)
+        SerialPeripheralControllerConfig(binding=BindingType.ASI_TIGER)
 
     with pytest.raises(ValueError):
         SerialPeripheralControllerConfig(
-            binding=PeripheralControllerBindingType.ASI_TIGER,
+            binding=BindingType.ASI_TIGER,
             port="/dev/ttyUSB0",
             hwid="10C4:EA60",
         )
 
 
+def test_serial_peripheral_controller_config_rejects_non_serial_binding():
+    """Check that shared BindingType values are validated for serial controllers."""
+    with pytest.raises(ValueError, match="serial binding"):
+        SerialPeripheralControllerConfig(
+            binding=BindingType.VIRTUAL,
+            port="/dev/ttyUSB0",
+        )
+
+
 def test_serial_peripheral_controller_config_accepts_exactly_one_port_source(monkeypatch):
     by_port = SerialPeripheralControllerConfig(
-        binding=PeripheralControllerBindingType.ASI_TIGER,
+        binding=BindingType.ASI_TIGER,
         port="/dev/ttyUSB0",
     )
     assert by_port.resolve_port() == "/dev/ttyUSB0"
@@ -142,7 +156,7 @@ def test_serial_peripheral_controller_config_accepts_exactly_one_port_source(mon
 
     monkeypatch.setattr("evomachine.com_ports.get_port", fake_get_port)
     by_hwid = SerialPeripheralControllerConfig(
-        binding=PeripheralControllerBindingType.ASI_TIGER,
+        binding=BindingType.ASI_TIGER,
         hwid="10C4:EA60",
     )
 
@@ -151,7 +165,7 @@ def test_serial_peripheral_controller_config_accepts_exactly_one_port_source(mon
 
 def test_serial_peripheral_controller_config_accepts_kwr103_binding():
     config = SerialPeripheralControllerConfig(
-        binding=PeripheralControllerBindingType.KWR103,
+        binding=BindingType.KWR103,
         port="/dev/ttyUSB2",
     )
 
@@ -161,31 +175,51 @@ def test_serial_peripheral_controller_config_accepts_kwr103_binding():
 def test_default_configs_return_expected_values():
     virtual_config = VirtualPeripheralController.default_config()
     assert isinstance(virtual_config, PeripheralControllerConfig)
-    assert virtual_config.binding == PeripheralControllerBindingType.VIRTUAL
+    assert virtual_config.binding == BindingType.VIRTUAL
     assert virtual_config.name == VirtualPeripheralController.DEFAULT_NAME
 
     tiger_config = TigerPeripheralController.default_config()
     assert isinstance(tiger_config, SerialPeripheralControllerConfig)
-    assert tiger_config.binding == PeripheralControllerBindingType.ASI_TIGER
+    assert tiger_config.binding == BindingType.ASI_TIGER
     assert tiger_config.name == TigerPeripheralController.DEFAULT_NAME
     assert tiger_config.hwid == TigerPeripheralController.DEFAULT_HWID
 
     syncboard_config = SyncBoardPeripheralController.default_config()
     assert isinstance(syncboard_config, SerialPeripheralControllerConfig)
-    assert syncboard_config.binding == PeripheralControllerBindingType.SYNCBOARD
+    assert syncboard_config.binding == BindingType.SYNCBOARD
     assert syncboard_config.name == SyncBoardPeripheralController.DEFAULT_NAME
     assert syncboard_config.hwid == SyncBoardPeripheralController.DEFAULT_HWID
 
     kwr103_config = KWR103PeripheralController.default_config()
     assert isinstance(kwr103_config, SerialPeripheralControllerConfig)
-    assert kwr103_config.binding == PeripheralControllerBindingType.KWR103
+    assert kwr103_config.binding == BindingType.KWR103
     assert kwr103_config.name == KWR103PeripheralController.DEFAULT_NAME
     assert kwr103_config.hwid == KWR103PeripheralController.DEFAULT_HWID
 
 
+def test_tiger_peripheral_controller_owns_card_addresses():
+    tiger = FakeTigerController()
+    controller = TigerPeripheralController(tiger=tiger)
+
+    assert controller.card_address_crisp == CARD_ADDRESS_CRISP
+    assert controller.card_address_led == CARD_ADDRESS_LED
+    assert controller.card_address_filter_wheel == CARD_ADDRESS_FILTER_WHEEL
+
+    custom = TigerPeripheralController(
+        tiger=tiger,
+        card_address_crisp=3,
+        card_address_led=4,
+        card_address_filter_wheel=5,
+    )
+
+    assert custom.card_address_crisp == 3
+    assert custom.card_address_led == 4
+    assert custom.card_address_filter_wheel == 5
+
+
 def test_peripheral_controller_factory_creates_virtual_controller():
     controller = PeripheralControllerFactory.create(
-        PeripheralControllerConfig(binding=PeripheralControllerBindingType.VIRTUAL)
+        PeripheralControllerConfig(binding=BindingType.VIRTUAL)
     )
 
     assert isinstance(controller, VirtualPeripheralController)
@@ -195,17 +229,17 @@ def test_peripheral_controller_factory_creates_virtual_controller():
 def test_peripheral_controller_factory_requires_serial_config_for_serial_bindings():
     with pytest.raises(TypeError):
         PeripheralControllerFactory.create(
-            PeripheralControllerConfig(binding=PeripheralControllerBindingType.ASI_TIGER)
+            PeripheralControllerConfig(binding=BindingType.ASI_TIGER)
         )
 
     with pytest.raises(TypeError):
         PeripheralControllerFactory.create(
-            PeripheralControllerConfig(binding=PeripheralControllerBindingType.SYNCBOARD)
+            PeripheralControllerConfig(binding=BindingType.SYNCBOARD)
         )
 
     with pytest.raises(TypeError):
         PeripheralControllerFactory.create(
-            PeripheralControllerConfig(binding=PeripheralControllerBindingType.KWR103)
+            PeripheralControllerConfig(binding=BindingType.KWR103)
         )
 
 
@@ -219,7 +253,7 @@ def test_peripheral_controller_factory_passes_serial_config_to_asitiger(monkeypa
     monkeypatch.setattr(TigerPeripheralController, "from_serial_port", classmethod(fake_from_serial_port))
     controller = PeripheralControllerFactory.create(
         SerialPeripheralControllerConfig(
-            binding=PeripheralControllerBindingType.ASI_TIGER,
+            binding=BindingType.ASI_TIGER,
             name="Tiger",
             initialise=False,
             port="/dev/ttyUSB0",
@@ -240,7 +274,7 @@ def test_peripheral_controller_factory_rejects_asitiger_use_thread_option():
     with pytest.raises(TypeError):
         PeripheralControllerFactory.create(
             SerialPeripheralControllerConfig(
-                binding=PeripheralControllerBindingType.ASI_TIGER,
+                binding=BindingType.ASI_TIGER,
                 port="/dev/ttyUSB0",
             ),
             use_thread=True,
@@ -257,7 +291,7 @@ def test_peripheral_controller_factory_passes_serial_config_to_syncboard(monkeyp
     monkeypatch.setattr(SyncBoardPeripheralController, "from_serial_port", classmethod(fake_from_serial_port))
     controller = PeripheralControllerFactory.create(
         SerialPeripheralControllerConfig(
-            binding=PeripheralControllerBindingType.SYNCBOARD,
+            binding=BindingType.SYNCBOARD,
             name="Sync",
             initialise=False,
             port="/dev/ttyACM0",
@@ -284,7 +318,7 @@ def test_peripheral_controller_factory_passes_serial_config_to_kwr103(monkeypatc
     monkeypatch.setattr(KWR103PeripheralController, "from_serial_port", classmethod(fake_from_serial_port))
     controller = PeripheralControllerFactory.create(
         SerialPeripheralControllerConfig(
-            binding=PeripheralControllerBindingType.KWR103,
+            binding=BindingType.KWR103,
             name="KWR",
             initialise=False,
             port="/dev/ttyUSB2",

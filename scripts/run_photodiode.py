@@ -3,9 +3,11 @@ import matplotlib.pyplot as plt
 import sys
 import time
 
-sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/asitiger")
-sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo")
-sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/de-lta-rt")
+from pathlib import Path
+WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+sys.path.append(str(WORKSPACE_ROOT / "asitiger"))
+sys.path.append(str(WORKSPACE_ROOT / "evomachine_repo"))
+sys.path.append(str(WORKSPACE_ROOT / "de-lta-rt"))
 
 from evomachine.types import LEDType  # noqa
 from syncboard.syncboardcontroller import SyncBoardController  # noqa
