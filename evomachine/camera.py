@@ -111,9 +111,12 @@ class Camera(Peripheral):
         self._is_alive: bool = False
         self._check_initialised: bool = check_initialised
         self._check_alive: bool = check_alive
+        # TODO(Codex): Add one status flag here to track whether the camera is live streaming or not.
 
     @staticmethod
     def _validate_exposure_time(exposure_time: float | int) -> float | int:
+        # TODO(Codex): Many classes and enum define their own argument validation. Can we add one general function to utils, that e.g. takes one variable and the types it should be, and then checks the type?
+        # TODO(Codex): Similarly, can we have a more general utils function that checks ranges (depending on types), and use this everywhere in the code?
         """
         Return a validated positive exposure time.
 

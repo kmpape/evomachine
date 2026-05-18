@@ -10,8 +10,8 @@ from delta.rttypes import TrackingSetting
 
 from evomachine.exceptions import ConfigError, ErrorCode
 from evomachine.types import ChamberOrientationType, FilterWheelType, FocusAlgorithmType, LEDType
-from evomachine.config_types import ImageConfigType, ImageConfigTypeFactory, ObjectiveConfigType, \
-    ObjectiveConfigTypeFactory
+from evomachine.config_types import ConfigFocus, ConfigFocusFactory, ImageConfigType, ImageConfigTypeFactory, \
+    ObjectiveConfigType, ObjectiveConfigTypeFactory, SoftwareFocusConfig, SoftwareFocusConfigFactory
 
 # Path to large data storage to store logs and files
 EVOMACHINE_DIR: Path = Path(__file__).resolve().parents[1]

@@ -11,13 +11,13 @@ class BindingType(EvoType):
     """Binding identifiers supported by evomachine peripheral factories."""
 
     VIRTUAL = auto()
-    """Supported by peripheral controllers, stages, filter wheels, LED sources, DMDs, cameras, and autofocus."""
+    """Supported by peripheral controllers, stages, filter wheels, LED sources, DMDs, cameras, autofocus, and photodiodes."""
 
     ASI_TIGER = auto()
     """Supported by peripheral controllers, stages, filter wheels, LED sources, and autofocus."""
 
     SYNCBOARD = auto()
-    """Supported by peripheral controllers and LED sources."""
+    """Supported by peripheral controllers, LED sources, and photodiodes."""
 
     KWR103 = auto()
     """Supported by peripheral controllers and LED sources."""

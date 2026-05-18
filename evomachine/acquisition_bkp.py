@@ -29,7 +29,7 @@ from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, get_logger
 from evomachine.coordinates import Coordinate
 from evomachine.exceptions import CameraError, ConfigError, ErrorCode, ErrorContainer, \
     EvoMachineError, StageError, TigerError, SyncBoardError
-from evomachine.software_focus import get_focus_score, get_focus_score_is_good, get_focus_curve_type
+from evomachine.software_focus_bkp import get_focus_score, get_focus_score_is_good, get_focus_curve_type
 from evomachine.utils import EvoCroppingBox, list_serial_ports, get_psu_port
 from evomachine.types import AutoFocusStatusType, FilterWheelType, FocusAlgorithmType, LEDType, FocusStatusType, \
     FocusCurveType, FovDirectionType, PositiveScalingType

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from evomachine.coordinates import Coordinate, CoordinateBounds
 from evomachine.peripherals import Peripheral, PeripheralController, get_peripheral_controller
 from evomachine.bindings.binding_types import BindingType
-from evomachine.types import AxisType, FovDirectionType, PositiveScalingType
+from evomachine.types import AxisType, FovDirectionType, PositiveScalingType, UNKNOWN_POSITION_ID
 
 
 class Stage(Peripheral):
@@ -18,7 +18,7 @@ class Stage(Peripheral):
     """
 
     AXES = (AxisType.X, AxisType.Y, AxisType.Z)
-    UNKNOWN_POSITION_ID = -1
+    UNKNOWN_POSITION_ID = UNKNOWN_POSITION_ID
 
     def __init__(
             self,

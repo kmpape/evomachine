@@ -1,13 +1,19 @@
-from dataclasses import dataclass
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum, auto
 import numpy as np
 from pathlib import Path
+from typing import Any
 
 import delta
 from delta.utils import CroppingBox
 from delta.rttypes import TrackingSetting
 
-from evomachine.types import BrightnessType, ExposureType, FilterWheelType, FocusAlgorithmType, LEDType, ChamberOrientationType
+from evomachine.coordinates import Coordinate
+from evomachine.types import BrightnessType, ExposureType, FilterWheelType, FocusAlgorithmType, LEDType, \
+    ChamberOrientationType, UNKNOWN_POSITION_ID
 from evomachine.exceptions import ConfigError, ErrorCode
 
 
@@ -480,7 +486,9 @@ class ConfigCRISPFactory:
 
 
 @dataclass
-class ConfigFocus:
+class SoftwareFocusConfig:
+    """Configuration object for software focus scoring and scan parameters."""
+
     exposure_time: float | int
     "Exposure time for focusing in ms."
     focus_channel: LEDType   # TODO make list
@@ -502,10 +510,27 @@ class ConfigFocus:
     "Box to crop out image area to focus on."
     user_input: bool | None = True
     "Ask for user input before configuring and starting software focus."
+    focus_frames: ConfigFrame | list[ConfigFrame] | None = None
+    "Frame acquisition settings for future scoring frame capture support."
 
     @staticmethod
     def get_attr_from_str(attr_name: str, attr_value_str: str) \
             -> int | float | bool | FocusAlgorithmType | LEDType | None:
+        """
+        Convert a GUI string value into the type expected by one config field.
+
+        Parameters
+        ----------
+        attr_name
+            Name of the SoftwareFocusConfig attribute being updated.
+        attr_value_str
+            String value supplied by a GUI or text configuration source.
+
+        Returns
+        -------
+        int | float | bool | FocusAlgorithmType | LEDType | None
+            Parsed value suitable for validation with attr_is_valid().
+        """
         if attr_name == 'exposure_time':
             return float(attr_value_str)
         elif attr_name == 'user_input':
@@ -519,7 +544,22 @@ class ConfigFocus:
         else:
             return int(attr_value_str)
 
-    def attr_is_valid(self, attr_name: str, attr_value) -> bool:
+    def attr_is_valid(self, attr_name: str, attr_value: Any) -> bool:
+        """
+        Return whether a candidate value is valid for one config field.
+
+        Parameters
+        ----------
+        attr_name
+            Name of the SoftwareFocusConfig attribute being checked.
+        attr_value
+            Candidate value for the attribute.
+
+        Returns
+        -------
+        bool
+            True when attr_value satisfies the field validation rules.
+        """
         if attr_name == 'exposure_time':
             return (isinstance(attr_value, int) or isinstance(attr_value, float)) and attr_value >= 0.01
         elif attr_name == 'focus_channel':
@@ -535,10 +575,48 @@ class ConfigFocus:
                 and (attr_value >= 0) and (attr_value <= 29)
         elif attr_name == 'user_input':
             return isinstance(attr_value, bool)
+        elif attr_name == 'focus_frames':
+            return self._focus_frames_are_valid(attr_value)
         else:
             return False
 
-    def __post_init__(self):
+    @staticmethod
+    def _focus_frames_are_valid(focus_frames: ConfigFrame | list[ConfigFrame] | None) -> bool:
+        """
+        Return whether focus frame settings have a supported shape.
+
+        Parameters
+        ----------
+        focus_frames
+            None, one ConfigFrame, or a list of ConfigFrame objects.
+
+        Returns
+        -------
+        bool
+            True when focus_frames is None, a ConfigFrame, or a list of
+            ConfigFrame objects.
+        """
+        if focus_frames is None:
+            return True
+        if isinstance(focus_frames, ConfigFrame):
+            return True
+        if isinstance(focus_frames, list):
+            return all(isinstance(frame, ConfigFrame) for frame in focus_frames)
+        return False
+
+    def __post_init__(self) -> None:
+        """
+        Validate software focus configuration after construction.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            The dataclass fields are validated in place.
+        """
         if not self.attr_is_valid('step_size', self.step_size):
             raise TypeError(f"step_size must be an int in [1, rel_range={self.rel_range}]. Provided {self.step_size}.")
         if not self.attr_is_valid('rel_range', self.rel_range):
@@ -551,12 +629,77 @@ class ConfigFocus:
             raise TypeError(f"brightness must be an int or float in [0, 29]. Provided {self.brightness}.")
         if not self.attr_is_valid('algorithm', self.algorithm):
             raise TypeError(f"algorithm must be an instance of FocusAlgorithmType. Provided {self.algorithm}.")
+        if not self.attr_is_valid('focus_frames', self.focus_frames):
+            raise TypeError("focus_frames must be None, ConfigFrame, or list[ConfigFrame].")
 
-    def copy(self):
-        return ConfigFocus(**self.__dict__)
+    def copy(self) -> SoftwareFocusConfig:
+        """
+        Return a shallow copy of this software focus configuration.
 
-    def __str__(self):
-        s = ["ConfigFocus"]
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        SoftwareFocusConfig
+            New config object with the same field values.
+        """
+        return SoftwareFocusConfig(**self.__dict__)
+
+    def updated(self, **kwargs: Any) -> SoftwareFocusConfig:
+        """
+        Return a copy with selected fields updated and validated.
+
+        Parameters
+        ----------
+        **kwargs
+            Attribute names and replacement values for the returned config.
+
+        Returns
+        -------
+        SoftwareFocusConfig
+            New validated config with the requested updates applied.
+        """
+        unknown_keys = [key for key in kwargs if key not in self.__dict__]
+        if unknown_keys:
+            raise ValueError(f"SoftwareFocusConfig.updated: unknown fields {unknown_keys}.")
+        values = dict(self.__dict__)
+        values.update(kwargs)
+        return SoftwareFocusConfig(**values)
+
+    def update_from_mapping(self, updates: dict[str, Any]) -> SoftwareFocusConfig:
+        """
+        Return a copy updated from a mapping of field values.
+
+        Parameters
+        ----------
+        updates
+            Mapping from SoftwareFocusConfig field names to replacement values.
+
+        Returns
+        -------
+        SoftwareFocusConfig
+            New validated config with the requested updates applied.
+        """
+        if not isinstance(updates, dict):
+            raise TypeError(f"SoftwareFocusConfig.update_from_mapping: updates must be dict, received {type(updates)}.")
+        return self.updated(**updates)
+
+    def __str__(self) -> str:
+        """
+        Return a multi-line display string for this config.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        str
+            Human-readable configuration summary.
+        """
+        s = ["SoftwareFocusConfig"]
         for i, (k, v) in enumerate(self.__dict__.items()):
             if i < len(self.__dict__) - 1:
                 s.append(f" ├─ {k}: {v}")
@@ -565,10 +708,27 @@ class ConfigFocus:
         return "\n".join(s)
 
 
-class ConfigFocusFactory:
+ConfigFocus = SoftwareFocusConfig
+
+
+class SoftwareFocusConfigFactory:
+    """Factory for default SoftwareFocusConfig instances."""
+
     @staticmethod
-    def default_config() -> ConfigFocus:
-        return ConfigFocus(
+    def default_config() -> SoftwareFocusConfig:
+        """
+        Return the default software focus configuration.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        SoftwareFocusConfig
+            Default focus configuration for the current application defaults.
+        """
+        return SoftwareFocusConfig(
             exposure_time=200,
             focus_channel=LEDType.LED_450_NM,
             brightness=29,
@@ -578,14 +738,18 @@ class ConfigFocusFactory:
         )
 
 
+class ConfigFocusFactory(SoftwareFocusConfigFactory):
+    """Compatibility alias factory for legacy ConfigFocus callers."""
+
+
 @dataclass
 class ConfigCamera:
     objective: ObjectiveConfigType
     "Objective type. See ObjectiveType."
     image: ImageConfigType
     "Image configuration. See ImageConfig."
-    focus: ConfigFocus
-    "Focus configuration. See ConfigFocus."
+    focus: SoftwareFocusConfig
+    "Focus configuration. See SoftwareFocusConfig."
     autofocus: ConfigCRISP
     "Autofocus configuration. See ConfigCRISP."
     leds: list[LEDType]
@@ -631,8 +795,8 @@ class ConfigCamera:
             raise TypeError(f"objective must be a ObjectiveType object. Provided {self.objective}.")
         if not isinstance(self.image, ImageConfigType):
             raise TypeError(f"image must be a ImageConfigType object. Provided {self.image}.")
-        if not isinstance(self.focus, ConfigFocus):
-            raise TypeError(f"focus must be a ConfigFocus object. Provided {self.focus}.")
+        if not isinstance(self.focus, SoftwareFocusConfig):
+            raise TypeError(f"focus must be a SoftwareFocusConfig object. Provided {self.focus}.")
         if not isinstance(self.autofocus, ConfigCRISP):
             raise TypeError(f"autofocus must be a ConfigCRISP object. Provided {self.autofocus}.")
         if not (isinstance(self.leds, list) and all(isinstance(led, LEDType) for led in self.leds))\
@@ -694,6 +858,98 @@ class ConfigCameraFactory:
 
 
 @dataclass
+class FileNameConfig:
+    """Configuration object for FileManager output paths and filename patterns."""
+
+    directory: Path
+    filename_pattern: str = "{channel}_P{position_id}_X{x}_Y{y}_Z{z}_F{filter_wheel}_{timestamp}{suffix}.{extension}"
+    extension: str = "tiff"
+    create_directory: bool = True
+
+    SUPPORTED_EXTENSIONS = {"tif", "tiff", "png", "jpg", "jpeg"}
+
+    def __post_init__(self) -> None:
+        """
+        Validate file naming configuration after construction.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            The dataclass fields are validated in place.
+        """
+        if isinstance(self.directory, str):
+            self.directory = Path(self.directory)
+        if not isinstance(self.directory, Path):
+            raise TypeError(f"FileNameConfig: directory must be Path or str, received {type(self.directory)}.")
+        if not isinstance(self.filename_pattern, str):
+            raise TypeError(
+                f"FileNameConfig: filename_pattern must be str, received {type(self.filename_pattern)}."
+            )
+        if self.filename_pattern == "":
+            raise ValueError("FileNameConfig: filename_pattern must not be empty.")
+        if not isinstance(self.extension, str):
+            raise TypeError(f"FileNameConfig: extension must be str, received {type(self.extension)}.")
+        self.extension = self.extension.lower().lstrip(".")
+        if self.extension not in self.SUPPORTED_EXTENSIONS:
+            raise ValueError(
+                f"FileNameConfig: extension must be one of {sorted(self.SUPPORTED_EXTENSIONS)}, "
+                f"received {self.extension}."
+            )
+        if not isinstance(self.create_directory, bool):
+            raise TypeError(
+                f"FileNameConfig: create_directory must be bool, received {type(self.create_directory)}."
+            )
+
+    def updated(self, **kwargs: Any) -> FileNameConfig:
+        """
+        Return a copy with selected fields updated and validated.
+
+        Parameters
+        ----------
+        **kwargs
+            Attribute names and replacement values for the returned config.
+
+        Returns
+        -------
+        FileNameConfig
+            New validated file name configuration.
+        """
+        unknown_keys = [key for key in kwargs if key not in self.__dict__]
+        if unknown_keys:
+            raise ValueError(f"FileNameConfig.updated: unknown fields {unknown_keys}.")
+        values = dict(self.__dict__)
+        values.update(kwargs)
+        return FileNameConfig(**values)
+
+    def update_from_mapping(self, updates: dict[str, Any]) -> FileNameConfig:
+        """
+        Return a copy updated from a mapping of field values.
+
+        Parameters
+        ----------
+        updates
+            Mapping from FileNameConfig field names to replacement values.
+
+        Returns
+        -------
+        FileNameConfig
+            New validated file name configuration.
+        """
+        if not isinstance(updates, dict):
+            raise TypeError(f"FileNameConfig.update_from_mapping: updates must be dict, received {type(updates)}.")
+        return self.updated(**updates)
+
+
+# TODO(Codex): Add the following attributes to the ConfigFrame and refactor where needed
+# - The ConfigFrame needs argument position_ID int which can also be UNKNOWN_ID to start with. Stage defines an UNKNOWN_ID. Define this UNKONWN_ID in types.py and refactor where it is needed.
+# - Add an attribute coordinate that is usually initialised with None coordinate. This and the position_ID will be filled after taking an image.
+# - Add a timestamp argument, one for creation and one for execution.
+# - Make a ConfigFrameFactory somewhere.
+@dataclass
 class ConfigFrame:
     """
     ConfigFrame is used when taking pictures. If any attribute is None, the corresponding hardware/setting is not activated.
@@ -705,6 +961,14 @@ class ConfigFrame:
     "Filter wheel type."
     exposure: ExposureType | None
     "Camera exposure."
+    position_id: int = UNKNOWN_POSITION_ID
+    "Registered position ID for the frame, or UNKNOWN_POSITION_ID when unknown."
+    coordinate: Coordinate | None = None
+    "Stage coordinate recorded for the frame, if known."
+    creation_time: datetime = field(default_factory=datetime.now)
+    "Time when this frame configuration was created."
+    execution_time: datetime | None = None
+    "Time when this frame was acquired or saved, if known."
     
     # Runtime settings
     force_settings: bool = False
@@ -748,7 +1012,58 @@ class ConfigFrame:
                 raise TypeError(f"ConfigFrame: exposure must be numeric or None, received {type(self.exposure)}.")
             if not 1 <= float(self.exposure) <= 1000:
                 raise ValueError(f"ConfigFrame: exposure must be in [1, 1000], received {self.exposure}.")
+        if not isinstance(self.position_id, int) or isinstance(self.position_id, bool):
+            raise TypeError(f"ConfigFrame: position_id must be int, received {type(self.position_id)}.")
+        if self.coordinate is not None and not isinstance(self.coordinate, Coordinate):
+            raise TypeError(f"ConfigFrame: coordinate must be Coordinate or None, received {type(self.coordinate)}.")
+        if not isinstance(self.creation_time, datetime):
+            raise TypeError(f"ConfigFrame: creation_time must be datetime, received {type(self.creation_time)}.")
+        if self.execution_time is not None and not isinstance(self.execution_time, datetime):
+            raise TypeError(
+                f"ConfigFrame: execution_time must be datetime or None, received {type(self.execution_time)}."
+            )
         for field_name in ["force_settings", "disable_leds_before", "disable_leds_after", "reset_leds_after"]:
             if not isinstance(getattr(self, field_name), bool):
                 raise TypeError(f"ConfigFrame: {field_name} must be bool, received {type(getattr(self, field_name))}.")
+
+
+class ConfigFrameFactory:
+    """Factory for common ConfigFrame instances."""
+
+    @staticmethod
+    def default(
+            leds: dict[LEDType, BrightnessType] | None = None,
+            filter_wheel: FilterWheelType | None = None,
+            exposure: ExposureType | None = None,
+            position_id: int = UNKNOWN_POSITION_ID,
+            coordinate: Coordinate | None = None,
+    ) -> ConfigFrame:
+        """
+        Return a ConfigFrame with common defaults.
+
+        Parameters
+        ----------
+        leds
+            Optional LED brightness settings.
+        filter_wheel
+            Optional filter wheel setting.
+        exposure
+            Optional exposure setting.
+        position_id
+            Registered position ID or UNKNOWN_POSITION_ID.
+        coordinate
+            Optional stage coordinate associated with the frame.
+
+        Returns
+        -------
+        ConfigFrame
+            Validated frame configuration.
+        """
+        return ConfigFrame(
+            leds=leds,
+            filter_wheel=filter_wheel,
+            exposure=exposure,
+            position_id=position_id,
+            coordinate=coordinate,
+        )
     
