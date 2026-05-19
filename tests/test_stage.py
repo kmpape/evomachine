@@ -5,7 +5,7 @@ from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralCon
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
 from evomachine.bindings.virtual.stage import VirtualStage
 from evomachine.coordinates import Coordinate, CoordinateBounds
-from evomachine.stage import StageConfig, StageFactory
+from evomachine.peripherals.stage import StageConfig, StageFactory
 from evomachine.bindings.binding_types import BindingType
 from evomachine.types import AxisType, FovDirectionType
 

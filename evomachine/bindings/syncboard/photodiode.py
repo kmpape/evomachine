@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from evomachine.bindings.syncboard.peripheralcontroller import SyncBoardPeripheralController
-from evomachine.photodiode import Photodiode, PhotodiodeReadingRange
+from evomachine.peripherals.photodiode import Photodiode, PhotodiodeReadingRange
 
 
 class SyncBoardPhotodiode(Photodiode):

@@ -7,7 +7,7 @@ import pytest
 
 from evomachine.bindings.binding_types import BindingType
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
-from evomachine.camera import CameraConfig, CameraFactory
+from evomachine.peripherals.camera import CameraConfig, CameraFactory
 from evomachine.config_types import ImageConfigType
 
 

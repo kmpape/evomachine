@@ -6,7 +6,7 @@ from enum import Enum, auto
 import json
 import numpy as np
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import delta
 from delta.utils import CroppingBox
@@ -16,6 +16,9 @@ from evomachine.coordinates import Coordinate
 from evomachine.types import BrightnessType, EvoType, ExposureType, FilterWheelType, FocusAlgorithmType, LEDType, \
     ChamberOrientationType, UNKNOWN_POSITION_ID
 from evomachine.exceptions import ConfigError, ErrorCode
+
+if TYPE_CHECKING:
+    from evomachine.acquisition import FrameAcquisitionSettings
 
 
 def _get_evomachine_dir() -> Path:
@@ -484,6 +487,139 @@ class ConfigCRISPFactory:
 
         tiger_config = TigerAutofocusConfigFactory.default_oil_config()
         return ConfigCRISP(**tiger_config.__dict__)
+
+
+@dataclass
+class SoftwareFocusConfigNew:
+    """Configuration object for the new software focus acquisition path."""
+
+    focus_frames: list["FrameMetaData"]
+    "Frame acquisition metadata captured at each Z coordinate."
+    acquisition_settings: "FrameAcquisitionSettings | None"
+    "Optional frame acquisition settings used for software focus captures."
+    rel_range: int
+    "Relative Z scan range around the current stage Z coordinate."
+    step_size: int
+    "Z scan step size."
+    algorithm: FocusAlgorithmType
+    "Focus scoring algorithm."
+    algorithm_kwargs: dict[str, Any] = field(default_factory=dict)
+    "Keyword arguments forwarded to the focus algorithm factory."
+    cropping_box: CroppingBox | list[CroppingBox] | None = None
+    "Optional crop or crops used for scoring."
+
+    def __post_init__(self) -> None:
+        """
+        Validate new software focus configuration.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            The dataclass fields are validated in place.
+        """
+        if not isinstance(self.focus_frames, list) or not self.focus_frames:
+            raise TypeError("SoftwareFocusConfigNew: focus_frames must be a non-empty list[FrameMetaData].")
+        if not all(isinstance(frame, FrameMetaData) for frame in self.focus_frames):
+            raise TypeError("SoftwareFocusConfigNew: every focus frame must be FrameMetaData.")
+        if self.acquisition_settings is not None:
+            from evomachine.acquisition import FrameAcquisitionSettings
+
+            if not isinstance(self.acquisition_settings, FrameAcquisitionSettings):
+                raise TypeError(
+                    "SoftwareFocusConfigNew: acquisition_settings must be FrameAcquisitionSettings or None."
+                )
+        if not isinstance(self.rel_range, int) or isinstance(self.rel_range, bool) or not 0 < self.rel_range < 2000:
+            raise TypeError("SoftwareFocusConfigNew: rel_range must be int in (0, 2000).")
+        if not isinstance(self.step_size, int) or isinstance(self.step_size, bool) or not 0 < self.step_size <= self.rel_range:
+            raise TypeError("SoftwareFocusConfigNew: step_size must be int in [1, rel_range].")
+        if not isinstance(self.algorithm, FocusAlgorithmType):
+            raise TypeError("SoftwareFocusConfigNew: algorithm must be FocusAlgorithmType.")
+        if not isinstance(self.algorithm_kwargs, dict):
+            raise TypeError("SoftwareFocusConfigNew: algorithm_kwargs must be dict[str, Any].")
+        if not all(isinstance(key, str) for key in self.algorithm_kwargs):
+            raise TypeError("SoftwareFocusConfigNew: algorithm_kwargs keys must be str.")
+        self.cropping_box = self._validate_cropping_box(self.cropping_box)
+
+    @staticmethod
+    def _validate_cropping_box(
+            cropping_box: CroppingBox | list[CroppingBox] | None,
+    ) -> CroppingBox | list[CroppingBox] | None:
+        """
+        Validate a scoring crop selection.
+
+        Parameters
+        ----------
+        cropping_box
+            None, one CroppingBox, or a non-empty list of CroppingBox objects.
+
+        Returns
+        -------
+        CroppingBox | list[CroppingBox] | None
+            Validated crop selection.
+        """
+        if cropping_box is None or isinstance(cropping_box, CroppingBox):
+            return cropping_box
+        if isinstance(cropping_box, list):
+            if not cropping_box:
+                raise ValueError("SoftwareFocusConfigNew: cropping_box list must not be empty.")
+            if not all(isinstance(box, CroppingBox) for box in cropping_box):
+                raise TypeError("SoftwareFocusConfigNew: every cropping_box entry must be CroppingBox.")
+            return list(cropping_box)
+        raise TypeError("SoftwareFocusConfigNew: cropping_box must be CroppingBox, list[CroppingBox], or None.")
+
+    def copy(self) -> "SoftwareFocusConfigNew":
+        """
+        Return a shallow copy of this configuration.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        SoftwareFocusConfigNew
+            New config object with the same field values.
+        """
+        return SoftwareFocusConfigNew(**self.__dict__)
+
+
+class SoftwareFocusConfigNewFactory:
+    """Factory for new software focus configuration defaults."""
+
+    @staticmethod
+    def default_config() -> SoftwareFocusConfigNew:
+        """
+        Return the default new software focus configuration.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        SoftwareFocusConfigNew
+            Default config for new acquisition-backed software focus.
+        """
+        return SoftwareFocusConfigNew(
+            focus_frames=[
+                FrameMetaData(
+                    frame_id=-1,
+                    leds={LEDType.LED_450_NM: 29},
+                    filter_wheel=None,
+                    exposure=200,
+                )
+            ],
+            acquisition_settings=None,
+            rel_range=50,
+            step_size=5,
+            algorithm=FocusAlgorithmType.STEEL,
+            algorithm_kwargs={"rowshift": 25, "colshift": 0},
+            cropping_box=CroppingBox(xtl=200, xbr=3000, ytl=300, ybr=2900),
+        )
 
 
 @dataclass
@@ -959,6 +1095,8 @@ class FrameMetaData:
     "Filter wheel type."
     exposure: ExposureType | None
     "Camera exposure."
+    dmd_pattern: np.ndarray | None = None
+    "Optional per-frame DMD pattern to display before acquisition."
     position_id: int = UNKNOWN_POSITION_ID
     "Registered position ID for the frame, or UNKNOWN_POSITION_ID when unknown."
     coordinate: Coordinate | None = None
@@ -1008,6 +1146,10 @@ class FrameMetaData:
                 raise TypeError(f"FrameMetaData: exposure must be numeric or None, received {type(self.exposure)}.")
             if not 1 <= float(self.exposure) <= 1000:
                 raise ValueError(f"FrameMetaData: exposure must be in [1, 1000], received {self.exposure}.")
+        if self.dmd_pattern is not None and not isinstance(self.dmd_pattern, np.ndarray):
+            raise TypeError(
+                f"FrameMetaData: dmd_pattern must be np.ndarray or None, received {type(self.dmd_pattern)}."
+            )
         if not isinstance(self.position_id, int) or isinstance(self.position_id, bool):
             raise TypeError(f"FrameMetaData: position_id must be int, received {type(self.position_id)}.")
         if self.coordinate is not None and not isinstance(self.coordinate, Coordinate):
@@ -1053,6 +1195,7 @@ class FrameMetaData:
             },
             "filter_wheel": self._enum_to_metadata(self.filter_wheel),
             "exposure": self.exposure,
+            "dmd_pattern": self._dmd_pattern_to_metadata(),
             "position_id": self.position_id,
             "coordinate": None if self.coordinate is None else self.coordinate.to_dict(),
             "creation_time": self.creation_time.isoformat(),
@@ -1064,6 +1207,40 @@ class FrameMetaData:
         except TypeError as error:
             raise TypeError("FrameMetaData.to_metadata_dict: metadata must be JSON serializable.") from error
         return metadata
+
+    def __str__(self) -> str:
+        """
+        Return a readable summary of this frame metadata.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        str
+            Human-readable metadata summary. The DMD pattern is represented by
+            presence, shape, and dtype rather than by array contents.
+        """
+        dmd_pattern = self._dmd_pattern_to_metadata()
+        values = {
+            "frame_id": self.frame_id,
+            "leds": self.leds,
+            "filter_wheel": self.filter_wheel,
+            "exposure": self.exposure,
+            "dmd_pattern": dmd_pattern,
+            "position_id": self.position_id,
+            "coordinate": self.coordinate,
+            "creation_time": self.creation_time,
+            "execution_time": self.execution_time,
+            "callback_id": self.callback_id,
+            "additional_metadata": self.additional_metadata,
+        }
+        summary = ["FrameMetaData"]
+        for index, (key, value) in enumerate(values.items()):
+            prefix = " └─ " if index == len(values) - 1 else " ├─ "
+            summary.append(f"{prefix}{key}: {value}")
+        return "\n".join(summary)
 
     @staticmethod
     def _enum_to_metadata(value: EvoType | None) -> dict[str, Any] | None:
@@ -1083,6 +1260,28 @@ class FrameMetaData:
         if value is None:
             return None
         return {"name": value.name, "value": value.value}
+
+    def _dmd_pattern_to_metadata(self) -> dict[str, Any] | None:
+        """
+        Return a compact metadata summary for the DMD pattern.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        dict[str, Any] | None
+            None when no DMD pattern is configured, otherwise a JSON-safe
+            summary containing presence, shape, and dtype.
+        """
+        if self.dmd_pattern is None:
+            return None
+        return {
+            "present": True,
+            "shape": list(self.dmd_pattern.shape),
+            "dtype": str(self.dmd_pattern.dtype),
+        }
 
 
 class FrameMetaDataFactory:
@@ -1114,6 +1313,7 @@ class FrameMetaDataFactory:
             leds: dict[LEDType, BrightnessType] | None = None,
             filter_wheel: FilterWheelType | None = None,
             exposure: ExposureType | None = None,
+            dmd_pattern: np.ndarray | None = None,
             position_id: int = UNKNOWN_POSITION_ID,
             coordinate: Coordinate | None = None,
             frame_id: int | None = None,
@@ -1131,6 +1331,8 @@ class FrameMetaDataFactory:
             Optional filter wheel setting.
         exposure
             Optional exposure setting.
+        dmd_pattern
+            Optional per-frame DMD pattern displayed before acquisition.
         position_id
             Registered position ID or UNKNOWN_POSITION_ID.
         coordinate
@@ -1155,6 +1357,7 @@ class FrameMetaDataFactory:
             leds=leds,
             filter_wheel=filter_wheel,
             exposure=exposure,
+            dmd_pattern=dmd_pattern,
             position_id=position_id,
             coordinate=coordinate,
             callback_id=callback_id,

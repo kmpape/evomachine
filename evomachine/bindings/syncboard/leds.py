@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from evomachine.bindings.syncboard.peripheralcontroller import SyncBoardPeripheralController
-from evomachine.leds import LedSource
+from evomachine.peripherals.leds import LedSource
 from evomachine.types import BrightnessType, LEDType
 
 

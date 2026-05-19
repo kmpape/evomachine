@@ -26,7 +26,7 @@ from evomachine.coordinates import Coordinate
 if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMDControl
 else:
-    from evomachine.dmd import DMDControl
+    from evomachine.dmd_pygame import DMDControl
 from evomachine.exceptions import ErrorCode, ErrorContainer, ConfigError
 from evomachine.strategy import AbstractStrategy
 from evomachine.utils import EvoCroppingBox, normalise_frame, rotation_correction, multipos_rotation_correction, \

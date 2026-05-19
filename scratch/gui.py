@@ -45,7 +45,7 @@ from evomachine.coordinates import Coordinate, CoordinateFactory
 if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMDControl
 else:
-    from evomachine.dmd import DMDControl
+    from evomachine.dmd_pygame import DMDControl
 from evomachine.exceptions import ConfigError, TigerError
 from evomachine.types import FocusAlgorithmType, LEDType
 

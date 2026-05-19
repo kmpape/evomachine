@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
-from evomachine.leds import LedSource
+from evomachine.peripherals.leds import LedSource
 from evomachine.types import BrightnessType, LEDType
 
 

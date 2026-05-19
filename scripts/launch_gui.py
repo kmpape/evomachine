@@ -23,7 +23,7 @@ from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProc
 if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMDControl  # noqa
 else:
-    from evomachine.dmd import DMDControl  # noqa
+    from evomachine.dmd_pygame import DMDControl  # noqa
     import pygame  # noqa
 from evomachine.coordinates import Coordinate
 from evomachine.types import AutoFocusStatusType, FilterWheelType, FocusAlgorithmType, LEDType, FocusStatusType, \

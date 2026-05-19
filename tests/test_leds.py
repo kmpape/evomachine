@@ -10,7 +10,7 @@ from evomachine.bindings.syncboard.leds import FakeSyncBoardController, SyncBoar
 from evomachine.bindings.syncboard.peripheralcontroller import SyncBoardPeripheralController
 from evomachine.bindings.virtual.leds import VirtualLedSource
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
-from evomachine.leds import LedConfig, LedFactory, LedManager, LedSource
+from evomachine.peripherals.leds import LedConfig, LedFactory, LedManager, LedSource
 from evomachine.peripherals import PeripheralController
 from evomachine.bindings.binding_types import BindingType
 from evomachine.types import BrightnessType, LEDType
@@ -120,7 +120,7 @@ def test_led_source_rejects_unavailable_led():
 
 def test_base_timed_led_starts_timer_and_callback_disables(monkeypatch):
     FakeTimer.instances = []
-    monkeypatch.setattr("evomachine.leds.threading.Timer", FakeTimer)
+    monkeypatch.setattr("evomachine.peripherals.leds.threading.Timer", FakeTimer)
     source = make_virtual_source()
 
     source.set_led(LEDType.LED_450_NM, brightness=25, duration=500)
@@ -137,7 +137,7 @@ def test_base_timed_led_starts_timer_and_callback_disables(monkeypatch):
 
 def test_disabling_led_cancels_existing_timer(monkeypatch):
     FakeTimer.instances = []
-    monkeypatch.setattr("evomachine.leds.threading.Timer", FakeTimer)
+    monkeypatch.setattr("evomachine.peripherals.leds.threading.Timer", FakeTimer)
     source = make_virtual_source()
 
     source.set_led(LEDType.LED_450_NM, brightness=25, duration=500)
@@ -239,7 +239,7 @@ def test_tiger_led_source_sends_full_brightness_mapping():
 
 def test_syncboard_led_source_uses_native_duration_and_intensity(monkeypatch):
     FakeTimer.instances = []
-    monkeypatch.setattr("evomachine.leds.threading.Timer", FakeTimer)
+    monkeypatch.setattr("evomachine.peripherals.leds.threading.Timer", FakeTimer)
     syncboard = FakeSyncBoardController()
     peripheral_ctrl = SyncBoardPeripheralController(syncboard=syncboard)
     peripheral_ctrl.initialise()

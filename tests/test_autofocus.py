@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from evomachine.autofocus import AutofocusConfig, AutofocusFactory
+from evomachine.peripherals.autofocus import AutofocusConfig, AutofocusFactory
 from evomachine.bindings.asitiger.autofocus import (
     CRISPState,
     FakeTigerAutofocusController,

@@ -4,7 +4,7 @@ from evomachine.bindings.asitiger.filterwheel import FakeTigerFilterWheelControl
 from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
 from evomachine.bindings.virtual.filterwheel import VirtualFilterWheel
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
-from evomachine.filterwheel import FilterWheelConfig, FilterWheelFactory
+from evomachine.peripherals.filterwheel import FilterWheelConfig, FilterWheelFactory
 from evomachine.bindings.binding_types import BindingType
 from evomachine.types import FilterWheelType
 

@@ -1,6 +1,6 @@
 from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
 from evomachine.coordinates import Coordinate
-from evomachine.stage import Stage
+from evomachine.peripherals.stage import Stage
 
 
 class FakeTigerStageController:

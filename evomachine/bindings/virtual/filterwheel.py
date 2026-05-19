@@ -1,5 +1,5 @@
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
-from evomachine.filterwheel import FilterWheel
+from evomachine.peripherals.filterwheel import FilterWheel
 from evomachine.types import FilterWheelType
 
 

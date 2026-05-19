@@ -13,7 +13,7 @@ from evomachine.config import get_logger, ConfigCameraFactory, ConfigImageProces
 if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMD_WIDTH_HEIGHT
 else:
-    from evomachine.dmd import DMD_WIDTH_HEIGHT
+    from evomachine.config import DMD_WIDTH_HEIGHT
 from evomachine.exceptions import EvoMachineError
 from evomachine.types import LEDType, FilterWheelType
 from evomachine.strategy import AbstractStrategy

@@ -5,7 +5,7 @@ from evomachine.bindings.syncboard.peripheralcontroller import SyncBoardPeripher
 from evomachine.bindings.syncboard.photodiode import SyncBoardPhotodiode
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
 from evomachine.bindings.virtual.photodiode import VirtualPhotodiode
-from evomachine.photodiode import (
+from evomachine.peripherals.photodiode import (
     PhotodiodeConfig,
     PhotodiodeFactory,
     PhotodiodeReadingRange,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from evomachine.bindings.em_dmd_window.peripheralcontroller import EmDmdWindowPeripheralController
-from evomachine.dmd import Dmd
+from evomachine.peripherals.dmd import Dmd
 
 
 class EmDmdWindowDmd(Dmd):

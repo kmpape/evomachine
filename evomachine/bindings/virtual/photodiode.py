@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
-from evomachine.photodiode import Photodiode, PhotodiodeReadingRange
+from evomachine.peripherals.photodiode import Photodiode, PhotodiodeReadingRange
 
 
 class VirtualPhotodiode(Photodiode):

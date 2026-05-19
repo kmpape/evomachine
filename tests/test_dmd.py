@@ -10,7 +10,7 @@ from evomachine.bindings.em_dmd_window.peripheralcontroller import EmDmdWindowPe
 from evomachine.bindings.pygame.dmd import PygameDmd
 from evomachine.bindings.pygame.peripheralcontroller import PygameDmdPeripheralController
 from evomachine.bindings.virtual.dmd import VirtualDmd, VirtualDmdPeripheralController
-from evomachine.dmd import Dmd, DmdConfig, DmdFactory
+from evomachine.peripherals.dmd import Dmd, DmdConfig, DmdFactory
 from evomachine.peripherals import PeripheralController, SocketPeripheralController
 from evomachine.bindings.binding_types import BindingType
 

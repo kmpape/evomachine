@@ -3,18 +3,17 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
-from evomachine.camera import Camera
+from evomachine.peripherals.camera import Camera
 from evomachine.config_types import Frame, FrameMetaData
 from evomachine.coordinates import Coordinate
-from evomachine.dmd import Dmd
+from evomachine.peripherals.dmd import Dmd
 from evomachine.filemanager import FileManager
-from evomachine.filterwheel import FilterWheel
-from evomachine.leds import LedManager, LedState
-from evomachine.stage import Stage
+from evomachine.peripherals.filterwheel import FilterWheel
+from evomachine.peripherals.leds import LedManager, LedState
+from evomachine.peripherals.stage import Stage
 from evomachine.types import LEDType
 
 
@@ -32,8 +31,6 @@ class FrameAcquisitionSettings:
     "Return camera-normalised image data when the camera supports it."
     illuminate_dmd: bool = True
     "Display DMD illumination before each captured frame when a DMD is available."
-    dmd_image: np.ndarray | None = None
-    "Optional DMD image to display instead of full illumination."
     clear_dmd_after: bool = False
     "Blank the DMD after the acquisition call completes."
     restore_leds_after: bool = True
@@ -64,8 +61,6 @@ class FrameAcquisitionSettings:
             )
         if self.suffix is not None and not isinstance(self.suffix, str):
             raise TypeError(f"FrameAcquisitionSettings: suffix must be str or None, received {type(self.suffix)}.")
-        if self.dmd_image is not None and not isinstance(self.dmd_image, np.ndarray):
-            raise TypeError(f"FrameAcquisitionSettings: dmd_image must be np.ndarray or None, received {type(self.dmd_image)}.")
 
 
 class FrameAcquisitionManager:
@@ -79,6 +74,7 @@ class FrameAcquisitionManager:
             dmd: Dmd | None = None,
             file_manager: FileManager | None = None,
             stage: Stage | None = None,
+            default_settings: FrameAcquisitionSettings | None = None,
     ):
         """
         Initialise a frame acquisition manager.
@@ -97,6 +93,9 @@ class FrameAcquisitionManager:
             Optional file manager used when acquisition settings request saving.
         stage
             Optional stage used by Z-stack acquisition.
+        default_settings
+            Optional default settings used when take_frame() and take_z_stack()
+            are called without per-call settings.
 
         Returns
         -------
@@ -108,6 +107,39 @@ class FrameAcquisitionManager:
         self.dmd = dmd
         self.file_manager = file_manager
         self.stage = stage
+        self.default_settings = self._validate_settings(settings=default_settings)
+
+    def update_settings(
+            self,
+            settings: FrameAcquisitionSettings | None = None,
+            **updates,
+    ) -> FrameAcquisitionSettings:
+        """
+        Replace or update the default frame acquisition settings.
+
+        Parameters
+        ----------
+        settings
+            Optional complete replacement settings. If None, updates are applied
+            to the current default settings.
+        **updates
+            FrameAcquisitionSettings fields to update on the current defaults.
+
+        Returns
+        -------
+        FrameAcquisitionSettings
+            The new default settings object.
+        """
+        if settings is not None and updates:
+            raise ValueError("FrameAcquisitionManager.update_settings: provide settings or updates, not both.")
+        if settings is not None:
+            self.default_settings = self._validate_settings(settings=settings)
+            return self.default_settings
+        try:
+            self.default_settings = replace(self.default_settings, **updates)
+        except TypeError as error:
+            raise ValueError("FrameAcquisitionManager.update_settings: unknown settings field.") from error
+        return self.default_settings
 
     def take_frame(
             self,
@@ -123,7 +155,9 @@ class FrameAcquisitionManager:
             One FrameMetaData object or a list of FrameMetaData objects to
             acquire in order.
         settings
-            Optional runtime acquisition settings.
+            Optional runtime acquisition settings. When omitted, the manager's
+            default settings are used. When supplied, settings replace defaults
+            for this call only.
 
         Returns
         -------
@@ -135,6 +169,8 @@ class FrameAcquisitionManager:
         previous_led_states = self._capture_led_states() if settings.restore_leds_after else {}
         frames: list[np.ndarray] = []
         saved_paths: list[Path | None] = []
+        # Cleanup must run even when DMD display, LED/filter setup, camera
+        # capture, or saving raises.
         try:
             for metadata in metadata_items:
                 frame, saved_path = self._acquire_single_frame(frame_metadata=metadata, settings=settings)
@@ -166,7 +202,9 @@ class FrameAcquisitionManager:
         z_coordinates
             List of Z-only Coordinates with x=None, y=None, and z set.
         settings
-            Optional runtime acquisition settings.
+            Optional runtime acquisition settings. When omitted, the manager's
+            default settings are used. When supplied, settings replace defaults
+            for this call only.
 
         Returns
         -------
@@ -258,10 +296,9 @@ class FrameAcquisitionManager:
             raise TypeError("FrameAcquisitionManager: every frame_metadata entry must be FrameMetaData.")
         return list(frame_metadata)
 
-    @staticmethod
-    def _normalise_settings(settings: FrameAcquisitionSettings | None) -> FrameAcquisitionSettings:
+    def _normalise_settings(self, settings: FrameAcquisitionSettings | None) -> FrameAcquisitionSettings:
         """
-        Return acquisition settings, creating defaults when omitted.
+        Return per-call settings or manager defaults when omitted.
 
         Parameters
         ----------
@@ -271,12 +308,34 @@ class FrameAcquisitionManager:
         Returns
         -------
         FrameAcquisitionSettings
+            Validated settings object for this call.
+        """
+        if settings is None:
+            return self.default_settings
+        return self._validate_settings(settings=settings)
+
+    @staticmethod
+    def _validate_settings(settings: FrameAcquisitionSettings | None) -> FrameAcquisitionSettings:
+        """
+        Validate a settings object or create defaults when omitted.
+
+        Parameters
+        ----------
+        settings
+            Optional FrameAcquisitionSettings object.
+
+        Returns
+        -------
+        FrameAcquisitionSettings
             Validated settings object.
         """
         if settings is None:
             return FrameAcquisitionSettings()
         if not isinstance(settings, FrameAcquisitionSettings):
-            raise TypeError(f"FrameAcquisitionManager: settings must be FrameAcquisitionSettings or None, received {type(settings)}.")
+            raise TypeError(
+                f"FrameAcquisitionManager: settings must be FrameAcquisitionSettings or None, "
+                f"received {type(settings)}."
+            )
         return settings
 
     @staticmethod
@@ -327,121 +386,35 @@ class FrameAcquisitionManager:
         tuple[np.ndarray, Path | None]
             Captured image and optional saved path.
         """
-        self._display_dmd(settings=settings)
-        self._set_filter_wheel(frame_metadata=frame_metadata)
-        self._set_exposure(frame_metadata=frame_metadata)
-        self._set_leds(frame_metadata=frame_metadata)
-        frame_metadata.execution_time = datetime.now()
-        frame = self.camera.get_frame(normalise=settings.normalise)
-        saved_path = self._save_frame(frame=frame, frame_metadata=frame_metadata, settings=settings)
-        return frame, saved_path
-
-    def _display_dmd(self, settings: FrameAcquisitionSettings) -> None:
-        """
-        Display DMD illumination for the next frame when configured.
-
-        Parameters
-        ----------
-        settings
-            Runtime acquisition settings.
-
-        Returns
-        -------
-        None
-        """
-        if self.dmd is None or not settings.illuminate_dmd:
-            return
-        if settings.dmd_image is None:
-            self.dmd.display_full()
-        else:
-            self.dmd.display_image(settings.dmd_image)
-
-    def _set_filter_wheel(self, frame_metadata: FrameMetaData) -> None:
-        """
-        Apply the frame metadata filter wheel setting when present.
-
-        Parameters
-        ----------
-        frame_metadata
-            Metadata containing an optional filter wheel setting.
-
-        Returns
-        -------
-        None
-        """
-        if frame_metadata.filter_wheel is None:
-            return
-        if self.filter_wheel is None:
-            raise RuntimeError("FrameAcquisitionManager: frame metadata requested filter wheel control but no filter wheel was provided.")
-        self.filter_wheel.set_filter_wheel(filter_type=frame_metadata.filter_wheel)
-
-    def _set_exposure(self, frame_metadata: FrameMetaData) -> None:
-        """
-        Apply the frame metadata camera exposure when present.
-
-        Parameters
-        ----------
-        frame_metadata
-            Metadata containing an optional exposure setting.
-
-        Returns
-        -------
-        None
-        """
+        if self.dmd is not None and settings.illuminate_dmd:
+            if frame_metadata.dmd_pattern is None:
+                self.dmd.display_full()
+            else:
+                self.dmd.display_image(frame_metadata.dmd_pattern)
+        if frame_metadata.filter_wheel is not None:
+            if self.filter_wheel is None:
+                raise RuntimeError(
+                    "FrameAcquisitionManager: frame metadata requested filter wheel control but no filter wheel was provided."
+                )
+            self.filter_wheel.set_filter_wheel(filter_type=frame_metadata.filter_wheel)
         if frame_metadata.exposure is not None:
             self.camera.set_exposure(frame_metadata.exposure)
-
-    def _set_leds(self, frame_metadata: FrameMetaData) -> None:
-        """
-        Apply the frame metadata LED settings when present.
-
-        Parameters
-        ----------
-        frame_metadata
-            Metadata containing optional LED settings.
-
-        Returns
-        -------
-        None
-        """
-        if frame_metadata.leds is None:
-            return
-        for led_type, brightness in frame_metadata.leds.items():
-            self.led_manager.set_led(led_type=led_type, brightness=brightness)
-
-    def _save_frame(
-            self,
-            frame: np.ndarray,
-            frame_metadata: FrameMetaData,
-            settings: FrameAcquisitionSettings,
-    ) -> Path | None:
-        """
-        Save a frame when requested by acquisition settings.
-
-        Parameters
-        ----------
-        frame
-            Captured image data.
-        frame_metadata
-            Metadata to save with the frame.
-        settings
-            Runtime acquisition settings.
-
-        Returns
-        -------
-        Path | None
-            Saved path when saving was requested, otherwise None.
-        """
+        if frame_metadata.leds is not None:
+            for led_type, brightness in frame_metadata.leds.items():
+                self.led_manager.set_led(led_type=led_type, brightness=brightness)
+        frame_metadata.execution_time = datetime.now()
+        frame = self.camera.get_frame(normalise=settings.normalise)
         if not settings.save:
-            return None
+            return frame, None
         if self.file_manager is None:
             raise RuntimeError("FrameAcquisitionManager: saving requested but no file manager was provided.")
-        return self.file_manager.save_frame(
+        saved_path = self.file_manager.save_frame(
             frame=frame,
             frame_metadata=frame_metadata,
             filename_pattern=settings.filename_pattern,
             suffix=settings.suffix,
         )
+        return frame, saved_path
 
     def _capture_led_states(self) -> dict[LEDType, LedState]:
         """

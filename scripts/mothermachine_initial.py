@@ -12,7 +12,7 @@ IMAGE_DIR = Path(__file__).resolve().parents[1] / "images"
 from evomachine.acquisition_bkp import EvoCamera
 from evomachine.config import DEVICE_CONFIG_EVO_TEST, CRISP_CONFIG_DEFAULT, OBJECTIVE_CONFIG_OIL, \
     OBJECTIVE_CONFIG_AIR, IMAGE_CONFIG_DEFAULT, ConfigDevice, ConfigFocus, ConfigLED, ConfigCRISP
-from evomachine.dmd import DMDControl, DMDColor
+from evomachine.dmd_pygame import DMDControl, DMDColor
 from evomachine.types import FovDirectionType
 from pathlib import Path
 

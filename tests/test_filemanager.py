@@ -10,7 +10,7 @@ import evomachine.config_types as config_types
 from evomachine.config_types import FileNameConfig, FrameMetaData, FrameMetaDataFactory
 from evomachine.coordinates import Coordinate
 from evomachine.filemanager import FileManager
-from evomachine.stage import Stage
+from evomachine.peripherals.stage import Stage
 from evomachine.types import FilterWheelType, LEDType, UNKNOWN_POSITION_ID
 
 
@@ -109,6 +109,7 @@ def test_frame_metadata_fields_and_factory_counter() -> None:
         leds={LEDType.LED_450_NM: 50},
         filter_wheel=FilterWheelType.NO_FILTER,
         exposure=100,
+        dmd_pattern=np.ones((2, 3), dtype=np.uint8),
     )
     explicit = FrameMetaDataFactory.default(leds=None, filter_wheel=None, exposure=None, frame_id=99)
     second = FrameMetaDataFactory.default(leds=None, filter_wheel=None, exposure=None)
@@ -119,6 +120,13 @@ def test_frame_metadata_fields_and_factory_counter() -> None:
     assert first.position_id == UNKNOWN_POSITION_ID
     assert Stage.UNKNOWN_POSITION_ID == UNKNOWN_POSITION_ID
     assert first.coordinate is None
+    assert first.to_metadata_dict()["dmd_pattern"] == {
+        "present": True,
+        "shape": [2, 3],
+        "dtype": "uint8",
+    }
+    assert "array" not in str(first)
+    assert "dmd_pattern" in str(first)
     assert isinstance(first.creation_time, datetime)
     with pytest.raises(TypeError):
         FrameMetaDataFactory.reset_counter(start=True)
@@ -136,6 +144,8 @@ def test_frame_metadata_fields_and_factory_counter() -> None:
         FrameMetaData(frame_id=0, leds=None, filter_wheel=None, exposure=None, callback_id=True)
     with pytest.raises(TypeError):
         FrameMetaData(frame_id=0, leds=None, filter_wheel=None, exposure=None, additional_metadata={1: "bad"})
+    with pytest.raises(TypeError):
+        FrameMetaData(frame_id=0, leds=None, filter_wheel=None, exposure=None, dmd_pattern="bad")
 
 
 def test_old_frame_symbols_are_removed() -> None:
@@ -234,6 +244,7 @@ def test_save_tiff_frame_writes_frame_metadata(tmp_path) -> None:
     assert metadata["FrameMetaData"]["callback_id"] == 11
     assert metadata["FrameMetaData"]["leds"]["LED_450_NM"]["brightness"] == 25.0
     assert metadata["FrameMetaData"]["filter_wheel"] == {"name": "FILTER_465nm", "value": 1}
+    assert metadata["FrameMetaData"]["dmd_pattern"] is None
     assert metadata["FrameMetaData"]["position_id"] == 3
     assert metadata["FrameMetaData"]["coordinate"] == {"X": 10, "Y": 20, "Z": 30}
     assert metadata["FrameMetaData"]["additional_metadata"] == {"experiment": "alpha"}

@@ -5,12 +5,13 @@ import pytest
 from delta.utils import CroppingBox
 
 from evomachine import software_focus_bkp
-from evomachine.acquisition import FrameAcquisitionManager
+from evomachine.acquisition import FrameAcquisitionManager, FrameAcquisitionSettings
 from evomachine.bindings.software_focus.software_focus_algorithms import (
     LaplacianVarianceFocusAlgorithm,
     SoftwareFocusAlgorithm,
     SquaredGradientAverageFocusAlgorithm,
     SteelFocusAlgorithm,
+    create_software_focus_algorithm,
 )
 from evomachine.config_types import (
     ConfigFocus,
@@ -18,17 +19,12 @@ from evomachine.config_types import (
     FrameMetaData,
     SoftwareFocusConfig,
     SoftwareFocusConfigFactory,
+    SoftwareFocusConfigNew,
+    SoftwareFocusConfigNewFactory,
 )
 from evomachine.coordinates import Coordinate
-from evomachine.softwarefocus import (
-    SoftwareFocus,
-    create_software_focus_algorithm,
-    get_focus_curve_type,
-    get_focus_score,
-    get_focus_score_is_good,
-    get_roi_focus_score,
-)
-from evomachine.leds import LedState
+from evomachine.peripherals.leds import LedState
+from evomachine.softwarefocus import SoftwareFocus
 from evomachine.types import FilterWheelType, FocusAlgorithmType, FocusCurveType, FocusStatusType, LEDType
 
 
@@ -315,28 +311,6 @@ class FakeFilterWheel:
         self.filters.append(filter_type)
 
 
-class FakeAutofocus:
-    """Small autofocus fake that records unlock calls."""
-
-    def __init__(self):
-        """Initialise fake autofocus state."""
-        self.unlock_count = 0
-
-    def unlock(self) -> None:
-        """
-        Record a fake autofocus unlock command.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-        """
-        self.unlock_count += 1
-
-
 def _image() -> np.ndarray:
     """
     Return a deterministic image for software focus score tests.
@@ -353,9 +327,9 @@ def _image() -> np.ndarray:
     return np.arange(36, dtype=np.float64).reshape(6, 6)
 
 
-def _config(**kwargs) -> SoftwareFocusConfig:
+def _legacy_config(**kwargs) -> SoftwareFocusConfig:
     """
-    Return a valid SoftwareFocusConfig with optional field overrides.
+    Return a valid legacy SoftwareFocusConfig with optional field overrides.
 
     Parameters
     ----------
@@ -365,7 +339,7 @@ def _config(**kwargs) -> SoftwareFocusConfig:
     Returns
     -------
     SoftwareFocusConfig
-        Valid software focus configuration.
+        Valid legacy software focus configuration.
     """
     values = {
         "exposure_time": 200,
@@ -376,6 +350,106 @@ def _config(**kwargs) -> SoftwareFocusConfig:
     }
     values.update(kwargs)
     return SoftwareFocusConfig(**values)
+
+
+def _frame(
+        frame_id: int = -1,
+        led_type: LEDType = LEDType.LED_450_NM,
+        brightness: float | int = 29,
+        exposure: float | int = 200,
+        filter_wheel: FilterWheelType | None = None,
+) -> FrameMetaData:
+    """
+    Return focus frame metadata for tests.
+
+    Parameters
+    ----------
+    frame_id
+        Frame ID for the metadata.
+    led_type
+        LED channel to use.
+    brightness
+        LED brightness to use.
+    exposure
+        Camera exposure to use.
+    filter_wheel
+        Optional filter wheel setting.
+
+    Returns
+    -------
+    FrameMetaData
+        Valid frame metadata.
+    """
+    return FrameMetaData(
+        frame_id=frame_id,
+        leds={led_type: brightness},
+        filter_wheel=filter_wheel,
+        exposure=exposure,
+    )
+
+
+def _config_new(**kwargs) -> SoftwareFocusConfigNew:
+    """
+    Return a valid SoftwareFocusConfigNew with optional field overrides.
+
+    Parameters
+    ----------
+    **kwargs
+        SoftwareFocusConfigNew field values to override.
+
+    Returns
+    -------
+    SoftwareFocusConfigNew
+        Valid new software focus configuration.
+    """
+    values = {
+        "focus_frames": [_frame()],
+        "acquisition_settings": None,
+        "rel_range": 3,
+        "step_size": 1,
+        "algorithm": FocusAlgorithmType.LAPLACIAN_VAR,
+        "algorithm_kwargs": {},
+        "cropping_box": None,
+    }
+    values.update(kwargs)
+    return SoftwareFocusConfigNew(**values)
+
+
+def _software_focus(
+        config: SoftwareFocusConfigNew | None = None,
+        filter_wheel: FakeFilterWheel | None = None,
+) -> tuple[SoftwareFocus, FakeStage, FakeCamera, FakeLedManager, FakeDmd]:
+    """
+    Return a SoftwareFocus instance with fake peripherals.
+
+    Parameters
+    ----------
+    config
+        Optional new software focus config.
+    filter_wheel
+        Optional fake filter wheel.
+
+    Returns
+    -------
+    tuple[SoftwareFocus, FakeStage, FakeCamera, FakeLedManager, FakeDmd]
+        SoftwareFocus and the fakes it uses.
+    """
+    stage = FakeStage()
+    camera = FakeCamera(stage=stage)
+    leds = FakeLedManager()
+    dmd = FakeDmd()
+    acquisition_manager = FrameAcquisitionManager(
+        camera=camera,
+        led_manager=leds,
+        filter_wheel=filter_wheel,
+        dmd=dmd,
+        stage=stage,
+    )
+    focus = SoftwareFocus(
+        acquisition_manager=acquisition_manager,
+        config=_config_new() if config is None else config,
+    )
+    return focus, stage, camera, leds, dmd
 
 
 def test_backup_module_exposes_legacy_focus_helpers() -> None:
@@ -399,7 +473,7 @@ def test_backup_module_exposes_legacy_focus_helpers() -> None:
 
 def test_algorithm_classes_match_backup_scores() -> None:
     """
-    Check that new algorithm classes match the backed-up implementations.
+    Check that algorithm classes match the backed-up implementations.
 
     Parameters
     ----------
@@ -416,9 +490,9 @@ def test_algorithm_classes_match_backup_scores() -> None:
     assert SteelFocusAlgorithm(rowshift=1, colshift=2).score_image(img) == software_focus_bkp.get_focus_score_steel(img, rowshift=1, colshift=2)
 
 
-def test_top_level_focus_score_helpers_match_backup_scores() -> None:
+def test_algorithm_factory_selects_algorithms() -> None:
     """
-    Check that new top-level helpers preserve score behavior.
+    Check algorithm factory type selection and parameter use.
 
     Parameters
     ----------
@@ -428,76 +502,20 @@ def test_top_level_focus_score_helpers_match_backup_scores() -> None:
     -------
     None
     """
-    img = _image()
-
-    assert get_focus_score(img, FocusAlgorithmType.LAPLACIAN_VAR) == software_focus_bkp.get_focus_score(img, FocusAlgorithmType.LAPLACIAN_VAR)
-    assert get_focus_score(img, FocusAlgorithmType.SQUARED_GRAD_AVG, threshold=2) == software_focus_bkp.get_focus_score(img, FocusAlgorithmType.SQUARED_GRAD_AVG, threshold=2)
-    assert get_focus_score(img, FocusAlgorithmType.STEEL, rowshift=1, colshift=2) == software_focus_bkp.get_focus_score(img, FocusAlgorithmType.STEEL, rowshift=1, colshift=2)
-
-
-def test_roi_focus_score_matches_backup_score() -> None:
-    """
-    Check that ROI scoring sums the same crop scores as the backup helper.
-
-    Parameters
-    ----------
-    None
-
-    Returns
-    -------
-    None
-    """
-    img = _image()
-    boxes = [
-        CroppingBox(xtl=0, xbr=3, ytl=0, ybr=3),
-        CroppingBox(xtl=2, xbr=6, ytl=2, ybr=6),
-    ]
-
-    assert get_roi_focus_score(
-        img=img,
-        algorithm=FocusAlgorithmType.STEEL,
-        boxes=boxes,
-        rowshift=1,
-        colshift=2,
-    ) == software_focus_bkp.get_roi_focus_score(
-        img=img,
-        algorithm=FocusAlgorithmType.STEEL,
-        boxes=boxes,
-        rowshift=1,
-        colshift=2,
-    )
-
-
-def test_algorithm_factory_selects_algorithms_and_uses_config() -> None:
-    """
-    Check algorithm factory type selection and config parameter use.
-
-    Parameters
-    ----------
-    None
-
-    Returns
-    -------
-    None
-    """
-    config = _config(rowshift_px=1, colshift_px=2)
-
     assert isinstance(create_software_focus_algorithm(FocusAlgorithmType.LAPLACIAN_VAR), SoftwareFocusAlgorithm)
     assert isinstance(create_software_focus_algorithm(FocusAlgorithmType.SQUARED_GRAD_AVG), SquaredGradientAverageFocusAlgorithm)
-    steel = create_software_focus_algorithm(FocusAlgorithmType.STEEL, config=config)
+    steel = create_software_focus_algorithm(FocusAlgorithmType.STEEL, rowshift=1, colshift=2)
 
     assert isinstance(steel, SteelFocusAlgorithm)
     assert steel.rowshift == 1
     assert steel.colshift == 2
     with pytest.raises(TypeError):
         create_software_focus_algorithm("STEEL")
-    with pytest.raises(TypeError):
-        create_software_focus_algorithm(FocusAlgorithmType.STEEL, config="bad")
 
 
-def test_focus_curve_helpers_match_backup_behavior() -> None:
+def test_legacy_software_focus_config_alias_factory_and_updates() -> None:
     """
-    Check focus curve classification helpers.
+    Check legacy SoftwareFocusConfig aliases still work for old callers.
 
     Parameters
     ----------
@@ -507,26 +525,7 @@ def test_focus_curve_helpers_match_backup_behavior() -> None:
     -------
     None
     """
-    focus_curve = np.array([1.0, 3.0, 2.0])
-
-    assert get_focus_curve_type(focus_curve) == FocusCurveType.HAS_GLOBAL_MAXIMUM
-    assert get_focus_score_is_good(focus_curve)
-    assert get_focus_curve_type(focus_curve) == software_focus_bkp.get_focus_curve_type(focus_curve)
-
-
-def test_software_focus_config_alias_factory_and_updates() -> None:
-    """
-    Check SoftwareFocusConfig validation, aliases, factories, and updates.
-
-    Parameters
-    ----------
-    None
-
-    Returns
-    -------
-    None
-    """
-    config = _config()
+    config = _legacy_config()
     frame = FrameMetaData(frame_id=0, leds={LEDType.LED_450_NM: 50}, filter_wheel=None, exposure=100)
     updated = config.updated(brightness=10, focus_frames=[frame])
 
@@ -542,53 +541,39 @@ def test_software_focus_config_alias_factory_and_updates() -> None:
     with pytest.raises(TypeError):
         config.update_from_mapping([("brightness", 10)])
     with pytest.raises(TypeError):
-        _config(focus_frames=["bad"])
+        _legacy_config(focus_frames=["bad"])
 
 
-def _software_focus(**config_updates) -> tuple[SoftwareFocus, FakeStage, FakeCamera, FakeLedManager, FakeDmd]:
+def test_software_focus_config_new_validation_and_factory() -> None:
     """
-    Return a SoftwareFocus instance with fake peripherals.
+    Check new software focus config validation and factory defaults.
 
     Parameters
     ----------
-    **config_updates
-        SoftwareFocusConfig values to override.
+    None
 
     Returns
     -------
-    tuple[SoftwareFocus, FakeStage, FakeCamera, FakeLedManager, FakeDmd]
-        SoftwareFocus and the fakes it uses.
+    None
     """
-    stage = FakeStage()
-    camera = FakeCamera(stage=stage)
-    leds = FakeLedManager()
-    dmd = FakeDmd()
-    filter_wheel = config_updates.pop("filter_wheel", None)
-    config = _config(
-        algorithm=FocusAlgorithmType.LAPLACIAN_VAR,
-        rel_range=3,
-        step_size=1,
-        rowshift_px=1,
-        colshift_px=1,
-        **config_updates,
-    )
-    acquisition_manager = FrameAcquisitionManager(
-        camera=camera,
-        led_manager=leds,
-        filter_wheel=filter_wheel,
-        dmd=dmd,
-        stage=stage,
-    )
-    focus = SoftwareFocus(
-        acquisition_manager=acquisition_manager,
-        config=config,
-    )
-    return focus, stage, camera, leds, dmd
+    config = SoftwareFocusConfigNewFactory.default_config()
+
+    assert isinstance(config, SoftwareFocusConfigNew)
+    assert config.focus_frames[0].leds == {LEDType.LED_450_NM: 29}
+    assert config.copy().focus_frames == config.focus_frames
+    with pytest.raises(TypeError):
+        _config_new(focus_frames=[])
+    with pytest.raises(TypeError):
+        _config_new(acquisition_settings="bad")
+    with pytest.raises(TypeError):
+        _config_new(algorithm_kwargs={1: "bad"})
+    with pytest.raises(ValueError):
+        _config_new(cropping_box=[])
 
 
 def test_software_focus_update_config_and_positions() -> None:
     """
-    Check SoftwareFocus config updates and position state initialisation.
+    Check default and position-specific config management.
 
     Parameters
     ----------
@@ -599,24 +584,28 @@ def test_software_focus_update_config_and_positions() -> None:
     None
     """
     focus, _, _, _, _ = _software_focus()
-    replacement = _config(brightness=10)
+    default_replacement = _config_new(focus_frames=[_frame(exposure=80)])
+    position_replacement = _config_new(focus_frames=[_frame(exposure=90)])
 
-    focus.initialise_positions([1, 2])
-    focus.update_config(brightness=20)
-    assert focus.config.brightness == 20
-    focus.update_config(config=replacement)
+    focus.initialise_positions([1, 2], position_configs={2: position_replacement})
+    assert not hasattr(focus.get_position_state(1), "position_id")
+    assert focus._config_for_position(1) is focus.default_config
+    assert focus._config_for_position(2) is position_replacement
 
-    assert focus.config is replacement
-    assert focus.get_position_state(1).position_id == 1
+    focus.update_config(default_replacement)
+    focus.update_config(position_replacement, position_id=1)
+
+    assert focus.default_config is default_replacement
+    assert focus._config_for_position(1) is position_replacement
     with pytest.raises(KeyError):
         focus.get_position_state(3)
-    with pytest.raises(ValueError):
-        focus.update_config(config=replacement, brightness=5)
+    with pytest.raises(TypeError):
+        focus.update_config("bad")
 
 
-def test_software_focus_instance_scoring_helpers() -> None:
+def test_software_focus_score_image_crops_and_averages() -> None:
     """
-    Check SoftwareFocus instance scoring helpers.
+    Check image scoring with no crop, one crop, and multiple crops.
 
     Parameters
     ----------
@@ -628,22 +617,15 @@ def test_software_focus_instance_scoring_helpers() -> None:
     """
     focus, _, _, _, _ = _software_focus()
     img = _image()
-    boxes = [CroppingBox(xtl=0, xbr=3, ytl=0, ybr=3)]
+    config = _config_new(algorithm=FocusAlgorithmType.STEEL, algorithm_kwargs={"rowshift": 1, "colshift": 2})
+    scorer = create_software_focus_algorithm(FocusAlgorithmType.STEEL, rowshift=1, colshift=2)
+    first_box = CroppingBox(xtl=0, xbr=3, ytl=0, ybr=3)
+    second_box = CroppingBox(xtl=2, xbr=6, ytl=2, ybr=6)
 
-    assert focus.score_image(img=img) == get_focus_score(
-        img=img,
-        algorithm=focus.config.algorithm,
-        rowshift=focus.config.rowshift_px,
-        colshift=focus.config.colshift_px,
-        config=focus.config,
-    )
-    assert focus.score_rois(img=img, boxes=boxes) == get_roi_focus_score(
-        img=img,
-        algorithm=focus.config.algorithm,
-        boxes=boxes,
-        rowshift=focus.config.rowshift_px,
-        colshift=focus.config.colshift_px,
-        config=focus.config,
+    assert focus.score_image(img=img, config=config) == scorer.score_image(img)
+    assert focus.score_image(img=img, config=config, cropping_box=first_box) == scorer.score_image(first_box.crop(img))
+    assert focus.score_image(img=img, config=config, cropping_box=[first_box, second_box]) == pytest.approx(
+        np.mean([scorer.score_image(first_box.crop(img)), scorer.score_image(second_box.crop(img))])
     )
 
 
@@ -659,9 +641,7 @@ def test_software_focus_run_scans_and_moves_to_best_z() -> None:
     -------
     None
     """
-    autofocus = FakeAutofocus()
     focus, stage, camera, leds, dmd = _software_focus()
-    focus.autofocus = autofocus
 
     result = focus.run(position_id=5)
     state = focus.get_position_state(5)
@@ -673,11 +653,39 @@ def test_software_focus_run_scans_and_moves_to_best_z() -> None:
     assert np.array_equal(result.z_coordinates, np.array([-3, -2, -1, 0, 1, 2]))
     assert state.focus_stack.shape == (6, 6, 6)
     assert state.previous_image.shape == (6, 6)
-    assert camera.exposures[0] == focus.config.exposure_time
+    assert camera.exposures[0] == 200
     assert dmd.full_count == 7
-    assert autofocus.unlock_count == 1
     assert leds.disable_count >= 1
     assert (LEDType.LED_450_NM, 29) in leds.commands
+
+
+def test_software_focus_run_uses_position_specific_config() -> None:
+    """
+    Check run uses position-specific config when present.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    focus, _, camera, leds, _ = _software_focus()
+    position_config = _config_new(
+        focus_frames=[_frame(led_type=LEDType.LED_565_NM, brightness=20, exposure=60)],
+        acquisition_settings=FrameAcquisitionSettings(illuminate_dmd=False, restore_leds_after=False),
+        rel_range=2,
+        step_size=1,
+    )
+    focus.initialise_positions([4], position_configs={4: position_config})
+
+    result = focus.run(position_id=4)
+
+    assert np.array_equal(result.z_coordinates, np.array([-2, -1, 0, 1]))
+    assert 60 in camera.exposures
+    assert (LEDType.LED_565_NM, 20) in leds.commands
+    assert leds.disable_count == 0
 
 
 def test_software_focus_run_averages_multiple_frame_metadata_scores() -> None:
@@ -692,20 +700,13 @@ def test_software_focus_run_averages_multiple_frame_metadata_scores() -> None:
     -------
     None
     """
-    frame_a = FrameMetaData(
-        frame_id=1,
-        leds={LEDType.LED_450_NM: 10},
-        filter_wheel=FilterWheelType.FILTER_465nm,
-        exposure=50,
-    )
-    frame_b = FrameMetaData(
-        frame_id=2,
-        leds={LEDType.LED_565_NM: 20},
-        filter_wheel=FilterWheelType.FILTER_592nm,
-        exposure=60,
-    )
+    frame_a = _frame(frame_id=1, led_type=LEDType.LED_450_NM, brightness=10, exposure=50, filter_wheel=FilterWheelType.FILTER_465nm)
+    frame_b = _frame(frame_id=2, led_type=LEDType.LED_565_NM, brightness=20, exposure=60, filter_wheel=FilterWheelType.FILTER_592nm)
     filter_wheel = FakeFilterWheel()
-    focus, _, camera, leds, _ = _software_focus(focus_frames=[frame_a, frame_b], filter_wheel=filter_wheel)
+    focus, _, camera, leds, _ = _software_focus(
+        config=_config_new(focus_frames=[frame_a, frame_b]),
+        filter_wheel=filter_wheel,
+    )
 
     result = focus.run(position_id=0)
 
@@ -730,13 +731,8 @@ def test_software_focus_run_rejects_missing_filter_wheel_for_frame_metadata() ->
     -------
     None
     """
-    frame = FrameMetaData(
-        frame_id=1,
-        leds={LEDType.LED_450_NM: 10},
-        filter_wheel=FilterWheelType.FILTER_465nm,
-        exposure=50,
-    )
-    focus, _, _, leds, _ = _software_focus(focus_frames=frame)
+    frame = _frame(frame_id=1, led_type=LEDType.LED_450_NM, brightness=10, exposure=50, filter_wheel=FilterWheelType.FILTER_465nm)
+    focus, _, _, leds, _ = _software_focus(config=_config_new(focus_frames=[frame]))
 
     with pytest.raises(RuntimeError, match="filter wheel"):
         focus.run(position_id=0)

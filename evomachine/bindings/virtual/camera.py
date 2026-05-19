@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
-from evomachine.camera import Camera
+from evomachine.peripherals.camera import Camera
 from evomachine.config_types import ImageConfigType
 
 

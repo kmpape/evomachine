@@ -1,5 +1,5 @@
 from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
-from evomachine.filterwheel import FilterWheel
+from evomachine.peripherals.filterwheel import FilterWheel
 from evomachine.types import FilterWheelType
 
 

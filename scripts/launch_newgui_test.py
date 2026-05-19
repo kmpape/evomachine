@@ -19,7 +19,7 @@ from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProc
 if USE_DMD_SOCKET:
     from evomachine.dmd_socket import DMDControl
 else:
-    from evomachine.dmd import DMDControl
+    from evomachine.dmd_pygame import DMDControl
 
 from evomachine.guidir.newgui import EvoGUI
 from evomachine.guidir.queuemanager import QueueManager

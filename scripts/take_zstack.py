@@ -13,7 +13,7 @@ from evomachine.acquisition_bkp import EvoCamera
 from evomachine.config import DEVICE_CONFIG_EVO_TEST, CRISP_CONFIG_DEFAULT, OBJECTIVE_CONFIG_OIL, \
     OBJECTIVE_CONFIG_AIR, IMAGE_CONFIG_DEFAULT, ConfigDevice, ConfigFocus, ConfigLED, ConfigCRISP, EVOMACHINE_DIR
 from evomachine.coordinates import Coordinate
-from evomachine.dmd import DMDControl, DMDColor
+from evomachine.dmd_pygame import DMDControl, DMDColor
 from evomachine.software_focus_bkp import get_focus_score_steel
 
 import numpy as np

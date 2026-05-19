@@ -1,6 +1,6 @@
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
 from evomachine.coordinates import Coordinate, CoordinateBounds
-from evomachine.stage import Stage
+from evomachine.peripherals.stage import Stage
 
 
 class VirtualStage(Stage):

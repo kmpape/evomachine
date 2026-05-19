@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from evomachine.autofocus import Autofocus
+from evomachine.peripherals.autofocus import Autofocus
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
 from evomachine.types import AutoFocusStatusType
 

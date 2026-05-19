@@ -7,9 +7,8 @@ from typing import Any
 
 import numpy as np
 from asitiger.command import CRISPState
-from asitiger.status import CRISPStatus
 
-from evomachine.autofocus import Autofocus
+from evomachine.peripherals.autofocus import Autofocus
 from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
 from evomachine.types import AutoFocusStatusType
 
@@ -609,4 +608,7 @@ class TigerAutofocus(Autofocus):
             True when CRISP reports IN_FOCUS or OUT_OF_FOCUS.
         """
         status_flag = self.tiger.crisp_get_set_state(card_address=self.card_address, value=None)
-        return status_flag in CRISPStatus.get_locked_state_flags()
+        return status_flag in {
+            AutoFocusStatusType.IN_FOCUS.value,
+            AutoFocusStatusType.OUT_OF_FOCUS.value,
+        }

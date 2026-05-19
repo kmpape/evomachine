@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 
-from evomachine.dmd import Dmd
+from evomachine.peripherals.dmd import Dmd
 from evomachine.peripherals import PeripheralController
 
 

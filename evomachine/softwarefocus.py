@@ -6,27 +6,19 @@ import threading
 import numpy as np
 from delta.utils import CroppingBox
 
-from evomachine.bindings.software_focus.software_focus_algorithms import (
-    DEFAULT_SQUARED_GRAD_THRESHOLD,
-    LaplacianVarianceFocusAlgorithm,
-    SoftwareFocusAlgorithm,
-    SquaredGradientAverageFocusAlgorithm,
-    SteelFocusAlgorithm,
-    create_software_focus_algorithm as _create_software_focus_algorithm,
-)
 from evomachine.acquisition import FrameAcquisitionManager, FrameAcquisitionSettings
-from evomachine.config_types import Frame, FrameMetaData, SoftwareFocusConfig
+from evomachine.bindings.software_focus.software_focus_algorithms import (
+    create_software_focus_algorithm,
+)
+from evomachine.config_types import Frame, FrameMetaData, SoftwareFocusConfigNew
 from evomachine.coordinates import Coordinate
-from evomachine.types import FocusAlgorithmType, FocusCurveType, FocusStatusType, LEDType
+from evomachine.types import FocusCurveType, FocusStatusType
 
 
-# TODO(Codex): can remove positio_id from state
 @dataclass
 class SoftwareFocusPositionState:
     """State recorded for one software focus position."""
 
-    position_id: int
-    "Position identifier associated with the focus run."
     previous_coordinate: Coordinate | None = None
     "Stage coordinate before the most recent focus run."
     z_coordinates: np.ndarray | None = None
@@ -67,8 +59,7 @@ class SoftwareFocus:
     def __init__(
             self,
             acquisition_manager: FrameAcquisitionManager,
-            config: SoftwareFocusConfig,
-            autofocus=None,
+            config: SoftwareFocusConfigNew,
     ):
         """
         Initialise a software focus orchestrator.
@@ -78,9 +69,7 @@ class SoftwareFocus:
         acquisition_manager
             FrameAcquisitionManager used for all camera and peripheral capture.
         config
-            SoftwareFocusConfig controlling scan range and scoring.
-        autofocus
-            Optional autofocus-like object exposing unlock().
+            Default SoftwareFocusConfigNew controlling scan range and scoring.
 
         Returns
         -------
@@ -91,167 +80,119 @@ class SoftwareFocus:
                 f"SoftwareFocus.__init__: acquisition_manager must be FrameAcquisitionManager, "
                 f"received {type(acquisition_manager)}."
             )
-        if not isinstance(config, SoftwareFocusConfig):
-            raise TypeError(f"SoftwareFocus.__init__: config must be SoftwareFocusConfig, received {type(config)}.")
+        if not isinstance(config, SoftwareFocusConfigNew):
+            raise TypeError(f"SoftwareFocus.__init__: config must be SoftwareFocusConfigNew, received {type(config)}.")
         if acquisition_manager.stage is None:
             raise ValueError("SoftwareFocus.__init__: acquisition_manager must have a stage.")
-        self.acquisition_manager = acquisition_manager
-        self.autofocus = autofocus
-        self.config: SoftwareFocusConfig = config
+        self.acquisition_manager: FrameAcquisitionManager = acquisition_manager
+        self.default_config: SoftwareFocusConfigNew = config
         self._position_states: dict[int, SoftwareFocusPositionState] = {}
+        self._position_config: dict[int, SoftwareFocusConfigNew] = {}
         self._stop_requested: bool = False
 
-    @property
-    def stage(self):
+    def initialise_positions(
+            self,
+            position_ids: list[int],
+            position_configs: dict[int, SoftwareFocusConfigNew] | None = None,
+    ) -> None:
         """
-        Return the stage owned by the acquisition manager.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        Stage-like object
-            Stage used by the acquisition manager.
-        """
-        if self.acquisition_manager.stage is None:
-            raise RuntimeError("SoftwareFocus.stage: acquisition manager has no stage.")
-        return self.acquisition_manager.stage
-
-    def initialise_positions(self, position_ids: list[int]) -> None:
-        """
-        Initialise empty focus state for each requested position ID.
+        Initialise empty focus state and optional configs for positions.
 
         Parameters
         ----------
         position_ids
             List of integer position IDs to track.
+        position_configs
+            Optional mapping of position ID to position-specific config.
 
         Returns
         -------
         None
         """
         if not isinstance(position_ids, list):
-            raise TypeError(f"SoftwareFocus.initialise_positions: position_ids must be list[int], received {type(position_ids)}.")
+            raise TypeError(
+                f"SoftwareFocus.initialise_positions: position_ids must be list[int], received {type(position_ids)}."
+            )
         if not all(isinstance(position_id, int) and not isinstance(position_id, bool) for position_id in position_ids):
             raise TypeError("SoftwareFocus.initialise_positions: every position ID must be int.")
         self._position_states = {
-            position_id: SoftwareFocusPositionState(position_id=position_id)
+            position_id: SoftwareFocusPositionState()
             for position_id in position_ids
         }
+        self._position_config = {}
+        if position_configs is None:
+            return
+        if not isinstance(position_configs, dict):
+            raise TypeError("SoftwareFocus.initialise_positions: position_configs must be dict[int, SoftwareFocusConfigNew].")
+        for position_id, config in position_configs.items():
+            if position_id not in self._position_states:
+                raise KeyError(f"SoftwareFocus.initialise_positions: unknown config position ID {position_id}.")
+            self._position_config[position_id] = self._validate_config(config=config)
 
-    def update_config(self, config: SoftwareFocusConfig | None = None, **updates) -> None:
+    def update_config(
+            self,
+            config: SoftwareFocusConfigNew,
+            position_id: int | None = None,
+    ) -> None:
         """
-        Replace or update the active software focus configuration.
+        Replace the default or one position-specific software focus config.
 
         Parameters
         ----------
         config
-            Optional replacement SoftwareFocusConfig.
-        **updates
-            SoftwareFocusConfig field values to update when config is None.
+            Replacement SoftwareFocusConfigNew.
+        position_id
+            Optional position ID. If None, update the default config.
 
         Returns
         -------
         None
         """
-        if config is not None and updates:
-            raise ValueError("SoftwareFocus.update_config: provide config or updates, not both.")
-        if config is not None:
-            if not isinstance(config, SoftwareFocusConfig):
-                raise TypeError(f"SoftwareFocus.update_config: config must be SoftwareFocusConfig, received {type(config)}.")
-            self.config = config
+        config = self._validate_config(config=config)
+        if position_id is None:
+            self.default_config = config
             return
-        self.config = self.config.updated(**updates)
+        if not isinstance(position_id, int) or isinstance(position_id, bool):
+            raise TypeError(f"SoftwareFocus.update_config: position_id must be int or None, received {type(position_id)}.")
+        self._position_config[position_id] = config
+        self._position_states.setdefault(position_id, SoftwareFocusPositionState())
 
     def score_image(
             self,
             img: np.ndarray,
-            algorithm: FocusAlgorithmType | None = None,
-            threshold: float | None = None,
-            rowshift: int | None = None,
-            colshift: int | None = None,
-            normalise_score: bool = False,
+            config: SoftwareFocusConfigNew,
+            cropping_box: CroppingBox | list[CroppingBox] | None = None,
     ) -> float:
         """
-        Return a focus score for one image using this object's configuration.
+        Return a focus score for one image using a new software focus config.
 
         Parameters
         ----------
         img
             Image array to score.
-        algorithm
-            Optional focus algorithm override. If None, self.config.algorithm is used.
-        threshold
-            Optional squared-gradient threshold.
-        rowshift
-            Optional row shift override.
-        colshift
-            Optional column shift override.
-        normalise_score
-            If True, normalise the Steel score by image area.
+        config
+            SoftwareFocusConfigNew selecting the algorithm and parameters.
+        cropping_box
+            Optional crop override. If None, config.cropping_box is used.
 
         Returns
         -------
         float
-            Focus score for the provided image.
+            Focus score for the provided image or mean crop score.
         """
-        return get_focus_score(
-            img=img,
-            algorithm=self.config.algorithm if algorithm is None else algorithm,
-            threshold=threshold,
-            rowshift=self.config.rowshift_px if rowshift is None else rowshift,
-            colshift=self.config.colshift_px if colshift is None else colshift,
-            normalise_score=normalise_score,
-            config=self.config,
+        config = self._validate_config(config=config)
+        scorer = create_software_focus_algorithm(
+            algorithm=config.algorithm,
+            **config.algorithm_kwargs,
         )
-
-    def score_rois(
-            self,
-            img: np.ndarray,
-            boxes: list[CroppingBox],
-            algorithm: FocusAlgorithmType | None = None,
-            threshold: float | None = None,
-            rowshift: int | None = None,
-            colshift: int | None = None,
-            normalise_score: bool = False,
-    ) -> float:
-        """
-        Return summed ROI focus scores using this object's configuration.
-
-        Parameters
-        ----------
-        img
-            Image array containing all regions.
-        boxes
-            CroppingBox objects selecting regions to score.
-        algorithm
-            Optional focus algorithm override. If None, self.config.algorithm is used.
-        threshold
-            Optional squared-gradient threshold.
-        rowshift
-            Optional row shift override.
-        colshift
-            Optional column shift override.
-        normalise_score
-            If True, normalise the Steel score by image area.
-
-        Returns
-        -------
-        float
-            Summed ROI focus score.
-        """
-        return get_roi_focus_score(
-            img=img,
-            algorithm=self.config.algorithm if algorithm is None else algorithm,
-            boxes=boxes,
-            threshold=threshold,
-            rowshift=self.config.rowshift_px if rowshift is None else rowshift,
-            colshift=self.config.colshift_px if colshift is None else colshift,
-            normalise_score=normalise_score,
-            config=self.config,
+        crop_selection = config.cropping_box if cropping_box is None else SoftwareFocusConfigNew._validate_cropping_box(
+            cropping_box,
         )
+        if crop_selection is None:
+            return scorer.score_image(img=img)
+        if isinstance(crop_selection, CroppingBox):
+            return scorer.score_image(img=crop_selection.crop(img))
+        return float(np.mean([scorer.score_image(img=box.crop(img)) for box in crop_selection]))
 
     def get_position_state(self, position_id: int) -> SoftwareFocusPositionState:
         """
@@ -308,22 +249,22 @@ class SoftwareFocus:
         """
         self._stop_requested = False
         resolved_position_id = self._resolve_position_id(position_id=position_id)
-        state = self._position_states.setdefault(
-            resolved_position_id,
-            SoftwareFocusPositionState(position_id=resolved_position_id),
-        )
-        previous_coordinate = self.stage.get_coordinates(query_hardware=True)
+        config = self._config_for_position(position_id=resolved_position_id)
+        state = self._position_states.setdefault(resolved_position_id, SoftwareFocusPositionState())
+        stage = self.acquisition_manager.stage
+        if stage is None:
+            raise RuntimeError("SoftwareFocus.run: acquisition manager has no stage.")
+        previous_coordinate = stage.get_coordinates(query_hardware=True)
         if previous_coordinate.z is None:
             raise RuntimeError("SoftwareFocus.run: current stage coordinate does not contain Z.")
         state.previous_coordinate = previous_coordinate.copy()
-        z_coordinates = self._make_z_coordinates(current_z=previous_coordinate.z)
+        z_coordinates = self._make_z_coordinates(current_z=previous_coordinate.z, config=config)
         state.z_coordinates = z_coordinates
 
-        self._prepare_hardware()
-        frame_metadata_items = self._focus_frame_metadata_items(position_id=resolved_position_id)
-        settings = self._focus_acquisition_settings()
+        frame_metadata_items = self._focus_frame_metadata_items(config=config)
+        settings = self._focus_acquisition_settings(config=config)
         if self._should_stop(stop_event=stop_event):
-            result = self._finalise_result(
+            return self._finalise_result(
                 state=state,
                 previous_coordinate=previous_coordinate,
                 scanned_z=np.asarray([], dtype=int),
@@ -331,7 +272,6 @@ class SoftwareFocus:
                 focus_stack=np.empty((0,), dtype=np.float64),
                 early_status=FocusStatusType.UNKNOWN,
             )
-            return result
 
         previous_frame = self.acquisition_manager.take_frame(
             frame_metadata=frame_metadata_items,
@@ -346,9 +286,10 @@ class SoftwareFocus:
         scores_array, stack_array = self._score_z_stack(
             frame=z_stack_frame,
             frames_per_z=len(frame_metadata_items),
+            config=config,
         )
         scanned_z = z_coordinates[:scores_array.size]
-        result = self._finalise_result(
+        return self._finalise_result(
             state=state,
             previous_coordinate=previous_coordinate,
             scanned_z=scanned_z,
@@ -356,7 +297,41 @@ class SoftwareFocus:
             focus_stack=stack_array,
             early_status=FocusStatusType.UNKNOWN,
         )
-        return result
+
+    @staticmethod
+    def _validate_config(config: SoftwareFocusConfigNew) -> SoftwareFocusConfigNew:
+        """
+        Return a validated new software focus config.
+
+        Parameters
+        ----------
+        config
+            Candidate SoftwareFocusConfigNew.
+
+        Returns
+        -------
+        SoftwareFocusConfigNew
+            Validated config.
+        """
+        if not isinstance(config, SoftwareFocusConfigNew):
+            raise TypeError(f"SoftwareFocus: config must be SoftwareFocusConfigNew, received {type(config)}.")
+        return config
+
+    def _config_for_position(self, position_id: int) -> SoftwareFocusConfigNew:
+        """
+        Return the config for one position.
+
+        Parameters
+        ----------
+        position_id
+            Position ID to resolve.
+
+        Returns
+        -------
+        SoftwareFocusConfigNew
+            Position-specific config when present, otherwise default config.
+        """
+        return self._position_config.get(position_id, self.default_config)
 
     def _resolve_position_id(self, position_id: int | None) -> int:
         """
@@ -376,12 +351,15 @@ class SoftwareFocus:
             if not isinstance(position_id, int) or isinstance(position_id, bool):
                 raise TypeError(f"SoftwareFocus.run: position_id must be int or None, received {type(position_id)}.")
             return position_id
-        get_pos = getattr(self.stage, "get_pos", None)
-        if callable(get_pos):
-            return int(get_pos())
+        stage = self.acquisition_manager.stage
+        if stage is not None:
+            get_pos = getattr(stage, "get_pos", None)
+            if callable(get_pos):
+                return int(get_pos())
         return -1
 
-    def _make_z_coordinates(self, current_z: int | float) -> np.ndarray:
+    @staticmethod
+    def _make_z_coordinates(current_z: int | float, config: SoftwareFocusConfigNew) -> np.ndarray:
         """
         Return scan Z coordinates around the current Z position.
 
@@ -389,30 +367,17 @@ class SoftwareFocus:
         ----------
         current_z
             Current Z coordinate.
+        config
+            Active software focus configuration.
 
         Returns
         -------
         np.ndarray
             Integer Z coordinates to scan.
         """
-        start = int(current_z - self.config.rel_range)
-        stop = int(current_z + self.config.rel_range)
-        return np.asarray(range(start, stop, self.config.step_size), dtype=int)
-
-    def _prepare_hardware(self) -> None:
-        """
-        Prepare optional autofocus before scanning.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-        """
-        if self.autofocus is not None:
-            self.autofocus.unlock()
+        start = int(current_z - config.rel_range)
+        stop = int(current_z + config.rel_range)
+        return np.asarray(range(start, stop, config.step_size), dtype=int)
 
     def _should_stop(self, stop_event: threading.Event | None) -> bool:
         """
@@ -430,49 +395,40 @@ class SoftwareFocus:
         """
         return self._stop_requested or (stop_event is not None and stop_event.is_set())
 
-    def _focus_frame_metadata_items(self, position_id: int) -> list[FrameMetaData]:
+    @staticmethod
+    def _focus_frame_metadata_items(config: SoftwareFocusConfigNew) -> list[FrameMetaData]:
         """
-        Return focus frame metadata entries as a list.
+        Return configured focus frame metadata entries.
 
         Parameters
         ----------
-        position_id
-            Position ID to attach to generated legacy focus metadata.
+        config
+            Active software focus configuration.
 
         Returns
         -------
         list[FrameMetaData]
-            Configured frame metadata entries or one generated legacy entry.
+            Configured frame metadata entries.
         """
-        focus_frames = self.config.focus_frames
-        if focus_frames is None:
-            return [
-                FrameMetaData(
-                    frame_id=-1,
-                    leds={self.config.focus_channel: self.config.brightness},
-                    filter_wheel=None,
-                    exposure=self.config.exposure_time,
-                    position_id=position_id,
-                )
-            ]
-        if isinstance(focus_frames, FrameMetaData):
-            return [focus_frames]
-        return list(focus_frames)
+        return list(config.focus_frames)
 
     @staticmethod
-    def _focus_acquisition_settings() -> FrameAcquisitionSettings:
+    def _focus_acquisition_settings(config: SoftwareFocusConfigNew) -> FrameAcquisitionSettings:
         """
         Return acquisition settings used by software focus captures.
 
         Parameters
         ----------
-        None
+        config
+            Active software focus configuration.
 
         Returns
         -------
         FrameAcquisitionSettings
             Runtime settings for focus acquisition.
         """
+        if config.acquisition_settings is not None:
+            return config.acquisition_settings
         return FrameAcquisitionSettings(
             save=False,
             normalise=False,
@@ -482,7 +438,12 @@ class SoftwareFocus:
             disable_leds_after=False,
         )
 
-    def _score_z_stack(self, frame: Frame, frames_per_z: int) -> tuple[np.ndarray, np.ndarray]:
+    def _score_z_stack(
+            self,
+            frame: Frame,
+            frames_per_z: int,
+            config: SoftwareFocusConfigNew,
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Score a captured Z stack and return per-Z scores and mean frames.
 
@@ -492,6 +453,8 @@ class SoftwareFocus:
             Captured frame stack from FrameAcquisitionManager.take_z_stack().
         frames_per_z
             Number of metadata captures acquired at each Z coordinate.
+        config
+            Active software focus configuration.
 
         Returns
         -------
@@ -507,7 +470,7 @@ class SoftwareFocus:
         for start in range(0, frame.array.shape[0], frames_per_z):
             frame_group = frame.array[start:start + frames_per_z].astype(np.float64)
             scores = [
-                self.score_image(img=self._crop_for_score(frame=frame_group[index]))
+                self.score_image(img=frame_group[index], config=config)
                 for index in range(frame_group.shape[0])
             ]
             focus_scores.append(float(np.mean(scores)))
@@ -530,24 +493,6 @@ class SoftwareFocus:
             Mean 2D frame.
         """
         return np.mean(frame.array.astype(np.float64), axis=0)
-
-    def _crop_for_score(self, frame: np.ndarray) -> np.ndarray:
-        """
-        Return the frame region used for focus scoring.
-
-        Parameters
-        ----------
-        frame
-            Captured frame.
-
-        Returns
-        -------
-        np.ndarray
-            Cropped or original frame.
-        """
-        if self.config.cropping_box is None:
-            return frame
-        return self.config.cropping_box.crop(frame)
 
     @staticmethod
     def _stack_frames(focus_stack: list[np.ndarray]) -> np.ndarray:
@@ -605,7 +550,7 @@ class SoftwareFocus:
             focus_status = early_status if early_status != FocusStatusType.UNKNOWN else FocusStatusType.BAD_FOCUS_CURVE
             best_index = None
         else:
-            curve_status = get_focus_curve_type(focus_curve=scores)
+            curve_status = self._get_focus_curve_type(focus_curve=scores)
             focus_status = FocusStatusType.IN_FOCUS if curve_status == FocusCurveType.HAS_GLOBAL_MAXIMUM else FocusStatusType.BAD_FOCUS_CURVE
             best_index = int(np.argmax(scores))
 
@@ -616,7 +561,10 @@ class SoftwareFocus:
             best_coordinate.z = int(scanned_z[best_index])
             best_frame = focus_stack[:, :, best_index] if focus_stack.ndim == 3 else None
             if focus_status == FocusStatusType.IN_FOCUS:
-                self.stage.move(target=Coordinate(None, None, int(scanned_z[best_index])), block=True)
+                stage = self.acquisition_manager.stage
+                if stage is None:
+                    raise RuntimeError("SoftwareFocus._finalise_result: acquisition manager has no stage.")
+                stage.move(target=Coordinate(None, None, int(scanned_z[best_index])), block=True)
 
         state.z_coordinates = scanned_z
         state.focus_scores = scores
@@ -633,253 +581,31 @@ class SoftwareFocus:
             curve_status=curve_status,
         )
 
+    @staticmethod
+    def _get_focus_curve_type(focus_curve: np.ndarray) -> FocusCurveType:
+        """
+        Classify the shape of a focus score curve.
 
-def get_focus_score_is_good(focus_curve: np.ndarray) -> bool:
-    """
-    Return whether a focus score curve has a single non-boundary maximum.
+        Parameters
+        ----------
+        focus_curve
+            Focus score values ordered by scanned Z position.
 
-    Parameters
-    ----------
-    focus_curve
-        Focus score values ordered by scanned Z position.
+        Returns
+        -------
+        FocusCurveType
+            Classification of the curve maximum pattern.
+        """
+        if focus_curve.size < 3:
+            return FocusCurveType.UNKNOWN
 
-    Returns
-    -------
-    bool
-        True when the curve is classified as having a global maximum.
-    """
-    return get_focus_curve_type(focus_curve=focus_curve) == FocusCurveType.HAS_GLOBAL_MAXIMUM
+        max_indices = np.where(focus_curve == np.max(focus_curve))[0]
+        num_maxima = len(max_indices)
 
-
-def get_focus_curve_type(focus_curve: np.ndarray) -> FocusCurveType:
-    """
-    Classify the shape of a focus score curve.
-
-    Parameters
-    ----------
-    focus_curve
-        Focus score values ordered by scanned Z position.
-
-    Returns
-    -------
-    FocusCurveType
-        Classification of the curve maximum pattern.
-    """
-    if focus_curve.size < 3:
+        if 0 in max_indices or len(focus_curve) - 1 in max_indices:
+            return FocusCurveType.HAS_BOUNDARY_MAXIMUM
+        if num_maxima == 1:
+            return FocusCurveType.HAS_GLOBAL_MAXIMUM
+        if num_maxima > 1:
+            return FocusCurveType.HAS_MAXIMA
         return FocusCurveType.UNKNOWN
-
-    max_indices = np.where(focus_curve == np.max(focus_curve))[0]
-    num_maxima = len(max_indices)
-
-    if 0 in max_indices or len(focus_curve) - 1 in max_indices:
-        return FocusCurveType.HAS_BOUNDARY_MAXIMUM
-    if num_maxima == 1:
-        return FocusCurveType.HAS_GLOBAL_MAXIMUM
-    if num_maxima > 1:
-        return FocusCurveType.HAS_MAXIMA
-    return FocusCurveType.UNKNOWN
-
-
-def create_software_focus_algorithm(
-        algorithm: FocusAlgorithmType,
-        config: SoftwareFocusConfig | None = None,
-        threshold: float | None = None,
-        rowshift: int | None = None,
-        colshift: int | None = None,
-        normalise_score: bool = False,
-) -> SoftwareFocusAlgorithm:
-    """
-    Create a software focus algorithm using explicit values or config defaults.
-
-    Parameters
-    ----------
-    algorithm
-        FocusAlgorithmType selecting the scoring implementation.
-    config
-        Optional SoftwareFocusConfig providing algorithm parameters.
-    threshold
-        Optional squared-gradient threshold.
-    rowshift
-        Optional row shift for the Steel algorithm. If None, config or legacy
-        defaults are used.
-    colshift
-        Optional column shift for the Steel algorithm. If None, config or
-        legacy defaults are used.
-    normalise_score
-        If True, normalise the Steel score by image area.
-
-    Returns
-    -------
-    SoftwareFocusAlgorithm
-        Focus scoring algorithm instance.
-    """
-    if config is not None and not isinstance(config, SoftwareFocusConfig):
-        raise TypeError(
-            f"create_software_focus_algorithm: config must be SoftwareFocusConfig or None, received {type(config)}."
-        )
-    resolved_rowshift = rowshift if rowshift is not None else (config.rowshift_px if config is not None else 25)
-    resolved_colshift = colshift if colshift is not None else (config.colshift_px if config is not None else 50)
-    return _create_software_focus_algorithm(
-        algorithm=algorithm,
-        threshold=threshold,
-        rowshift=resolved_rowshift,
-        colshift=resolved_colshift,
-        normalise=normalise_score,
-    )
-
-
-def get_roi_focus_score(
-        img: np.ndarray,
-        algorithm: FocusAlgorithmType,
-        boxes: list[CroppingBox],
-        threshold: float | None = None,
-        rowshift: int = 25,
-        colshift: int = 50,
-        normalise_score: bool = False,
-        config: SoftwareFocusConfig | None = None,
-) -> float:
-    """
-    Return a summed focus score for cropped regions of one image.
-
-    Parameters
-    ----------
-    img
-        Source image array containing all regions.
-    algorithm
-        FocusAlgorithmType selecting the scoring implementation.
-    boxes
-        CroppingBox objects selecting regions to score.
-    threshold
-        Optional squared-gradient threshold.
-    rowshift
-        Row shift for the Steel algorithm.
-    colshift
-        Column shift for the Steel algorithm.
-    normalise_score
-        If True, normalise the Steel score by image area.
-    config
-        Optional SoftwareFocusConfig providing algorithm parameters.
-
-    Returns
-    -------
-    float
-        Sum of focus scores across the provided regions.
-    """
-    scorer = create_software_focus_algorithm(
-        algorithm=algorithm,
-        config=config,
-        threshold=threshold,
-        rowshift=rowshift,
-        colshift=colshift,
-        normalise_score=normalise_score,
-    )
-    return scorer.score_rois(img=img, boxes=boxes)
-
-
-def get_focus_score(
-        img: np.ndarray,
-        algorithm: FocusAlgorithmType,
-        threshold: float | None = None,
-        rowshift: int = 25,
-        colshift: int = 50,
-        normalise_score: bool = False,
-        config: SoftwareFocusConfig | None = None,
-) -> float:
-    """
-    Return a focus score for one image.
-
-    Parameters
-    ----------
-    img
-        Image array to score.
-    algorithm
-        FocusAlgorithmType selecting the scoring implementation.
-    threshold
-        Optional squared-gradient threshold.
-    rowshift
-        Row shift for the Steel algorithm.
-    colshift
-        Column shift for the Steel algorithm.
-    normalise_score
-        If True, normalise the Steel score by image area.
-    config
-        Optional SoftwareFocusConfig providing algorithm parameters.
-
-    Returns
-    -------
-    float
-        Focus score for the provided image.
-    """
-    scorer = create_software_focus_algorithm(
-        algorithm=algorithm,
-        config=config,
-        threshold=threshold,
-        rowshift=rowshift,
-        colshift=colshift,
-        normalise_score=normalise_score,
-    )
-    return scorer.score_image(img=img)
-
-
-def get_focus_score_laplacian_var(img: np.ndarray) -> float:
-    """
-    Return a Laplacian-variance focus score for one image.
-
-    Parameters
-    ----------
-    img
-        Image array to score.
-
-    Returns
-    -------
-    float
-        Variance of the squared inner Laplacian image.
-    """
-    return LaplacianVarianceFocusAlgorithm().score_image(img=img)
-
-
-def get_focus_score_squared_gradient(img: np.ndarray, threshold: float | None = None) -> float:
-    """
-    Return a squared-gradient focus score for one image.
-
-    Parameters
-    ----------
-    img
-        Image array to score.
-    threshold
-        Optional squared-gradient threshold.
-
-    Returns
-    -------
-    float
-        Mean squared horizontal gradient after thresholding.
-    """
-    return SquaredGradientAverageFocusAlgorithm(threshold=threshold).score_image(img=img)
-
-
-def get_focus_score_steel(
-        img: np.ndarray,
-        rowshift: int,
-        colshift: int,
-        normalise: bool = False,
-) -> float:
-    """
-    Return a Steel focus score for one image.
-
-    Parameters
-    ----------
-    img
-        Image array to score.
-    rowshift
-        Pixel shift along image rows.
-    colshift
-        Pixel shift along image columns.
-    normalise
-        If True, divide the score by twice the image area.
-
-    Returns
-    -------
-    float
-        Shifted-difference Steel focus score.
-    """
-    return SteelFocusAlgorithm(rowshift=rowshift, colshift=colshift, normalise=normalise).score_image(img=img)
