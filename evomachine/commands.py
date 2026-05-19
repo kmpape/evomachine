@@ -8,12 +8,8 @@ import numpy as np
 
 from delta.utils import CroppingBox as DeltaCroppingBox
 
-from evomachine.config import EVO_FORMATTER, get_logger, USE_DMD_SOCKET, ConfigImageProcessor
+from evomachine.config import DMD_WIDTH_HEIGHT, EVO_FORMATTER, get_logger, ConfigImageProcessor
 from evomachine.coordinates import Coordinate
-if USE_DMD_SOCKET:
-    from evomachine.dmd_socket import DMD_WIDTH_HEIGHT
-else:
-    from evomachine.dmd import DMD_WIDTH_HEIGHT
 from evomachine.types import AutomatonCommandType, FilterWheelType, FocusStatusType, LEDType, MagnetModeType
 from evomachine.utils import EvoCroppingBox
 

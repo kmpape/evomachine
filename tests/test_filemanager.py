@@ -6,34 +6,39 @@ import pytest
 import skimage.io
 import tifffile
 
-from evomachine.config_types import ConfigFrame, ConfigFrameFactory, FileNameConfig
+import evomachine.config_types as config_types
+from evomachine.config_types import FileNameConfig, FrameMetaData, FrameMetaDataFactory
 from evomachine.coordinates import Coordinate
 from evomachine.filemanager import FileManager
 from evomachine.stage import Stage
 from evomachine.types import FilterWheelType, LEDType, UNKNOWN_POSITION_ID
 
 
-def _frame_config() -> ConfigFrame:
+def _frame_metadata(**updates) -> FrameMetaData:
     """
-    Return a deterministic ConfigFrame for file manager tests.
+    Return deterministic FrameMetaData for file manager tests.
 
     Parameters
     ----------
-    None
+    **updates
+        FrameMetaData field values to override.
 
     Returns
     -------
-    ConfigFrame
-        Frame configuration with metadata-friendly values.
+    FrameMetaData
+        Frame metadata with stable test values.
     """
-    return ConfigFrame(
-        leds={LEDType.LED_450_NM: 25},
-        filter_wheel=FilterWheelType.FILTER_465nm,
-        exposure=100,
-        position_id=3,
-        coordinate=Coordinate(10, 20, 30),
-        creation_time=datetime(2026, 1, 2, 3, 4, 5, 6000),
-    )
+    values = {
+        "frame_id": 7,
+        "leds": {LEDType.LED_450_NM: 25},
+        "filter_wheel": FilterWheelType.FILTER_465nm,
+        "exposure": 100,
+        "position_id": 3,
+        "coordinate": Coordinate(10, 20, 30),
+        "creation_time": datetime(2026, 1, 2, 3, 4, 5, 6000),
+    }
+    values.update(updates)
+    return FrameMetaData(**values)
 
 
 def test_filename_config_validation_and_updates(tmp_path) -> None:
@@ -87,9 +92,9 @@ def test_file_manager_creates_directory_and_updates_config(tmp_path) -> None:
         FileManager(FileNameConfig(directory=tmp_path / "missing", create_directory=False))
 
 
-def test_config_frame_new_fields_and_factory() -> None:
+def test_frame_metadata_fields_and_factory_counter() -> None:
     """
-    Check ConfigFrame metadata fields, defaults, and factory behavior.
+    Check FrameMetaData fields, validation, and factory counter behavior.
 
     Parameters
     ----------
@@ -99,24 +104,54 @@ def test_config_frame_new_fields_and_factory() -> None:
     -------
     None
     """
-    config_frame = ConfigFrameFactory.default(
+    FrameMetaDataFactory.reset_counter()
+    first = FrameMetaDataFactory.default(
         leds={LEDType.LED_450_NM: 50},
         filter_wheel=FilterWheelType.NO_FILTER,
         exposure=100,
     )
+    explicit = FrameMetaDataFactory.default(leds=None, filter_wheel=None, exposure=None, frame_id=99)
+    second = FrameMetaDataFactory.default(leds=None, filter_wheel=None, exposure=None)
 
-    assert config_frame.position_id == UNKNOWN_POSITION_ID
+    assert first.frame_id == 0
+    assert explicit.frame_id == 99
+    assert second.frame_id == 1
+    assert first.position_id == UNKNOWN_POSITION_ID
     assert Stage.UNKNOWN_POSITION_ID == UNKNOWN_POSITION_ID
-    assert config_frame.coordinate is None
-    assert isinstance(config_frame.creation_time, datetime)
+    assert first.coordinate is None
+    assert isinstance(first.creation_time, datetime)
     with pytest.raises(TypeError):
-        ConfigFrame(leds=None, filter_wheel=None, exposure=None, position_id=True)
+        FrameMetaDataFactory.reset_counter(start=True)
     with pytest.raises(TypeError):
-        ConfigFrame(leds=None, filter_wheel=None, exposure=None, coordinate=(1, 2, 3))
+        FrameMetaData(frame_id=True, leds=None, filter_wheel=None, exposure=None)
     with pytest.raises(TypeError):
-        ConfigFrame(leds=None, filter_wheel=None, exposure=None, creation_time="now")
+        FrameMetaData(frame_id=0, leds=None, filter_wheel=None, exposure=None, position_id=True)
     with pytest.raises(TypeError):
-        ConfigFrame(leds=None, filter_wheel=None, exposure=None, execution_time="now")
+        FrameMetaData(frame_id=0, leds=None, filter_wheel=None, exposure=None, coordinate=(1, 2, 3))
+    with pytest.raises(TypeError):
+        FrameMetaData(frame_id=0, leds=None, filter_wheel=None, exposure=None, creation_time="now")
+    with pytest.raises(TypeError):
+        FrameMetaData(frame_id=0, leds=None, filter_wheel=None, exposure=None, execution_time="now")
+    with pytest.raises(TypeError):
+        FrameMetaData(frame_id=0, leds=None, filter_wheel=None, exposure=None, callback_id=True)
+    with pytest.raises(TypeError):
+        FrameMetaData(frame_id=0, leds=None, filter_wheel=None, exposure=None, additional_metadata={1: "bad"})
+
+
+def test_old_frame_symbols_are_removed() -> None:
+    """
+    Check the hard rename removed old frame metadata public symbols.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    assert not hasattr(config_types, "Config" + "Frame")
+    assert not hasattr(config_types, "Config" + "FrameFactory")
 
 
 def test_default_and_override_filename_generation(tmp_path) -> None:
@@ -133,24 +168,24 @@ def test_default_and_override_filename_generation(tmp_path) -> None:
     None
     """
     manager = FileManager(FileNameConfig(directory=tmp_path))
-    config_frame = _frame_config()
+    frame_metadata = _frame_metadata(additional_metadata={"experiment": "demo"})
 
-    filename = manager.get_filename(config_frame=config_frame, suffix="_raw")
+    filename = manager.get_filename(frame_metadata=frame_metadata, suffix="_raw")
     assert filename.parent == tmp_path
     assert filename.name.startswith("LED450NM_P3_X10_Y20_Z30_F1_")
     assert filename.name.endswith("_raw.tiff")
 
     custom = manager.get_filename(
-        config_frame=config_frame,
-        filename_pattern="{experiment}_{channel}.{extension}",
-        experiment="demo",
+        frame_metadata=frame_metadata,
+        filename_pattern="{experiment}_{channel}_F{frame_id}_C{callback_id}.{extension}",
+        callback_id=12,
     )
-    assert custom == tmp_path / "demo_LED450NM.tiff"
+    assert custom == tmp_path / "demo_LED450NM_F7_C12.tiff"
 
 
 def test_missing_filename_values_use_stable_placeholders(tmp_path) -> None:
     """
-    Check missing ConfigFrame values render stable filename placeholders.
+    Check missing FrameMetaData values render stable filename placeholders.
 
     Parameters
     ----------
@@ -162,16 +197,16 @@ def test_missing_filename_values_use_stable_placeholders(tmp_path) -> None:
     None
     """
     manager = FileManager(FileNameConfig(directory=tmp_path))
-    config_frame = ConfigFrame(leds=None, filter_wheel=None, exposure=None)
+    frame_metadata = FrameMetaData(frame_id=0, leds=None, filter_wheel=None, exposure=None)
 
-    filename = manager.get_filename(config_frame=config_frame)
+    filename = manager.get_filename(frame_metadata=frame_metadata)
 
     assert filename.name.startswith("NO_LED_P-1_X_Y_Zauto_FNone_")
 
 
-def test_save_tiff_frame_writes_config_frame_metadata(tmp_path) -> None:
+def test_save_tiff_frame_writes_frame_metadata(tmp_path) -> None:
     """
-    Check TIFF saves include JSON ConfigFrame metadata.
+    Check TIFF saves include JSON FrameMetaData metadata.
 
     Parameters
     ----------
@@ -183,10 +218,10 @@ def test_save_tiff_frame_writes_config_frame_metadata(tmp_path) -> None:
     None
     """
     manager = FileManager(FileNameConfig(directory=tmp_path))
-    config_frame = _frame_config()
+    frame_metadata = _frame_metadata(callback_id=11, additional_metadata={"experiment": "alpha"})
     frame = np.arange(16, dtype=np.uint16).reshape(4, 4)
 
-    filename = manager.save_frame(frame=frame, config_frame=config_frame, suffix="_meta")
+    filename = manager.save_frame(frame=frame, frame_metadata=frame_metadata, suffix="_meta")
 
     assert filename.exists()
     with tifffile.TiffFile(filename) as tiff:
@@ -195,16 +230,70 @@ def test_save_tiff_frame_writes_config_frame_metadata(tmp_path) -> None:
     metadata = json.loads(description)
 
     assert np.array_equal(saved, frame)
-    assert metadata["ConfigFrame"]["leds"]["LED_450_NM"]["brightness"] == 25.0
-    assert metadata["ConfigFrame"]["filter_wheel"] == {"name": "FILTER_465nm", "value": 1}
-    assert metadata["ConfigFrame"]["position_id"] == 3
-    assert metadata["ConfigFrame"]["coordinate"] == {"X": 10, "Y": 20, "Z": 30}
-    assert config_frame.execution_time is not None
+    assert metadata["FrameMetaData"]["frame_id"] == 7
+    assert metadata["FrameMetaData"]["callback_id"] == 11
+    assert metadata["FrameMetaData"]["leds"]["LED_450_NM"]["brightness"] == 25.0
+    assert metadata["FrameMetaData"]["filter_wheel"] == {"name": "FILTER_465nm", "value": 1}
+    assert metadata["FrameMetaData"]["position_id"] == 3
+    assert metadata["FrameMetaData"]["coordinate"] == {"X": 10, "Y": 20, "Z": 30}
+    assert metadata["FrameMetaData"]["additional_metadata"] == {"experiment": "alpha"}
+    assert "force" + "_settings" not in metadata["FrameMetaData"]
+    assert frame_metadata.execution_time is not None
 
 
-def test_save_png_frame_without_metadata_assertions(tmp_path) -> None:
+def test_non_json_serializable_metadata_raises_before_write(tmp_path) -> None:
     """
-    Check non-TIFF image saves work without metadata expectations.
+    Check non-JSON-serializable additional metadata raises before writing.
+
+    Parameters
+    ----------
+    tmp_path
+        Pytest temporary directory fixture.
+
+    Returns
+    -------
+    None
+    """
+    manager = FileManager(FileNameConfig(directory=tmp_path))
+    frame_metadata = _frame_metadata(additional_metadata={"bad": object()})
+    frame = np.arange(16, dtype=np.uint16).reshape(4, 4)
+
+    with pytest.raises(TypeError):
+        manager.save_frame(frame=frame, frame_metadata=frame_metadata)
+
+    assert not list(tmp_path.iterdir())
+
+
+def test_load_helpers_read_tiff_image_and_metadata(tmp_path) -> None:
+    """
+    Check load helpers read saved TIFF image data and metadata.
+
+    Parameters
+    ----------
+    tmp_path
+        Pytest temporary directory fixture.
+
+    Returns
+    -------
+    None
+    """
+    manager = FileManager(FileNameConfig(directory=tmp_path))
+    frame = np.arange(16, dtype=np.uint16).reshape(4, 4)
+    filename = manager.save_frame(frame=frame, frame_metadata=_frame_metadata())
+
+    image = FileManager.load_image(filename)
+    metadata = FileManager.load_tiff_metadata(filename)
+    loaded_image, loaded_metadata = FileManager.load_frame(filename)
+
+    assert np.array_equal(image, frame)
+    assert np.array_equal(loaded_image, frame)
+    assert metadata["FrameMetaData"]["frame_id"] == 7
+    assert loaded_metadata == metadata
+
+
+def test_save_and_load_png_frame_without_metadata(tmp_path) -> None:
+    """
+    Check non-TIFF image saves and loads without metadata.
 
     Parameters
     ----------
@@ -218,8 +307,66 @@ def test_save_png_frame_without_metadata_assertions(tmp_path) -> None:
     manager = FileManager(FileNameConfig(directory=tmp_path, extension="png"))
     frame = np.arange(16, dtype=np.uint8).reshape(4, 4)
 
-    filename = manager.save_frame(frame=frame, config_frame=_frame_config())
+    filename = manager.save_frame(frame=frame, frame_metadata=_frame_metadata())
+    loaded_image, loaded_metadata = FileManager.load_frame(filename)
 
     assert filename.suffix == ".png"
     assert filename.exists()
     assert skimage.io.imread(filename).shape == frame.shape
+    assert loaded_image.shape == frame.shape
+    assert loaded_metadata is None
+    with pytest.raises(ValueError):
+        FileManager.load_tiff_metadata(filename)
+
+
+def test_list_filenames_returns_sorted_matching_files_only(tmp_path) -> None:
+    """
+    Check filename listing returns sorted matching files and skips directories.
+
+    Parameters
+    ----------
+    tmp_path
+        Pytest temporary directory fixture.
+
+    Returns
+    -------
+    None
+    """
+    first = tmp_path / "LED450NM_a_ref.tiff"
+    second = tmp_path / "LED450NM_b_ref.tiff"
+    other = tmp_path / "LED565NM_c_ref.tiff"
+    match_directory = tmp_path / "LED450NM_dir_ref.tiff"
+    second.write_text("second")
+    first.write_text("first")
+    other.write_text("other")
+    match_directory.mkdir()
+
+    filenames = FileManager.list_filenames(directory=tmp_path, filename_pattern="LED450NM_*_ref.tiff")
+
+    assert filenames == [first, second]
+
+
+def test_list_filenames_rejects_invalid_inputs(tmp_path) -> None:
+    """
+    Check filename listing validates directory and pattern inputs.
+
+    Parameters
+    ----------
+    tmp_path
+        Pytest temporary directory fixture.
+
+    Returns
+    -------
+    None
+    """
+    file_path = tmp_path / "file.tiff"
+    file_path.write_text("data")
+
+    with pytest.raises(FileNotFoundError):
+        FileManager.list_filenames(directory=tmp_path / "missing", filename_pattern="*.tiff")
+    with pytest.raises(NotADirectoryError):
+        FileManager.list_filenames(directory=file_path, filename_pattern="*.tiff")
+    with pytest.raises(TypeError):
+        FileManager.list_filenames(directory=tmp_path, filename_pattern=1)
+    with pytest.raises(ValueError):
+        FileManager.list_filenames(directory=tmp_path, filename_pattern="/absolute/*.tiff")

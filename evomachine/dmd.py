@@ -16,14 +16,10 @@ import skimage.io
 
 from evomachine.peripherals import Peripheral, PeripheralController, get_peripheral_controller
 from evomachine.bindings.binding_types import BindingType
+from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT
 
 logger = logging.getLogger(__name__)
-EVOMACHINE_DIR = Path(__file__).resolve().parent
 
-
-# NOTE: If modified, these parameters must also be modified in the C DMD window code.
-DMD_WIDTH_HEIGHT = (2716, 1600)
-CAM_WIDTH_HEIGHT = (3200, 3200)
 ARR_TYPE = np.uint8
 
 
@@ -35,8 +31,25 @@ class DmdConfig:
     name: str = ""
     check_initialised: bool = True
     check_alive: bool = True
+    width_height_DMD: tuple[int, int] = DMD_WIDTH_HEIGHT
+    width_height_CAM: tuple[int, int] = CAM_WIDTH_HEIGHT
+    display_offset: tuple[int, int] = (0, 0)
+    monitor_index: int | None = None
+    calibration_file: Path | None = None
 
     def __post_init__(self) -> None:
+        """
+        Validate DMD configuration after dataclass construction.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            The dataclass fields are validated in place.
+        """
         if not isinstance(self.binding, BindingType):
             raise TypeError(f"DmdConfig: binding must be BindingType, received {type(self.binding)}.")
         if not isinstance(self.name, str):
@@ -47,10 +60,114 @@ class DmdConfig:
             )
         if not isinstance(self.check_alive, bool):
             raise TypeError(f"DmdConfig: check_alive must be bool, received {type(self.check_alive)}.")
+        self.width_height_DMD = self._validate_size(
+            value=self.width_height_DMD,
+            field_name="width_height_DMD",
+        )
+        self.width_height_CAM = self._validate_size(
+            value=self.width_height_CAM,
+            field_name="width_height_CAM",
+        )
+        self.display_offset = self._validate_size(
+            value=self.display_offset,
+            field_name="display_offset",
+            allow_zero=True,
+        )
+        if self.monitor_index is not None:
+            if not isinstance(self.monitor_index, int) or isinstance(self.monitor_index, bool):
+                raise TypeError(f"DmdConfig: monitor_index must be int or None, received {type(self.monitor_index)}.")
+            if self.monitor_index < 0:
+                raise ValueError(f"DmdConfig: monitor_index must be non-negative, received {self.monitor_index}.")
+        if isinstance(self.calibration_file, str):
+            self.calibration_file = Path(self.calibration_file)
+        if self.calibration_file is not None and not isinstance(self.calibration_file, Path):
+            raise TypeError(
+                f"DmdConfig: calibration_file must be Path, str, or None, received {type(self.calibration_file)}."
+            )
+
+    @staticmethod
+    def _validate_size(
+            value: tuple[int, int],
+            field_name: str,
+            allow_zero: bool = False,
+    ) -> tuple[int, int]:
+        """
+        Return a validated two-integer size or offset tuple.
+
+        Parameters
+        ----------
+        value
+            Candidate two-value tuple.
+        field_name
+            Field name used in error messages.
+        allow_zero
+            If True, zero values are accepted.
+
+        Returns
+        -------
+        tuple[int, int]
+            Validated tuple.
+        """
+        if not isinstance(value, tuple) or len(value) != 2:
+            raise TypeError(f"DmdConfig: {field_name} must be tuple[int, int], received {type(value)}.")
+        if not all(isinstance(item, int) and not isinstance(item, bool) for item in value):
+            raise TypeError(f"DmdConfig: {field_name} entries must be int.")
+        if allow_zero:
+            if not all(item >= 0 for item in value):
+                raise ValueError(f"DmdConfig: {field_name} entries must be non-negative.")
+        elif not all(item > 0 for item in value):
+            raise ValueError(f"DmdConfig: {field_name} entries must be positive.")
+        return value
 
 
 class Dmd(Peripheral):
-    """Shared DMD behavior; subclasses implement binding-specific image display."""
+    """  TODO(CODEX): Modify doc if needed with implemented changes.
+    Class for communicating with the DMD. After calling initialise(), communicate with the DMD using following
+    functions:
+    - display_full():           Full illumination
+    - display_none():           No illumination
+    - display_fov_full():       Display full illumination on entire FoV.
+    - display_line_horiz(...):  Display a horizontal line. Uses DMD coordinates.
+    - display_line_vert(...):   Display a vertical line. Uses DMD coordinates.
+    - display_on_fov(...):      Display a number of rectangles on FoV. Uses image coordinates.
+
+
+    Note:
+    The DMD has width DMD_WIDTH_HEIGHT[0] and height DMD_WIDTH_HEIGHT[1]. In this class, the images are allocated as
+    an array with the number of rows corresponding to the width and columns corresponding to the height.
+
+    _____________________________________________________
+    | (width,0)                                   (0,0) |
+    |                                                   |
+    | SCREEN AS SEEN ON A SURFACE BEFORE THE MICROSCOPE |
+    |                                                   |
+    | (width,height)                         (0,height) |
+    |___________________________________________________|
+
+
+    Example:
+        Line 1 produced by display_line_horiz(100)
+        Line 2 produced by display_line_vert(100)
+
+    -> Monitor view:
+    _____________________________________________________
+    | 1111112111111111111111111111111111111111111111111 |
+    |       2                                           |
+    |       2                                           |
+    |       2                                           |
+    |       2                                           |
+    |_______2___________________________________________|
+
+    -> Camera view:
+    _____________________________________________________
+    | 2222221222222222222222222222222222222222222222222 |
+    |       1                                           |
+    |       1                                           |
+    |       1                                           |
+    |       1                                           |
+    |_______1___________________________________________|
+
+    """
 
     DEFAULT_NAME: str = "DMD"
     DEFAULT_LINE_WIDTH: int = 5
@@ -76,7 +193,7 @@ class Dmd(Peripheral):
         self.default_line_width: int = self.DEFAULT_LINE_WIDTH
         self._is_full_display: bool = False
         self._loaded_img: np.ndarray | None = None
-        self._calib_file: Path = calibration_file or EVOMACHINE_DIR / "dmd_calibration_data_2025-08-14_v2.pkl"
+        self._calib_file: Path = calibration_file or Path(__file__).resolve().parent / "dmd_calibration_data_2025-08-14_v2.pkl"
         self._calib_data: list | None = None
         self._homography_mat: np.ndarray | None = None
         self._homography_mat_inv: np.ndarray | None = None
@@ -548,8 +665,17 @@ class DmdFactory:
     ) -> Dmd:
         if not isinstance(config, DmdConfig):
             raise TypeError(f"DmdFactory.create: expected DmdConfig, received {type(config)}.")
+        dmd_options = {
+            "width_height_DMD": config.width_height_DMD,
+            "width_height_CAM": config.width_height_CAM,
+            "calibration_file": config.calibration_file,
+        }
 
         if config.binding == BindingType.EM_DMD_WINDOW:
+            if config.display_offset != (0, 0) or config.monitor_index is not None:
+                raise NotImplementedError(
+                    "DmdFactory.create: EM_DMD_WINDOW does not support display_offset or monitor_index."
+                )
             from evomachine.bindings.em_dmd_window.dmd import EmDmdWindowDmd
             from evomachine.bindings.em_dmd_window.peripheralcontroller import EmDmdWindowPeripheralController
 
@@ -563,22 +689,32 @@ class DmdFactory:
                 name=config.name or EmDmdWindowDmd.DEFAULT_NAME,
                 check_initialised=config.check_initialised,
                 check_alive=config.check_alive,
+                **dmd_options,
                 **binding_options,
             )
         if config.binding == BindingType.PYGAME:
             from evomachine.bindings.pygame.dmd import PygameDmd
             from evomachine.bindings.pygame.peripheralcontroller import PygameDmdPeripheralController
 
+            controller_options = {
+                "size": config.width_height_DMD,
+                "display_offset": config.display_offset,
+                "monitor_index": config.monitor_index,
+            }
+            for key in list(controller_options):
+                binding_options.pop(key, None)
             peripheral_ctrl = get_peripheral_controller(
                 peripheral_controllers=peripheral_controllers,
                 controller_type=PygameDmdPeripheralController,
                 action="DmdFactory.create",
             )
+            peripheral_ctrl.configure_display(**controller_options)
             return PygameDmd(
                 peripheral_ctrl=peripheral_ctrl,
                 name=config.name or PygameDmd.DEFAULT_NAME,
                 check_initialised=config.check_initialised,
                 check_alive=config.check_alive,
+                **dmd_options,
                 **binding_options,
             )
         if config.binding == BindingType.VIRTUAL:
@@ -595,6 +731,7 @@ class DmdFactory:
                 name=config.name or VirtualDmd.DEFAULT_NAME,
                 check_initialised=config.check_initialised,
                 check_alive=config.check_alive,
+                **dmd_options,
                 **binding_options,
             )
         raise ValueError(f"DmdFactory.create: unsupported binding {config.binding}.")

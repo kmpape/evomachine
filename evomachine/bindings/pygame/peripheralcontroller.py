@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from evomachine.dmd import DMD_WIDTH_HEIGHT
+from evomachine.config import DMD_WIDTH_HEIGHT
 from evomachine.peripherals import PeripheralController
 
 
@@ -29,6 +29,7 @@ class FakePygame:
         """Initialise fake pygame display state."""
         self.updated = False
         self.quit_called = False
+        self.modes = []
         self.surfarray = type("FakeSurfArray", (), {"make_surface": lambda _, img: ("surface", img.copy())})()
         self.display = type(
             "FakeDisplay",
@@ -42,6 +43,7 @@ class FakePygame:
 
     def set_mode(self, size, flags=0) -> FakeSurface:
         """Return a fake surface for the requested display mode."""
+        self.modes.append((size, flags))
         return FakeSurface()
 
     def update(self) -> None:
@@ -63,11 +65,15 @@ class PygameDmdPeripheralController(PeripheralController):
             name: str = DEFAULT_NAME,
             debug_mode: bool = False,
             size: tuple[int, int] = DMD_WIDTH_HEIGHT,
+            display_offset: tuple[int, int] = (0, 0),
+            monitor_index: int | None = None,
             surface: Any | None = None,
             pygame_module: Any | None = None,
     ):
         self.debug_mode: bool = debug_mode
         self.size: tuple[int, int] = size
+        self.display_offset: tuple[int, int] = display_offset
+        self.monitor_index: int | None = monitor_index
         self.surface: Any | None = surface
         self._pygame: Any | None = pygame_module
         super().__init__(name=name)
@@ -80,6 +86,32 @@ class PygameDmdPeripheralController(PeripheralController):
     ) -> PygameDmdPeripheralController:
         """Create a pygame-backed DMD peripheral controller."""
         return cls(name=name, **dmd_options)
+
+    def configure_display(
+            self,
+            size: tuple[int, int],
+            display_offset: tuple[int, int] = (0, 0),
+            monitor_index: int | None = None,
+    ) -> None:
+        """
+        Update pygame display placement configuration.
+
+        Parameters
+        ----------
+        size
+            Window/fullscreen size in pixels.
+        display_offset
+            SDL window position offset as an (x, y) tuple.
+        monitor_index
+            Optional SDL fullscreen display index.
+
+        Returns
+        -------
+        None
+        """
+        self.size = size
+        self.display_offset = display_offset
+        self.monitor_index = monitor_index
 
     def get_pygame(self) -> Any:
         """Return the pygame module, importing it lazily."""
@@ -108,7 +140,9 @@ class PygameDmdPeripheralController(PeripheralController):
         if self.surface is None:
             flags = getattr(pygame, "NOFRAME", 0) | getattr(pygame, "FULLSCREEN", 0)
             try:
-                os.environ.setdefault("SDL_VIDEO_WINDOW_POS", "0,0")
+                os.environ["SDL_VIDEO_WINDOW_POS"] = f"{self.display_offset[0]},{self.display_offset[1]}"
+                if self.monitor_index is not None:
+                    os.environ["SDL_VIDEO_FULLSCREEN_DISPLAY"] = str(self.monitor_index)
                 self.surface = pygame.display.set_mode(size=self.size, flags=flags)
             except Exception:
                 self.surface = pygame.display.set_mode(size=(300, 300), flags=getattr(pygame, "NOFRAME", 0))

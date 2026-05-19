@@ -16,6 +16,8 @@ from evomachine.config_types import ConfigFocus, ConfigFocusFactory, ImageConfig
 # Path to large data storage to store logs and files
 EVOMACHINE_DIR: Path = Path(__file__).resolve().parents[1]
 DATA_DIR = EVOMACHINE_DIR / "images"
+DMD_WIDTH_HEIGHT = (2716, 1600)
+CAM_WIDTH_HEIGHT = (3200, 3200)
 
 # DeLTA/evomachine/asitiger/syncboard/dmdwindow lib install directory
 

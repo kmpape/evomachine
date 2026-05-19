@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
+import json
 import numpy as np
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,7 @@ from delta.utils import CroppingBox
 from delta.rttypes import TrackingSetting
 
 from evomachine.coordinates import Coordinate
-from evomachine.types import BrightnessType, ExposureType, FilterWheelType, FocusAlgorithmType, LEDType, \
+from evomachine.types import BrightnessType, EvoType, ExposureType, FilterWheelType, FocusAlgorithmType, LEDType, \
     ChamberOrientationType, UNKNOWN_POSITION_ID
 from evomachine.exceptions import ConfigError, ErrorCode
 
@@ -491,7 +492,7 @@ class SoftwareFocusConfig:
 
     exposure_time: float | int
     "Exposure time for focusing in ms."
-    focus_channel: LEDType   # TODO make list
+    focus_channel: LEDType
     "LED channel to use while scanning. See LEDType for available channels."
     rel_range: int
     "Relative range for Z-movement of stage in 1/10 μm, e.g., stage will move current_position+-rel_range."
@@ -510,7 +511,7 @@ class SoftwareFocusConfig:
     "Box to crop out image area to focus on."
     user_input: bool | None = True
     "Ask for user input before configuring and starting software focus."
-    focus_frames: ConfigFrame | list[ConfigFrame] | None = None
+    focus_frames: FrameMetaData | list[FrameMetaData] | None = None
     "Frame acquisition settings for future scoring frame capture support."
 
     @staticmethod
@@ -581,27 +582,27 @@ class SoftwareFocusConfig:
             return False
 
     @staticmethod
-    def _focus_frames_are_valid(focus_frames: ConfigFrame | list[ConfigFrame] | None) -> bool:
+    def _focus_frames_are_valid(focus_frames: FrameMetaData | list[FrameMetaData] | None) -> bool:
         """
         Return whether focus frame settings have a supported shape.
 
         Parameters
         ----------
         focus_frames
-            None, one ConfigFrame, or a list of ConfigFrame objects.
+            None, one FrameMetaData, or a list of FrameMetaData objects.
 
         Returns
         -------
         bool
-            True when focus_frames is None, a ConfigFrame, or a list of
-            ConfigFrame objects.
+            True when focus_frames is None, a FrameMetaData, or a list of
+            FrameMetaData objects.
         """
         if focus_frames is None:
             return True
-        if isinstance(focus_frames, ConfigFrame):
+        if isinstance(focus_frames, FrameMetaData):
             return True
         if isinstance(focus_frames, list):
-            return all(isinstance(frame, ConfigFrame) for frame in focus_frames)
+            return all(isinstance(frame, FrameMetaData) for frame in focus_frames)
         return False
 
     def __post_init__(self) -> None:
@@ -630,7 +631,7 @@ class SoftwareFocusConfig:
         if not self.attr_is_valid('algorithm', self.algorithm):
             raise TypeError(f"algorithm must be an instance of FocusAlgorithmType. Provided {self.algorithm}.")
         if not self.attr_is_valid('focus_frames', self.focus_frames):
-            raise TypeError("focus_frames must be None, ConfigFrame, or list[ConfigFrame].")
+            raise TypeError("focus_frames must be None, FrameMetaData, or list[FrameMetaData].")
 
     def copy(self) -> SoftwareFocusConfig:
         """
@@ -944,16 +945,13 @@ class FileNameConfig:
         return self.updated(**updates)
 
 
-# TODO(Codex): Add the following attributes to the ConfigFrame and refactor where needed
-# - The ConfigFrame needs argument position_ID int which can also be UNKNOWN_ID to start with. Stage defines an UNKNOWN_ID. Define this UNKONWN_ID in types.py and refactor where it is needed.
-# - Add an attribute coordinate that is usually initialised with None coordinate. This and the position_ID will be filled after taking an image.
-# - Add a timestamp argument, one for creation and one for execution.
-# - Make a ConfigFrameFactory somewhere.
 @dataclass
-class ConfigFrame:
+class FrameMetaData:
     """
-    ConfigFrame is used when taking pictures. If any attribute is None, the corresponding hardware/setting is not activated.
+    Store frame acquisition settings and metadata associated with one image frame.
     """
+    frame_id: int
+    "Frame identifier used to associate saved files and callbacks."
     # Frame settings
     leds: dict[LEDType, BrightnessType] | None
     "Dict with LED/brightness to actuate simultaneously for the frame."
@@ -969,20 +967,14 @@ class ConfigFrame:
     "Time when this frame configuration was created."
     execution_time: datetime | None = None
     "Time when this frame was acquired or saved, if known."
-    
-    # Runtime settings
-    force_settings: bool = False
-    "Hardware will be actuated even if the code thinks that the right settings are already in place."
-    disable_leds_before: bool = True
-    "Will send commands to disable all available LEDs before taking the frame."
-    disable_leds_after: bool = True
-    "Will send commands to disable all available LEDs after taking the frame."
-    reset_leds_after: bool = False
-    "Will restore LED/brightness as it thinks it was before."
+    callback_id: int | None = None
+    "Callback identifier filled by the automaton when available."
+    additional_metadata: dict[str, Any] = field(default_factory=dict)
+    "Additional JSON-serializable metadata for filename generation and saved metadata."
 
     def __post_init__(self) -> None:
         """
-        Validate frame acquisition settings after construction.
+        Validate frame metadata after construction.
 
         Parameters
         ----------
@@ -993,53 +985,143 @@ class ConfigFrame:
         None
             The dataclass fields are validated in place.
         """
+        if not isinstance(self.frame_id, int) or isinstance(self.frame_id, bool):
+            raise TypeError(f"FrameMetaData: frame_id must be int, received {type(self.frame_id)}.")
         if self.leds is not None:
             if not isinstance(self.leds, dict):
-                raise TypeError(f"ConfigFrame: leds must be dict[LEDType, BrightnessType] or None, received {type(self.leds)}.")
+                raise TypeError(
+                    f"FrameMetaData: leds must be dict[LEDType, BrightnessType] or None, received {type(self.leds)}."
+                )
             for led_type, brightness in self.leds.items():
                 if not isinstance(led_type, LEDType):
-                    raise TypeError(f"ConfigFrame: LED keys must be LEDType, received {type(led_type)}.")
+                    raise TypeError(f"FrameMetaData: LED keys must be LEDType, received {type(led_type)}.")
                 if not isinstance(brightness, int | float):
-                    raise TypeError(f"ConfigFrame: LED brightness must be numeric, received {type(brightness)}.")
+                    raise TypeError(f"FrameMetaData: LED brightness must be numeric, received {type(brightness)}.")
                 if not 0 <= float(brightness) <= 100:
-                    raise ValueError(f"ConfigFrame: LED brightness must be in [0, 100], received {brightness}.")
+                    raise ValueError(f"FrameMetaData: LED brightness must be in [0, 100], received {brightness}.")
         if self.filter_wheel is not None and not isinstance(self.filter_wheel, FilterWheelType):
             raise TypeError(
-                f"ConfigFrame: filter_wheel must be FilterWheelType or None, received {type(self.filter_wheel)}."
+                f"FrameMetaData: filter_wheel must be FilterWheelType or None, received {type(self.filter_wheel)}."
             )
         if self.exposure is not None:
             if not isinstance(self.exposure, int | float):
-                raise TypeError(f"ConfigFrame: exposure must be numeric or None, received {type(self.exposure)}.")
+                raise TypeError(f"FrameMetaData: exposure must be numeric or None, received {type(self.exposure)}.")
             if not 1 <= float(self.exposure) <= 1000:
-                raise ValueError(f"ConfigFrame: exposure must be in [1, 1000], received {self.exposure}.")
+                raise ValueError(f"FrameMetaData: exposure must be in [1, 1000], received {self.exposure}.")
         if not isinstance(self.position_id, int) or isinstance(self.position_id, bool):
-            raise TypeError(f"ConfigFrame: position_id must be int, received {type(self.position_id)}.")
+            raise TypeError(f"FrameMetaData: position_id must be int, received {type(self.position_id)}.")
         if self.coordinate is not None and not isinstance(self.coordinate, Coordinate):
-            raise TypeError(f"ConfigFrame: coordinate must be Coordinate or None, received {type(self.coordinate)}.")
+            raise TypeError(f"FrameMetaData: coordinate must be Coordinate or None, received {type(self.coordinate)}.")
         if not isinstance(self.creation_time, datetime):
-            raise TypeError(f"ConfigFrame: creation_time must be datetime, received {type(self.creation_time)}.")
+            raise TypeError(f"FrameMetaData: creation_time must be datetime, received {type(self.creation_time)}.")
         if self.execution_time is not None and not isinstance(self.execution_time, datetime):
             raise TypeError(
-                f"ConfigFrame: execution_time must be datetime or None, received {type(self.execution_time)}."
+                f"FrameMetaData: execution_time must be datetime or None, received {type(self.execution_time)}."
             )
-        for field_name in ["force_settings", "disable_leds_before", "disable_leds_after", "reset_leds_after"]:
-            if not isinstance(getattr(self, field_name), bool):
-                raise TypeError(f"ConfigFrame: {field_name} must be bool, received {type(getattr(self, field_name))}.")
+        if self.callback_id is not None and (not isinstance(self.callback_id, int) or isinstance(self.callback_id, bool)):
+            raise TypeError(f"FrameMetaData: callback_id must be int or None, received {type(self.callback_id)}.")
+        if not isinstance(self.additional_metadata, dict):
+            raise TypeError(
+                f"FrameMetaData: additional_metadata must be dict[str, Any], "
+                f"received {type(self.additional_metadata)}."
+            )
+        if not all(isinstance(key, str) for key in self.additional_metadata):
+            raise TypeError("FrameMetaData: additional_metadata keys must be str.")
 
+    def to_metadata_dict(self) -> dict[str, Any]:
+        """
+        Return a JSON-serializable metadata dictionary for this frame.
 
-class ConfigFrameFactory:
-    """Factory for common ConfigFrame instances."""
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        dict[str, Any]
+            JSON-serializable representation of the frame metadata.
+        """
+        metadata = {
+            "frame_id": self.frame_id,
+            "callback_id": self.callback_id,
+            "leds": None if self.leds is None else {
+                led_type.name: {
+                    "value": led_type.value,
+                    "brightness": float(brightness),
+                }
+                for led_type, brightness in self.leds.items()
+            },
+            "filter_wheel": self._enum_to_metadata(self.filter_wheel),
+            "exposure": self.exposure,
+            "position_id": self.position_id,
+            "coordinate": None if self.coordinate is None else self.coordinate.to_dict(),
+            "creation_time": self.creation_time.isoformat(),
+            "execution_time": None if self.execution_time is None else self.execution_time.isoformat(),
+            "additional_metadata": self.additional_metadata,
+        }
+        try:
+            json.dumps(metadata)
+        except TypeError as error:
+            raise TypeError("FrameMetaData.to_metadata_dict: metadata must be JSON serializable.") from error
+        return metadata
 
     @staticmethod
+    def _enum_to_metadata(value: EvoType | None) -> dict[str, Any] | None:
+        """
+        Return a JSON-serializable enum representation.
+
+        Parameters
+        ----------
+        value
+            EvoType enum value or None.
+
+        Returns
+        -------
+        dict[str, Any] | None
+            Enum name and value, or None.
+        """
+        if value is None:
+            return None
+        return {"name": value.name, "value": value.value}
+
+
+class FrameMetaDataFactory:
+    """Factory for common FrameMetaData instances with generated frame IDs."""
+
+    _next_frame_id = 0
+
+    @classmethod
+    def reset_counter(cls, start: int = 0) -> None:
+        """
+        Reset the generated frame ID counter.
+
+        Parameters
+        ----------
+        start
+            Integer frame ID to use for the next generated frame.
+
+        Returns
+        -------
+        None
+        """
+        if not isinstance(start, int) or isinstance(start, bool):
+            raise TypeError(f"FrameMetaDataFactory.reset_counter: start must be int, received {type(start)}.")
+        cls._next_frame_id = start
+
+    @classmethod
     def default(
+            cls,
             leds: dict[LEDType, BrightnessType] | None = None,
             filter_wheel: FilterWheelType | None = None,
             exposure: ExposureType | None = None,
             position_id: int = UNKNOWN_POSITION_ID,
             coordinate: Coordinate | None = None,
-    ) -> ConfigFrame:
+            frame_id: int | None = None,
+            callback_id: int | None = None,
+            additional_metadata: dict[str, Any] | None = None,
+    ) -> FrameMetaData:
         """
-        Return a ConfigFrame with common defaults.
+        Return a FrameMetaData with common defaults.
 
         Parameters
         ----------
@@ -1053,17 +1135,77 @@ class ConfigFrameFactory:
             Registered position ID or UNKNOWN_POSITION_ID.
         coordinate
             Optional stage coordinate associated with the frame.
+        frame_id
+            Optional explicit frame ID. When None, the factory counter is used.
+        callback_id
+            Optional callback ID associated with the frame.
+        additional_metadata
+            Optional extra metadata mapping for filenames and saved metadata.
 
         Returns
         -------
-        ConfigFrame
-            Validated frame configuration.
+        FrameMetaData
+            Validated frame metadata.
         """
-        return ConfigFrame(
+        if frame_id is None:
+            frame_id = cls._next_frame_id
+            cls._next_frame_id += 1
+        return FrameMetaData(
+            frame_id=frame_id,
             leds=leds,
             filter_wheel=filter_wheel,
             exposure=exposure,
             position_id=position_id,
             coordinate=coordinate,
+            callback_id=callback_id,
+            additional_metadata={} if additional_metadata is None else additional_metadata,
         )
     
+
+@dataclass
+class Frame:
+    """Store one or more acquired image arrays with their frame metadata."""
+
+    frame_metadata: list[FrameMetaData]
+    "Frame metadata entries corresponding to the leading axis of array."
+    array: np.ndarray
+    "Image data with shape (len(frame_metadata), height, width)."
+    saved_paths: list[Path | None] = field(default_factory=list)
+    "Optional saved output paths corresponding to the leading axis of array."
+
+    def __post_init__(self) -> None:
+        """
+        Validate acquired frame data after construction.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            The dataclass fields are validated in place.
+        """
+        if not isinstance(self.frame_metadata, list):
+            raise TypeError(f"Frame: frame_metadata must be list[FrameMetaData], received {type(self.frame_metadata)}.")
+        if not self.frame_metadata:
+            raise ValueError("Frame: frame_metadata must not be empty.")
+        if not all(isinstance(metadata, FrameMetaData) for metadata in self.frame_metadata):
+            raise TypeError("Frame: every frame_metadata entry must be FrameMetaData.")
+        if not isinstance(self.array, np.ndarray):
+            raise TypeError(f"Frame: array must be np.ndarray, received {type(self.array)}.")
+        if self.array.ndim != 3:
+            raise ValueError(f"Frame: array must be 3D with shape (n_frames, height, width), received {self.array.shape}.")
+        if self.array.shape[0] != len(self.frame_metadata):
+            raise ValueError(
+                f"Frame: leading array dimension {self.array.shape[0]} must match "
+                f"{len(self.frame_metadata)} metadata entries."
+            )
+        if self.saved_paths is None:
+            self.saved_paths = [None] * len(self.frame_metadata)
+        if not isinstance(self.saved_paths, list):
+            raise TypeError(f"Frame: saved_paths must be list[Path | None], received {type(self.saved_paths)}.")
+        if len(self.saved_paths) != len(self.frame_metadata):
+            raise ValueError("Frame: saved_paths length must match frame_metadata length.")
+        if not all(path is None or isinstance(path, Path) for path in self.saved_paths):
+            raise TypeError("Frame: saved_paths entries must be Path or None.")

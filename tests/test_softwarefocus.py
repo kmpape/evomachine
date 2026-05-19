@@ -1,8 +1,11 @@
+import threading
+
 import numpy as np
 import pytest
 from delta.utils import CroppingBox
 
 from evomachine import software_focus_bkp
+from evomachine.acquisition import FrameAcquisitionManager
 from evomachine.bindings.software_focus.software_focus_algorithms import (
     LaplacianVarianceFocusAlgorithm,
     SoftwareFocusAlgorithm,
@@ -12,18 +15,326 @@ from evomachine.bindings.software_focus.software_focus_algorithms import (
 from evomachine.config_types import (
     ConfigFocus,
     ConfigFocusFactory,
-    ConfigFrame,
+    FrameMetaData,
     SoftwareFocusConfig,
     SoftwareFocusConfigFactory,
 )
+from evomachine.coordinates import Coordinate
 from evomachine.softwarefocus import (
+    SoftwareFocus,
     create_software_focus_algorithm,
     get_focus_curve_type,
     get_focus_score,
     get_focus_score_is_good,
     get_roi_focus_score,
 )
-from evomachine.types import FocusAlgorithmType, FocusCurveType, LEDType
+from evomachine.leds import LedState
+from evomachine.types import FilterWheelType, FocusAlgorithmType, FocusCurveType, FocusStatusType, LEDType
+
+
+class FakeStage:
+    """Small stage fake whose current Z controls fake camera sharpness."""
+
+    def __init__(self, coordinate: Coordinate | None = None, position_id: int = 0):
+        """
+        Initialise a fake stage.
+
+        Parameters
+        ----------
+        coordinate
+            Initial stage coordinate.
+        position_id
+            Position ID returned by get_pos().
+
+        Returns
+        -------
+        None
+        """
+        self.coordinate = coordinate or Coordinate(0, 0, 0)
+        self.position_id = position_id
+        self.moves: list[Coordinate] = []
+
+    def get_coordinates(self, query_hardware: bool = True, axes=None) -> Coordinate:
+        """
+        Return the current fake coordinate.
+
+        Parameters
+        ----------
+        query_hardware
+            Accepted for API compatibility.
+        axes
+            Accepted for API compatibility.
+
+        Returns
+        -------
+        Coordinate
+            Copy of the current coordinate.
+        """
+        return self.coordinate.copy()
+
+    def get_pos(self) -> int:
+        """
+        Return the fake position ID.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        int
+            Current fake position ID.
+        """
+        return self.position_id
+
+    def move(self, target: Coordinate, block: bool = True) -> None:
+        """
+        Move the fake stage to a coordinate.
+
+        Parameters
+        ----------
+        target
+            Coordinate containing axes to update.
+        block
+            Accepted for API compatibility.
+
+        Returns
+        -------
+        None
+        """
+        self.moves.append(target.copy())
+        if target.x is not None:
+            self.coordinate.x = target.x
+        if target.y is not None:
+            self.coordinate.y = target.y
+        if target.z is not None:
+            self.coordinate.z = target.z
+
+
+class FakeCamera:
+    """Small camera fake returning images whose sharpness peaks at Z=0."""
+
+    def __init__(self, stage: FakeStage, shape: tuple[int, int] = (6, 6)):
+        """
+        Initialise a fake camera.
+
+        Parameters
+        ----------
+        stage
+            FakeStage used to read the current Z coordinate.
+        shape
+            Shape of generated images.
+
+        Returns
+        -------
+        None
+        """
+        self.stage = stage
+        self.shape = shape
+        self.exposures: list[float | int] = []
+        self.frames_captured = 0
+
+    def set_exposure(self, exposure_time: float | int) -> None:
+        """
+        Record a fake exposure setting.
+
+        Parameters
+        ----------
+        exposure_time
+            Exposure time in milliseconds.
+
+        Returns
+        -------
+        None
+        """
+        self.exposures.append(exposure_time)
+
+    def get_frame(self, normalise: bool = False) -> np.ndarray:
+        """
+        Return a deterministic image based on current fake stage Z.
+
+        Parameters
+        ----------
+        normalise
+            Accepted for API compatibility.
+
+        Returns
+        -------
+        np.ndarray
+            Generated image.
+        """
+        self.frames_captured += 1
+        z = 0 if self.stage.coordinate.z is None else int(self.stage.coordinate.z)
+        amplitude = max(0, 10 - abs(z))
+        frame = np.zeros(self.shape, dtype=np.float64)
+        frame[2:4, 2:4] = amplitude
+        return frame
+
+
+class FakeLedManager:
+    """Small LED manager fake that records set and disable calls."""
+
+    def __init__(self):
+        """Initialise fake LED command recording."""
+        self.commands: list[tuple[LEDType | None, float | int]] = []
+        self.disable_count = 0
+        self.states = {
+            LEDType.LED_450_NM: LedState(led_type=LEDType.LED_450_NM),
+            LEDType.LED_565_NM: LedState(led_type=LEDType.LED_565_NM),
+        }
+
+    def get_available_leds(self) -> list[LEDType]:
+        """
+        Return LEDs available through the fake manager.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        list[LEDType]
+            Available fake LEDs.
+        """
+        return list(self.states)
+
+    def get_led_state(self, led_type: LEDType) -> LedState:
+        """
+        Return the cached fake LED state.
+
+        Parameters
+        ----------
+        led_type
+            LED to inspect.
+
+        Returns
+        -------
+        LedState
+            Copied fake state.
+        """
+        state = self.states[led_type]
+        return LedState(led_type=state.led_type, brightness=state.brightness, is_on=state.is_on)
+
+    def set_led(self, led_type: LEDType, brightness: float | int, duration: float | None = None) -> None:
+        """
+        Record a fake LED set command.
+
+        Parameters
+        ----------
+        led_type
+            LEDType to record.
+        brightness
+            Brightness to record.
+        duration
+            Accepted for API compatibility.
+
+        Returns
+        -------
+        None
+        """
+        self.commands.append((led_type, brightness))
+        self.states[led_type] = LedState(led_type=led_type, brightness=brightness, is_on=brightness > 0)
+
+    def disable_led(self, led_type: LEDType | None = None) -> None:
+        """
+        Record a fake LED disable command.
+
+        Parameters
+        ----------
+        led_type
+            Optional LEDType to disable.
+
+        Returns
+        -------
+        None
+        """
+        self.disable_count += 1
+        self.commands.append((led_type, 0))
+        led_types = list(self.states) if led_type is None else [led_type]
+        for selected_led in led_types:
+            self.states[selected_led] = LedState(led_type=selected_led)
+
+
+class FakeDmd:
+    """Small DMD fake that records display calls."""
+
+    def __init__(self):
+        """Initialise fake DMD state."""
+        self.full_count = 0
+        self.none_count = 0
+
+    def display_full(self) -> None:
+        """
+        Record a fake full-display command.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.full_count += 1
+
+    def display_none(self) -> None:
+        """
+        Record a fake blank-display command.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.none_count += 1
+
+
+class FakeFilterWheel:
+    """Small filter wheel fake that records filter positions."""
+
+    def __init__(self):
+        """Initialise fake filter wheel state."""
+        self.filters: list[FilterWheelType] = []
+
+    def set_filter_wheel(self, filter_type: FilterWheelType) -> None:
+        """
+        Record a fake filter wheel setting.
+
+        Parameters
+        ----------
+        filter_type
+            FilterWheelType to record.
+
+        Returns
+        -------
+        None
+        """
+        self.filters.append(filter_type)
+
+
+class FakeAutofocus:
+    """Small autofocus fake that records unlock calls."""
+
+    def __init__(self):
+        """Initialise fake autofocus state."""
+        self.unlock_count = 0
+
+    def unlock(self) -> None:
+        """
+        Record a fake autofocus unlock command.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.unlock_count += 1
 
 
 def _image() -> np.ndarray:
@@ -216,7 +527,7 @@ def test_software_focus_config_alias_factory_and_updates() -> None:
     None
     """
     config = _config()
-    frame = ConfigFrame(leds={LEDType.LED_450_NM: 50}, filter_wheel=None, exposure=100)
+    frame = FrameMetaData(frame_id=0, leds={LEDType.LED_450_NM: 50}, filter_wheel=None, exposure=100)
     updated = config.updated(brightness=10, focus_frames=[frame])
 
     assert ConfigFocus is SoftwareFocusConfig
@@ -232,3 +543,226 @@ def test_software_focus_config_alias_factory_and_updates() -> None:
         config.update_from_mapping([("brightness", 10)])
     with pytest.raises(TypeError):
         _config(focus_frames=["bad"])
+
+
+def _software_focus(**config_updates) -> tuple[SoftwareFocus, FakeStage, FakeCamera, FakeLedManager, FakeDmd]:
+    """
+    Return a SoftwareFocus instance with fake peripherals.
+
+    Parameters
+    ----------
+    **config_updates
+        SoftwareFocusConfig values to override.
+
+    Returns
+    -------
+    tuple[SoftwareFocus, FakeStage, FakeCamera, FakeLedManager, FakeDmd]
+        SoftwareFocus and the fakes it uses.
+    """
+    stage = FakeStage()
+    camera = FakeCamera(stage=stage)
+    leds = FakeLedManager()
+    dmd = FakeDmd()
+    filter_wheel = config_updates.pop("filter_wheel", None)
+    config = _config(
+        algorithm=FocusAlgorithmType.LAPLACIAN_VAR,
+        rel_range=3,
+        step_size=1,
+        rowshift_px=1,
+        colshift_px=1,
+        **config_updates,
+    )
+    acquisition_manager = FrameAcquisitionManager(
+        camera=camera,
+        led_manager=leds,
+        filter_wheel=filter_wheel,
+        dmd=dmd,
+        stage=stage,
+    )
+    focus = SoftwareFocus(
+        acquisition_manager=acquisition_manager,
+        config=config,
+    )
+    return focus, stage, camera, leds, dmd
+
+
+def test_software_focus_update_config_and_positions() -> None:
+    """
+    Check SoftwareFocus config updates and position state initialisation.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    focus, _, _, _, _ = _software_focus()
+    replacement = _config(brightness=10)
+
+    focus.initialise_positions([1, 2])
+    focus.update_config(brightness=20)
+    assert focus.config.brightness == 20
+    focus.update_config(config=replacement)
+
+    assert focus.config is replacement
+    assert focus.get_position_state(1).position_id == 1
+    with pytest.raises(KeyError):
+        focus.get_position_state(3)
+    with pytest.raises(ValueError):
+        focus.update_config(config=replacement, brightness=5)
+
+
+def test_software_focus_instance_scoring_helpers() -> None:
+    """
+    Check SoftwareFocus instance scoring helpers.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    focus, _, _, _, _ = _software_focus()
+    img = _image()
+    boxes = [CroppingBox(xtl=0, xbr=3, ytl=0, ybr=3)]
+
+    assert focus.score_image(img=img) == get_focus_score(
+        img=img,
+        algorithm=focus.config.algorithm,
+        rowshift=focus.config.rowshift_px,
+        colshift=focus.config.colshift_px,
+        config=focus.config,
+    )
+    assert focus.score_rois(img=img, boxes=boxes) == get_roi_focus_score(
+        img=img,
+        algorithm=focus.config.algorithm,
+        boxes=boxes,
+        rowshift=focus.config.rowshift_px,
+        colshift=focus.config.colshift_px,
+        config=focus.config,
+    )
+
+
+def test_software_focus_run_scans_and_moves_to_best_z() -> None:
+    """
+    Check SoftwareFocus scans Z positions and moves to the best non-boundary Z.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    autofocus = FakeAutofocus()
+    focus, stage, camera, leds, dmd = _software_focus()
+    focus.autofocus = autofocus
+
+    result = focus.run(position_id=5)
+    state = focus.get_position_state(5)
+
+    assert result.focus_status == FocusStatusType.IN_FOCUS
+    assert result.curve_status == FocusCurveType.HAS_GLOBAL_MAXIMUM
+    assert result.best_coordinate.z == 0
+    assert stage.coordinate.z == 0
+    assert np.array_equal(result.z_coordinates, np.array([-3, -2, -1, 0, 1, 2]))
+    assert state.focus_stack.shape == (6, 6, 6)
+    assert state.previous_image.shape == (6, 6)
+    assert camera.exposures[0] == focus.config.exposure_time
+    assert dmd.full_count == 7
+    assert autofocus.unlock_count == 1
+    assert leds.disable_count >= 1
+    assert (LEDType.LED_450_NM, 29) in leds.commands
+
+
+def test_software_focus_run_averages_multiple_frame_metadata_scores() -> None:
+    """
+    Check SoftwareFocus averages scores from multiple FrameMetaData captures.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    frame_a = FrameMetaData(
+        frame_id=1,
+        leds={LEDType.LED_450_NM: 10},
+        filter_wheel=FilterWheelType.FILTER_465nm,
+        exposure=50,
+    )
+    frame_b = FrameMetaData(
+        frame_id=2,
+        leds={LEDType.LED_565_NM: 20},
+        filter_wheel=FilterWheelType.FILTER_592nm,
+        exposure=60,
+    )
+    filter_wheel = FakeFilterWheel()
+    focus, _, camera, leds, _ = _software_focus(focus_frames=[frame_a, frame_b], filter_wheel=filter_wheel)
+
+    result = focus.run(position_id=0)
+
+    assert result.focus_status == FocusStatusType.IN_FOCUS
+    assert camera.frames_captured == 14
+    assert filter_wheel.filters[:2] == [FilterWheelType.FILTER_465nm, FilterWheelType.FILTER_592nm]
+    assert (LEDType.LED_450_NM, 10) in leds.commands
+    assert (LEDType.LED_565_NM, 20) in leds.commands
+    assert 50 in camera.exposures
+    assert 60 in camera.exposures
+
+
+def test_software_focus_run_rejects_missing_filter_wheel_for_frame_metadata() -> None:
+    """
+    Check SoftwareFocus raises when frame metadata needs a missing filter wheel.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    frame = FrameMetaData(
+        frame_id=1,
+        leds={LEDType.LED_450_NM: 10},
+        filter_wheel=FilterWheelType.FILTER_465nm,
+        exposure=50,
+    )
+    focus, _, _, leds, _ = _software_focus(focus_frames=frame)
+
+    with pytest.raises(RuntimeError, match="filter wheel"):
+        focus.run(position_id=0)
+    assert leds.disable_count >= 1
+
+
+def test_software_focus_run_respects_stop_event() -> None:
+    """
+    Check SoftwareFocus stops before scanning when the stop event is set.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    focus, stage, _, leds, dmd = _software_focus()
+    stop_event = threading.Event()
+    stop_event.set()
+
+    result = focus.run(position_id=0, stop_event=stop_event)
+
+    assert result.focus_status != FocusStatusType.IN_FOCUS
+    assert result.focus_scores.size == 0
+    assert len(stage.moves) == 0
+    assert dmd.full_count == 0
+    assert leds.disable_count == 0
