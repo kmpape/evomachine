@@ -999,11 +999,8 @@ class FileNameConfig:
     """Configuration object for FileManager output paths and filename patterns."""
 
     directory: Path
-    filename_pattern: str = "{channel}_P{position_id}_X{x}_Y{y}_Z{z}_F{filter_wheel}_{timestamp}{suffix}.{extension}"
-    extension: str = "tiff"
+    filename_pattern: str = "{channel}_P{position_id}_X{x}_Y{y}_Z{z}_F{filter_wheel}_{timestamp}"
     create_directory: bool = True
-
-    SUPPORTED_EXTENSIONS = {"tif", "tiff", "png", "jpg", "jpeg"}
 
     def __post_init__(self) -> None:
         """
@@ -1028,14 +1025,6 @@ class FileNameConfig:
             )
         if self.filename_pattern == "":
             raise ValueError("FileNameConfig: filename_pattern must not be empty.")
-        if not isinstance(self.extension, str):
-            raise TypeError(f"FileNameConfig: extension must be str, received {type(self.extension)}.")
-        self.extension = self.extension.lower().lstrip(".")
-        if self.extension not in self.SUPPORTED_EXTENSIONS:
-            raise ValueError(
-                f"FileNameConfig: extension must be one of {sorted(self.SUPPORTED_EXTENSIONS)}, "
-                f"received {self.extension}."
-            )
         if not isinstance(self.create_directory, bool):
             raise TypeError(
                 f"FileNameConfig: create_directory must be bool, received {type(self.create_directory)}."

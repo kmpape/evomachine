@@ -238,14 +238,12 @@ class FakeFileManager:
         None
         """
         self.fail_on_save = fail_on_save
-        self.saved: list[tuple[np.ndarray, FrameMetaData, str | None, str | None]] = []
+        self.saved: list[tuple[np.ndarray, FrameMetaData]] = []
 
     def save_frame(
             self,
             frame: np.ndarray,
             frame_metadata: FrameMetaData,
-            filename_pattern: str | None = None,
-            suffix: str | None = None,
     ) -> Path:
         """
         Record a save request and return a fake path.
@@ -256,10 +254,6 @@ class FakeFileManager:
             Image frame to save.
         frame_metadata
             Metadata to save with the frame.
-        filename_pattern
-            Optional filename pattern.
-        suffix
-            Optional filename suffix.
 
         Returns
         -------
@@ -268,7 +262,7 @@ class FakeFileManager:
         """
         if self.fail_on_save:
             raise RuntimeError("save failed")
-        self.saved.append((frame.copy(), frame_metadata, filename_pattern, suffix))
+        self.saved.append((frame.copy(), frame_metadata))
         return Path("/tmp/frame.tiff")
 
 

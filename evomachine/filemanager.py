@@ -16,7 +16,8 @@ from evomachine.types import FilterWheelType, LEDType
 class FileManager:
     """Manager for frame filenames, save directories, and frame image metadata."""
 
-    TIFF_EXTENSIONS = {"tif", "tiff"}
+    TIFF_EXTENSION = "tiff"
+    NON_TIFF_IMAGE_SUFFIXES = {".tif", ".png", ".jpg", ".jpeg", ".bmp"}
 
     def __init__(self, config: FileNameConfig):
         """
@@ -25,8 +26,7 @@ class FileManager:
         Parameters
         ----------
         config
-            FileNameConfig defining the output directory, filename pattern, and
-            default extension.
+            FileNameConfig defining the output directory and filename pattern.
 
         Returns
         -------
@@ -85,9 +85,6 @@ class FileManager:
     def get_filename(
             self,
             frame_metadata: FrameMetaData,
-            filename_pattern: str | None = None,
-            suffix: str | None = None,
-            **values: Any,
     ) -> Path:
         """
         Return an output path generated from the active filename pattern.
@@ -96,44 +93,27 @@ class FileManager:
         ----------
         frame_metadata
             FrameMetaData supplying default filename variables.
-        filename_pattern
-            Optional pattern overriding FileNameConfig.filename_pattern.
-        suffix
-            Optional suffix inserted through the {suffix} pattern variable.
-        **values
-            Additional or overriding format variables for the filename pattern.
 
         Returns
         -------
         Path
-            Full output path under the configured directory.
+            Full TIFF output path under the configured directory.
         """
         if not isinstance(frame_metadata, FrameMetaData):
             raise TypeError(
                 f"FileManager.get_filename: frame_metadata must be FrameMetaData, received {type(frame_metadata)}."
             )
-        if filename_pattern is not None and not isinstance(filename_pattern, str):
-            raise TypeError(
-                f"FileManager.get_filename: filename_pattern must be str or None, received {type(filename_pattern)}."
-            )
-        if suffix is not None and not isinstance(suffix, str):
-            raise TypeError(f"FileManager.get_filename: suffix must be str or None, received {type(suffix)}.")
-        pattern = self.config.filename_pattern if filename_pattern is None else filename_pattern
-        format_values = self._format_values(frame_metadata=frame_metadata, suffix=suffix)
-        format_values.update(values)
-        filename = pattern.format(**format_values)
+        format_values = self._format_values(frame_metadata=frame_metadata)
+        filename = self.config.filename_pattern.format(**format_values)
         filename_path = Path(filename)
         if filename_path.is_absolute():
             raise ValueError("FileManager.get_filename: filename_pattern must produce a relative path.")
-        return self.config.directory / filename_path
+        return self.config.directory / self._with_tiff_suffix(path=filename_path)
 
     def save_frame(
             self,
             frame: np.ndarray,
             frame_metadata: FrameMetaData,
-            filename_pattern: str | None = None,
-            suffix: str | None = None,
-            **values: Any,
     ) -> Path:
         """
         Save one frame image and return the output path.
@@ -144,12 +124,6 @@ class FileManager:
             Image array to save.
         frame_metadata
             FrameMetaData to include in TIFF metadata and filename variables.
-        filename_pattern
-            Optional pattern overriding FileNameConfig.filename_pattern.
-        suffix
-            Optional suffix inserted through the {suffix} pattern variable.
-        **values
-            Additional or overriding format variables for the filename pattern.
 
         Returns
         -------
@@ -164,19 +138,10 @@ class FileManager:
             )
         if frame_metadata.execution_time is None:
             frame_metadata.execution_time = datetime.now()
-        filename = self.get_filename(
-            frame_metadata=frame_metadata,
-            filename_pattern=filename_pattern,
-            suffix=suffix,
-            **values,
-        )
+        filename = self.get_filename(frame_metadata=frame_metadata)
         filename.parent.mkdir(parents=True, exist_ok=True)
-        extension = filename.suffix.lower().lstrip(".") or self.config.extension
-        if extension in self.TIFF_EXTENSIONS:
-            metadata = {"FrameMetaData": frame_metadata.to_metadata_dict()}
-            tifffile.imwrite(filename, frame, description=json.dumps(metadata))
-        else:
-            skimage.io.imsave(filename, frame, check_contrast=False)
+        metadata = {"FrameMetaData": frame_metadata.to_metadata_dict()}
+        tifffile.imwrite(filename, frame, description=json.dumps(metadata))
         return filename
 
     @staticmethod
@@ -214,7 +179,7 @@ class FileManager:
         """
         image_path = cls._validate_file_path(path=path, action="FileManager.load_tiff_metadata")
         extension = image_path.suffix.lower().lstrip(".")
-        if extension not in cls.TIFF_EXTENSIONS:
+        if extension != cls.TIFF_EXTENSION:
             raise ValueError(f"FileManager.load_tiff_metadata: path must be a TIFF file, received {image_path}.")
         with tifffile.TiffFile(image_path) as tiff:
             description = tiff.pages[0].tags["ImageDescription"].value
@@ -223,7 +188,7 @@ class FileManager:
     @classmethod
     def load_frame(cls, path: Path | str) -> tuple[np.ndarray, dict[str, Any] | None]:
         """
-        Load an image and metadata when the file is a TIFF.
+        Load a TIFF image and its metadata.
 
         Parameters
         ----------
@@ -233,13 +198,11 @@ class FileManager:
         Returns
         -------
         tuple[np.ndarray, dict[str, Any] | None]
-            Loaded image and metadata dictionary for TIFF files, or None for
-            non-TIFF files.
+            Loaded image and metadata dictionary.
         """
         image_path = cls._validate_file_path(path=path, action="FileManager.load_frame")
         image = cls.load_image(path=image_path)
-        extension = image_path.suffix.lower().lstrip(".")
-        metadata = cls.load_tiff_metadata(path=image_path) if extension in cls.TIFF_EXTENSIONS else None
+        metadata = cls.load_tiff_metadata(path=image_path)
         return image, metadata
 
     @staticmethod
@@ -302,7 +265,29 @@ class FileManager:
             raise FileNotFoundError(f"{action}: path is not a file: {path}.")
         return path
 
-    def _format_values(self, frame_metadata: FrameMetaData, suffix: str | None) -> dict[str, Any]:
+    @classmethod
+    def _with_tiff_suffix(cls, path: Path) -> Path:
+        """
+        Return a path ending in the hard-coded TIFF suffix.
+
+        Parameters
+        ----------
+        path
+            Relative filename path generated from the active filename pattern.
+
+        Returns
+        -------
+        Path
+            Filename path ending in .tiff, preserving non-extension periods in
+            stems such as multi-LED channel labels.
+        """
+        if path.suffix.lower() == f".{cls.TIFF_EXTENSION}":
+            return path
+        if path.suffix.lower() in cls.NON_TIFF_IMAGE_SUFFIXES:
+            return path.with_suffix(f".{cls.TIFF_EXTENSION}")
+        return path.with_name(f"{path.name}.{cls.TIFF_EXTENSION}")
+
+    def _format_values(self, frame_metadata: FrameMetaData) -> dict[str, Any]:
         """
         Return default filename format values derived from FrameMetaData.
 
@@ -310,8 +295,6 @@ class FileManager:
         ----------
         frame_metadata
             FrameMetaData supplying metadata for filename variables.
-        suffix
-            Optional suffix value.
 
         Returns
         -------
@@ -329,8 +312,6 @@ class FileManager:
             "z": coordinate_dict.get("Z", "auto"),
             "filter_wheel": self._format_filter_wheel(frame_metadata.filter_wheel),
             "timestamp": timestamp_source.strftime("%Y-%m-%d_%H-%M-%S-%f"),
-            "suffix": "" if suffix is None else suffix,
-            "extension": self.config.extension,
             "frame_id": frame_metadata.frame_id,
             "callback_id": "" if frame_metadata.callback_id is None else frame_metadata.callback_id,
         }
@@ -354,7 +335,7 @@ class FileManager:
         """
         if not frame_metadata.leds:
             return LEDType.NO_LED.name
-        return "+".join(led_type.name.replace("_", "") for led_type in frame_metadata.leds)
+        return ".".join(led_type.name.replace("_", "") for led_type in frame_metadata.leds)
 
     @staticmethod
     def _format_filter_wheel(filter_wheel: FilterWheelType | None) -> str:

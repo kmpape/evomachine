@@ -43,7 +43,7 @@ def _frame_metadata(**updates) -> FrameMetaData:
 
 def test_filename_config_validation_and_updates(tmp_path) -> None:
     """
-    Check FileNameConfig validation, normalization, and update helpers.
+    Check FileNameConfig validation and update helpers.
 
     Parameters
     ----------
@@ -54,17 +54,15 @@ def test_filename_config_validation_and_updates(tmp_path) -> None:
     -------
     None
     """
-    config = FileNameConfig(directory=tmp_path, extension=".TIF")
+    config = FileNameConfig(directory=tmp_path)
 
-    assert config.extension == "tif"
-    assert config.updated(extension="png").extension == "png"
-    assert config.update_from_mapping({"extension": "jpg"}).extension == "jpg"
-    with pytest.raises(ValueError):
-        FileNameConfig(directory=tmp_path, extension="bmp")
+    assert config.directory == tmp_path
+    assert config.updated(filename_pattern="{frame_id}").filename_pattern == "{frame_id}"
+    assert config.update_from_mapping({"filename_pattern": "{channel}"}).filename_pattern == "{channel}"
     with pytest.raises(ValueError):
         FileNameConfig(directory=tmp_path, filename_pattern="")
     with pytest.raises(TypeError):
-        config.update_from_mapping([("extension", "png")])
+        config.update_from_mapping([("filename_pattern", "{frame_id}")])
     with pytest.raises(ValueError):
         config.updated(missing=True)
 
@@ -86,8 +84,8 @@ def test_file_manager_creates_directory_and_updates_config(tmp_path) -> None:
     manager = FileManager(FileNameConfig(directory=directory))
 
     assert directory.is_dir()
-    manager.update_config(extension="png")
-    assert manager.config.extension == "png"
+    manager.update_config(filename_pattern="{frame_id}")
+    assert manager.config.filename_pattern == "{frame_id}"
     with pytest.raises(FileNotFoundError):
         FileManager(FileNameConfig(directory=tmp_path / "missing", create_directory=False))
 
@@ -164,9 +162,9 @@ def test_old_frame_symbols_are_removed() -> None:
     assert not hasattr(config_types, "Config" + "FrameFactory")
 
 
-def test_default_and_override_filename_generation(tmp_path) -> None:
+def test_default_and_configured_filename_generation(tmp_path) -> None:
     """
-    Check default and custom filename pattern rendering.
+    Check default and configured filename pattern rendering.
 
     Parameters
     ----------
@@ -180,17 +178,39 @@ def test_default_and_override_filename_generation(tmp_path) -> None:
     manager = FileManager(FileNameConfig(directory=tmp_path))
     frame_metadata = _frame_metadata(additional_metadata={"experiment": "demo"})
 
-    filename = manager.get_filename(frame_metadata=frame_metadata, suffix="_raw")
+    filename = manager.get_filename(frame_metadata=frame_metadata)
     assert filename.parent == tmp_path
     assert filename.name.startswith("LED450NM_P3_X10_Y20_Z30_F1_")
-    assert filename.name.endswith("_raw.tiff")
+    assert filename.suffix == ".tiff"
 
-    custom = manager.get_filename(
-        frame_metadata=frame_metadata,
-        filename_pattern="{experiment}_{channel}_F{frame_id}_C{callback_id}.{extension}",
-        callback_id=12,
+    manager.update_config(
+        filename_pattern="{experiment}_{channel}_F{frame_id}_C{callback_id}.png",
     )
+    frame_metadata.callback_id = 12
+    custom = manager.get_filename(frame_metadata=frame_metadata)
     assert custom == tmp_path / "demo_LED450NM_F7_C12.tiff"
+
+
+def test_multiple_led_filename_uses_period_separator(tmp_path) -> None:
+    """
+    Check multiple LED channel labels use periods instead of plus signs.
+
+    Parameters
+    ----------
+    tmp_path
+        Pytest temporary directory fixture.
+
+    Returns
+    -------
+    None
+    """
+    manager = FileManager(FileNameConfig(directory=tmp_path, filename_pattern="{channel}"))
+    frame_metadata = _frame_metadata(leds={LEDType.LED_450_NM: 25, LEDType.LED_565_NM: 30})
+
+    filename = manager.get_filename(frame_metadata=frame_metadata)
+
+    assert filename.name == "LED450NM.LED565NM.tiff"
+    assert "+" not in filename.name
 
 
 def test_missing_filename_values_use_stable_placeholders(tmp_path) -> None:
@@ -231,8 +251,9 @@ def test_save_tiff_frame_writes_frame_metadata(tmp_path) -> None:
     frame_metadata = _frame_metadata(callback_id=11, additional_metadata={"experiment": "alpha"})
     frame = np.arange(16, dtype=np.uint16).reshape(4, 4)
 
-    filename = manager.save_frame(frame=frame, frame_metadata=frame_metadata, suffix="_meta")
+    filename = manager.save_frame(frame=frame, frame_metadata=frame_metadata)
 
+    assert filename.suffix == ".tiff"
     assert filename.exists()
     with tifffile.TiffFile(filename) as tiff:
         saved = tiff.asarray()
@@ -302,9 +323,9 @@ def test_load_helpers_read_tiff_image_and_metadata(tmp_path) -> None:
     assert loaded_metadata == metadata
 
 
-def test_save_and_load_png_frame_without_metadata(tmp_path) -> None:
+def test_load_frame_rejects_non_tiff_files(tmp_path) -> None:
     """
-    Check non-TIFF image saves and loads without metadata.
+    Check load_frame is TIFF-only while load_image remains generic.
 
     Parameters
     ----------
@@ -315,19 +336,15 @@ def test_save_and_load_png_frame_without_metadata(tmp_path) -> None:
     -------
     None
     """
-    manager = FileManager(FileNameConfig(directory=tmp_path, extension="png"))
+    path = tmp_path / "image.png"
     frame = np.arange(16, dtype=np.uint8).reshape(4, 4)
+    skimage.io.imsave(path, frame, check_contrast=False)
 
-    filename = manager.save_frame(frame=frame, frame_metadata=_frame_metadata())
-    loaded_image, loaded_metadata = FileManager.load_frame(filename)
+    image = FileManager.load_image(path)
 
-    assert filename.suffix == ".png"
-    assert filename.exists()
-    assert skimage.io.imread(filename).shape == frame.shape
-    assert loaded_image.shape == frame.shape
-    assert loaded_metadata is None
     with pytest.raises(ValueError):
-        FileManager.load_tiff_metadata(filename)
+        FileManager.load_frame(path)
+    assert image.shape == frame.shape
 
 
 def test_list_filenames_returns_sorted_matching_files_only(tmp_path) -> None:

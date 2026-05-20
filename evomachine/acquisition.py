@@ -23,10 +23,6 @@ class FrameAcquisitionSettings:
 
     save: bool = False
     "Save acquired frames with the configured FileManager."
-    filename_pattern: str | None = None
-    "Optional filename pattern passed to FileManager.save_frame()."
-    suffix: str | None = None
-    "Optional filename suffix passed to FileManager.save_frame()."
     normalise: bool = False
     "Return camera-normalised image data when the camera supports it."
     illuminate_dmd: bool = True
@@ -55,12 +51,6 @@ class FrameAcquisitionSettings:
             value = getattr(self, field_name)
             if not isinstance(value, bool):
                 raise TypeError(f"FrameAcquisitionSettings: {field_name} must be bool, received {type(value)}.")
-        if self.filename_pattern is not None and not isinstance(self.filename_pattern, str):
-            raise TypeError(
-                f"FrameAcquisitionSettings: filename_pattern must be str or None, received {type(self.filename_pattern)}."
-            )
-        if self.suffix is not None and not isinstance(self.suffix, str):
-            raise TypeError(f"FrameAcquisitionSettings: suffix must be str or None, received {type(self.suffix)}.")
 
 
 class FrameAcquisitionManager:
@@ -408,12 +398,7 @@ class FrameAcquisitionManager:
             return frame, None
         if self.file_manager is None:
             raise RuntimeError("FrameAcquisitionManager: saving requested but no file manager was provided.")
-        saved_path = self.file_manager.save_frame(
-            frame=frame,
-            frame_metadata=frame_metadata,
-            filename_pattern=settings.filename_pattern,
-            suffix=settings.suffix,
-        )
+        saved_path = self.file_manager.save_frame(frame=frame, frame_metadata=frame_metadata)
         return frame, saved_path
 
     def _capture_led_states(self) -> dict[LEDType, LedState]:
@@ -486,3 +471,12 @@ class FrameAcquisitionManager:
                 self.led_manager.set_led(led_type=led_type, brightness=state.brightness)
             else:
                 self.led_manager.disable_led(led_type=led_type)
+
+
+
+
+
+#TODO(CODEX): Implement the FocusManager class to coordinate autofocus, stage, and software focus as follows
+# - The FocusManager will be a more elaborate version than what's in the current manage_autofocus method of the automaton
+# - It will own an autofocus object, a software focus object, and a stage
+# - Its main purpose is to move between position IDs while maintaining or restoring focus
