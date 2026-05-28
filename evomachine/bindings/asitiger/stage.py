@@ -73,7 +73,7 @@ class TigerStage(Stage):
     def __init__(
             self,
             peripheral_ctrl: TigerPeripheralController,
-            delta_fov: float,
+            fov_step_size: float,
             name: str = "ASI Tiger Stage",
             check_initialised: bool = True,
             check_alive: bool = True,
@@ -85,7 +85,7 @@ class TigerStage(Stage):
         ----------
         peripheral_ctrl
             TigerPeripheralController that owns the shared Tiger connection.
-        delta_fov
+        fov_step_size
             Field-of-view movement size in ASI stage units.
         name
             Human-readable stage name.
@@ -106,7 +106,7 @@ class TigerStage(Stage):
         self.tiger = self.peripheral_ctrl.tiger
         super().__init__(
             name=name,
-            delta_fov=delta_fov,
+            fov_step_size=fov_step_size,
             check_initialised=check_initialised,
             check_alive=check_alive,
         )

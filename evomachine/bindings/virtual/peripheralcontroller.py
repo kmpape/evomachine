@@ -1,4 +1,4 @@
-from evomachine.peripherals import PeripheralController, PeripheralControllerConfig
+from evomachine.peripherals.peripherals import PeripheralController, PeripheralControllerConfig
 from evomachine.bindings.binding_types import BindingType
 
 

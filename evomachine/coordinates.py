@@ -2,12 +2,31 @@ from dataclasses import dataclass
 from math import ceil
 
 from evomachine.exceptions import ConfigError, ErrorCode
+from evomachine.types import AxisType
 from evomachine.utils import EvoCroppingBox
 
 COORD_PRINT_PRECISION = 1
 
-
 class Coordinate:
+    """
+    Coordinate value object containing X, Y, optional Z, and a channel ID.
+
+    Parameters
+    ----------
+    x
+        X-axis coordinate value, or None when the X axis is unset.
+    y
+        Y-axis coordinate value, or None when the Y axis is unset.
+    z
+        Optional Z-axis coordinate value, or None when the Z axis is unset.
+    channel_id
+        Channel ID associated with the coordinate.
+
+    Returns
+    -------
+    Coordinate
+        Coordinate object storing axis values and channel metadata.
+    """
 
     def __init__(
             self,
@@ -22,13 +41,159 @@ class Coordinate:
         self._channel_id = channel_id
 
     def copy(self) -> 'Coordinate':
+        """
+        Return a copy of this coordinate.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        Coordinate
+            Coordinate with the same axis values and channel ID.
+        """
         return Coordinate(x=self.x, y=self.y, z=self.z, channel_id=self._channel_id)
 
     def get_channel_id(self) -> int:
+        """
+        Return the coordinate channel ID.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        int
+            Channel ID stored on the coordinate.
+        """
         return self._channel_id
 
     def has_z(self) -> bool:
+        """
+        Return whether the Z axis has a value.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        bool
+            True when z is not None.
+        """
         return self.z is not None
+
+    def axis_value(self, axis: AxisType) -> float | int | None:
+        """
+        Return the value for one axis.
+
+        Parameters
+        ----------
+        axis
+            AxisType value selecting X, Y, or Z.
+
+        Returns
+        -------
+        float | int | None
+            Axis value, or None when the coordinate does not contain that axis.
+        """
+        if axis == AxisType.X:
+            return self.x
+        if axis == AxisType.Y:
+            return self.y
+        if axis == AxisType.Z:
+            return self.z
+        raise ValueError(f"Coordinate.axis_value: unsupported axis {axis}.")
+
+    @staticmethod
+    def from_axis(axis: AxisType, value: float | int, channel_id: int = 0) -> 'Coordinate':
+        """
+        Build a partial coordinate containing one axis value.
+
+        Parameters
+        ----------
+        axis
+            AxisType value selecting the axis to populate.
+        value
+            Coordinate value for the selected axis.
+        channel_id
+            Channel ID to store on the returned coordinate.
+
+        Returns
+        -------
+        Coordinate
+            Coordinate with the selected axis populated and other axes set to None.
+        """
+        if axis == AxisType.X:
+            return Coordinate(x=value, y=None, z=None, channel_id=channel_id)
+        if axis == AxisType.Y:
+            return Coordinate(x=None, y=value, z=None, channel_id=channel_id)
+        if axis == AxisType.Z:
+            return Coordinate(x=None, y=None, z=value, channel_id=channel_id)
+        raise ValueError(f"Coordinate.from_axis: unsupported axis {axis}.")
+
+    def has_axis_value(self) -> bool:
+        """
+        Return whether any coordinate axis has a value.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        bool
+            True when X, Y, or Z is not None.
+        """
+        return self.x is not None or self.y is not None or self.z is not None
+
+    def filter_axes(self, axes: list[AxisType]) -> 'Coordinate':
+        """
+        Return a coordinate containing only the selected axes.
+
+        Parameters
+        ----------
+        axes
+            AxisType values to preserve in the returned coordinate.
+
+        Returns
+        -------
+        Coordinate
+            Coordinate with non-selected axes set to None and channel ID preserved.
+        """
+        return Coordinate(
+            x=self.x if AxisType.X in axes else None,
+            y=self.y if AxisType.Y in axes else None,
+            z=self.z if AxisType.Z in axes else None,
+            channel_id=self.get_channel_id(),
+        )
+
+    def merge(self, update: 'Coordinate') -> 'Coordinate':
+        """
+        Merge a partial coordinate into this coordinate.
+
+        Parameters
+        ----------
+        update
+            Coordinate whose non-None axis values replace this coordinate's values.
+            A non-None channel ID replaces this coordinate's channel ID.
+
+        Returns
+        -------
+        Coordinate
+            Merged coordinate.
+        """
+        if not isinstance(update, Coordinate):
+            raise TypeError(f"Coordinate.merge: update must be Coordinate, received {type(update)}.")
+        update_channel_id = update.get_channel_id()
+        return Coordinate(
+            x=self.x if update.x is None else update.x,
+            y=self.y if update.y is None else update.y,
+            z=self.z if update.z is None else update.z,
+            channel_id=self.get_channel_id() if update_channel_id is None else update_channel_id,
+        )
 
     def sign(self) -> 'Coordinate':
         sign_x = 1 if self.x > 0 else (-1 if self.x < 0 else 0)

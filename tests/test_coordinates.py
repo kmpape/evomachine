@@ -1,6 +1,7 @@
 import pytest
 
 from evomachine.coordinates import Coordinate, CoordinateBounds, CoordinateFactory
+from evomachine.types import AxisType
 
 
 def test_coordinate_copy_and_equality_are_value_based():
@@ -37,6 +38,49 @@ def test_coordinate_none_coordinate_has_no_axes_and_no_channel():
 def test_coordinate_has_z_tracks_only_z_presence():
     assert Coordinate(1, 2, 3).has_z()
     assert not Coordinate(1, 2, None).has_z()
+
+
+def test_coordinate_axis_value_returns_selected_axis():
+    coordinate = Coordinate(1, None, 3, channel_id=4)
+
+    assert coordinate.axis_value(AxisType.X) == 1
+    assert coordinate.axis_value(AxisType.Y) is None
+    assert coordinate.axis_value(AxisType.Z) == 3
+
+
+def test_coordinate_from_axis_builds_partial_coordinate():
+    assert Coordinate.from_axis(AxisType.X, 5, channel_id=9) == Coordinate(5, None, None, channel_id=9)
+    assert Coordinate.from_axis(AxisType.Y, 6, channel_id=9) == Coordinate(None, 6, None, channel_id=9)
+    assert Coordinate.from_axis(AxisType.Z, 7, channel_id=9) == Coordinate(None, None, 7, channel_id=9)
+
+
+def test_coordinate_has_axis_value_checks_all_axes():
+    assert Coordinate(None, 0, None).has_axis_value()
+    assert Coordinate(None, None, -1).has_axis_value()
+    assert not Coordinate.none_coordinate().has_axis_value()
+
+
+def test_coordinate_filter_axes_preserves_selected_axes_and_channel():
+    coordinate = Coordinate(1, 2, 3, channel_id=4)
+
+    filtered = coordinate.filter_axes([AxisType.X, AxisType.Z])
+
+    assert filtered == Coordinate(1, None, 3, channel_id=4)
+
+
+def test_coordinate_merge_preserves_base_axes_for_none_updates():
+    base = Coordinate(1, 2, 3, channel_id=4)
+
+    merged = base.merge(Coordinate(None, 20, None, channel_id=None))
+
+    assert merged == Coordinate(1, 20, 3, channel_id=4)
+    assert base == Coordinate(1, 2, 3, channel_id=4)
+
+
+def test_coordinate_merge_updates_channel_when_update_has_channel():
+    base = Coordinate(1, 2, 3, channel_id=4)
+
+    assert base.merge(Coordinate(None, None, None, channel_id=8)) == Coordinate(1, 2, 3, channel_id=8)
 
 
 def test_coordinate_sign_preserves_channel_and_none_z():

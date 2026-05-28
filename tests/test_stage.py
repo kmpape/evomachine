@@ -15,7 +15,7 @@ from evomachine.types import AxisType, FovDirectionType
 def make_test_stage() -> VirtualStage:
     peripheral_ctrl = VirtualPeripheralController()
     peripheral_ctrl.initialise()
-    stage = VirtualStage(peripheral_ctrl=peripheral_ctrl, delta_fov=100.0)
+    stage = VirtualStage(peripheral_ctrl=peripheral_ctrl, fov_step_size=100.0)
     stage.initialise()
     return stage
 
@@ -23,7 +23,7 @@ def make_tiger_stage() -> TigerStage:
     tiger = FakeTigerStageController()
     peripheral_ctrl = TigerPeripheralController(tiger=tiger)
     peripheral_ctrl.initialise()
-    stage = TigerStage(peripheral_ctrl=peripheral_ctrl, delta_fov=100.0)
+    stage = TigerStage(peripheral_ctrl=peripheral_ctrl, fov_step_size=100.0)
     stage.initialise()
     return stage
 
@@ -88,7 +88,7 @@ def test_stage_rejects_out_of_bounds_coordinate(make_stage):
 
 
 @pytest.mark.parametrize("make_stage", STAGE_FACTORIES)
-def test_stage_move_fov_tuples_use_delta_fov(make_stage):
+def test_stage_move_fov_tuples_use_fov_step_size(make_stage):
     stage = make_stage()
 
     stage.move([
@@ -202,15 +202,15 @@ def test_stage_home_zero_and_halt(make_stage):
 
 def test_stage_config_validates_inputs():
     with pytest.raises(TypeError):
-        StageConfig(binding="virtual", delta_fov=1)
+        StageConfig(binding="virtual", fov_step_size=1)
     with pytest.raises(ValueError):
-        StageConfig(binding=BindingType.VIRTUAL, delta_fov=0)
+        StageConfig(binding=BindingType.VIRTUAL, fov_step_size=0)
     with pytest.raises(TypeError):
-        StageConfig(binding=BindingType.VIRTUAL, delta_fov=1, check_alive="yes")
+        StageConfig(binding=BindingType.VIRTUAL, fov_step_size=1, check_alive="yes")
     with pytest.raises(TypeError):
         StageConfig(
             binding=BindingType.VIRTUAL,
-            delta_fov=1,
+            fov_step_size=1,
             coordinate_bounds="bad",
         )
 
@@ -219,7 +219,7 @@ def test_stage_readiness_checks_can_be_disabled():
     peripheral_ctrl = VirtualPeripheralController()
     stage = VirtualStage(
         peripheral_ctrl=peripheral_ctrl,
-        delta_fov=100.0,
+        fov_step_size=100.0,
         check_initialised=False,
         check_alive=False,
     )
@@ -232,7 +232,7 @@ def test_stage_readiness_checks_can_be_disabled():
 def test_stage_query_before_initialise_raises_by_default():
     peripheral_ctrl = VirtualPeripheralController()
     peripheral_ctrl.initialise()
-    stage = VirtualStage(peripheral_ctrl=peripheral_ctrl, delta_fov=100.0)
+    stage = VirtualStage(peripheral_ctrl=peripheral_ctrl, fov_step_size=100.0)
 
     with pytest.raises(RuntimeError):
         stage.get_coordinates()
@@ -244,14 +244,14 @@ def test_stage_factory_creates_virtual_stage():
     stage = StageFactory.create(
         StageConfig(
             binding=BindingType.VIRTUAL,
-            delta_fov=50.0,
+            fov_step_size=50.0,
             initial_coordinate=Coordinate(1, 2, 3),
         ),
         peripheral_controllers=peripheral_ctrl,
     )
 
     assert isinstance(stage, VirtualStage)
-    assert stage.get_delta_fov() == 50.0
+    assert stage.get_fov_step_size() == 50.0
     stage.initialise()
     assert stage.get_coordinates(query_hardware=False) == Coordinate(1, 2, 3)
 
@@ -263,7 +263,7 @@ def test_stage_factory_passes_virtual_config_values():
     stage = StageFactory.create(
         StageConfig(
             binding=BindingType.VIRTUAL,
-            delta_fov=25.0,
+            fov_step_size=25.0,
             name="Debug Stage",
             check_initialised=False,
             check_alive=False,
@@ -274,7 +274,7 @@ def test_stage_factory_passes_virtual_config_values():
     )
 
     assert stage.name == "Debug Stage"
-    assert stage.get_delta_fov() == 25.0
+    assert stage.get_fov_step_size() == 25.0
     stage.move(Coordinate(4, 5, 6))
     assert stage.get_coordinates(query_hardware=False) == Coordinate(4, 5, 6)
     assert stage.get_coordinate_bounds() == bounds
@@ -284,13 +284,13 @@ def test_stage_factory_passes_virtual_config_values():
 
 def test_stage_factory_requires_tiger_peripheral_controller_for_asitiger():
     with pytest.raises(ValueError):
-        StageFactory.create(StageConfig(binding=BindingType.ASI_TIGER, delta_fov=100.0))
+        StageFactory.create(StageConfig(binding=BindingType.ASI_TIGER, fov_step_size=100.0))
 
 
 def test_stage_factory_rejects_unsupported_shared_binding():
     """Check that shared BindingType values are still scoped per factory."""
     with pytest.raises(ValueError, match="unsupported stage binding"):
-        StageFactory.create(StageConfig(binding=BindingType.KWR103, delta_fov=100.0))
+        StageFactory.create(StageConfig(binding=BindingType.KWR103, fov_step_size=100.0))
 
 
 def test_stage_factory_creates_asitiger_stage_with_fake_controller():
@@ -301,7 +301,7 @@ def test_stage_factory_creates_asitiger_stage_with_fake_controller():
     stage = StageFactory.create(
         StageConfig(
             binding=BindingType.ASI_TIGER,
-            delta_fov=10.0,
+            fov_step_size=10.0,
             name="Fake Tiger Stage",
         ),
         peripheral_controllers=peripheral_ctrl,

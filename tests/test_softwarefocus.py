@@ -49,6 +49,7 @@ class FakeStage:
         self.coordinate = coordinate or Coordinate(0, 0, 0)
         self.position_id = position_id
         self.moves: list[Coordinate] = []
+        self.stop_count = 0
 
     def get_coordinates(self, query_hardware: bool = True, axes=None) -> Coordinate:
         """
@@ -106,6 +107,20 @@ class FakeStage:
         if target.z is not None:
             self.coordinate.z = target.z
 
+    def stop(self) -> None:
+        """
+        Record that stage stop was requested.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.stop_count += 1
+
 
 class FakeCamera:
     """Small camera fake returning images whose sharpness peaks at Z=0."""
@@ -129,6 +144,7 @@ class FakeCamera:
         self.shape = shape
         self.exposures: list[float | int] = []
         self.frames_captured = 0
+        self.stop_count = 0
 
     def set_exposure(self, exposure_time: float | int) -> None:
         """
@@ -166,6 +182,20 @@ class FakeCamera:
         frame[2:4, 2:4] = amplitude
         return frame
 
+    def stop(self) -> None:
+        """
+        Record that camera stop was requested.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.stop_count += 1
+
 
 class FakeLedManager:
     """Small LED manager fake that records set and disable calls."""
@@ -174,6 +204,7 @@ class FakeLedManager:
         """Initialise fake LED command recording."""
         self.commands: list[tuple[LEDType | None, float | int]] = []
         self.disable_count = 0
+        self.stop_count = 0
         self.states = {
             LEDType.LED_450_NM: LedState(led_type=LEDType.LED_450_NM),
             LEDType.LED_565_NM: LedState(led_type=LEDType.LED_565_NM),
@@ -250,6 +281,20 @@ class FakeLedManager:
         for selected_led in led_types:
             self.states[selected_led] = LedState(led_type=selected_led)
 
+    def stop(self) -> None:
+        """
+        Record that LED manager stop was requested.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.stop_count += 1
+
 
 class FakeDmd:
     """Small DMD fake that records display calls."""
@@ -258,6 +303,7 @@ class FakeDmd:
         """Initialise fake DMD state."""
         self.full_count = 0
         self.none_count = 0
+        self.stop_count = 0
 
     def display_full(self) -> None:
         """
@@ -287,6 +333,20 @@ class FakeDmd:
         """
         self.none_count += 1
 
+    def stop(self) -> None:
+        """
+        Record that DMD stop was requested.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.stop_count += 1
+
 
 class FakeFilterWheel:
     """Small filter wheel fake that records filter positions."""
@@ -294,6 +354,7 @@ class FakeFilterWheel:
     def __init__(self):
         """Initialise fake filter wheel state."""
         self.filters: list[FilterWheelType] = []
+        self.stop_count = 0
 
     def set_filter_wheel(self, filter_type: FilterWheelType) -> None:
         """
@@ -309,6 +370,20 @@ class FakeFilterWheel:
         None
         """
         self.filters.append(filter_type)
+
+    def stop(self) -> None:
+        """
+        Record that filter wheel stop was requested.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.stop_count += 1
 
 
 def _image() -> np.ndarray:

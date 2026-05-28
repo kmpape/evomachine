@@ -237,7 +237,7 @@ class FrameAcquisitionManager:
 
     def stop(self) -> None:
         """
-        Stop acquisition-related peripherals when they expose stop behavior.
+        Stop acquisition-related peripherals.
 
         Parameters
         ----------
@@ -250,13 +250,9 @@ class FrameAcquisitionManager:
         self.led_manager.disable_led()
         if self.dmd is not None:
             self.dmd.display_none()
-        camera_stop = getattr(self.camera, "stop", None)
-        if callable(camera_stop):
-            camera_stop()
+        self.camera.stop()
         if self.stage is not None:
-            stage_stop = getattr(self.stage, "stop", None)
-            if callable(stage_stop):
-                stage_stop()
+            self.stage.stop()
 
     @staticmethod
     def _normalise_frame_metadata(frame_metadata: FrameMetaData | list[FrameMetaData]) -> list[FrameMetaData]:
@@ -471,12 +467,3 @@ class FrameAcquisitionManager:
                 self.led_manager.set_led(led_type=led_type, brightness=state.brightness)
             else:
                 self.led_manager.disable_led(led_type=led_type)
-
-
-
-
-
-#TODO(CODEX): Implement the FocusManager class to coordinate autofocus, stage, and software focus as follows
-# - The FocusManager will be a more elaborate version than what's in the current manage_autofocus method of the automaton
-# - It will own an autofocus object, a software focus object, and a stage
-# - Its main purpose is to move between position IDs while maintaining or restoring focus

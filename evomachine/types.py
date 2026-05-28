@@ -80,6 +80,7 @@ class ChamberOrientationType(EvoType):
     VERTICAL = auto()
 
 
+# TODO(Codex): This is CRISP specific. This should be IN_FOCUS, OUT_OF_FOCUS, and UNKNOWN. This below should be moved to CRISP and then have a mapping to this.
 class AutoFocusStatusType(EvoType):
     """CRISP autofocus status flags reported by the device and consumed by camera/autofocus logic."""
 
@@ -122,6 +123,7 @@ class AutomatonCommandType(EvoType):
     AUTOFOCUS_DATA = auto()
 
 
+# TODO(Codex): rename as SoftwareFocusStatusType
 class FocusStatusType(EvoType):
     """Software focus result status used to decide whether focusing succeeded or why it failed."""
 

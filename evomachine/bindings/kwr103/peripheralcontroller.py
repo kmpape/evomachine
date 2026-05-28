@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from evomachine.bindings.kwr103.KWR103Driver import KWR103
-from evomachine.peripherals import SerialPeripheralController, SerialPeripheralControllerConfig
+from evomachine.peripherals.peripherals import SerialPeripheralController, SerialPeripheralControllerConfig
 from evomachine.bindings.binding_types import BindingType
 
 

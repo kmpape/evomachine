@@ -6,7 +6,7 @@ import threading
 import time
 from typing import Any
 
-from evomachine.peripherals import Peripheral, PeripheralController, get_peripheral_controller
+from evomachine.peripherals.peripherals import Peripheral, PeripheralController, get_peripheral_controller
 from evomachine.bindings.binding_types import BindingType
 from evomachine.types import BrightnessType, LEDType
 

@@ -4,7 +4,7 @@ from typing import Any
 
 from asitiger.tigercontroller import TigerController
 
-from evomachine.peripherals import SerialPeripheralController, SerialPeripheralControllerConfig
+from evomachine.peripherals.peripherals import SerialPeripheralController, SerialPeripheralControllerConfig
 from evomachine.bindings.binding_types import BindingType
 from evomachine.bindings.asitiger.card_addresses import (
     CARD_ADDRESS_CRISP,

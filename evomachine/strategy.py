@@ -10,16 +10,12 @@ import time
 import traceback
 
 from evomachine.commands import AutomatonCommand, CommandFactory
-from evomachine.config import get_logger, ConfigCamera, ConfigCameraFactory, USE_DMD_SOCKET, ConfigImageProcessor
+from evomachine.config import get_logger
+from evomachine.config_types import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, FrameMetaDataFactory
 from evomachine.coordinates import Coordinate
-from evomachine.exceptions import ConfigError, ErrorCode, EvoMachineError, StrategyError
+from evomachine.peripherals.dmd import Dmd
 from evomachine.types import AutomatonCommandType, LEDType
 from evomachine.utils import normalise_frame
-from evomachine.coordinates import Coordinate
-if USE_DMD_SOCKET:
-    from evomachine.dmd_socket import DMDControl
-else:
-    from evomachine.dmd_pygame import DMDControl
 
 from delta.rt import PositionRT
 
@@ -60,8 +56,8 @@ class AbstractStrategy(ABC):
         "Factory object to create AutomatonCommands."
         self.config_camera: ConfigCamera | None = None
         "Camera configuration object."
-        self.dmd: DMDControl = DMDControl(debug_mode=True)
-        "DMD object (without display control) to warp camera -> DMD image format."
+        self.dmd: Dmd | None = None
+        "DMD object injected during initialise()."
 
     def __getstate__(self) -> dict:
         """
@@ -73,15 +69,15 @@ class AbstractStrategy(ABC):
             Dictionary to serialise.
         """
         state = self.__dict__.copy()
-        del state['dmd']
-        del state['pos_processors']
+        state.pop('dmd', None)
+        state.pop('pos_processors', None)
         return state
 
     def __setstate__(self, state: dict) -> None:
         """
         This function and __getstate__ are used to save & load the strategy. Child classes may modify those.
         """
-        state['dmd'] = DMDControl(debug_mode=True)
+        state['dmd'] = None
         state['pos_processors'] = []
         self.__dict__.update(state)
 
@@ -104,6 +100,7 @@ class AbstractStrategy(ABC):
             region_of_interests: dict[int, list[int]],
             config_camera: ConfigCamera,
             pos_processors: list[PositionRT],
+            dmd: Dmd,
     ) -> list[AutomatonCommand]:
         """
         Initialise the strategy. Note that initialise will be called several times, and it therefore MUST reset
@@ -126,11 +123,15 @@ class AbstractStrategy(ABC):
             Object defining camera configuration.
         pos_processors: list[PositionRT]
             List of position processors to access lineages etc. Access via pos_processors[pos_id].
+        dmd: Dmd
+            DMD object available to strategies for pattern construction.
         Returns
         -------
         list[AutomatonCommand]
             List of commands to be executed by the automaton.
         """
+        if not isinstance(dmd, Dmd):
+            raise TypeError(f"AbstractStrategy.initialise: dmd must be Dmd, received {type(dmd)}.")
         self.callback_counter = 0
         self.field_of_views = field_of_views
         self.positions = positions
@@ -138,11 +139,10 @@ class AbstractStrategy(ABC):
         self.command_factory.update_region_of_interests(region_of_interests=region_of_interests)
         self.config_camera = config_camera
         self.pos_processors = pos_processors
-        self.dmd.initialise()  # Load calibration data
+        self.dmd = dmd
         new_command_list = self._initialise()
         if not self.is_valid_command_list(new_command_list):
-            raise StrategyError(message=f"AbstractStrategy.callback: invalid command list ({new_command_list}).",
-                                error_code=ErrorCode.ERROR_STRATEGY)
+            raise RuntimeError(f"AbstractStrategy.initialise: invalid command list ({new_command_list}).")
         return new_command_list
 
     @abstractmethod
@@ -150,7 +150,7 @@ class AbstractStrategy(ABC):
             self,
             fov_id: int,
             data: list[AutomatonCommand],
-            errors: list[EvoMachineError],
+            errors: list[Exception],
     ) -> list[AutomatonCommand]:
         """
         See callback().
@@ -166,7 +166,7 @@ class AbstractStrategy(ABC):
             self,
             fov_id: int,  # TODO need to consider several move commands passed or allow for one only
             data: list[AutomatonCommand],
-            errors: list[EvoMachineError],
+            errors: list[Exception],
     ) -> list[AutomatonCommand]:
         """
         Callback function for the strategy. This function is called by the
@@ -179,7 +179,7 @@ class AbstractStrategy(ABC):
             The id of the current field of view.
         `data` : list[AutomatonCommand]
             List of AutomatonCommand executed at the last time step.
-        `errors` : list[EvoMachineError]
+        `errors` : list[Exception]
             List of errors that occurred during execution.
 
         Returns
@@ -189,8 +189,7 @@ class AbstractStrategy(ABC):
         """
         new_command_list = self._callback(fov_id=fov_id, data=data, errors=errors)
         if not self.is_valid_command_list(new_command_list):
-            raise StrategyError(message=f"AbstractStrategy.callback: invalid command list ({new_command_list}).",
-                                error_code=ErrorCode.ERROR_STRATEGY)
+            raise RuntimeError(f"AbstractStrategy.callback: invalid command list ({new_command_list}).")
         self.callback_counter += 1
         return new_command_list
 
@@ -244,7 +243,9 @@ class AbstractStrategy(ABC):
                     if not cmd.command_args['duration'] >= 0:
                         raise KeyError(f"invalid wait command arguments {cmd.command_args}")
                 elif cmd.command_type == AutomatonCommandType.IMAGE:
-                    im_shape = (len(cmd.command_args['channels']), *cfg_camera.image.shape)
+                    metadata = cmd.command_args['frame_metadata']
+                    metadata_items = metadata if isinstance(metadata, list) else [metadata]
+                    im_shape = (len(metadata_items), *cfg_camera.image.shape)
                     rand_img = (np.random.rand(*im_shape) * 65535).astype(np.uint16)
                     rand_img_norm = normalise_frame(rand_img)
                     cmd.command_data = rand_img_norm
@@ -268,8 +269,10 @@ class AbstractStrategy(ABC):
             )
             if self.path_to_save is not None:
                 if not self.path_to_save.exists():
-                    raise ConfigError(f"AbstractStrategy.test_strategy: path_to_save provided by strategy is invalid "
-                                      f"({self.path_to_save}).", ErrorCode.ERROR_DEVICE_CONFIG)
+                    raise ValueError(
+                        f"AbstractStrategy.test_strategy: path_to_save provided by strategy is invalid "
+                        f"({self.path_to_save})."
+                    )
             cmd_list = check_cmd_list(_cmd_list=cmd_list, _curr_pos_id=curr_pos_id)
             cmd_list = self.callback(fov_id=curr_pos_id, data=cmd_list, errors=[])
             _ = check_cmd_list(_cmd_list=cmd_list, _curr_pos_id=curr_pos_id)
@@ -290,7 +293,7 @@ class NoStrategy(AbstractStrategy):
             self,
             fov_id: int,
             data: list[AutomatonCommand],
-            errors: list[EvoMachineError],
+            errors: list[Exception],
     ) -> list[AutomatonCommand]:
         return []
 
@@ -337,9 +340,17 @@ class BasicStrategy(AbstractStrategy):
         for i in range(len(self.field_of_views)):
             cmd_move = self.command_factory.command_move(fov_id=i)
             cmd_list.append(cmd_move)
+            initial_channels = list(dict.fromkeys([*self.imaging_channels, *self.cfg.channels_seg]))
+            frame_metadata = [
+                FrameMetaDataFactory.default(
+                    leds={channel: 10},
+                    exposure=self.exposure_time,
+                    position_id=i,
+                )
+                for channel in initial_channels
+            ]
             cmd_image = self.command_factory.command_image(
-                channels=self.imaging_channels,
-                exposure_time=self.exposure_time,
+                frame_metadata=frame_metadata,
                 segment=True,
                 save=True,
             )
@@ -359,7 +370,7 @@ class BasicStrategy(AbstractStrategy):
             self,
             fov_id: int,
             data: list[AutomatonCommand],
-            errors: list[EvoMachineError],
+            errors: list[Exception],
     ) -> list[AutomatonCommand]:
         """
         Callback function for the strategy. This function is called by the
@@ -372,7 +383,7 @@ class BasicStrategy(AbstractStrategy):
             The id of the current field of view.
         `data` : list[AutomatonCommand]
             List of AutomatonCommand.
-        `errors` : list[EvoMachineError]
+        `errors` : list[Exception]
             List of errors that occurred during execution.
         """
 
@@ -385,9 +396,16 @@ class BasicStrategy(AbstractStrategy):
         for i in range(len(self.field_of_views)):
             cmd_move = self.command_factory.command_move(fov_id=i)
             cmd_list.append(cmd_move)
+            frame_metadata = [
+                FrameMetaDataFactory.default(
+                    leds={channel: 10},
+                    exposure=self.exposure_time,
+                    position_id=i,
+                )
+                for channel in self.imaging_channels
+            ]
             cmd_image = self.command_factory.command_image(
-                channels=self.imaging_channels,
-                exposure_time=self.exposure_time,
+                frame_metadata=frame_metadata,
                 segment=False,
                 save=True,
             )

@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageFont
 import skimage.color
 import skimage.io
 
-from evomachine.peripherals import Peripheral, PeripheralController, get_peripheral_controller
+from evomachine.peripherals.peripherals import Peripheral, PeripheralController, get_peripheral_controller
 from evomachine.bindings.binding_types import BindingType
 from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT
 

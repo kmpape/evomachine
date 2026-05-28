@@ -14,7 +14,7 @@ class VirtualStage(Stage):
     def __init__(
             self,
             peripheral_ctrl: VirtualPeripheralController,
-            delta_fov: float,
+            fov_step_size: float,
             name: str = "Virtual Stage",
             initial_coordinate: Coordinate | None = None,
             coordinate_bounds: CoordinateBounds | None = None,
@@ -28,7 +28,7 @@ class VirtualStage(Stage):
         ----------
         peripheral_ctrl
             VirtualPeripheralController that owns the simulated controller lifecycle.
-        delta_fov
+        fov_step_size
             Field-of-view movement size in stage coordinate units.
         name
             Human-readable stage name.
@@ -59,7 +59,7 @@ class VirtualStage(Stage):
         self._halt_was_called: bool = False
         super().__init__(
             name=name,
-            delta_fov=delta_fov,
+            fov_step_size=fov_step_size,
             coordinate_bounds=coordinate_bounds,
             check_initialised=check_initialised,
             check_alive=check_alive,
@@ -172,7 +172,7 @@ class VirtualStage(Stage):
         Coordinate
             New stored coordinate after the move.
         """
-        self._virtual_coordinate = self._merge_coordinates(base=self._virtual_coordinate, update=coordinate)
+        self._virtual_coordinate = self._virtual_coordinate.merge(update=coordinate)
         return self._virtual_coordinate.copy()
 
     def _home(self, block: bool = False) -> Coordinate:

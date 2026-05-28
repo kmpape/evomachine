@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 
 from evomachine.config import DMD_WIDTH_HEIGHT
-from evomachine.peripherals import SocketPeripheralController
+from evomachine.peripherals.peripherals import SocketPeripheralController
 
 logger = logging.getLogger(__name__)
 

@@ -8,7 +8,8 @@ import numpy as np
 
 from delta.utils import CroppingBox as DeltaCroppingBox
 
-from evomachine.config import DMD_WIDTH_HEIGHT, EVO_FORMATTER, get_logger, ConfigImageProcessor
+from evomachine.config import DMD_WIDTH_HEIGHT, EVO_FORMATTER, get_logger
+from evomachine.config_types import ConfigImageProcessor, FrameMetaData
 from evomachine.coordinates import Coordinate
 from evomachine.types import AutomatonCommandType, FilterWheelType, FocusStatusType, LEDType, MagnetModeType
 from evomachine.utils import EvoCroppingBox
@@ -199,35 +200,21 @@ class CommandFactory:
 
     def command_image(
             self,
-            channels: list[LEDType],
-            exposure_time: int | None,
+            frame_metadata: FrameMetaData | list[FrameMetaData],
             segment: bool,
-            brightness: int | float | list[int | float] = 10,
             save: bool = False,
             filename_suffix: str | None = None,
-            pattern: np.ndarray | None = None,
-            filter_wheel: FilterWheelType | list[FilterWheelType] | None = None,
-            force_led: bool = False,
-            reset_led: bool = False,
     ) -> AutomatonCommand:
         """
         Create a command for taking an image.
 
         Parameters
         ----------
-        channels        : List of LED channels. If any image processing is enabled, channels must
-                          contain ConfigImageProcessor.channels_seg.
-        exposure_time   : If None, uses default exposure, otherwise, in MILLISECONDS.
+        frame_metadata  : One FrameMetaData object or a list of FrameMetaData objects used by FrameAcquisitionManager.
         segment         : Segments image and tracks cells if True. See channels for channel requirements. If segment is
                           True, and ConfigImageProcessor.preproc_enabled is False, this function throws an exception.
-        brightness      : Brightness as value in [0,29].
         save            : Save image(s). Uses ConfigDevice.path_to_save passed to Automaton.
         filename_suffix : Suffix to append to filenames.
-        pattern         : An optional pattern of size width_height_DMD (see DMDControl) that will be displayed using
-                          dmd.display_image(). If None, the DMD is set via dmd.display_full().
-        filter_wheel    : Optional filter wheel to set. Otherwise, current setting is used.
-        force_led       : TODO
-        reset_led       : TODO
 
         Returns in AbstractStrategy.callback
         ------------------------------------
@@ -243,39 +230,42 @@ class CommandFactory:
         -------
         command: AutomatonCommand
         """
-        if not (isinstance(channels, list) and all(isinstance(channel, LEDType) for channel in channels)):
-            raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument channel ({type(channels)}).")
-        if not isinstance(exposure_time, int):
-            raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument exposure_time ({type(exposure_time)}).")
+        metadata_items = [frame_metadata] if isinstance(frame_metadata, FrameMetaData) else frame_metadata
+        if not isinstance(metadata_items, list) or not metadata_items:
+            raise TypeError(
+                "AutomatonCommandFactory.image: frame_metadata must be FrameMetaData or non-empty list[FrameMetaData]."
+            )
+        if not all(isinstance(metadata, FrameMetaData) for metadata in metadata_items):
+            raise TypeError("AutomatonCommandFactory.image: every frame_metadata entry must be FrameMetaData.")
         if not isinstance(segment, bool):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument segment ({type(segment)}).")
-        if not isinstance(force_led, bool):
-            raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument force_led ({type(force_led)}).")
-        if not isinstance(reset_led, bool):
-            raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument reset_led ({type(reset_led)}).")
-        if segment:  # self._cfg.preproc_enabled or
-            if not all([ch_seg in channels for ch_seg in self._cfg.channels_seg]):
-                raise TypeError(f"AutomatonCommandFactory.image: channels_seg={self._cfg.channels_seg} not in channels={channels} for segment=True.")
+        if not isinstance(save, bool):
+            raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument save ({type(save)}).")
+        if segment:
+            metadata_leds = [
+                metadata.leds
+                for metadata in metadata_items
+                if metadata.leds is not None
+            ]
+            metadata_channels = [
+                led_type
+                for leds in metadata_leds
+                for led_type in leds
+            ]
+            if not all(ch_seg in metadata_channels for ch_seg in self._cfg.channels_seg):
+                raise TypeError(
+                    f"AutomatonCommandFactory.image: channels_seg={self._cfg.channels_seg} not in "
+                    f"FrameMetaData LED channels={metadata_channels} for segment=True."
+                )
         if segment and not self._cfg.preproc_enabled:
             raise TypeError(f"AutomatonCommandFactory.image: segment=True but preproc_enabled=False.")
-        if not ((isinstance(brightness, int) and 0 <= brightness <= 100) or
-                (isinstance(brightness, list) and
-                 all([0 <= b <= 100 for b in brightness]) and len(brightness) == len(channels))):
-            raise TypeError(f"AutomatonCommandFactory.image: Wrong type or range or format for argument brightness.")
-        if isinstance(brightness, int):
-            brightness = [brightness for _ in channels]
-        if filter_wheel is not None:
-            if isinstance(filter_wheel, list) and (len(channels) != len(filter_wheel) or
-                                                   any([not isinstance(f, FilterWheelType) for f in filter_wheel])):
-                raise TypeError("AutomatonCommandFactory.image: If list, len(filter_wheel) must be equal len(channels).")
-            elif not isinstance(filter_wheel, list) and not isinstance(filter_wheel, FilterWheelType):
-                raise TypeError("AutomatonCommandFactory.image: filter_wheel must be of type FilterWheelType.")
         if not (isinstance(filename_suffix, str) or filename_suffix is None):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument filename_suffix ({type(filename_suffix)}).")
         command_args = {
-            'channels': channels, 'exposure_time': exposure_time, 'segment': segment, 'brightness': brightness,
-            'save': save, 'pattern': pattern, 'filter_wheel': filter_wheel,
-            'force_led': force_led, 'reset_led': reset_led, 'filename_suffix': filename_suffix,
+            'frame_metadata': frame_metadata,
+            'segment': segment,
+            'save': save,
+            'filename_suffix': filename_suffix,
         }
         return AutomatonCommand(
             command_type=AutomatonCommandType.IMAGE,

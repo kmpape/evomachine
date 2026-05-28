@@ -143,11 +143,11 @@ def make_virtual_stage() -> VirtualStage:
     Returns
     -------
     VirtualStage
-        Initialised virtual stage with delta_fov 100.
+        Initialised virtual stage with fov_step_size 100.
     """
     peripheral_ctrl = VirtualPeripheralController()
     peripheral_ctrl.initialise()
-    stage = VirtualStage(peripheral_ctrl=peripheral_ctrl, delta_fov=100.0)
+    stage = VirtualStage(peripheral_ctrl=peripheral_ctrl, fov_step_size=100.0)
     stage.initialise()
     return stage
 
@@ -168,7 +168,7 @@ def make_fake_tiger_stage() -> TigerStage:
     tiger = FakeTigerStageController()
     peripheral_ctrl = TigerPeripheralController(tiger=tiger)
     peripheral_ctrl.initialise()
-    stage = TigerStage(peripheral_ctrl=peripheral_ctrl, delta_fov=100.0)
+    stage = TigerStage(peripheral_ctrl=peripheral_ctrl, fov_step_size=100.0)
     stage.initialise()
     return stage
 

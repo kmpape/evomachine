@@ -832,10 +832,17 @@ class ImagePlotter(EvoPanelTemplate):
     def update_image(self, cmd: AutomatonCommand):
         if cmd.command_type == AutomatonCommandType.IMAGE:
             fov_id = cmd.fov_id
-            channels_int = [self.channel_to_index[c] for c in cmd.command_args['channels']]
+            metadata = cmd.command_args['frame_metadata']
+            metadata_items = metadata if isinstance(metadata, list) else [metadata]
+            channels_int = [
+                self.channel_to_index[next(iter(frame_metadata.leds))]
+                for frame_metadata in metadata_items
+                if frame_metadata.leds
+            ]
             if not fov_id in self.image_array.keys():
                 self.image_array[fov_id] = np.zeros((len(self.channel_to_index), *self.camera_config.image.shape))
-            self.image_array[fov_id][channels_int, :, :] = cmd.command_data['img']
+            image_stack = cmd.command_data['img'][0] if isinstance(cmd.command_data['img'], list) else cmd.command_data['img']
+            self.image_array[fov_id][channels_int, :, :] = image_stack
             self.image_time_str = cmd.get_exec_time()
             if 'seg' in cmd.command_data:
                 self.roi_data[fov_id]['seg_masks'] = cmd.command_data['seg']

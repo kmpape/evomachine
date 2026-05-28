@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from dataclasses import dataclass
 from evomachine.coordinates import Coordinate, CoordinateBounds
-from evomachine.peripherals import Peripheral, PeripheralController, get_peripheral_controller
+from evomachine.peripherals.peripherals import Peripheral, PeripheralController, get_peripheral_controller
 from evomachine.bindings.binding_types import BindingType
 from evomachine.types import AxisType, FovDirectionType, PositiveScalingType, UNKNOWN_POSITION_ID
 
@@ -23,7 +23,7 @@ class Stage(Peripheral):
     def __init__(
             self,
             name: str,
-            delta_fov: float,
+            fov_step_size: float,
             coordinate_bounds: CoordinateBounds | None = None,
             check_initialised: bool = True,
             check_alive: bool = True,
@@ -35,7 +35,7 @@ class Stage(Peripheral):
         ----------
         name
             Human-readable stage name.
-        delta_fov
+        fov_step_size
             Field-of-view step size in stage coordinate units.
         coordinate_bounds
             Optional software movement bounds. If None, hardware-reported limits
@@ -51,24 +51,35 @@ class Stage(Peripheral):
         -------
         None
         """
-        if delta_fov <= 0:
-            raise ValueError(f"Stage.__init__: delta_fov must be positive, received {delta_fov}.")
+        if fov_step_size <= 0:
+            raise ValueError(f"Stage.__init__: fov_step_size must be positive, received {fov_step_size}.")
         self.name: str = name
+        "Name displayed in logs and error messages to identify the stage."
         self._is_initialised: bool = False
+        "Set to True when initialisation has completed successfully."
         self._is_alive: bool = False
+        "Set by is_alive."
         self._check_initialised: bool = check_initialised
+        "If True, public hardware-querying methods raise RuntimeError when the stage has not been initialised."
         self._check_alive: bool = check_alive
-        self._current_pos: Coordinate = Coordinate.none_coordinate()
-        self._curr_pos: int = self.UNKNOWN_POSITION_ID
-        self._pos_id_to_coordinate: dict[int, Coordinate] = {}
-        self._delta_fov: float = delta_fov
+        "If True, public hardware-querying methods raise RuntimeError when the stage does not report alive."
+        self._current_coordinate: Coordinate = Coordinate.none_coordinate()
+        "Current position as returned by hardware queries and updated after moves. Axes are None when unknown."
+        self._current_position_id: int = self.UNKNOWN_POSITION_ID
+        "Current position ID. Becomes available when moving to a registered position ID."
+        self._position_id_to_coordinate: dict[int, Coordinate] = {}
+        "Mapping from position ID to Coordinate for registered positions. Populated by set_pos_id_to_coordinate."
+        self._fov_step_size: float = fov_step_size
+        "Field-of-view step size in stage coordinate units. Used for FoV movement targets."
         self._coordinate_bounds: CoordinateBounds | None = coordinate_bounds.copy() if coordinate_bounds else None
+        "Software movement bounds. Set via constructor."
         self._fov_direction_to_axis_sign: dict[FovDirectionType, tuple[AxisType, int]] = {
             FovDirectionType.UP: (AxisType.Y, -1),
             FovDirectionType.DOWN: (AxisType.Y, +1),
             FovDirectionType.LEFT: (AxisType.X, -1),
             FovDirectionType.RIGHT: (AxisType.X, +1),
         }
+        "Mapping from field-of-view movement direction to affected axis and movement sign. Used for FoV movement targets."
 
     @classmethod
     def _validate_axes(cls, axes: list[AxisType] | None = None) -> list[AxisType]:
@@ -97,129 +108,7 @@ class Stage(Peripheral):
                 axes_norm.append(axis)
         return axes_norm
 
-    @staticmethod
-    def _axis_value(coordinate: Coordinate, axis: AxisType) -> float | int | None:
-        """
-        Return one axis value from a Coordinate.
-
-        Parameters
-        ----------
-        coordinate
-            Coordinate to read from.
-        axis
-            Axis to read.
-
-        Returns
-        -------
-        float | int | None
-            Coordinate value for the requested axis, or None when unset.
-        """
-        if axis == AxisType.X:
-            return coordinate.x
-        if axis == AxisType.Y:
-            return coordinate.y
-        if axis == AxisType.Z:
-            return coordinate.z
-        raise ValueError(f"Stage._axis_value: unsupported axis {axis}.")
-
-    @staticmethod
-    def _coordinate_from_axis(
-            axis: AxisType,
-            value: float | int,
-            channel_id: int = 0,
-    ) -> Coordinate:
-        """
-        Build a partial Coordinate containing one axis.
-
-        Parameters
-        ----------
-        axis
-            Axis to populate.
-        value
-            Target coordinate for the axis.
-        channel_id
-            Channel ID to preserve on the coordinate.
-
-        Returns
-        -------
-        Coordinate
-            Coordinate with only the selected axis populated.
-        """
-        return Coordinate(
-            x=value if axis == AxisType.X else None,
-            y=value if axis == AxisType.Y else None,
-            z=value if axis == AxisType.Z else None,
-            channel_id=channel_id,
-        )
-
-    @classmethod
-    def _coordinate_has_value(cls, coordinate: Coordinate) -> bool:
-        """
-        Check whether any axis in a Coordinate has a value.
-
-        Parameters
-        ----------
-        coordinate
-            Coordinate to inspect.
-
-        Returns
-        -------
-        bool
-            True when at least one of X, Y, or Z is not None.
-        """
-        return any(cls._axis_value(coordinate=coordinate, axis=axis) is not None for axis in cls.AXES)
-
-    @classmethod
-    def _filter_coordinate(cls, coordinate: Coordinate, axes: list[AxisType]) -> Coordinate:
-        """
-        Return a copy of a Coordinate containing only selected axes.
-
-        Parameters
-        ----------
-        coordinate
-            Coordinate to filter.
-        axes
-            Axes to include in the returned Coordinate.
-
-        Returns
-        -------
-        Coordinate
-            Partial Coordinate with non-requested axes set to None.
-        """
-        return Coordinate(
-            x=coordinate.x if AxisType.X in axes else None,
-            y=coordinate.y if AxisType.Y in axes else None,
-            z=coordinate.z if AxisType.Z in axes else None,
-            channel_id=coordinate.get_channel_id(),
-        )
-
-    @staticmethod
-    def _merge_coordinates(base: Coordinate, update: Coordinate) -> Coordinate:
-        """
-        Merge a partial Coordinate into an existing Coordinate.
-
-        Parameters
-        ----------
-        base
-            Existing coordinate state.
-        update
-            New coordinate values. None values leave the corresponding base axis
-            unchanged.
-
-        Returns
-        -------
-        Coordinate
-            Merged coordinate.
-        """
-        update_channel_id = update.get_channel_id()
-        return Coordinate(
-            x=base.x if update.x is None else update.x,
-            y=base.y if update.y is None else update.y,
-            z=base.z if update.z is None else update.z,
-            channel_id=base.get_channel_id() if update_channel_id is None else update_channel_id,
-        )
-
-    def _update_current_pos(self, coordinate: Coordinate) -> None:
+    def _update_current_coordinate(self, coordinate: Coordinate) -> None:
         """
         Update the cached current coordinate.
 
@@ -232,7 +121,7 @@ class Stage(Peripheral):
         -------
         None
         """
-        self._current_pos = self._merge_coordinates(base=self._current_pos, update=coordinate)
+        self._current_coordinate = self._current_coordinate.merge(update=coordinate)
 
     def _require_ready(self, action: str) -> None:
         """
@@ -274,7 +163,7 @@ class Stage(Peripheral):
         if self._check_alive and not self._is_alive:
             raise RuntimeError("Stage.initialise: stage is not alive after initialisation.")
         if self._is_alive:
-            self._current_pos = self._get_coordinates()
+            self._current_coordinate = self._get_coordinates()
 
     def finalise(self, force: bool = False) -> None:
         """
@@ -362,8 +251,8 @@ class Stage(Peripheral):
         axes_norm = self._validate_axes(axes=axes)
         if query_hardware:
             self._require_ready(action="get_coordinates")
-            self._update_current_pos(coordinate=self._get_coordinates())
-        return self._filter_coordinate(coordinate=self._current_pos, axes=axes_norm)
+            self._update_current_coordinate(coordinate=self._get_coordinates())
+        return self._current_coordinate.filter_axes(axes=axes_norm)
 
     def get_pos(self) -> int:
         """
@@ -379,9 +268,9 @@ class Stage(Peripheral):
             Current position ID, or UNKNOWN_POSITION_ID when the current coordinate
             does not correspond to a known position ID.
         """
-        return self._curr_pos
+        return self._current_position_id
 
-    def get_delta_fov(self) -> float:
+    def get_fov_step_size(self) -> float:
         """
         Return the configured field-of-view movement step.
 
@@ -394,24 +283,24 @@ class Stage(Peripheral):
         float
             Field-of-view step size.
         """
-        return self._delta_fov
+        return self._fov_step_size
 
-    def set_delta_fov(self, delta_fov: float) -> None:
+    def set_fov_step_size(self, fov_step_size: float) -> None:
         """
         Set the field-of-view movement step.
 
         Parameters
         ----------
-        delta_fov
+        fov_step_size
             Positive movement step size.
 
         Returns
         -------
         None
         """
-        if delta_fov <= 0:
-            raise ValueError(f"Stage.set_delta_fov: delta_fov must be positive, received {delta_fov}.")
-        self._delta_fov = delta_fov
+        if fov_step_size <= 0:
+            raise ValueError(f"Stage.set_fov_step_size: fov_step_size must be positive, received {fov_step_size}.")
+        self._fov_step_size = fov_step_size
 
     def get_coordinate_bounds(self) -> CoordinateBounds:
         """
@@ -496,7 +385,7 @@ class Stage(Peripheral):
             if self.coordinate_is_out_of_bounds(coordinate):
                 return False
             coordinates[i_pos] = coordinate.copy()
-        self._pos_id_to_coordinate = coordinates
+        self._position_id_to_coordinate = coordinates
         return True
 
     @staticmethod
@@ -507,7 +396,7 @@ class Stage(Peripheral):
         Parameters
         ----------
         multiplier
-            Positive numeric multiplier for delta_fov.
+            Positive numeric multiplier for fov_step_size.
 
         Returns
         -------
@@ -531,7 +420,7 @@ class Stage(Peripheral):
         ----------
         fov_moves
             List of (FovDirectionType, multiplier) movement requests. Multipliers
-            must be positive and scale delta_fov. HOME is not allowed in a list
+            must be positive and scale fov_step_size. HOME is not allowed in a list
             because it is an absolute hardware command.
 
         Returns
@@ -554,11 +443,11 @@ class Stage(Peripheral):
             if direction == FovDirectionType.HOME:
                 raise ValueError("Stage._coordinate_from_fov_moves: HOME must be used as a single move target.")
             axis, sign = self._fov_direction_to_axis_sign[direction]
-            axis_deltas[axis] += int(sign * self.get_delta_fov() * self._fov_multiplier_value(multiplier))
+            axis_deltas[axis] += int(sign * self.get_fov_step_size() * self._fov_multiplier_value(multiplier))
 
         current = self.get_coordinates(axes=[AxisType.X, AxisType.Y], query_hardware=True)
-        current_x = self._axis_value(coordinate=current, axis=AxisType.X)
-        current_y = self._axis_value(coordinate=current, axis=AxisType.Y)
+        current_x = current.axis_value(axis=AxisType.X)
+        current_y = current.axis_value(axis=AxisType.Y)
         if current_x is None or current_y is None:
             raise RuntimeError("Stage._coordinate_from_fov_moves: current X/Y coordinates are not initialised.")
         return Coordinate(
@@ -588,9 +477,9 @@ class Stage(Peripheral):
             hardware home command.
         """
         if isinstance(target, int) and not isinstance(target, bool):
-            if target not in self._pos_id_to_coordinate:
+            if target not in self._position_id_to_coordinate:
                 raise IndexError(f"Stage.move: position index {target} out of range.")
-            return target, self._pos_id_to_coordinate[target].copy(), False
+            return target, self._position_id_to_coordinate[target].copy(), False
         if isinstance(target, Coordinate):
             return self.UNKNOWN_POSITION_ID, target.copy(), False
         if isinstance(target, tuple):
@@ -626,7 +515,7 @@ class Stage(Peripheral):
             configured by set_pos_id_to_coordinate. A Coordinate is an absolute
             full or partial stage coordinate; axes set to None are not moved. A
             tuple[FovDirectionType, PositiveScalingType] moves one field-of-view
-            step in the requested direction by multiplier * delta_fov. A list of
+            step in the requested direction by multiplier * fov_step_size. A list of
             those tuples combines all UP/DOWN/LEFT/RIGHT FoV deltas into one
             absolute X/Y move, allowing diagonal or repeated-direction movement
             with a single hardware move. FovDirectionType.HOME is accepted only
@@ -644,15 +533,15 @@ class Stage(Peripheral):
         self._require_ready(action="move")
         pos_id, move_coordinate, use_home = self._coordinate_from_move_target(target=target)
         if use_home:
-            self._current_pos = self._home(block=block)
-            self._curr_pos = pos_id
+            self._current_coordinate = self._home(block=block)
+            self._current_position_id = pos_id
             return
-        if not self._coordinate_has_value(coordinate=move_coordinate):
+        if not move_coordinate.has_axis_value():
             return
         if self.coordinate_is_out_of_bounds(coordinate=move_coordinate):
             raise ValueError(f"Stage.move: coordinate is out of bounds: {move_coordinate}.")
-        self._update_current_pos(coordinate=self._move(coordinate=move_coordinate, block=block))
-        self._curr_pos = pos_id
+        self._update_current_coordinate(coordinate=self._move(coordinate=move_coordinate, block=block))
+        self._current_position_id = pos_id
 
     @abstractmethod
     def halt(self) -> None:
@@ -700,8 +589,8 @@ class Stage(Peripheral):
         None
         """
         self._require_ready(action="zero_coordinates")
-        self._current_pos = self._zero_coordinates()
-        self._curr_pos = self.UNKNOWN_POSITION_ID
+        self._current_coordinate = self._zero_coordinates()
+        self._current_position_id = self.UNKNOWN_POSITION_ID
 
     @abstractmethod
     def _initialise(self, force: bool = False) -> bool:
@@ -871,10 +760,34 @@ class Stage(Peripheral):
 
 @dataclass
 class StageConfig:
-    """Configuration object used by StageFactory to create Stage instances."""
+    """
+    Configuration object used by StageFactory to create Stage instances.
+
+    Parameters
+    ----------
+    binding
+        Stage binding type to create.
+    fov_step_size
+        Positive field-of-view step size in stage coordinate units.
+    name
+        Optional human-readable stage name.
+    check_initialised
+        If True, public hardware-querying methods require initialisation.
+    check_alive
+        If True, public hardware-querying methods require a live stage.
+    initial_coordinate
+        Optional initial coordinate for virtual stages.
+    coordinate_bounds
+        Optional software bounds used for movement validation.
+
+    Returns
+    -------
+    StageConfig
+        Validated stage factory configuration.
+    """
 
     binding: BindingType
-    delta_fov: float
+    fov_step_size: float
     name: str | None = None
     check_initialised: bool = True
     check_alive: bool = True
@@ -896,11 +809,11 @@ class StageConfig:
         """
         if not isinstance(self.binding, BindingType):
             raise TypeError(f"StageConfig: binding must be BindingType, received {type(self.binding)}.")
-        if not isinstance(self.delta_fov, int | float):
-            raise TypeError(f"StageConfig: delta_fov must be numeric, received {type(self.delta_fov)}.")
-        if self.delta_fov <= 0:
-            raise ValueError(f"StageConfig: delta_fov must be positive, received {self.delta_fov}.")
-        self.delta_fov = float(self.delta_fov)
+        if not isinstance(self.fov_step_size, int | float):
+            raise TypeError(f"StageConfig: fov_step_size must be numeric, received {type(self.fov_step_size)}.")
+        if self.fov_step_size <= 0:
+            raise ValueError(f"StageConfig: fov_step_size must be positive, received {self.fov_step_size}.")
+        self.fov_step_size = float(self.fov_step_size)
         if self.name is not None and not isinstance(self.name, str):
             raise TypeError(f"StageConfig: name must be str or None, received {type(self.name)}.")
         if not isinstance(self.check_initialised, bool):
@@ -961,7 +874,7 @@ class StageFactory:
             )
             return VirtualStage(
                 peripheral_ctrl=peripheral_ctrl,
-                delta_fov=config.delta_fov,
+                fov_step_size=config.fov_step_size,
                 name=config.name or "Virtual Stage",
                 initial_coordinate=config.initial_coordinate,
                 coordinate_bounds=config.coordinate_bounds,
@@ -980,7 +893,7 @@ class StageFactory:
             )
             return TigerStage(
                 peripheral_ctrl=peripheral_ctrl,
-                delta_fov=config.delta_fov,
+                fov_step_size=config.fov_step_size,
                 name=config.name or "ASI Tiger Stage",
                 check_initialised=config.check_initialised,
                 check_alive=config.check_alive,

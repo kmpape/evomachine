@@ -8,7 +8,7 @@ import numpy as np
 
 from evomachine.bindings.binding_types import BindingType
 from evomachine.config_types import ImageConfigType
-from evomachine.peripherals import Peripheral, PeripheralController, get_peripheral_controller
+from evomachine.peripherals.peripherals import Peripheral, PeripheralController, get_peripheral_controller
 
 
 @dataclass

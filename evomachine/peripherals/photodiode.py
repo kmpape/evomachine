@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from evomachine.bindings.binding_types import BindingType
-from evomachine.peripherals import Peripheral, PeripheralController, get_peripheral_controller
+from evomachine.peripherals.peripherals import Peripheral, PeripheralController, get_peripheral_controller
 
 
 @dataclass

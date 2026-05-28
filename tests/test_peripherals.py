@@ -10,7 +10,7 @@ from evomachine.bindings.kwr103.KWR103Driver import KWR103
 from evomachine.bindings.kwr103.peripheralcontroller import KWR103PeripheralController
 from evomachine.bindings.syncboard.peripheralcontroller import SyncBoardPeripheralController
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
-from evomachine.peripherals import (
+from evomachine.peripherals.peripherals import (
     PeripheralController,
     PeripheralControllerConfig,
     PeripheralControllerFactory,

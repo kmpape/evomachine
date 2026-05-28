@@ -9,6 +9,7 @@ import pytest
 
 from evomachine.acquisition import FrameAcquisitionManager, FrameAcquisitionSettings
 from evomachine.config_types import FrameMetaData
+from evomachine.coordinates import Coordinate
 from evomachine.peripherals.leds import LedState
 from evomachine.types import LEDType
 
@@ -32,6 +33,7 @@ class FakeCamera:
         self.fail_on_frame = fail_on_frame
         self.exposures: list[float | int] = []
         self.normalise_calls: list[bool] = []
+        self.stop_count = 0
 
     def set_exposure(self, exposure_time: float | int) -> None:
         """
@@ -67,6 +69,20 @@ class FakeCamera:
             raise RuntimeError("capture failed")
         return np.ones((3, 4), dtype=np.float64 if normalise else np.uint16)
 
+    def stop(self) -> None:
+        """
+        Record that camera stop was requested.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.stop_count += 1
+
 
 class FakeLedManager:
     """LED manager fake that records set and disable commands."""
@@ -85,6 +101,7 @@ class FakeLedManager:
         """
         self.commands: list[tuple[LEDType | None, float | int]] = []
         self.disable_count = 0
+        self.stop_count = 0
         self.states = {
             LEDType.LED_450_NM: LedState(led_type=LEDType.LED_450_NM, brightness=12, is_on=True),
         }
@@ -157,6 +174,20 @@ class FakeLedManager:
         self.disable_count += 1
         self.commands.append((led_type, 0))
 
+    def stop(self) -> None:
+        """
+        Record that LED manager stop was requested.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.stop_count += 1
+
 
 class FakeDmd:
     """DMD fake that records full, image, and blank display commands."""
@@ -175,6 +206,7 @@ class FakeDmd:
         """
         self.full_count = 0
         self.none_count = 0
+        self.stop_count = 0
         self.images: list[np.ndarray] = []
 
     def display_full(self) -> None:
@@ -219,6 +251,91 @@ class FakeDmd:
         None
         """
         self.none_count += 1
+
+    def stop(self) -> None:
+        """
+        Record that DMD stop was requested.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.stop_count += 1
+
+
+class FakeStage:
+    """Stage fake that records stop calls for acquisition manager tests."""
+
+    def __init__(self):
+        """
+        Initialise fake stage state.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.coordinate = Coordinate(0, 0, 0)
+        self.stop_count = 0
+
+    def get_coordinates(self, query_hardware: bool = True) -> Coordinate:
+        """
+        Return the fake stage coordinate.
+
+        Parameters
+        ----------
+        query_hardware
+            Accepted for API compatibility.
+
+        Returns
+        -------
+        Coordinate
+            Current fake stage coordinate.
+        """
+        return self.coordinate.copy()
+
+    def move(self, target: Coordinate, block: bool = True) -> None:
+        """
+        Move the fake stage to a partial coordinate.
+
+        Parameters
+        ----------
+        target
+            Coordinate containing axes to update.
+        block
+            Accepted for API compatibility.
+
+        Returns
+        -------
+        None
+        """
+        if target.x is not None:
+            self.coordinate.x = target.x
+        if target.y is not None:
+            self.coordinate.y = target.y
+        if target.z is not None:
+            self.coordinate.z = target.z
+
+    def stop(self) -> None:
+        """
+        Record that stage stop was requested.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.stop_count += 1
 
 
 class FakeFileManager:
@@ -295,6 +412,7 @@ def _manager(
         led_manager: FakeLedManager | None = None,
         dmd: FakeDmd | None = None,
         file_manager: FakeFileManager | None = None,
+        stage: FakeStage | None = None,
         default_settings: FrameAcquisitionSettings | None = None,
 ) -> FrameAcquisitionManager:
     """
@@ -310,6 +428,8 @@ def _manager(
         Optional fake DMD.
     file_manager
         Optional fake file manager.
+    stage
+        Optional fake stage.
     default_settings
         Optional default acquisition settings.
 
@@ -323,6 +443,7 @@ def _manager(
         led_manager=FakeLedManager() if led_manager is None else led_manager,
         dmd=FakeDmd() if dmd is None else dmd,
         file_manager=file_manager,
+        stage=stage,
         default_settings=default_settings,
     )
 
@@ -493,3 +614,29 @@ def test_cleanup_runs_when_save_raises() -> None:
     assert dmd.full_count == 1
     assert dmd.none_count == 1
     assert leds.disable_count == 1
+
+
+def test_stop_calls_camera_and_stage_stop_directly() -> None:
+    """
+    Check acquisition stop uses the required peripheral stop API.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    camera = FakeCamera()
+    leds = FakeLedManager()
+    dmd = FakeDmd()
+    stage = FakeStage()
+    manager = _manager(camera=camera, led_manager=leds, dmd=dmd, stage=stage)
+
+    manager.stop()
+
+    assert leds.disable_count == 1
+    assert dmd.none_count == 1
+    assert camera.stop_count == 1
+    assert stage.stop_count == 1

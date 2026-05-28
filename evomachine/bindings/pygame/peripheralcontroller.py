@@ -4,7 +4,7 @@ import os
 from typing import Any
 
 from evomachine.config import DMD_WIDTH_HEIGHT
-from evomachine.peripherals import PeripheralController
+from evomachine.peripherals.peripherals import PeripheralController
 
 
 class FakeSurface:

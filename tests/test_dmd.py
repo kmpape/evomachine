@@ -11,7 +11,7 @@ from evomachine.bindings.pygame.dmd import PygameDmd
 from evomachine.bindings.pygame.peripheralcontroller import PygameDmdPeripheralController
 from evomachine.bindings.virtual.dmd import VirtualDmd, VirtualDmdPeripheralController
 from evomachine.peripherals.dmd import Dmd, DmdConfig, DmdFactory
-from evomachine.peripherals import PeripheralController, SocketPeripheralController
+from evomachine.peripherals.peripherals import PeripheralController, SocketPeripheralController
 from evomachine.bindings.binding_types import BindingType
 
 # TODO(CODEX): Make these Fake classes import dependent. If some global variable is true, the real classes are imported and the real bindings tested. For security reasons, we need test settings defined somewhere.
