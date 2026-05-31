@@ -11,7 +11,7 @@ from evomachine.config_types import FileNameConfig, FrameMetaData, FrameMetaData
 from evomachine.coordinates import Coordinate
 from evomachine.filemanager import FileManager
 from evomachine.peripherals.stage import Stage
-from evomachine.types import FilterWheelType, LEDType, UNKNOWN_POSITION_ID
+from evomachine.types import FilterWheelType, LEDType, UNKNOWN_FOV_ID
 
 
 def _frame_metadata(**updates) -> FrameMetaData:
@@ -33,7 +33,7 @@ def _frame_metadata(**updates) -> FrameMetaData:
         "leds": {LEDType.LED_450_NM: 25},
         "filter_wheel": FilterWheelType.FILTER_465nm,
         "exposure": 100,
-        "position_id": 3,
+        "fov_id": 3,
         "coordinate": Coordinate(10, 20, 30),
         "creation_time": datetime(2026, 1, 2, 3, 4, 5, 6000),
     }
@@ -115,8 +115,8 @@ def test_frame_metadata_fields_and_factory_counter() -> None:
     assert first.frame_id == 0
     assert explicit.frame_id == 99
     assert second.frame_id == 1
-    assert first.position_id == UNKNOWN_POSITION_ID
-    assert Stage.UNKNOWN_POSITION_ID == UNKNOWN_POSITION_ID
+    assert first.fov_id == UNKNOWN_FOV_ID
+    assert Stage.UNKNOWN_FOV_ID == UNKNOWN_FOV_ID
     assert first.coordinate is None
     assert first.to_metadata_dict()["dmd_pattern"] == {
         "present": True,
@@ -131,7 +131,7 @@ def test_frame_metadata_fields_and_factory_counter() -> None:
     with pytest.raises(TypeError):
         FrameMetaData(frame_id=True, leds=None, filter_wheel=None, exposure=None)
     with pytest.raises(TypeError):
-        FrameMetaData(frame_id=0, leds=None, filter_wheel=None, exposure=None, position_id=True)
+        FrameMetaData(frame_id=0, leds=None, filter_wheel=None, exposure=None, fov_id=True)
     with pytest.raises(TypeError):
         FrameMetaData(frame_id=0, leds=None, filter_wheel=None, exposure=None, coordinate=(1, 2, 3))
     with pytest.raises(TypeError):
@@ -160,6 +160,14 @@ def test_old_frame_symbols_are_removed() -> None:
     """
     assert not hasattr(config_types, "Config" + "Frame")
     assert not hasattr(config_types, "Config" + "FrameFactory")
+    with pytest.raises(TypeError):
+        FrameMetaData(
+            frame_id=0,
+            leds=None,
+            filter_wheel=None,
+            exposure=None,
+            position_id=0,
+        )
 
 
 def test_default_and_configured_filename_generation(tmp_path) -> None:
@@ -180,7 +188,7 @@ def test_default_and_configured_filename_generation(tmp_path) -> None:
 
     filename = manager.get_filename(frame_metadata=frame_metadata)
     assert filename.parent == tmp_path
-    assert filename.name.startswith("LED450NM_P3_X10_Y20_Z30_F1_")
+    assert filename.name.startswith("LED450NM_FOV3_X10_Y20_Z30_F1_")
     assert filename.suffix == ".tiff"
 
     manager.update_config(
@@ -231,7 +239,7 @@ def test_missing_filename_values_use_stable_placeholders(tmp_path) -> None:
 
     filename = manager.get_filename(frame_metadata=frame_metadata)
 
-    assert filename.name.startswith("NO_LED_P-1_X_Y_Zauto_FNone_")
+    assert filename.name.startswith("NO_LED_FOV-1_X_Y_Zauto_FNone_")
 
 
 def test_save_tiff_frame_writes_frame_metadata(tmp_path) -> None:
@@ -266,7 +274,7 @@ def test_save_tiff_frame_writes_frame_metadata(tmp_path) -> None:
     assert metadata["FrameMetaData"]["leds"]["LED_450_NM"]["brightness"] == 25.0
     assert metadata["FrameMetaData"]["filter_wheel"] == {"name": "FILTER_465nm", "value": 1}
     assert metadata["FrameMetaData"]["dmd_pattern"] is None
-    assert metadata["FrameMetaData"]["position_id"] == 3
+    assert metadata["FrameMetaData"]["fov_id"] == 3
     assert metadata["FrameMetaData"]["coordinate"] == {"X": 10, "Y": 20, "Z": 30}
     assert metadata["FrameMetaData"]["additional_metadata"] == {"experiment": "alpha"}
     assert "force" + "_settings" not in metadata["FrameMetaData"]

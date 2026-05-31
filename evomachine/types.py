@@ -18,8 +18,8 @@ ExposureType = Annotated[float, "1 <= value in ms <= 1000"]
 PositiveScalingType = Annotated[float, "value > 0"]
 """Positive scale factor used for relative movement and other multiplicative settings."""
 
-UNKNOWN_POSITION_ID = -1
-"""Position ID used when a frame or stage position is not associated with a registered position."""
+UNKNOWN_FOV_ID = -1
+"""FoV ID used when a frame or stage location is not associated with a registered FoV."""
 
 
 class EvoType(Enum):

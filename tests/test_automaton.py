@@ -219,21 +219,21 @@ class FakeAcquisitionManager(FrameAcquisitionManager):
 
 
 class FakeFocusNavigator(FocusNavigator):
-    """Focus navigator fake that records moves and positions."""
+    """Focus navigator fake that records moves and fovs."""
 
     def __init__(self):
         """Initialise fake focus navigator state."""
         self.moves: list[int] = []
-        self.positions: dict[int, Coordinate] = {}
+        self.fovs: dict[int, Coordinate] = {}
 
-    def initialise_positions(self, position_id_to_coordinate, use_autofocus=None) -> None:
-        """Record position initialisation."""
-        self.positions = position_id_to_coordinate
+    def initialise_fovs(self, fov_id_to_coordinate, use_autofocus=None) -> None:
+        """Record fov initialisation."""
+        self.fovs = fov_id_to_coordinate
 
-    def move(self, position_id: int, manage_focus: bool = True):
+    def move(self, fov_id: int, manage_focus: bool = True):
         """Record one move request."""
-        self.moves.append(position_id)
-        return {"position_id": position_id, "manage_focus": manage_focus}
+        self.moves.append(fov_id)
+        return {"fov_id": fov_id, "manage_focus": manage_focus}
 
 
 class FakeProjectionManager(ProjectionManager):
@@ -329,7 +329,7 @@ def make_automaton():
         dmd=dmd,
         projection_manager=projection_manager,
     )
-    automaton.initialise(field_of_views={0: Coordinate(0, 0, 0), 1: Coordinate(1, 0, 0)})
+    automaton.initialise(fovs={0: Coordinate(0, 0, 0), 1: Coordinate(1, 0, 0)})
     return automaton, acquisition_manager, focus_navigator, projection_manager, led_manager, dmd
 
 
@@ -364,6 +364,24 @@ def test_automaton_constructor_validates_dependencies() -> None:
         )
 
 
+def test_automaton_old_position_api_is_removed() -> None:
+    """
+    Check old automaton position API names are absent.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    automaton, *_deps = make_automaton()
+
+    assert not hasattr(automaton, "get_pos_id")
+    assert not hasattr(automaton, "get_next_pos_id")
+
+
 def test_automaton_move_delegates_to_focus_navigator() -> None:
     """
     Check MOVE command uses FocusNavigator.
@@ -383,8 +401,8 @@ def test_automaton_move_delegates_to_focus_navigator() -> None:
     automaton._process()
 
     assert focus_navigator.moves == [1]
-    assert automaton.get_pos_id() == 1
-    assert command.command_data["position_id"] == 1
+    assert automaton.get_fov_id() == 1
+    assert command.command_data["fov_id"] == 1
 
 
 def test_automaton_image_uses_frame_metadata_and_updates_buffers() -> None:
@@ -405,7 +423,7 @@ def test_automaton_image_uses_frame_metadata_and_updates_buffers() -> None:
         leds={LEDType.LED_450_NM: 20},
         filter_wheel=None,
         exposure=50,
-        position_id=0,
+        fov_id=0,
     )
     command = CommandFactory(cfg=make_cfg()).command_image(frame_metadata=metadata, segment=False, save=True)
 

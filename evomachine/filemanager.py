@@ -306,7 +306,7 @@ class FileManager:
         timestamp_source = frame_metadata.execution_time or frame_metadata.creation_time
         format_values = {
             "channel": self._format_channel(frame_metadata=frame_metadata),
-            "position_id": frame_metadata.position_id,
+            "fov_id": frame_metadata.fov_id,
             "x": coordinate_dict.get("X", ""),
             "y": coordinate_dict.get("Y", ""),
             "z": coordinate_dict.get("Z", "auto"),

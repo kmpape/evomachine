@@ -41,28 +41,49 @@ def test_stage_initialises_and_reports_coordinates(make_stage):
 
 
 @pytest.mark.parametrize("make_stage", STAGE_FACTORIES)
+def test_stage_old_registered_position_api_is_removed(make_stage):
+    """
+    Check old registered-position stage API names are absent.
+
+    Parameters
+    ----------
+    make_stage
+        Stage factory fixture parameter.
+
+    Returns
+    -------
+    None
+    """
+    stage = make_stage()
+
+    assert not hasattr(stage, "get_pos")
+    assert not hasattr(stage, "set_pos_id_to_coordinate")
+    assert not hasattr(stage, "UNKNOWN_POSITION_ID")
+
+
+@pytest.mark.parametrize("make_stage", STAGE_FACTORIES)
 def test_stage_move_coordinate_preserves_unset_axes(make_stage):
     stage = make_stage()
 
     stage.move(Coordinate(10, None, 5))
 
     assert stage.get_coordinates(query_hardware=False) == Coordinate(10, 0, 5)
-    assert stage.get_pos() == stage.UNKNOWN_POSITION_ID
+    assert stage.get_fov_id() == stage.UNKNOWN_FOV_ID
 
 
 @pytest.mark.parametrize("make_stage", STAGE_FACTORIES)
-def test_stage_move_position_id(make_stage):
+def test_stage_move_fov_id(make_stage):
     stage = make_stage()
-    assert stage.set_pos_id_to_coordinate({7: Coordinate(20, 30, None)}, use_autofocus=True)
+    assert stage.set_fov_id_to_coordinate({7: Coordinate(20, 30, None)}, use_autofocus=True)
 
     stage.move(7)
 
-    assert stage.get_pos() == 7
+    assert stage.get_fov_id() == 7
     assert stage.get_coordinates(query_hardware=False) == Coordinate(20, 30, 0)
 
 
 @pytest.mark.parametrize("make_stage", STAGE_FACTORIES)
-def test_stage_move_unknown_position_id_raises(make_stage):
+def test_stage_move_unknown_fov_id_raises(make_stage):
     stage = make_stage()
 
     with pytest.raises(IndexError):
@@ -70,13 +91,13 @@ def test_stage_move_unknown_position_id_raises(make_stage):
 
 
 @pytest.mark.parametrize("make_stage", STAGE_FACTORIES)
-def test_stage_position_list_checks_autofocus_z_rules(make_stage):
+def test_stage_fov_list_checks_autofocus_z_rules(make_stage):
     stage = make_stage()
 
-    assert stage.set_pos_id_to_coordinate({1: Coordinate(1, 2, 3)}, use_autofocus=False)
-    assert not stage.set_pos_id_to_coordinate({1: Coordinate(1, 2, None)}, use_autofocus=False)
-    assert not stage.set_pos_id_to_coordinate({1: Coordinate(1, 2, 3)}, use_autofocus=True)
-    assert stage.set_pos_id_to_coordinate({1: Coordinate(1, 2, None)}, use_autofocus=True)
+    assert stage.set_fov_id_to_coordinate({1: Coordinate(1, 2, 3)}, use_autofocus=False)
+    assert not stage.set_fov_id_to_coordinate({1: Coordinate(1, 2, None)}, use_autofocus=False)
+    assert not stage.set_fov_id_to_coordinate({1: Coordinate(1, 2, 3)}, use_autofocus=True)
+    assert stage.set_fov_id_to_coordinate({1: Coordinate(1, 2, None)}, use_autofocus=True)
 
 
 @pytest.mark.parametrize("make_stage", STAGE_FACTORIES)
@@ -124,7 +145,7 @@ def test_stage_move_single_fov_tuple_and_home(make_stage):
 
     stage.move((FovDirectionType.HOME, 1.0))
     assert stage.get_coordinates(query_hardware=False) == Coordinate(0, 0, 0)
-    assert stage.get_pos() == 0
+    assert stage.get_fov_id() == 0
 
 
 @pytest.mark.parametrize("make_stage", STAGE_FACTORIES)
@@ -186,12 +207,12 @@ def test_stage_home_zero_and_halt(make_stage):
 
     stage.move((FovDirectionType.HOME, 1.0))
     assert stage.get_coordinates(query_hardware=False) == Coordinate(0, 0, 0)
-    assert stage.get_pos() == 0
+    assert stage.get_fov_id() == 0
 
     stage.move(Coordinate(10, 20, 30))
     stage.zero_coordinates()
     assert stage.get_coordinates(query_hardware=False) == Coordinate(0, 0, 0)
-    assert stage.get_pos() == stage.UNKNOWN_POSITION_ID
+    assert stage.get_fov_id() == stage.UNKNOWN_FOV_ID
 
     stage.halt()
     if isinstance(stage, VirtualStage):

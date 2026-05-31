@@ -122,15 +122,15 @@ class CommandFactory:
         "Image processor config used for checking channels of imaging commands."
         self._command_id_counter: int = -1
         "Command ID generator. First ID is 0. Does not care for overflow."
-        self._pos_to_roi: dict[int, list[int]] = {}
-        "Dictionary mapping position_id to roi_ids set in update_region_of_interests. Used to check commands."
+        self._fov_to_roi: dict[int, list[int]] = {}
+        "Dictionary mapping fov_id to roi_ids set in update_region_of_interests. Used to check commands."
 
     def get_next_id(self):
         self._command_id_counter += 1
         return self._command_id_counter
 
     def update_region_of_interests(self, region_of_interests: dict[int, list[int]]):
-        self._pos_to_roi = region_of_interests
+        self._fov_to_roi = region_of_interests
 
     def command_from_template(self, template: AutomatonCommand) -> AutomatonCommand:
         """
@@ -303,7 +303,7 @@ class CommandFactory:
 
         Parameters
         ----------
-        fov_id  : Either a valid position index, -1 for next position in the list, or None for no movement.
+        fov_id  : Either a valid fov index, -1 for next fov in the list, or None for no movement.
 
         Returns in AbstractStrategy.callback
         ------------------------------------
@@ -370,7 +370,7 @@ class CommandFactory:
     def command_project_roi(
             self,
             channel: LEDType,
-            pos_id: int,
+            fov_id: int,
             roi_ids: list[int],
             duration: int | float,
             brightness: int | float = 29,
@@ -381,7 +381,7 @@ class CommandFactory:
     ) -> AutomatonCommand:
         """
         Projects a pattern built from the specified RoI boxes onto the current FoV. NOTE: The automaton will NOT move to
-        the provided pos_id. A MOVE command to the corresponding pos_id / fov_id must be provided first.
+        the provided fov_id. A MOVE command to the corresponding fov_id must be provided first.
 
         Special behavior with invert=True:
         If invert=True, the automaton will add black patches to the left and right of the trench columns. These black
@@ -391,8 +391,8 @@ class CommandFactory:
         Parameters
         ----------
         channel         : LED channel.
-        pos_id          : Position ID to obtain the RoI boxes from.
-        roi_ids         : List of roi_ids to build the pattern. Must correspond to the roi_ids of pos_id.
+        fov_id          : FoV ID to obtain the RoI boxes from.
+        roi_ids         : List of roi_ids to build the pattern. Must correspond to the roi_ids of fov_id.
         duration        : Duration of the projection in SECONDS.
         brightness      : Brightness as value in [0,100].
         fill_x          : Determines the percentage of the RoI boxes filled (in X/horizontal/column direction).
@@ -412,10 +412,10 @@ class CommandFactory:
         if not isinstance(channel, LEDType):
             raise TypeError(f"AutomatonCommandFactory.command_project_roi: Wrong type for argument channel "
                             f"({type(channel)}).")
-        if not (isinstance(pos_id, int) and (pos_id in self._pos_to_roi.keys())):
-            raise TypeError(f"AutomatonCommandFactory.command_project_roi: pos_id={pos_id} does not exist.")
-        if not (all(isinstance(r, int) and (r in self._pos_to_roi[pos_id]) for r in roi_ids)):
-            raise TypeError(f"AutomatonCommandFactory.command_project_roi: roi_ids do not exist for pos_id={pos_id}.")
+        if not (isinstance(fov_id, int) and (fov_id in self._fov_to_roi.keys())):
+            raise TypeError(f"AutomatonCommandFactory.command_project_roi: fov_id={fov_id} does not exist.")
+        if not (all(isinstance(r, int) and (r in self._fov_to_roi[fov_id]) for r in roi_ids)):
+            raise TypeError(f"AutomatonCommandFactory.command_project_roi: roi_ids do not exist for fov_id={fov_id}.")
         if not (isinstance(brightness, int) or not isinstance(brightness, float)) or not (0 <= brightness <= 100):
             raise TypeError(f"AutomatonCommandFactory.project: Wrong type or range for argument brightness.")
         max_duration = 60*60 if brightness > 29 else 3600
@@ -428,7 +428,7 @@ class CommandFactory:
             raise TypeError(f"AutomatonCommandFactory.command_project_roi: Wrong type or range for argument fill_y.")
         return AutomatonCommand(
             command_type=AutomatonCommandType.PROJECT_ROI,
-            command_args={'channel': channel, 'pos_id': pos_id, 'roi_ids': roi_ids, 'duration': duration,
+            command_args={'channel': channel, 'fov_id': fov_id, 'roi_ids': roi_ids, 'duration': duration,
                           'brightness': brightness, 'fill_x': fill_x, 'fill_y': fill_y, 'invert': invert,
                           'set_live_mode': set_live_mode},
             command_id=self.get_next_id(),
@@ -547,14 +547,12 @@ class CommandFactory:
     def command_fov_data(
             fovs: dict[int, Coordinate],
             cropping_boxes: dict[int, list[EvoCroppingBox]],
-            fov_to_pos: dict[int, list[int]],
-            pos_to_fov_index: dict[int, int]
+            fov_to_roi: dict[int, list[int]],
     ) -> AutomatonCommand:
         command_args = {
             'fovs': fovs,
             'cropping_boxes': cropping_boxes,
-            'fov_to_pos': fov_to_pos,
-            'pos_to_fov_index': pos_to_fov_index,
+            'fov_to_roi': fov_to_roi,
         }
         return AutomatonCommand(
             command_type=AutomatonCommandType.FOV_DATA,

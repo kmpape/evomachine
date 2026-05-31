@@ -7,7 +7,12 @@ from evomachine.commands import AutomatonCommand
 from evomachine.config_types import ConfigCameraFactory, ConfigImageProcessorFactory, FrameMetaData
 from evomachine.coordinates import Coordinate
 from evomachine.peripherals.dmd import Dmd
-from evomachine.strategy import AbstractStrategy, BasicStrategy
+from evomachine.strategy import (
+    AbstractStrategy,
+    BasicStrategy,
+    create_strategy_from_definition,
+    list_strategy_definitions,
+)
 from evomachine.types import AutomatonCommandType, LEDType
 
 
@@ -220,11 +225,10 @@ def test_strategy_initialise_injects_dmd() -> None:
     dmd = FakeDmd()
 
     commands = strategy.initialise(
-        field_of_views={0: Coordinate(0, 0, 0)},
-        positions={0: [0]},
+        fovs={0: Coordinate(0, 0, 0)},
         region_of_interests={0: []},
         config_camera=ConfigCameraFactory.default_air_config(),
-        pos_processors=[],
+        fov_processors=[],
         dmd=dmd,
     )
 
@@ -258,7 +262,7 @@ def test_strategy_serialization_excludes_dmd() -> None:
     restored = pickle.loads(pickle.dumps(strategy))
 
     assert restored.dmd is None
-    assert restored.pos_processors == []
+    assert restored.fov_processors == []
 
 
 def test_invalid_strategy_command_list_raises_runtime_error() -> None:
@@ -282,10 +286,38 @@ def test_invalid_strategy_command_list_raises_runtime_error() -> None:
 
     with pytest.raises(RuntimeError):
         strategy.initialise(
-            field_of_views={0: Coordinate(0, 0, 0)},
-            positions={0: [0]},
+            fovs={0: Coordinate(0, 0, 0)},
             region_of_interests={0: []},
             config_camera=ConfigCameraFactory.default_air_config(),
-            pos_processors=[],
+            fov_processors=[],
             dmd=FakeDmd(),
         )
+
+
+def test_strategy_discovery_and_creation_use_name_file_pair() -> None:
+    """
+    Check strategy discovery returns definitions that can instantiate strategies.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    definitions = list_strategy_definitions()
+    assert definitions
+    definition = next(item for item in definitions if item.name == "SimpleImagingStrategy")
+    cfg = ConfigImageProcessorFactory.default_config(
+        channels=[LEDType.LED_450_NM],
+        channels_seg=[LEDType.LED_450_NM],
+    )
+
+    strategy = create_strategy_from_definition(
+        name=definition.name,
+        file_path=definition.file_path,
+        cfg=cfg,
+    )
+
+    assert strategy.name() == "SimpleImagingStrategy"

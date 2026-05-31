@@ -125,3 +125,27 @@ def test_command_image_rejects_missing_segmentation_channel() -> None:
 
     with pytest.raises(TypeError, match="channels_seg"):
         factory.command_image(frame_metadata=make_metadata(0, LEDType.LED_565_NM), segment=True)
+
+
+def test_command_project_roi_rejects_old_pos_id_argument() -> None:
+    """
+    Check PROJECT_ROI commands require fov_id instead of pos_id.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    factory = make_factory()
+    factory.update_region_of_interests({2: [0]})
+
+    with pytest.raises(TypeError):
+        factory.command_project_roi(
+            channel=LEDType.LED_450_NM,
+            pos_id=2,
+            roi_ids=[0],
+            duration=1.0,
+        )

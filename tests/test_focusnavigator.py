@@ -389,7 +389,7 @@ class FakeSoftwareFocus:
             self,
             stage: FakeStage,
             statuses: dict[int, FocusStatusType] | None = None,
-            z_by_position: dict[int, float | int] | None = None,
+            z_by_fov: dict[int, float | int] | None = None,
     ):
         """
         Initialise fake software focus state.
@@ -399,9 +399,9 @@ class FakeSoftwareFocus:
         stage
             FakeStage whose Z coordinate is updated on successful runs.
         statuses
-            Optional focus status by position ID.
-        z_by_position
-            Optional best Z value by position ID.
+            Optional focus status by fov ID.
+        z_by_fov
+            Optional best Z value by fov ID.
 
         Returns
         -------
@@ -409,43 +409,43 @@ class FakeSoftwareFocus:
         """
         self.stage = stage
         self.statuses = statuses or {}
-        self.z_by_position = z_by_position or {}
+        self.z_by_fov = z_by_fov or {}
         self.runs: list[int] = []
-        self.initialised_positions: list[int] = []
+        self.initialised_fovs: list[int] = []
 
-    def initialise_positions(self, position_ids: list[int]) -> None:
+    def initialise_fovs(self, fov_ids: list[int]) -> None:
         """
-        Record initialised position IDs.
+        Record initialised fov IDs.
 
         Parameters
         ----------
-        position_ids
-            Position IDs supplied by FocusNavigator.
+        fov_ids
+            FoV IDs supplied by FocusNavigator.
 
         Returns
         -------
         None
         """
-        self.initialised_positions = list(position_ids)
+        self.initialised_fovs = list(fov_ids)
 
-    def run(self, position_id: int):
+    def run(self, fov_id: int):
         """
         Record a software focus run and return a focus status.
 
         Parameters
         ----------
-        position_id
-            Position ID being focused.
+        fov_id
+            FoV ID being focused.
 
         Returns
         -------
         SimpleNamespace
             Object exposing focus_status.
         """
-        self.runs.append(position_id)
-        status = self.statuses.get(position_id, FocusStatusType.IN_FOCUS)
-        if status == FocusStatusType.IN_FOCUS and position_id in self.z_by_position:
-            self.stage.move(target=Coordinate(None, None, self.z_by_position[position_id]), block=True)
+        self.runs.append(fov_id)
+        status = self.statuses.get(fov_id, FocusStatusType.IN_FOCUS)
+        if status == FocusStatusType.IN_FOCUS and fov_id in self.z_by_fov:
+            self.stage.move(target=Coordinate(None, None, self.z_by_fov[fov_id]), block=True)
         return SimpleNamespace(focus_status=status)
 
 
@@ -489,9 +489,9 @@ def _navigator(
     return navigator, stage, autofocus, software_focus, sleeps
 
 
-def _positions() -> dict[int, Coordinate]:
+def _fovs() -> dict[int, Coordinate]:
     """
-    Return deterministic focus navigator positions.
+    Return deterministic focus navigator fovs.
 
     Parameters
     ----------
@@ -500,7 +500,7 @@ def _positions() -> dict[int, Coordinate]:
     Returns
     -------
     dict[int, Coordinate]
-        Position coordinates keyed by position ID.
+        Position coordinates keyed by fov ID.
     """
     return {
         0: Coordinate(0, 0, 10, channel_id=0),
@@ -530,9 +530,9 @@ def test_focus_navigator_config_validation() -> None:
         FocusNavigatorConfig(out_of_focus_wait_s=-1)
 
 
-def test_initialise_positions_registers_xy_only_when_using_autofocus() -> None:
+def test_initialise_fovs_registers_xy_only_when_using_autofocus() -> None:
     """
-    Check autofocus mode stores full coordinates but registers XY-only positions.
+    Check autofocus mode stores full coordinates but registers XY-only fovs.
 
     Parameters
     ----------
@@ -544,16 +544,16 @@ def test_initialise_positions_registers_xy_only_when_using_autofocus() -> None:
     """
     navigator, stage, _, software_focus, _ = _navigator(FocusNavigatorConfig(use_autofocus=True))
 
-    navigator.initialise_positions(_positions())
+    navigator.initialise_fovs(_fovs())
 
-    assert stage._position_id_to_coordinate[0] == Coordinate(0, 0, None, channel_id=0)
-    assert navigator.get_position_state(0).coordinate == Coordinate(0, 0, 10, channel_id=0)
-    assert software_focus.initialised_positions == [0, 1, 2]
+    assert stage._fov_id_to_coordinate[0] == Coordinate(0, 0, None, channel_id=0)
+    assert navigator.get_fov_state(0).coordinate == Coordinate(0, 0, 10, channel_id=0)
+    assert software_focus.initialised_fovs == [0, 1, 2]
 
 
-def test_initialise_positions_registers_full_coordinates_without_autofocus() -> None:
+def test_initialise_fovs_registers_full_coordinates_without_autofocus() -> None:
     """
-    Check non-autofocus mode registers full position coordinates.
+    Check non-autofocus mode registers full fov coordinates.
 
     Parameters
     ----------
@@ -565,14 +565,14 @@ def test_initialise_positions_registers_full_coordinates_without_autofocus() -> 
     """
     navigator, stage, _, _, _ = _navigator(FocusNavigatorConfig(use_autofocus=False))
 
-    navigator.initialise_positions(_positions())
+    navigator.initialise_fovs(_fovs())
 
-    assert stage._position_id_to_coordinate[0] == Coordinate(0, 0, 10, channel_id=0)
+    assert stage._fov_id_to_coordinate[0] == Coordinate(0, 0, 10, channel_id=0)
 
 
 def test_move_direct_without_autofocus_toggle() -> None:
     """
-    Check movement without channel change uses registered stage position directly.
+    Check movement without channel change uses registered stage fov directly.
 
     Parameters
     ----------
@@ -583,12 +583,12 @@ def test_move_direct_without_autofocus_toggle() -> None:
     None
     """
     navigator, stage, autofocus, software_focus, _ = _navigator(FocusNavigatorConfig(use_autofocus=True))
-    navigator.initialise_positions(_positions())
+    navigator.initialise_fovs(_fovs())
 
     result = navigator.move(0, manage_focus=False)
 
     assert stage.get_coordinates(query_hardware=False) == Coordinate(0, 0, 0)
-    assert result.position_id == 0
+    assert result.fov_id == 0
     assert result.is_locked
     assert autofocus.history == []
     assert software_focus.runs == []
@@ -607,13 +607,13 @@ def test_channel_change_move_unlocks_focuses_locks_and_records_z() -> None:
     None
     """
     stage = FakeStage()
-    software_focus = FakeSoftwareFocus(stage=stage, z_by_position={2: 42})
+    software_focus = FakeSoftwareFocus(stage=stage, z_by_fov={2: 42})
     navigator, _, autofocus, _, sleeps = _navigator(
         FocusNavigatorConfig(use_autofocus=True, post_move_wait_s=0.5, post_autofocus_wait_s=0.75),
         software_focus=software_focus,
         stage=stage,
     )
-    navigator.initialise_positions(_positions())
+    navigator.initialise_fovs(_fovs())
     navigator.move(0, manage_focus=False)
 
     result = navigator.move(2, manage_focus=False)
@@ -621,7 +621,7 @@ def test_channel_change_move_unlocks_focuses_locks_and_records_z() -> None:
     assert software_focus.runs == [2]
     assert autofocus.history == ["unlock", "initialise:None", "lock"]
     assert sleeps == [0.5, 0.75]
-    assert navigator.get_position_state(2).coordinate.z == 42
+    assert navigator.get_fov_state(2).coordinate.z == 42
     assert result.is_locked
 
 
@@ -638,14 +638,14 @@ def test_locked_autofocus_records_z_without_refocusing() -> None:
     None
     """
     navigator, stage, autofocus, software_focus, _ = _navigator(FocusNavigatorConfig(use_autofocus=True))
-    navigator.initialise_positions(_positions())
+    navigator.initialise_fovs(_fovs())
     stage.move(Coordinate(None, None, 55), block=True)
 
     result = navigator.manage_focus(0)
 
     assert result.is_locked
     assert not result.refocusing
-    assert navigator.get_position_state(0).z_time_series == [(55, 123.0, True)]
+    assert navigator.get_fov_state(0).z_time_series == [(55, 123.0, True)]
     assert autofocus.history == []
     assert software_focus.runs == []
 
@@ -667,7 +667,7 @@ def test_out_of_focus_status_waits_before_lock_check() -> None:
         FocusNavigatorConfig(use_autofocus=True, out_of_focus_wait_s=2.5),
         autofocus=autofocus,
     )
-    navigator.initialise_positions(_positions())
+    navigator.initialise_fovs(_fovs())
 
     navigator.manage_focus(0)
 
@@ -690,7 +690,7 @@ def test_lost_lock_raises_when_refocus_disabled() -> None:
         FocusNavigatorConfig(use_autofocus=True, refocus=False),
         autofocus=FakeAutofocus(locked=False),
     )
-    navigator.initialise_positions(_positions())
+    navigator.initialise_fovs(_fovs())
 
     with pytest.raises(RuntimeError, match="refocus is disabled"):
         navigator.manage_focus(0)
@@ -713,7 +713,7 @@ def test_max_refocus_trials_raises_at_configured_limit() -> None:
         autofocus=FakeAutofocus(locked=False),
         software_focus=FakeSoftwareFocus(stage=FakeStage(), statuses={0: FocusStatusType.BAD_FOCUS_CURVE}),
     )
-    navigator.initialise_positions(_positions())
+    navigator.initialise_fovs(_fovs())
     with pytest.raises(RuntimeError):
         navigator.manage_focus(0)
 
@@ -721,9 +721,9 @@ def test_max_refocus_trials_raises_at_configured_limit() -> None:
         navigator.manage_focus(0)
 
 
-def test_recovery_via_previous_position_without_software_focus() -> None:
+def test_recovery_via_previous_fov_without_software_focus() -> None:
     """
-    Check non-software recovery reinitialises at previous position and moves back.
+    Check non-software recovery reinitialises at previous fov and moves back.
 
     Parameters
     ----------
@@ -737,7 +737,7 @@ def test_recovery_via_previous_position_without_software_focus() -> None:
         FocusNavigatorConfig(use_autofocus=True, refocus_using_software_focus=False),
         autofocus=FakeAutofocus(locked=False),
     )
-    navigator.initialise_positions(_positions())
+    navigator.initialise_fovs(_fovs())
 
     result = navigator.manage_focus(1)
 
@@ -748,9 +748,9 @@ def test_recovery_via_previous_position_without_software_focus() -> None:
     assert result.is_locked
 
 
-def test_recovery_via_software_focus_on_current_position() -> None:
+def test_recovery_via_software_focus_on_current_fov() -> None:
     """
-    Check software focus recovery succeeds on the current position.
+    Check software focus recovery succeeds on the current fov.
 
     Parameters
     ----------
@@ -761,26 +761,26 @@ def test_recovery_via_software_focus_on_current_position() -> None:
     None
     """
     stage = FakeStage()
-    software_focus = FakeSoftwareFocus(stage=stage, z_by_position={0: 77})
+    software_focus = FakeSoftwareFocus(stage=stage, z_by_fov={0: 77})
     navigator, _, autofocus, _, _ = _navigator(
         FocusNavigatorConfig(use_autofocus=True),
         autofocus=FakeAutofocus(locked=False),
         software_focus=software_focus,
         stage=stage,
     )
-    navigator.initialise_positions(_positions())
+    navigator.initialise_fovs(_fovs())
 
     result = navigator.manage_focus(0)
 
     assert software_focus.runs == [0]
     assert autofocus.history == ["unlock", "initialise:None", "lock"]
-    assert navigator.get_position_state(0).coordinate.z == 77
+    assert navigator.get_fov_state(0).coordinate.z == 77
     assert result.software_focus_status == FocusStatusType.IN_FOCUS
 
 
-def test_recovery_via_software_focus_across_all_positions_moves_back() -> None:
+def test_recovery_via_software_focus_across_all_fovs_moves_back() -> None:
     """
-    Check all-position recovery tries positions in order and returns to original.
+    Check all-fov recovery tries fovs in order and returns to original.
 
     Parameters
     ----------
@@ -794,20 +794,20 @@ def test_recovery_via_software_focus_across_all_positions_moves_back() -> None:
     software_focus = FakeSoftwareFocus(
         stage=stage,
         statuses={0: FocusStatusType.BAD_FOCUS_CURVE, 1: FocusStatusType.IN_FOCUS},
-        z_by_position={1: 88},
+        z_by_fov={1: 88},
     )
     navigator, _, _, _, _ = _navigator(
-        FocusNavigatorConfig(use_autofocus=True, refocus_on_all_positions=True),
+        FocusNavigatorConfig(use_autofocus=True, refocus_on_all_fovs=True),
         autofocus=FakeAutofocus(locked=False),
         software_focus=software_focus,
         stage=stage,
     )
-    navigator.initialise_positions(_positions())
+    navigator.initialise_fovs(_fovs())
 
     result = navigator.manage_focus(0)
 
     assert software_focus.runs == [0, 1]
-    assert navigator.get_position_state(1).coordinate.z == 88
+    assert navigator.get_fov_state(1).coordinate.z == 88
     assert stage.get_coordinates(query_hardware=False).x == 0
     assert result.refocusing
 
@@ -832,7 +832,7 @@ def test_failed_software_focus_raises() -> None:
         software_focus=software_focus,
         stage=stage,
     )
-    navigator.initialise_positions(_positions())
+    navigator.initialise_fovs(_fovs())
 
     with pytest.raises(RuntimeError, match="software focus failed"):
         navigator.manage_focus(0)

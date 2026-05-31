@@ -31,7 +31,7 @@ from evomachine.types import FilterWheelType, FocusAlgorithmType, FocusCurveType
 class FakeStage:
     """Small stage fake whose current Z controls fake camera sharpness."""
 
-    def __init__(self, coordinate: Coordinate | None = None, position_id: int = 0):
+    def __init__(self, coordinate: Coordinate | None = None, fov_id: int = 0):
         """
         Initialise a fake stage.
 
@@ -39,15 +39,15 @@ class FakeStage:
         ----------
         coordinate
             Initial stage coordinate.
-        position_id
-            Position ID returned by get_pos().
+        fov_id
+            FoV ID returned by get_fov_id().
 
         Returns
         -------
         None
         """
         self.coordinate = coordinate or Coordinate(0, 0, 0)
-        self.position_id = position_id
+        self.fov_id = fov_id
         self.moves: list[Coordinate] = []
         self.stop_count = 0
 
@@ -69,9 +69,9 @@ class FakeStage:
         """
         return self.coordinate.copy()
 
-    def get_pos(self) -> int:
+    def get_fov_id(self) -> int:
         """
-        Return the fake position ID.
+        Return the fake fov ID.
 
         Parameters
         ----------
@@ -80,9 +80,9 @@ class FakeStage:
         Returns
         -------
         int
-            Current fake position ID.
+            Current fake fov ID.
         """
-        return self.position_id
+        return self.fov_id
 
     def move(self, target: Coordinate, block: bool = True) -> None:
         """
@@ -349,7 +349,7 @@ class FakeDmd:
 
 
 class FakeFilterWheel:
-    """Small filter wheel fake that records filter positions."""
+    """Small filter wheel fake that records filter fovs."""
 
     def __init__(self):
         """Initialise fake filter wheel state."""
@@ -646,9 +646,9 @@ def test_software_focus_config_new_validation_and_factory() -> None:
         _config_new(cropping_box=[])
 
 
-def test_software_focus_update_config_and_positions() -> None:
+def test_software_focus_update_config_and_fovs() -> None:
     """
-    Check default and position-specific config management.
+    Check default and fov-specific config management.
 
     Parameters
     ----------
@@ -660,20 +660,21 @@ def test_software_focus_update_config_and_positions() -> None:
     """
     focus, _, _, _, _ = _software_focus()
     default_replacement = _config_new(focus_frames=[_frame(exposure=80)])
-    position_replacement = _config_new(focus_frames=[_frame(exposure=90)])
+    fov_replacement = _config_new(focus_frames=[_frame(exposure=90)])
 
-    focus.initialise_positions([1, 2], position_configs={2: position_replacement})
-    assert not hasattr(focus.get_position_state(1), "position_id")
-    assert focus._config_for_position(1) is focus.default_config
-    assert focus._config_for_position(2) is position_replacement
+    focus.initialise_fovs([1, 2], fov_configs={2: fov_replacement})
+    assert not hasattr(focus.get_fov_result(1), "fov_id")
+    assert not hasattr(focus, "get_fov_state")
+    assert focus._fov_config.get(1, focus.default_config) is focus.default_config
+    assert focus._fov_config.get(2, focus.default_config) is fov_replacement
 
     focus.update_config(default_replacement)
-    focus.update_config(position_replacement, position_id=1)
+    focus.update_config(fov_replacement, fov_id=1)
 
     assert focus.default_config is default_replacement
-    assert focus._config_for_position(1) is position_replacement
+    assert focus._fov_config.get(1, focus.default_config) is fov_replacement
     with pytest.raises(KeyError):
-        focus.get_position_state(3)
+        focus.get_fov_result(3)
     with pytest.raises(TypeError):
         focus.update_config("bad")
 
@@ -706,7 +707,7 @@ def test_software_focus_score_image_crops_and_averages() -> None:
 
 def test_software_focus_run_scans_and_moves_to_best_z() -> None:
     """
-    Check SoftwareFocus scans Z positions and moves to the best non-boundary Z.
+    Check SoftwareFocus scans Z fovs and moves to the best non-boundary Z.
 
     Parameters
     ----------
@@ -718,25 +719,26 @@ def test_software_focus_run_scans_and_moves_to_best_z() -> None:
     """
     focus, stage, camera, leds, dmd = _software_focus()
 
-    result = focus.run(position_id=5)
-    state = focus.get_position_state(5)
+    result = focus.run(fov_id=5)
+    stored_result = focus.get_fov_result(5)
 
     assert result.focus_status == FocusStatusType.IN_FOCUS
     assert result.curve_status == FocusCurveType.HAS_GLOBAL_MAXIMUM
     assert result.best_coordinate.z == 0
     assert stage.coordinate.z == 0
     assert np.array_equal(result.z_coordinates, np.array([-3, -2, -1, 0, 1, 2]))
-    assert state.focus_stack.shape == (6, 6, 6)
-    assert state.previous_image.shape == (6, 6)
+    assert stored_result is result
+    assert result.focus_stack.shape == (6, 6, 6)
+    assert result.previous_image.shape == (6, 6)
     assert camera.exposures[0] == 200
     assert dmd.full_count == 7
     assert leds.disable_count >= 1
     assert (LEDType.LED_450_NM, 29) in leds.commands
 
 
-def test_software_focus_run_uses_position_specific_config() -> None:
+def test_software_focus_run_uses_fov_specific_config() -> None:
     """
-    Check run uses position-specific config when present.
+    Check run uses fov-specific config when present.
 
     Parameters
     ----------
@@ -747,15 +749,15 @@ def test_software_focus_run_uses_position_specific_config() -> None:
     None
     """
     focus, _, camera, leds, _ = _software_focus()
-    position_config = _config_new(
+    fov_config = _config_new(
         focus_frames=[_frame(led_type=LEDType.LED_565_NM, brightness=20, exposure=60)],
         acquisition_settings=FrameAcquisitionSettings(illuminate_dmd=False, restore_leds_after=False),
         rel_range=2,
         step_size=1,
     )
-    focus.initialise_positions([4], position_configs={4: position_config})
+    focus.initialise_fovs([4], fov_configs={4: fov_config})
 
-    result = focus.run(position_id=4)
+    result = focus.run(fov_id=4)
 
     assert np.array_equal(result.z_coordinates, np.array([-2, -1, 0, 1]))
     assert 60 in camera.exposures
@@ -783,7 +785,7 @@ def test_software_focus_run_averages_multiple_frame_metadata_scores() -> None:
         filter_wheel=filter_wheel,
     )
 
-    result = focus.run(position_id=0)
+    result = focus.run(fov_id=0)
 
     assert result.focus_status == FocusStatusType.IN_FOCUS
     assert camera.frames_captured == 14
@@ -810,7 +812,7 @@ def test_software_focus_run_rejects_missing_filter_wheel_for_frame_metadata() ->
     focus, _, _, leds, _ = _software_focus(config=_config_new(focus_frames=[frame]))
 
     with pytest.raises(RuntimeError, match="filter wheel"):
-        focus.run(position_id=0)
+        focus.run(fov_id=0)
     assert leds.disable_count >= 1
 
 
@@ -830,7 +832,7 @@ def test_software_focus_run_respects_stop_event() -> None:
     stop_event = threading.Event()
     stop_event.set()
 
-    result = focus.run(position_id=0, stop_event=stop_event)
+    result = focus.run(fov_id=0, stop_event=stop_event)
 
     assert result.focus_status != FocusStatusType.IN_FOCUS
     assert result.focus_scores.size == 0

@@ -10,39 +10,25 @@ from evomachine.acquisition import FrameAcquisitionManager, FrameAcquisitionSett
 from evomachine.bindings.software_focus.software_focus_algorithms import (
     create_software_focus_algorithm,
 )
-from evomachine.config_types import Frame, FrameMetaData, SoftwareFocusConfigNew
+from evomachine.config_types import Frame, SoftwareFocusConfigNew
 from evomachine.coordinates import Coordinate
-from evomachine.types import FocusCurveType, FocusStatusType
-
-
-@dataclass
-class SoftwareFocusPositionState:
-    """State recorded for one software focus position."""
-
-    previous_coordinate: Coordinate | None = None
-    "Stage coordinate before the most recent focus run."
-    z_coordinates: np.ndarray | None = None
-    "Z coordinates scanned during the most recent focus run."
-    focus_scores: np.ndarray | None = None
-    "Focus score for each scanned Z coordinate."
-    focus_stack: np.ndarray | None = None
-    "Image stack captured during the most recent focus run."
-    previous_image: np.ndarray | None = None
-    "Image captured before the scan started."
-    status: FocusStatusType = FocusStatusType.UNKNOWN
-    "Software focus status for the most recent focus run."
-    curve_status: FocusCurveType = FocusCurveType.UNKNOWN
-    "Focus curve classification for the most recent focus run."
+from evomachine.types import FocusCurveType, FocusStatusType, UNKNOWN_FOV_ID
 
 
 @dataclass
 class SoftwareFocusResult:
-    """Result returned by one software focus run."""
+    """Result returned by one software focus run and stored for one fov."""
 
+    previous_coordinate: Coordinate | None
+    "Stage coordinate before the focus run, or None before any run."
+    previous_image: np.ndarray | None
+    "Image captured before the scan started, or None when unavailable."
     best_coordinate: Coordinate | None
     "Best Z coordinate found by the focus run, or None if no valid best coordinate exists."
     best_frame: np.ndarray | None
     "Frame captured at the best Z coordinate, or None when unavailable."
+    focus_stack: np.ndarray
+    "Image stack captured during the focus run."
     focus_scores: np.ndarray
     "Focus score for each scanned Z coordinate."
     z_coordinates: np.ndarray
@@ -86,81 +72,81 @@ class SoftwareFocus:
             raise ValueError("SoftwareFocus.__init__: acquisition_manager must have a stage.")
         self.acquisition_manager: FrameAcquisitionManager = acquisition_manager
         self.default_config: SoftwareFocusConfigNew = config
-        self._position_states: dict[int, SoftwareFocusPositionState] = {}
-        self._position_config: dict[int, SoftwareFocusConfigNew] = {}
+        self._fov_results: dict[int, SoftwareFocusResult] = {}
+        self._fov_config: dict[int, SoftwareFocusConfigNew] = {}
         self._stop_requested: bool = False
 
-    def initialise_positions(
+    def initialise_fovs(
             self,
-            position_ids: list[int],
-            position_configs: dict[int, SoftwareFocusConfigNew] | None = None,
+            fov_ids: list[int],
+            fov_configs: dict[int, SoftwareFocusConfigNew] | None = None,
     ) -> None:
         """
-        Initialise empty focus state and optional configs for positions.
+        Initialise empty focus results and optional configs for fovs.
 
         Parameters
         ----------
-        position_ids
-            List of integer position IDs to track.
-        position_configs
-            Optional mapping of position ID to position-specific config.
+        fov_ids
+            List of integer fov IDs to track.
+        fov_configs
+            Optional mapping of fov ID to fov-specific config.
 
         Returns
         -------
         None
         """
-        if not isinstance(position_ids, list):
+        if not isinstance(fov_ids, list):
             raise TypeError(
-                f"SoftwareFocus.initialise_positions: position_ids must be list[int], received {type(position_ids)}."
+                f"SoftwareFocus.initialise_fovs: fov_ids must be list[int], received {type(fov_ids)}."
             )
-        if not all(isinstance(position_id, int) and not isinstance(position_id, bool) for position_id in position_ids):
-            raise TypeError("SoftwareFocus.initialise_positions: every position ID must be int.")
-        self._position_states = {
-            position_id: SoftwareFocusPositionState()
-            for position_id in position_ids
+        if not all(isinstance(fov_id, int) and not isinstance(fov_id, bool) for fov_id in fov_ids):
+            raise TypeError("SoftwareFocus.initialise_fovs: every fov ID must be int.")
+        self._fov_results = {
+            fov_id: self._empty_result()
+            for fov_id in fov_ids
         }
-        self._position_config = {}
-        if position_configs is None:
+        self._fov_config = {}
+        if fov_configs is None:
             return
-        if not isinstance(position_configs, dict):
-            raise TypeError("SoftwareFocus.initialise_positions: position_configs must be dict[int, SoftwareFocusConfigNew].")
-        for position_id, config in position_configs.items():
-            if position_id not in self._position_states:
-                raise KeyError(f"SoftwareFocus.initialise_positions: unknown config position ID {position_id}.")
-            self._position_config[position_id] = self._validate_config(config=config)
+        if not isinstance(fov_configs, dict):
+            raise TypeError("SoftwareFocus.initialise_fovs: fov_configs must be dict[int, SoftwareFocusConfigNew].")
+        for fov_id, config in fov_configs.items():
+            if fov_id not in self._fov_results:
+                raise KeyError(f"SoftwareFocus.initialise_fovs: unknown config fov ID {fov_id}.")
+            self._fov_config[fov_id] = self._validate_config(config=config)
 
     def update_config(
             self,
             config: SoftwareFocusConfigNew,
-            position_id: int | None = None,
+            fov_id: int | None = None,
     ) -> None:
         """
-        Replace the default or one position-specific software focus config.
+        Replace the default or one fov-specific software focus config.
 
         Parameters
         ----------
         config
             Replacement SoftwareFocusConfigNew.
-        position_id
-            Optional position ID. If None, update the default config.
+        fov_id
+            Optional fov ID. If None, update the default config.
 
         Returns
         -------
         None
         """
         config = self._validate_config(config=config)
-        if position_id is None:
+        if fov_id is None:
             self.default_config = config
             return
-        if not isinstance(position_id, int) or isinstance(position_id, bool):
-            raise TypeError(f"SoftwareFocus.update_config: position_id must be int or None, received {type(position_id)}.")
-        self._position_config[position_id] = config
-        self._position_states.setdefault(position_id, SoftwareFocusPositionState())
+        if not isinstance(fov_id, int) or isinstance(fov_id, bool):
+            raise TypeError(f"SoftwareFocus.update_config: fov_id must be int or None, received {type(fov_id)}.")
+        self._fov_config[fov_id] = config
+        self._fov_results.setdefault(fov_id, self._empty_result())
 
     def score_image(
             self,
             img: np.ndarray,
-            config: SoftwareFocusConfigNew,
+            config: SoftwareFocusConfigNew | None = None,
             cropping_box: CroppingBox | list[CroppingBox] | None = None,
     ) -> float:
         """
@@ -180,7 +166,7 @@ class SoftwareFocus:
         float
             Focus score for the provided image or mean crop score.
         """
-        config = self._validate_config(config=config)
+        config = self.default_config if config is None else self._validate_config(config=config)
         scorer = create_software_focus_algorithm(
             algorithm=config.algorithm,
             **config.algorithm_kwargs,
@@ -194,23 +180,23 @@ class SoftwareFocus:
             return scorer.score_image(img=crop_selection.crop(img))
         return float(np.mean([scorer.score_image(img=box.crop(img)) for box in crop_selection]))
 
-    def get_position_state(self, position_id: int) -> SoftwareFocusPositionState:
+    def get_fov_result(self, fov_id: int) -> SoftwareFocusResult:
         """
-        Return recorded focus state for one position.
+        Return recorded focus result for one fov.
 
         Parameters
         ----------
-        position_id
-            Position ID to retrieve.
+        fov_id
+            FoV ID to retrieve.
 
         Returns
         -------
-        SoftwareFocusPositionState
-            Recorded state for position_id.
+        SoftwareFocusResult
+            Recorded result for fov_id.
         """
-        if position_id not in self._position_states:
-            raise KeyError(f"SoftwareFocus.get_position_state: unknown position ID {position_id}.")
-        return self._position_states[position_id]
+        if fov_id not in self._fov_results:
+            raise KeyError(f"SoftwareFocus.get_fov_result: unknown fov ID {fov_id}.")
+        return self._fov_results[fov_id]
 
     def stop(self) -> None:
         """
@@ -228,7 +214,7 @@ class SoftwareFocus:
 
     def run(
             self,
-            position_id: int | None = None,
+            fov_id: int | None = None,
             stop_event: threading.Event | None = None,
     ) -> SoftwareFocusResult:
         """
@@ -236,8 +222,8 @@ class SoftwareFocus:
 
         Parameters
         ----------
-        position_id
-            Optional tracked position ID. If None, the stage's current position
+        fov_id
+            Optional tracked fov ID. If None, the stage's current fov
             ID is used when available, otherwise -1.
         stop_event
             Optional threading.Event checked between scan steps.
@@ -248,25 +234,34 @@ class SoftwareFocus:
             Focus run result, including scores, scanned Z coordinates, and best frame.
         """
         self._stop_requested = False
-        resolved_position_id = self._resolve_position_id(position_id=position_id)
-        config = self._config_for_position(position_id=resolved_position_id)
-        state = self._position_states.setdefault(resolved_position_id, SoftwareFocusPositionState())
+        resolved_fov_id = self._resolve_fov_id(fov_id=fov_id)
+        config = self._fov_config.get(resolved_fov_id, self.default_config)
+        self._fov_results.setdefault(resolved_fov_id, self._empty_result())
         stage = self.acquisition_manager.stage
         if stage is None:
             raise RuntimeError("SoftwareFocus.run: acquisition manager has no stage.")
         previous_coordinate = stage.get_coordinates(query_hardware=True)
         if previous_coordinate.z is None:
             raise RuntimeError("SoftwareFocus.run: current stage coordinate does not contain Z.")
-        state.previous_coordinate = previous_coordinate.copy()
         z_coordinates = self._make_z_coordinates(current_z=previous_coordinate.z, config=config)
-        state.z_coordinates = z_coordinates
 
-        frame_metadata_items = self._focus_frame_metadata_items(config=config)
-        settings = self._focus_acquisition_settings(config=config)
-        if self._should_stop(stop_event=stop_event):
+        frame_metadata_items = list(config.focus_frames)
+        if config.acquisition_settings is not None:
+            settings = config.acquisition_settings
+        else:
+            settings = FrameAcquisitionSettings(
+                save=False,
+                normalise=False,
+                illuminate_dmd=True,
+                clear_dmd_after=False,
+                restore_leds_after=True,
+                disable_leds_after=False,
+            )
+        if self._stop_requested or (stop_event is not None and stop_event.is_set()):
             return self._finalise_result(
-                state=state,
+                fov_id=resolved_fov_id,
                 previous_coordinate=previous_coordinate,
+                previous_image=None,
                 scanned_z=np.asarray([], dtype=int),
                 scores=np.asarray([], dtype=float),
                 focus_stack=np.empty((0,), dtype=np.float64),
@@ -277,7 +272,7 @@ class SoftwareFocus:
             frame_metadata=frame_metadata_items,
             settings=settings,
         )
-        state.previous_image = self._mean_frame(frame=previous_frame)
+        previous_image = self._mean_frame(frame=previous_frame)
         z_stack_frame = self.acquisition_manager.take_z_stack(
             frame_metadata=frame_metadata_items,
             z_coordinates=[Coordinate(None, None, int(z_coord)) for z_coord in z_coordinates],
@@ -290,8 +285,9 @@ class SoftwareFocus:
         )
         scanned_z = z_coordinates[:scores_array.size]
         return self._finalise_result(
-            state=state,
+            fov_id=resolved_fov_id,
             previous_coordinate=previous_coordinate,
+            previous_image=previous_image,
             scanned_z=scanned_z,
             scores=scores_array,
             focus_stack=stack_array,
@@ -317,51 +313,33 @@ class SoftwareFocus:
             raise TypeError(f"SoftwareFocus: config must be SoftwareFocusConfigNew, received {type(config)}.")
         return config
 
-    def _config_for_position(self, position_id: int) -> SoftwareFocusConfigNew:
+    def _resolve_fov_id(self, fov_id: int | None) -> int:
         """
-        Return the config for one position.
+        Return an explicit or stage-derived fov ID.
 
         Parameters
         ----------
-        position_id
-            Position ID to resolve.
-
-        Returns
-        -------
-        SoftwareFocusConfigNew
-            Position-specific config when present, otherwise default config.
-        """
-        return self._position_config.get(position_id, self.default_config)
-
-    def _resolve_position_id(self, position_id: int | None) -> int:
-        """
-        Return an explicit or stage-derived position ID.
-
-        Parameters
-        ----------
-        position_id
-            Optional caller-provided position ID.
+        fov_id
+            Optional caller-provided fov ID.
 
         Returns
         -------
         int
-            Resolved position ID.
+            Resolved fov ID.
         """
-        if position_id is not None:
-            if not isinstance(position_id, int) or isinstance(position_id, bool):
-                raise TypeError(f"SoftwareFocus.run: position_id must be int or None, received {type(position_id)}.")
-            return position_id
+        if fov_id is not None:
+            if not isinstance(fov_id, int) or isinstance(fov_id, bool):
+                raise TypeError(f"SoftwareFocus.run: fov_id must be int or None, received {type(fov_id)}.")
+            return fov_id
         stage = self.acquisition_manager.stage
         if stage is not None:
-            get_pos = getattr(stage, "get_pos", None)
-            if callable(get_pos):
-                return int(get_pos())
-        return -1
+            return stage.get_fov_id()
+        return UNKNOWN_FOV_ID
 
     @staticmethod
     def _make_z_coordinates(current_z: int | float, config: SoftwareFocusConfigNew) -> np.ndarray:
         """
-        Return scan Z coordinates around the current Z position.
+        Return scan Z coordinates around the current Z coordinate.
 
         Parameters
         ----------
@@ -379,63 +357,30 @@ class SoftwareFocus:
         stop = int(current_z + config.rel_range)
         return np.asarray(range(start, stop, config.step_size), dtype=int)
 
-    def _should_stop(self, stop_event: threading.Event | None) -> bool:
-        """
-        Return whether scanning should stop.
-
-        Parameters
-        ----------
-        stop_event
-            Optional external stop event.
-
-        Returns
-        -------
-        bool
-            True when an internal or external stop request is active.
-        """
-        return self._stop_requested or (stop_event is not None and stop_event.is_set())
-
     @staticmethod
-    def _focus_frame_metadata_items(config: SoftwareFocusConfigNew) -> list[FrameMetaData]:
+    def _empty_result() -> SoftwareFocusResult:
         """
-        Return configured focus frame metadata entries.
+        Return an empty software focus result.
 
         Parameters
         ----------
-        config
-            Active software focus configuration.
+        None
 
         Returns
         -------
-        list[FrameMetaData]
-            Configured frame metadata entries.
+        SoftwareFocusResult
+            Result object with unknown status and no captured data.
         """
-        return list(config.focus_frames)
-
-    @staticmethod
-    def _focus_acquisition_settings(config: SoftwareFocusConfigNew) -> FrameAcquisitionSettings:
-        """
-        Return acquisition settings used by software focus captures.
-
-        Parameters
-        ----------
-        config
-            Active software focus configuration.
-
-        Returns
-        -------
-        FrameAcquisitionSettings
-            Runtime settings for focus acquisition.
-        """
-        if config.acquisition_settings is not None:
-            return config.acquisition_settings
-        return FrameAcquisitionSettings(
-            save=False,
-            normalise=False,
-            illuminate_dmd=True,
-            clear_dmd_after=False,
-            restore_leds_after=True,
-            disable_leds_after=False,
+        return SoftwareFocusResult(
+            previous_coordinate=None,
+            previous_image=None,
+            best_coordinate=None,
+            best_frame=None,
+            focus_stack=np.empty((0,), dtype=np.float64),
+            focus_scores=np.asarray([], dtype=float),
+            z_coordinates=np.asarray([], dtype=int),
+            focus_status=FocusStatusType.UNKNOWN,
+            curve_status=FocusCurveType.UNKNOWN,
         )
 
     def _score_z_stack(
@@ -502,7 +447,7 @@ class SoftwareFocus:
         Parameters
         ----------
         focus_stack
-            List of 2D frames ordered by Z position.
+            List of 2D frames ordered by Z coordinate.
 
         Returns
         -------
@@ -515,22 +460,25 @@ class SoftwareFocus:
 
     def _finalise_result(
             self,
-            state: SoftwareFocusPositionState,
+            fov_id: int,
             previous_coordinate: Coordinate,
+            previous_image: np.ndarray | None,
             scanned_z: np.ndarray,
             scores: np.ndarray,
             focus_stack: np.ndarray,
             early_status: FocusStatusType,
     ) -> SoftwareFocusResult:
         """
-        Classify scores, update state, and move to the best Z when appropriate.
+        Classify scores, store the result, and move to the best Z when appropriate.
 
         Parameters
         ----------
-        state
-            Position state to update.
+        fov_id
+            FoV ID whose stored result should be replaced.
         previous_coordinate
             Coordinate from before the focus run.
+        previous_image
+            Image captured before scanning, or None when no image was captured.
         scanned_z
             Z coordinates that were actually scanned.
         scores
@@ -566,20 +514,19 @@ class SoftwareFocus:
                     raise RuntimeError("SoftwareFocus._finalise_result: acquisition manager has no stage.")
                 stage.move(target=Coordinate(None, None, int(scanned_z[best_index])), block=True)
 
-        state.z_coordinates = scanned_z
-        state.focus_scores = scores
-        state.focus_stack = focus_stack
-        state.status = focus_status
-        state.curve_status = curve_status
-
-        return SoftwareFocusResult(
+        result = SoftwareFocusResult(
+            previous_coordinate=previous_coordinate.copy(),
+            previous_image=previous_image,
             best_coordinate=best_coordinate,
             best_frame=best_frame,
+            focus_stack=focus_stack,
             focus_scores=scores,
             z_coordinates=scanned_z,
             focus_status=focus_status,
             curve_status=curve_status,
         )
+        self._fov_results[fov_id] = result
+        return result
 
     @staticmethod
     def _get_focus_curve_type(focus_curve: np.ndarray) -> FocusCurveType:
@@ -589,7 +536,7 @@ class SoftwareFocus:
         Parameters
         ----------
         focus_curve
-            Focus score values ordered by scanned Z position.
+            Focus score values ordered by scanned Z fov.
 
         Returns
         -------

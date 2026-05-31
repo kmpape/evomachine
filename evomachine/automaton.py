@@ -29,7 +29,7 @@ class Automaton:
 
     def __init__(
             self,
-            camera: Any,
+            camera: Any,  # TODO(CODEX): make automaton take one FrameAcquisitionManager and access through it if necessary
             stage: Any,
             led_manager: Any,
             acquisition_manager: FrameAcquisitionManager,
@@ -44,7 +44,7 @@ class Automaton:
             dmd: Any | None = None,
             autofocus: Any | None = None,
             photodiode: Any | None = None,
-            projection_manager: ProjectionManager | None = None,
+            projection_manager: ProjectionManager | None = None,  #  TODO(CODEX): rename ProjectionManager class as DmdCalibrator
             process_q: Queue | None = None,
             gui_to_automaton_q: Queue | None = None,
             automaton_to_gui_q: Queue | None = None,
@@ -53,6 +53,7 @@ class Automaton:
     ):
         """
         Initialise the automaton with explicit peripherals and managers.
+        # TODO(CODEX): explain how the automaton works here, e.g. gui vs strategy process
 
         Parameters
         ----------
@@ -114,6 +115,7 @@ class Automaton:
             raise TypeError("Automaton.__init__: strategy must be AbstractStrategy.")
         if projection_manager is not None and not isinstance(projection_manager, ProjectionManager):
             raise TypeError("Automaton.__init__: projection_manager must be ProjectionManager or None.")
+        # TODO(CODEX) add "description strings" and type annotations everywhere
         self.camera = camera
         self.stage = stage
         self.led_manager = led_manager
@@ -131,19 +133,16 @@ class Automaton:
         self._curr_period: int = 0
         self._curr_step: int = 0
         self._fovs: dict[int, Coordinate] = {}
-        self._fov_to_pos: dict[int, list[int]] = {}
-        self._pos_to_fov: dict[int, int] = {}
-        self._pos_to_fov_index: dict[int, int] = {}
-        self._pos_to_roi: dict[int, list[int]] = {}
+        self._fov_to_roi: dict[int, list[int]] = {}
         self._cropping_boxes: dict[int, list[Any]] = {}
-        self._pos_processor: list[Any] = []
+        self._fov_processors: list[Any] = []
         self._all_frames_raw: list[np.ndarray] = []
         self._all_frames: list[np.ndarray] = []
         self._ref_frames: list[np.ndarray] = []
         self._fov_list_is_initialised = False
         self._strategy_is_initialised = False
         self._reference_frames_is_initialised = False
-        self._position_processors_is_initialised: list[bool] = []
+        self._fov_processors_is_initialised: list[bool] = []
         self.next_commands: list[AutomatonCommand] = []
         self.last_commands: list[AutomatonCommand] = []
         self._start_strategy_event = start_strategy_event
@@ -203,7 +202,7 @@ class Automaton:
 
     def initialise(
             self,
-            field_of_views: dict[int, Coordinate],
+            fovs: dict[int, Coordinate],
             cropping_boxes: dict[int, list[Any]] | None = None,
             use_autofocus: bool = False,
     ) -> None:
@@ -212,37 +211,34 @@ class Automaton:
 
         Parameters
         ----------
-        field_of_views
-            Mapping from position ID to Coordinate.
+        fovs
+            Mapping from fov ID to Coordinate.
         cropping_boxes
             Optional mapping from FoV ID to cropping boxes.
         use_autofocus
-            Whether registered stage positions should omit Z for autofocus.
+            Whether registered stage fovs should omit Z for autofocus.
 
         Returns
         -------
         None
         """
-        if not isinstance(field_of_views, dict) or not field_of_views:
-            raise TypeError("Automaton.initialise: field_of_views must be a non-empty dict[int, Coordinate].")
-        if not all(isinstance(key, int) and isinstance(value, Coordinate) for key, value in field_of_views.items()):
-            raise TypeError("Automaton.initialise: field_of_views must map int to Coordinate.")
+        if not isinstance(fovs, dict) or not fovs:
+            raise TypeError("Automaton.initialise: fovs must be a non-empty dict[int, Coordinate].")
+        if not all(isinstance(key, int) and isinstance(value, Coordinate) for key, value in fovs.items()):
+            raise TypeError("Automaton.initialise: fovs must map int to Coordinate.")
         self.initialise_devices()
-        self._fovs = {position_id: coordinate.copy() for position_id, coordinate in field_of_views.items()}
-        self._fov_to_pos = {position_id: [position_id] for position_id in self._fovs}
-        self._pos_to_fov = {position_id: position_id for position_id in self._fovs}
-        self._pos_to_fov_index = {position_id: 0 for position_id in self._fovs}
+        self._fovs = {fov_id: coordinate.copy() for fov_id, coordinate in fovs.items()}
         self._cropping_boxes = {} if cropping_boxes is None else copy.copy(cropping_boxes)
-        self._pos_to_roi = {position_id: [] for position_id in self._fovs}
-        self.focus_navigator.initialise_positions(
-            position_id_to_coordinate=self._fovs,
+        self._fov_to_roi = {fov_id: [] for fov_id in self._fovs}
+        self.focus_navigator.initialise_fovs(
+            fov_id_to_coordinate=self._fovs,
             use_autofocus=use_autofocus,
         )
-        self._position_processors_is_initialised = [True for _ in self._fovs]
+        self._fov_processors_is_initialised = [True for _ in self._fovs]
         self._fov_list_is_initialised = True
         self._reference_frames_is_initialised = True
-        first_position_id = next(iter(self._fovs))
-        self._curr_fov_id = first_position_id
+        first_fov_id = next(iter(self._fovs))
+        self._curr_fov_id = first_fov_id
         self._initialise_strategy()
 
     def initialise_devices(self) -> None:
@@ -320,13 +316,12 @@ class Automaton:
             raise RuntimeError("Automaton._initialise_strategy: field of views are not initialised.")
         if self.dmd is None:
             raise RuntimeError("Automaton._initialise_strategy: dmd is required.")
-        self._strategy.command_factory.update_region_of_interests(region_of_interests=self._pos_to_roi)
+        self._strategy.command_factory.update_region_of_interests(region_of_interests=self._fov_to_roi)
         self.next_commands = self._strategy.initialise(
-            field_of_views=self._fovs,
-            positions=self._fov_to_pos,
-            region_of_interests=self._pos_to_roi,
+            fovs=self._fovs,
+            region_of_interests=self._fov_to_roi,
             config_camera=getattr(self.camera, "cfg", None),
-            pos_processors=self._pos_processor,
+            fov_processors=self._fov_processors,
             dmd=self.dmd,
         )
         self._strategy_is_initialised = True
@@ -428,14 +423,14 @@ class Automaton:
         Any
             FocusNavigatorResult returned by FocusNavigator.move().
         """
-        target_position_id = command.command_args
-        if target_position_id is None:
+        target_fov_id = command.command_args
+        if target_fov_id is None:
             return None
-        if target_position_id == -1:
-            target_position_id = self.get_next_pos_id(current_pos=self._curr_fov_id)
-        result = self.focus_navigator.move(position_id=target_position_id)
-        self._curr_fov_id = target_position_id
-        if self._fovs and target_position_id == next(iter(self._fovs)):
+        if target_fov_id == -1:
+            target_fov_id = self.get_next_fov_id(current_fov=self._curr_fov_id)
+        result = self.focus_navigator.move(fov_id=target_fov_id)
+        self._curr_fov_id = target_fov_id
+        if self._fovs and target_fov_id == next(iter(self._fovs)):
             self._curr_period += 1
         return result
 
@@ -459,8 +454,8 @@ class Automaton:
             if not isinstance(metadata, FrameMetaData):
                 raise TypeError("Automaton._execute_image: frame_metadata entries must be FrameMetaData.")
             metadata.callback_id = self._strategy.callback_counter
-            if metadata.position_id < 0:
-                metadata.position_id = self._curr_fov_id
+            if metadata.fov_id < 0:
+                metadata.fov_id = self._curr_fov_id
         frame = self.acquisition_manager.take_frame(
             frame_metadata=frame_metadata,
             settings=FrameAcquisitionSettings(save=command.command_args["save"]),
@@ -498,11 +493,11 @@ class Automaton:
             channel_index = self._metadata_channel_index(metadata=metadata)
             if channel_index is None:
                 continue
-            position_id = metadata.position_id if metadata.position_id >= 0 else self._curr_fov_id
-            self._all_frames_raw[position_id][0, channel_index, :, :] = self._all_frames_raw[position_id][1, channel_index, :, :]
-            self._all_frames[position_id][0, channel_index, :, :] = self._all_frames[position_id][1, channel_index, :, :]
-            self._all_frames_raw[position_id][1, channel_index, :, :] = frame.array[frame_index]
-            self._all_frames[position_id][1, channel_index, :, :] = normalise_frame(frame.array[frame_index])
+            fov_id = metadata.fov_id if metadata.fov_id >= 0 else self._curr_fov_id
+            self._all_frames_raw[fov_id][0, channel_index, :, :] = self._all_frames_raw[fov_id][1, channel_index, :, :]
+            self._all_frames[fov_id][0, channel_index, :, :] = self._all_frames[fov_id][1, channel_index, :, :]
+            self._all_frames_raw[fov_id][1, channel_index, :, :] = frame.array[frame_index]
+            self._all_frames[fov_id][1, channel_index, :, :] = normalise_frame(frame.array[frame_index])
 
     def _ensure_frame_buffers(self, frame: Frame) -> None:
         """
@@ -524,18 +519,18 @@ class Automaton:
         frame_shape = frame.array.shape[-2:]
         dtype = frame.array.dtype
         num_channels = len(self._channel_to_index)
-        num_positions = max(self._fovs) + 1
+        num_fovs = max(self._fovs) + 1
         self._all_frames_raw = [
             np.zeros((2, num_channels, *frame_shape), dtype=dtype)
-            for _ in range(num_positions)
+            for _ in range(num_fovs)
         ]
         self._all_frames = [
             np.zeros((2, num_channels, *frame_shape), dtype=np.float32)
-            for _ in range(num_positions)
+            for _ in range(num_fovs)
         ]
         self._ref_frames = [
             np.zeros((num_channels, *frame_shape), dtype=dtype)
-            for _ in range(num_positions)
+            for _ in range(num_fovs)
         ]
 
     def _metadata_channel_index(self, metadata: FrameMetaData) -> int | None:
@@ -601,10 +596,10 @@ class Automaton:
         if self.dmd is None:
             raise RuntimeError("Automaton._execute_project_roi: dmd is required.")
         args = command.command_args
-        pos_id = args["pos_id"]
-        if pos_id >= len(self._pos_processor):
-            raise KeyError(f"Automaton._execute_project_roi: unknown position ID {pos_id}.")
-        processor = self._pos_processor[pos_id]
+        fov_id = args["fov_id"]
+        if fov_id >= len(self._fov_processors):
+            raise KeyError(f"Automaton._execute_project_roi: unknown fov ID {fov_id}.")
+        processor = self._fov_processors[fov_id]
         roi_boxes = [processor.roi_boxes[roi_id] for roi_id in args["roi_ids"]]
         pattern = self.dmd.pattern_from_roi_boxes(
             boxes=roi_boxes,
@@ -689,7 +684,7 @@ class Automaton:
         if callable(live_mode):
             live_mode()
 
-    def override_parameter(self, fov_id: int, pos_id: int, param_name: str, param_value: Any) -> None:
+    def override_parameter(self, fov_id: int, param_name: str, param_value: Any) -> None:
         """
         Placeholder for legacy GUI parameter overrides.
 
@@ -697,8 +692,6 @@ class Automaton:
         ----------
         fov_id
             Field-of-view identifier from the GUI request.
-        pos_id
-            Position identifier from the GUI request.
         param_name
             Parameter name requested by the GUI.
         param_value
@@ -951,14 +944,14 @@ class Automaton:
         Returns
         -------
         bool
-            True when devices, positions, and strategy are initialised.
+            True when devices, fovs, and strategy are initialised.
         """
         return (
             self.devices_is_initialised()
             and self._strategy_is_initialised
             and self._reference_frames_is_initialised
             and self._fov_list_is_initialised
-            and all(self._position_processors_is_initialised)
+            and all(self._fov_processors_is_initialised)
         )
 
     def get_channel_to_index(self) -> dict[LEDType, int]:
@@ -976,24 +969,24 @@ class Automaton:
         """
         return dict(self._channel_to_index)
 
-    def get_next_pos_id(self, current_pos: int) -> int:
+    def get_next_fov_id(self, current_fov: int) -> int:
         """
-        Return the next position ID, wrapping at the end.
+        Return the next fov ID, wrapping at the end.
 
         Parameters
         ----------
-        current_pos
-            Current position ID.
+        current_fov
+            Current fov ID.
 
         Returns
         -------
         int
-            Next position ID.
+            Next fov ID.
         """
         keys = list(self._fovs)
-        if current_pos not in keys:
-            raise KeyError(f"Automaton.get_next_pos_id: unknown position ID {current_pos}.")
-        return keys[(keys.index(current_pos) + 1) % len(keys)]
+        if current_fov not in keys:
+            raise KeyError(f"Automaton.get_next_fov_id: unknown fov ID {current_fov}.")
+        return keys[(keys.index(current_fov) + 1) % len(keys)]
 
     def get_period(self) -> int:
         """
@@ -1010,9 +1003,9 @@ class Automaton:
         """
         return self._curr_period
 
-    def get_pos_id(self) -> int:
+    def get_fov_id(self) -> int:
         """
-        Return the current position ID.
+        Return the current fov ID.
 
         Parameters
         ----------
@@ -1021,18 +1014,18 @@ class Automaton:
         Returns
         -------
         int
-            Current position ID.
+            Current fov ID.
         """
         return self._curr_fov_id
 
-    def get_frame(self, i_pos: int, channel: LEDType) -> np.ndarray:
+    def get_frame(self, fov_id: int, channel: LEDType) -> np.ndarray:
         """
-        Return the latest normalised frame for one position and LED channel.
+        Return the latest normalised frame for one fov and LED channel.
 
         Parameters
         ----------
-        i_pos
-            Position index.
+        fov_id
+            FoV ID.
         channel
             LED channel.
 
@@ -1041,7 +1034,7 @@ class Automaton:
         np.ndarray
             Latest normalised frame.
         """
-        return self._all_frames[i_pos][1, self._channel_to_index[channel], :, :]
+        return self._all_frames[fov_id][1, self._channel_to_index[channel], :, :]
 
     def get_strategy_name(self) -> str:
         """

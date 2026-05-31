@@ -14,7 +14,7 @@ from delta.rttypes import TrackingSetting
 
 from evomachine.coordinates import Coordinate
 from evomachine.types import BrightnessType, EvoType, ExposureType, FilterWheelType, FocusAlgorithmType, LEDType, \
-    ChamberOrientationType, UNKNOWN_POSITION_ID
+    ChamberOrientationType, UNKNOWN_FOV_ID
 from evomachine.exceptions import ConfigError, ErrorCode
 
 if TYPE_CHECKING:
@@ -270,8 +270,8 @@ class ConfigImageProcessor:
     "Refocus after autofocus loss (otherwise shuts down). Set refocus_using_software_focus=False to avoid using autofocus."
     refocus_using_software_focus: bool = True
     "Use software focus to refocus after autofocus loss. refocus must be True."
-    refocus_on_all_positions: bool = False
-    "Try refocusing on all recorded positions. refocus and refocus_using_software_focus must be True."
+    refocus_on_all_fovs: bool = False
+    "Try refocusing on all recorded fovs. refocus and refocus_using_software_focus must be True."
     max_refocus_trials: int = 10
     "Maximum number of refocusing trials before stopping execution."
     chamber_orientation: ChamberOrientationType = ChamberOrientationType.HORIZONTAL
@@ -631,7 +631,7 @@ class SoftwareFocusConfig:
     focus_channel: LEDType
     "LED channel to use while scanning. See LEDType for available channels."
     rel_range: int
-    "Relative range for Z-movement of stage in 1/10 μm, e.g., stage will move current_position+-rel_range."
+    "Relative range for Z-movement of stage in 1/10 μm, e.g., stage will move current_fov+-rel_range."
     step_size: int
     "Step size for Z-movement of stage in 1/10 μm, e.g., step_size=1 -> stage moves in 0.1 μm."
     brightness: float
@@ -999,7 +999,7 @@ class FileNameConfig:
     """Configuration object for FileManager output paths and filename patterns."""
 
     directory: Path
-    filename_pattern: str = "{channel}_P{position_id}_X{x}_Y{y}_Z{z}_F{filter_wheel}_{timestamp}"
+    filename_pattern: str = "{channel}_FOV{fov_id}_X{x}_Y{y}_Z{z}_F{filter_wheel}_{timestamp}"
     create_directory: bool = True
 
     def __post_init__(self) -> None:
@@ -1086,8 +1086,8 @@ class FrameMetaData:
     "Camera exposure."
     dmd_pattern: np.ndarray | None = None
     "Optional per-frame DMD pattern to display before acquisition."
-    position_id: int = UNKNOWN_POSITION_ID
-    "Registered position ID for the frame, or UNKNOWN_POSITION_ID when unknown."
+    fov_id: int = UNKNOWN_FOV_ID
+    "Registered fov ID for the frame, or UNKNOWN_FOV_ID when unknown."
     coordinate: Coordinate | None = None
     "Stage coordinate recorded for the frame, if known."
     creation_time: datetime = field(default_factory=datetime.now)
@@ -1139,8 +1139,8 @@ class FrameMetaData:
             raise TypeError(
                 f"FrameMetaData: dmd_pattern must be np.ndarray or None, received {type(self.dmd_pattern)}."
             )
-        if not isinstance(self.position_id, int) or isinstance(self.position_id, bool):
-            raise TypeError(f"FrameMetaData: position_id must be int, received {type(self.position_id)}.")
+        if not isinstance(self.fov_id, int) or isinstance(self.fov_id, bool):
+            raise TypeError(f"FrameMetaData: fov_id must be int, received {type(self.fov_id)}.")
         if self.coordinate is not None and not isinstance(self.coordinate, Coordinate):
             raise TypeError(f"FrameMetaData: coordinate must be Coordinate or None, received {type(self.coordinate)}.")
         if not isinstance(self.creation_time, datetime):
@@ -1185,7 +1185,7 @@ class FrameMetaData:
             "filter_wheel": self._enum_to_metadata(self.filter_wheel),
             "exposure": self.exposure,
             "dmd_pattern": self._dmd_pattern_to_metadata(),
-            "position_id": self.position_id,
+            "fov_id": self.fov_id,
             "coordinate": None if self.coordinate is None else self.coordinate.to_dict(),
             "creation_time": self.creation_time.isoformat(),
             "execution_time": None if self.execution_time is None else self.execution_time.isoformat(),
@@ -1218,7 +1218,7 @@ class FrameMetaData:
             "filter_wheel": self.filter_wheel,
             "exposure": self.exposure,
             "dmd_pattern": dmd_pattern,
-            "position_id": self.position_id,
+            "fov_id": self.fov_id,
             "coordinate": self.coordinate,
             "creation_time": self.creation_time,
             "execution_time": self.execution_time,
@@ -1303,7 +1303,7 @@ class FrameMetaDataFactory:
             filter_wheel: FilterWheelType | None = None,
             exposure: ExposureType | None = None,
             dmd_pattern: np.ndarray | None = None,
-            position_id: int = UNKNOWN_POSITION_ID,
+            fov_id: int = UNKNOWN_FOV_ID,
             coordinate: Coordinate | None = None,
             frame_id: int | None = None,
             callback_id: int | None = None,
@@ -1322,8 +1322,8 @@ class FrameMetaDataFactory:
             Optional exposure setting.
         dmd_pattern
             Optional per-frame DMD pattern displayed before acquisition.
-        position_id
-            Registered position ID or UNKNOWN_POSITION_ID.
+        fov_id
+            Registered fov ID or UNKNOWN_FOV_ID.
         coordinate
             Optional stage coordinate associated with the frame.
         frame_id
@@ -1347,7 +1347,7 @@ class FrameMetaDataFactory:
             filter_wheel=filter_wheel,
             exposure=exposure,
             dmd_pattern=dmd_pattern,
-            position_id=position_id,
+            fov_id=fov_id,
             coordinate=coordinate,
             callback_id=callback_id,
             additional_metadata={} if additional_metadata is None else additional_metadata,

@@ -5,20 +5,20 @@ from dataclasses import dataclass
 from evomachine.coordinates import Coordinate, CoordinateBounds
 from evomachine.peripherals.peripherals import Peripheral, PeripheralController, get_peripheral_controller
 from evomachine.bindings.binding_types import BindingType
-from evomachine.types import AxisType, FovDirectionType, PositiveScalingType, UNKNOWN_POSITION_ID
+from evomachine.types import AxisType, FovDirectionType, PositiveScalingType, UNKNOWN_FOV_ID
 
 
 class Stage(Peripheral):
     """
     Base class for microscope stages.
 
-    This class owns movement bookkeeping, position-ID handling, bounds checking,
+    This class owns movement bookkeeping, fov-ID handling, bounds checking,
     and optional readiness checks. Subclasses implement only the low-level
     hardware operations.
     """
 
     AXES = (AxisType.X, AxisType.Y, AxisType.Z)
-    UNKNOWN_POSITION_ID = UNKNOWN_POSITION_ID
+    UNKNOWN_FOV_ID = UNKNOWN_FOV_ID
 
     def __init__(
             self,
@@ -64,11 +64,11 @@ class Stage(Peripheral):
         self._check_alive: bool = check_alive
         "If True, public hardware-querying methods raise RuntimeError when the stage does not report alive."
         self._current_coordinate: Coordinate = Coordinate.none_coordinate()
-        "Current position as returned by hardware queries and updated after moves. Axes are None when unknown."
-        self._current_position_id: int = self.UNKNOWN_POSITION_ID
-        "Current position ID. Becomes available when moving to a registered position ID."
-        self._position_id_to_coordinate: dict[int, Coordinate] = {}
-        "Mapping from position ID to Coordinate for registered positions. Populated by set_pos_id_to_coordinate."
+        "Current coordinate as returned by hardware queries and updated after moves. Axes are None when unknown."
+        self._current_fov_id: int = self.UNKNOWN_FOV_ID
+        "Current fov ID. Becomes available when moving to a registered fov ID."
+        self._fov_id_to_coordinate: dict[int, Coordinate] = {}
+        "Mapping from FoV ID to Coordinate for registered FoVs. Populated by set_fov_id_to_coordinate."
         self._fov_step_size: float = fov_step_size
         "Field-of-view step size in stage coordinate units. Used for FoV movement targets."
         self._coordinate_bounds: CoordinateBounds | None = coordinate_bounds.copy() if coordinate_bounds else None
@@ -254,9 +254,9 @@ class Stage(Peripheral):
             self._update_current_coordinate(coordinate=self._get_coordinates())
         return self._current_coordinate.filter_axes(axes=axes_norm)
 
-    def get_pos(self) -> int:
+    def get_fov_id(self) -> int:
         """
-        Return the current position ID.
+        Return the current fov ID.
 
         Parameters
         ----------
@@ -265,10 +265,10 @@ class Stage(Peripheral):
         Returns
         -------
         int
-            Current position ID, or UNKNOWN_POSITION_ID when the current coordinate
-            does not correspond to a known position ID.
+            Current fov ID, or UNKNOWN_FOV_ID when the current coordinate
+            does not correspond to a known fov ID.
         """
-        return self._current_position_id
+        return self._current_fov_id
 
     def get_fov_step_size(self) -> float:
         """
@@ -353,18 +353,18 @@ class Stage(Peripheral):
             raise TypeError(f"Stage.coordinate_is_out_of_bounds: expected Coordinate, received {type(coordinate)}.")
         return self.get_coordinate_bounds().is_out_of_bounds(coordinate=coordinate)
 
-    def set_pos_id_to_coordinate(
+    def set_fov_id_to_coordinate(
             self,
-            pos_id_to_coordinate: dict[int, Coordinate],
+            fov_id_to_coordinate: dict[int, Coordinate],
             use_autofocus: bool,
     ) -> bool:
         """
-        Register position IDs for later movement.
+        Register fov IDs for later movement.
 
         Parameters
         ----------
-        pos_id_to_coordinate
-            Mapping from position ID to stage Coordinate.
+        fov_id_to_coordinate
+            Mapping from fov ID to stage Coordinate.
         use_autofocus
             If True, registered coordinates must not contain Z. If False, they must
             contain Z.
@@ -375,17 +375,17 @@ class Stage(Peripheral):
             True when the complete mapping is valid and stored, otherwise False.
         """
         coordinates: dict[int, Coordinate] = {}
-        for i_pos, coordinate in pos_id_to_coordinate.items():
+        for registered_fov_id, coordinate in fov_id_to_coordinate.items():
             if not isinstance(coordinate, Coordinate):
-                raise TypeError(f"Stage.set_pos_id_to_coordinate: position {i_pos} is not a Coordinate.")
+                raise TypeError(f"Stage.set_fov_id_to_coordinate: FoV {registered_fov_id} is not a Coordinate.")
             if (not use_autofocus) and (not coordinate.has_z()):
                 return False
             if use_autofocus and coordinate.has_z():
                 return False
             if self.coordinate_is_out_of_bounds(coordinate):
                 return False
-            coordinates[i_pos] = coordinate.copy()
-        self._position_id_to_coordinate = coordinates
+            coordinates[registered_fov_id] = coordinate.copy()
+        self._fov_id_to_coordinate = coordinates
         return True
 
     @staticmethod
@@ -462,26 +462,26 @@ class Stage(Peripheral):
             target: int | Coordinate | tuple[FovDirectionType, PositiveScalingType] | list[tuple[FovDirectionType, PositiveScalingType]],
     ) -> tuple[int, Coordinate, bool]:
         """
-        Convert a public movement target into a position ID and Coordinate.
+        Convert a public movement target into a fov ID and Coordinate.
 
         Parameters
         ----------
         target
-            Position ID, Coordinate, single FoV movement tuple, or FoV movement
+            FoV ID, Coordinate, single FoV movement tuple, or FoV movement
             list.
 
         Returns
         -------
         tuple[int, Coordinate, bool]
-            Position ID to cache, Coordinate to move to, and whether to run a
+            FoV ID to cache, Coordinate to move to, and whether to run a
             hardware home command.
         """
         if isinstance(target, int) and not isinstance(target, bool):
-            if target not in self._position_id_to_coordinate:
-                raise IndexError(f"Stage.move: position index {target} out of range.")
-            return target, self._position_id_to_coordinate[target].copy(), False
+            if target not in self._fov_id_to_coordinate:
+                raise IndexError(f"Stage.move: fov index {target} out of range.")
+            return target, self._fov_id_to_coordinate[target].copy(), False
         if isinstance(target, Coordinate):
-            return self.UNKNOWN_POSITION_ID, target.copy(), False
+            return self.UNKNOWN_FOV_ID, target.copy(), False
         if isinstance(target, tuple):
             if len(target) != 2:
                 raise TypeError("Stage.move: FoV tuple target must be tuple(direction, multiplier).")
@@ -491,9 +491,9 @@ class Stage(Peripheral):
             if direction == FovDirectionType.HOME:
                 self._fov_multiplier_value(multiplier)
                 return 0, Coordinate.none_coordinate(), True
-            return self.UNKNOWN_POSITION_ID, self._coordinate_from_fov_moves(fov_moves=[target]), False
+            return self.UNKNOWN_FOV_ID, self._coordinate_from_fov_moves(fov_moves=[target]), False
         if isinstance(target, list):
-            return self.UNKNOWN_POSITION_ID, self._coordinate_from_fov_moves(fov_moves=target), False
+            return self.UNKNOWN_FOV_ID, self._coordinate_from_fov_moves(fov_moves=target), False
         raise TypeError(
             f"Stage.move: expected int, Coordinate, tuple[FovDirectionType, PositiveScalingType], "
             f"or list[tuple[FovDirectionType, PositiveScalingType]], "
@@ -511,8 +511,8 @@ class Stage(Peripheral):
         Parameters
         ----------
         target
-            Supported movement target. An int moves to a registered position ID
-            configured by set_pos_id_to_coordinate. A Coordinate is an absolute
+            Supported movement target. An int moves to a registered fov ID
+            configured by set_fov_id_to_coordinate. A Coordinate is an absolute
             full or partial stage coordinate; axes set to None are not moved. A
             tuple[FovDirectionType, PositiveScalingType] moves one field-of-view
             step in the requested direction by multiplier * fov_step_size. A list of
@@ -531,17 +531,17 @@ class Stage(Peripheral):
         None
         """
         self._require_ready(action="move")
-        pos_id, move_coordinate, use_home = self._coordinate_from_move_target(target=target)
+        fov_id, move_coordinate, use_home = self._coordinate_from_move_target(target=target)
         if use_home:
             self._current_coordinate = self._home(block=block)
-            self._current_position_id = pos_id
+            self._current_fov_id = fov_id
             return
         if not move_coordinate.has_axis_value():
             return
         if self.coordinate_is_out_of_bounds(coordinate=move_coordinate):
             raise ValueError(f"Stage.move: coordinate is out of bounds: {move_coordinate}.")
         self._update_current_coordinate(coordinate=self._move(coordinate=move_coordinate, block=block))
-        self._current_position_id = pos_id
+        self._current_fov_id = fov_id
 
     @abstractmethod
     def halt(self) -> None:
@@ -590,7 +590,7 @@ class Stage(Peripheral):
         """
         self._require_ready(action="zero_coordinates")
         self._current_coordinate = self._zero_coordinates()
-        self._current_position_id = self.UNKNOWN_POSITION_ID
+        self._current_fov_id = self.UNKNOWN_FOV_ID
 
     @abstractmethod
     def _initialise(self, force: bool = False) -> bool:
@@ -699,9 +699,9 @@ class Stage(Peripheral):
 
         Implementations should move every axis that is not None in coordinate. They
         should block until idle when block is True. The returned Coordinate should
-        describe the stage position after the move; returning the requested partial
+        describe the stage fov after the move; returning the requested partial
         Coordinate is acceptable when the hardware cannot cheaply report the final
-        full position.
+        full fov.
 
         Parameters
         ----------
@@ -720,7 +720,7 @@ class Stage(Peripheral):
     @abstractmethod
     def _home(self, block: bool = False) -> Coordinate:
         """
-        Move the hardware stage to its home position.
+        Move the hardware stage to its home fov.
 
         Implementations should perform the hardware home command and return the
         coordinate reached after homing. If block is True, they should wait until

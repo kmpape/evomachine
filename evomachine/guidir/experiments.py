@@ -43,7 +43,7 @@ class ExperimentWorker(EvoWorkerTemplate):
 
         self.valid_coordinates = False
         self.factory: CoordinateFactory = CoordinateFactory(dfov=self.cfg_camera.fov_size * 10)
-        self._field_of_views: None | dict[int, Coordinate] = None
+        self._fovs: None | dict[int, Coordinate] = None
         self._cropping_boxes: None | list[delta.utils.CroppingBox] = None
         self._stage_limits: None | dict[str, tuple[float, float]] = None
         self.queue_manager.request(
@@ -173,29 +173,31 @@ class ExperimentWorker(EvoWorkerTemplate):
                 callback_args=(True,),
             )
 
-    def initialise_automaton_field_of_views(
+    def initialise_automaton_fovs(
             self,
             read_in_positions: dict[int, dict[str, None | dict[str, float | int]]],
             cropping_boxes: list[EvoCroppingBox] | None = None,
             is_init_all: bool = False,
             use_autofocus: bool = False,
     ):
-        logger.debug(f"ExperimentWorker.initialise_automaton_field_of_views: {read_in_positions}.")
+        logger.debug(f"ExperimentWorker.initialise_automaton_fovs: {read_in_positions}.")
         coordinates = self.get_positions_from_dict(read_in_positions)
         # cropping_boxes_one_fov = ExperimentWorker.make_delta_cropping_boxes(cropping_indices)
         if not self.valid_coordinates or coordinates is None:
             logger.warning("No valid coordinates provided. Aborting.")
             return
+        if cropping_boxes is None:
+            cropping_boxes = []
         if not all(isinstance(b, EvoCroppingBox) for b in cropping_boxes):
             raise TypeError(f"Expected list of EvoCroppingBox, got {cropping_boxes} instead. Aborting.")
-        self._field_of_views = {fov_id: coord for fov_id, coord in enumerate(coordinates)}
-        self._cropping_boxes = {fov_id: cropping_boxes for fov_id in self._field_of_views.keys()} if \
+        self._fovs = {fov_id: coord for fov_id, coord in enumerate(coordinates)}
+        self._cropping_boxes = {fov_id: cropping_boxes for fov_id in self._fovs.keys()} if \
             (cropping_boxes is not None and len(cropping_boxes) > 0) else None
         if not is_init_all:
             self.queue_manager.request(
-                req_str='self.initialise_field_of_view_list',
+                req_str='self.initialise',
                 kwargs_dict={
-                    'field_of_views': self._field_of_views,
+                    'fovs': self._fovs,
                     'cropping_boxes': self._cropping_boxes,
                     'use_autofocus': use_autofocus,
                 },
@@ -204,9 +206,9 @@ class ExperimentWorker(EvoWorkerTemplate):
             )
         else:
             self.queue_manager.request(
-                req_str='self.initialise_field_of_view_list',
+                req_str='self.initialise',
                 kwargs_dict={
-                    'field_of_views': self._field_of_views,
+                    'fovs': self._fovs,
                     'cropping_boxes': self._cropping_boxes,
                     'use_autofocus': use_autofocus,
                 },
@@ -220,7 +222,7 @@ class ExperimentWorker(EvoWorkerTemplate):
             cropping_boxes: list[EvoCroppingBox] | None = None,
             use_autofocus: bool = False,
     ):
-        self.initialise_automaton_field_of_views(
+        self.initialise_automaton_fovs(
             read_in_positions=read_in_positions,
             cropping_boxes=cropping_boxes,
             is_init_all=True,
@@ -520,7 +522,7 @@ class ExperimentPanel(EvoPanelTemplate):
         self._automaton_is_initialised = False
         self.signal_set_button_color.emit([0], "orange")
         self.signal_disable_button.emit([9])
-        self.worker.initialise_automaton_field_of_views(
+        self.worker.initialise_automaton_fovs(
             read_in_positions=self.read_in_positions,
             cropping_boxes=[b for b in self.cropping_boxes.values() if b is not None],
             use_autofocus=self.use_autofocus,
@@ -611,7 +613,7 @@ class ExperimentPanel(EvoPanelTemplate):
             ax1.set_xticklabels([f'{x:.1f}' for x in z_coords.tolist()])
             ax1.set_xlabel("Z position [um]")
             ax1.set_ylabel("Sharpness Scores")
-            ax1.set_title(f"Focus Curve at pos_id = {i}")
+            ax1.set_title(f"Focus Curve at fov_id = {i}")
             best_index = np.argmax(focus_curves[i][1])
             ax1.plot(z_coords[best_index], focus_curves[i][1][best_index], marker='o')
             ax1.grid(True)
@@ -896,15 +898,14 @@ class PositionDialog(QDialog):
             req_str='self.override_parameter',
             kwargs_dict={
                 'fov_id': self.curr_fov,
-                'pos_id': self.curr_fov,  # FIXME
                 'param_name': field,
                 'param_value': self.overrides[self.curr_fov][field],
             },
             callback=self.receive_override_response,
-            callback_args=(self.curr_fov, self.curr_fov, field, self.overrides[self.curr_fov][field]),
+            callback_args=(self.curr_fov, field, self.overrides[self.curr_fov][field]),
         )
 
-    def receive_override_response(self, data: Any, fov_id: int, pos_id: int, param_name: str, param_value: Any):
+    def receive_override_response(self, data: Any, fov_id: int, param_name: str, param_value: Any):
         if isinstance(data, Exception):
             logger.error("PositionDialog.receive_override_response: received exception. Returning.")
             return
@@ -927,4 +928,3 @@ class PositionDialog(QDialog):
             self.fovs[self.fov_id].z = float(param_value)
         self.signal_update_active.emit(param_name, param_value)
         self.signal_update_buttons.emit(True)
-

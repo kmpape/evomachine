@@ -3,7 +3,6 @@ from math import ceil
 
 from evomachine.exceptions import ConfigError, ErrorCode
 from evomachine.types import AxisType
-from evomachine.utils import EvoCroppingBox
 
 COORD_PRINT_PRECISION = 1
 
@@ -529,20 +528,3 @@ class CoordinateFactory:
                 channel_id=start.get_channel_id(),
             )
         return [start + (delta * i) for i in range(max(num_pos_x, num_pos_y))]
-
-
-# TODO(CODEX):
-# - We used to make a difference between FieldOfView and Position as the former being a cropping box within an FieldOfView.
-#   However, this distinction is not really used anywhere, and we now only have FieldsOfView, althoug they're called position everywhere.
-#   I would like to remove this distinction everywhere and just remove FieldOfView entirely, and only have position_id. No need for classes for this.
-@dataclass
-class FieldOfView:
-    fov_id: int
-    "ID of the field of view."
-    coordinate: Coordinate
-    "Coordinate of the field of view."
-    cropping_boxes: dict[int, EvoCroppingBox]
-    "List of cropping boxes for the field of view."
-
-    def get_position_ids(self) -> list[int]:
-        return list(self.cropping_boxes.keys())
