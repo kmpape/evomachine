@@ -14,8 +14,8 @@ from PyQt5.QtWidgets import (
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
 
-from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
-from evomachine.config_types import DMDCalibConfigType, DMDCalibConfigTypeFactory
+from evomachine.config import CameraSystemConfig, ImageProcessorConfig, get_logger
+from evomachine.peripherals.dmd import DmdCalibrationConfig, DmdCalibrationConfigFactory
 from evomachine.guidir.figures import FigureWindow, FigureMultiWindow
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
 from evomachine.guidir.guitypes import ButtonState, DMDModes, SMALL, CENTER, LEFT, RIGHT, NORMAL
@@ -56,7 +56,7 @@ class DMDWorker(EvoWorkerTemplate):
 
 
 class DMDCalibDialog(QDialog):
-    def __init__(self, cfg: DMDCalibConfigType):
+    def __init__(self, cfg: DmdCalibrationConfig):
         super().__init__()
 
         self.cfg = cfg
@@ -120,8 +120,8 @@ class DMDPanel(EvoPanelTemplate):
     def __init__(
             self,
             queue_manager: QueueManager,
-            camera_config: ConfigCamera,
-            processor_config: ConfigImageProcessor,
+            camera_config: CameraSystemConfig,
+            processor_config: ImageProcessorConfig,
             start_strategy_event: Event,
             stop_strategy_event: Event,
             stop_event: Event,
@@ -136,7 +136,7 @@ class DMDPanel(EvoPanelTemplate):
             stop_event=stop_event,
             shutdown_event=shutdown_event,
         )
-        self.calib_config: DMDCalibConfigType = DMDCalibConfigTypeFactory.default()
+        self.calib_config: DmdCalibrationConfig = DmdCalibrationConfigFactory.default()
         # calib_data = (calib_data, homography_mat, homography_mat_inv, calib_file)
         self.calib_data: tuple[list, np.ndarray, np.ndarray, Path] | tuple[None, None, None, None] = None, None, None, None
         self.filename: str | None = None

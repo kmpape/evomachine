@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from evomachine.acquisition import FrameAcquisitionManager, FrameAcquisitionSettings
-from evomachine.config_types import FrameMetaData
+from evomachine.frame import FrameMetaData
 from evomachine.coordinates import Coordinate
 from evomachine.peripherals.leds import LedState
 from evomachine.types import LEDType

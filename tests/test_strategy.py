@@ -4,7 +4,9 @@ import numpy as np
 import pytest
 
 from evomachine.commands import AutomatonCommand
-from evomachine.config_types import ConfigCameraFactory, ConfigImageProcessorFactory, FrameMetaData
+from evomachine.frame import FrameMetaData
+from evomachine.image_processing_config import ImageProcessorConfigFactory
+from evomachine.peripherals.camera import CameraSystemConfigFactory
 from evomachine.coordinates import Coordinate
 from evomachine.peripherals.dmd import Dmd
 from evomachine.strategy import (
@@ -213,7 +215,7 @@ def test_strategy_initialise_injects_dmd() -> None:
     -------
     None
     """
-    cfg = ConfigImageProcessorFactory.default_config(
+    cfg = ImageProcessorConfigFactory.default_config(
         channels=[LEDType.LED_450_NM, LEDType.LED_565_NM],
         channels_seg=[LEDType.LED_450_NM],
     )
@@ -227,7 +229,7 @@ def test_strategy_initialise_injects_dmd() -> None:
     commands = strategy.initialise(
         fovs={0: Coordinate(0, 0, 0)},
         region_of_interests={0: []},
-        config_camera=ConfigCameraFactory.default_air_config(),
+        config_camera=CameraSystemConfigFactory.default_air_config(),
         fov_processors=[],
         dmd=dmd,
     )
@@ -251,7 +253,7 @@ def test_strategy_serialization_excludes_dmd() -> None:
     None
     """
     strategy = BasicStrategy(
-        cfg=ConfigImageProcessorFactory.default_config(
+        cfg=ImageProcessorConfigFactory.default_config(
             channels=[LEDType.LED_450_NM],
             channels_seg=[LEDType.LED_450_NM],
         ),
@@ -278,7 +280,7 @@ def test_invalid_strategy_command_list_raises_runtime_error() -> None:
     None
     """
     strategy = InvalidStrategy(
-        cfg=ConfigImageProcessorFactory.default_config(
+        cfg=ImageProcessorConfigFactory.default_config(
             channels=[LEDType.LED_450_NM],
             channels_seg=[LEDType.LED_450_NM],
         )
@@ -288,7 +290,7 @@ def test_invalid_strategy_command_list_raises_runtime_error() -> None:
         strategy.initialise(
             fovs={0: Coordinate(0, 0, 0)},
             region_of_interests={0: []},
-            config_camera=ConfigCameraFactory.default_air_config(),
+            config_camera=CameraSystemConfigFactory.default_air_config(),
             fov_processors=[],
             dmd=FakeDmd(),
         )
@@ -309,7 +311,7 @@ def test_strategy_discovery_and_creation_use_name_file_pair() -> None:
     definitions = list_strategy_definitions()
     assert definitions
     definition = next(item for item in definitions if item.name == "SimpleImagingStrategy")
-    cfg = ConfigImageProcessorFactory.default_config(
+    cfg = ImageProcessorConfigFactory.default_config(
         channels=[LEDType.LED_450_NM],
         channels_seg=[LEDType.LED_450_NM],
     )

@@ -10,12 +10,13 @@ from evomachine.bindings.kwr103.KWR103Driver import KWR103
 from evomachine.bindings.kwr103.peripheralcontroller import KWR103PeripheralController
 from evomachine.bindings.syncboard.peripheralcontroller import SyncBoardPeripheralController
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
-from evomachine.peripherals.peripherals import (
+from evomachine.peripherals.peripheralcontrollers import (
     PeripheralController,
     PeripheralControllerConfig,
     PeripheralControllerFactory,
     SerialPeripheralControllerConfig,
 )
+from evomachine.peripherals.peripherals import PeripheralController as CompatibilityPeripheralController
 from evomachine.bindings.binding_types import BindingType
 
 
@@ -63,6 +64,18 @@ class FakeKWR103Serial:
 class FakeTigerController:
     def __init__(self):
         self.connection = FakeConnection()
+        self.halt_was_called = False
+
+    def status(self):
+        return True
+
+    def halt(self):
+        self.halt_was_called = True
+
+
+class FakeControllerWithoutDisconnect:
+    def __init__(self):
+        self.connection = object()
         self.halt_was_called = False
 
     def status(self):
@@ -409,6 +422,17 @@ def test_tiger_shutdown_uses_shared_disconnect_behaviour():
     controller.shutdown()
 
     assert tiger.connection.disconnect_was_called
+
+
+def test_serial_controller_shutdown_requires_disconnect_method():
+    controller = TigerPeripheralController(tiger=FakeControllerWithoutDisconnect())
+
+    with pytest.raises(TypeError, match="disconnect"):
+        controller.shutdown()
+
+
+def test_old_peripherals_controller_import_still_works():
+    assert CompatibilityPeripheralController is PeripheralController
 
 
 def test_tiger_shutdown_respects_close_on_shutdown_unless_forced():

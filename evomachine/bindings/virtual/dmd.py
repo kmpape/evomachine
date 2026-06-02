@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 
 from evomachine.peripherals.dmd import Dmd
-from evomachine.peripherals.peripherals import PeripheralController
+from evomachine.peripherals.peripheralcontrollers import PeripheralController
 
 
 class VirtualDmdControl:

@@ -13,8 +13,10 @@ import numpy as np
 from evomachine.acquisition import FrameAcquisitionManager, FrameAcquisitionSettings
 from evomachine.commands import AutomatonCommand, CommandFactory
 from evomachine.config import EVO_GUI_LOGGING_LEVEL, get_logger
-from evomachine.config_types import ConfigImageProcessor, DMDCalibConfigType, Frame, FrameMetaData
 from evomachine.coordinates import Coordinate
+from evomachine.frame import Frame, FrameMetaData
+from evomachine.image_processing_config import ImageProcessorConfig
+from evomachine.peripherals.dmd import DmdCalibrationConfig
 from evomachine.navigation import FocusNavigator
 from evomachine.projection import ProjectionManager
 from evomachine.strategy import AbstractStrategy
@@ -35,7 +37,7 @@ class Automaton:
             acquisition_manager: FrameAcquisitionManager,
             focus_navigator: FocusNavigator,
             strategy: AbstractStrategy,
-            cfg_processor: ConfigImageProcessor,
+            cfg_processor: ImageProcessorConfig,
             start_strategy_event: Event,
             stop_strategy_event: Event,
             stop_event: Event,
@@ -155,6 +157,7 @@ class Automaton:
         self.queue_timeout = self._validate_non_negative_float(queue_timeout, "queue_timeout")
         self.run_timeout = self._validate_non_negative_float(run_timeout, "run_timeout")
 
+    # TODO(CODEX): Move _require_methods and _validate_non_negative_float to utils. check if other classes redefine similar functions and reuse.
     @staticmethod
     def _require_methods(obj: Any, name: str, methods: tuple[str, ...]) -> None:
         """
@@ -520,6 +523,9 @@ class Automaton:
         dtype = frame.array.dtype
         num_channels = len(self._channel_to_index)
         num_fovs = max(self._fovs) + 1
+        # TODO(CODEX) refactor these arrays below to:
+        # - store the latest nsteps frames (replacing 2) and add this variable as class attribute for now. reference frame remains 2D.
+        # - refactor these arrays to be arrays of size num_fovs x nsteps x num_channels x *frame_shape, and store the latest frame in index 0 for easier access and appending new frames at index 1 before shifting. this will simplify the code and make it more efficient when we want to add more than 2 frames in the future.
         self._all_frames_raw = [
             np.zeros((2, num_channels, *frame_shape), dtype=dtype)
             for _ in range(num_fovs)
@@ -705,7 +711,7 @@ class Automaton:
 
     def dmd_calibrate(
             self,
-            cfg: DMDCalibConfigType,
+            cfg: DmdCalibrationConfig,
             filename: str | None = None,
     ) -> tuple[list, np.ndarray, np.ndarray, Any] | tuple[None, None, None, None]:
         """
@@ -969,6 +975,7 @@ class Automaton:
         """
         return dict(self._channel_to_index)
 
+    # TODO(CODEX): can this function be inlined as it is only used once currently? also can keys[(keys.index(current_fov) + 1) % len(keys)] be improved?
     def get_next_fov_id(self, current_fov: int) -> int:
         """
         Return the next fov ID, wrapping at the end.
@@ -988,6 +995,8 @@ class Automaton:
             raise KeyError(f"Automaton.get_next_fov_id: unknown fov ID {current_fov}.")
         return keys[(keys.index(current_fov) + 1) % len(keys)]
 
+
+    # TODO(CODEX): I think that this should be removed, self._curr_period. We should have a callback counter, and maybe a command counter
     def get_period(self) -> int:
         """
         Return the current acquisition period counter.
@@ -1003,6 +1012,7 @@ class Automaton:
         """
         return self._curr_period
 
+    # TODO(CODEX): this should be extracted from the navigator, which should give UNKNOWN_FOV_ID when the current fov is not known (if the coordinates don't match the current position)
     def get_fov_id(self) -> int:
         """
         Return the current fov ID.
@@ -1018,6 +1028,7 @@ class Automaton:
         """
         return self._curr_fov_id
 
+    # TODO(CODEX): this should have a time id argument and return most recent one by default
     def get_frame(self, fov_id: int, channel: LEDType) -> np.ndarray:
         """
         Return the latest normalised frame for one fov and LED channel.

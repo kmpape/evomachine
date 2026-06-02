@@ -4,9 +4,63 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from evomachine.peripherals.peripherals import Peripheral, PeripheralController, get_peripheral_controller
 from evomachine.bindings.binding_types import BindingType
+from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
+from evomachine.peripherals.peripherals import Peripheral, update_dataclass_config
 from evomachine.types import FilterWheelType
+
+
+@dataclass
+class FilterWheelConfig:
+    """Configuration object used by FilterWheelFactory to create filter wheels."""
+
+    binding: BindingType
+    available_filters: list[FilterWheelType]
+    name: str | None = None
+    check_initialised: bool = True
+    check_alive: bool = True
+
+    def __post_init__(self) -> None:
+        """
+        Validate filter wheel factory configuration.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        if not isinstance(self.binding, BindingType):
+            raise TypeError(f"FilterWheelConfig: binding must be BindingType, received {type(self.binding)}.")
+        if self.name is not None and not isinstance(self.name, str):
+            raise TypeError(f"FilterWheelConfig: name must be str or None, received {type(self.name)}.")
+        if not isinstance(self.check_initialised, bool):
+            raise TypeError(
+                f"FilterWheelConfig: check_initialised must be bool, received {type(self.check_initialised)}."
+            )
+        if not isinstance(self.check_alive, bool):
+            raise TypeError(f"FilterWheelConfig: check_alive must be bool, received {type(self.check_alive)}.")
+        self.available_filters = FilterWheel._validate_available_filters(
+            available_filters=self.available_filters,
+        )
+
+    def copy(self) -> "FilterWheelConfig":
+        return FilterWheelConfig(**self.__dict__)
+
+    def updated(self, **kwargs: Any) -> "FilterWheelConfig":
+        unknown_keys = [key for key in kwargs if key not in self.__dict__]
+        if unknown_keys:
+            raise ValueError(f"FilterWheelConfig.updated: unknown fields {unknown_keys}.")
+        values = dict(self.__dict__)
+        values.update(kwargs)
+        return FilterWheelConfig(**values)
+
+    def update_from_mapping(self, updates: dict[str, Any]) -> "FilterWheelConfig":
+        if not isinstance(updates, dict):
+            raise TypeError("FilterWheelConfig.update_from_mapping: updates must be dict.")
+        return self.updated(**updates)
 
 
 class FilterWheel(Peripheral):
@@ -54,6 +108,7 @@ class FilterWheel(Peripheral):
         self._check_initialised: bool = check_initialised
         self._check_alive: bool = check_alive
         self._current_filter_type: FilterWheelType = FilterWheelType.UNKNOWN
+        self.config: FilterWheelConfig | None = None
 
     @staticmethod
     def _validate_available_filters(available_filters: list[FilterWheelType]) -> list[FilterWheelType]:
@@ -226,6 +281,31 @@ class FilterWheel(Peripheral):
         """
         return list(self._available_filters)
 
+    def update_config(self, config: "FilterWheelConfig | None" = None, **updates: Any) -> None:
+        """Replace or update filter wheel configuration at runtime."""
+        current_config = self.config
+        if current_config is None:
+            if config is None:
+                raise RuntimeError("FilterWheel.update_config: this filter wheel was not created from a FilterWheelConfig.")
+            new_config = config.copy()
+        else:
+            new_config = update_dataclass_config(current_config=current_config, replacement=config, **updates)
+        if current_config is not None and new_config.binding != current_config.binding:
+            raise RuntimeError("FilterWheel.update_config: changing binding requires recreating the filter wheel.")
+        was_initialised = self.is_initialised()
+        reinitialise = current_config is not None and new_config.available_filters != current_config.available_filters
+        if reinitialise and was_initialised:
+            self.finalise(force=True)
+        self.config = new_config.copy()
+        self.name = new_config.name or self.name
+        self._available_filters = self._validate_available_filters(new_config.available_filters)
+        self._check_initialised = new_config.check_initialised
+        self._check_alive = new_config.check_alive
+        if self._current_filter_type not in self._available_filters:
+            self._current_filter_type = FilterWheelType.UNKNOWN
+        if reinitialise and was_initialised:
+            self.initialise(force=True)
+
     def get_filter_wheel(self) -> FilterWheelType:
         """
         Return the software-known current filter wheel position.
@@ -358,43 +438,6 @@ class FilterWheel(Peripheral):
         raise NotImplementedError
 
 
-@dataclass
-class FilterWheelConfig:
-    """Configuration object used by FilterWheelFactory to create filter wheels."""
-
-    binding: BindingType
-    available_filters: list[FilterWheelType]
-    name: str | None = None
-    check_initialised: bool = True
-    check_alive: bool = True
-
-    def __post_init__(self) -> None:
-        """
-        Validate filter wheel factory configuration.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-        """
-        if not isinstance(self.binding, BindingType):
-            raise TypeError(f"FilterWheelConfig: binding must be BindingType, received {type(self.binding)}.")
-        if self.name is not None and not isinstance(self.name, str):
-            raise TypeError(f"FilterWheelConfig: name must be str or None, received {type(self.name)}.")
-        if not isinstance(self.check_initialised, bool):
-            raise TypeError(
-                f"FilterWheelConfig: check_initialised must be bool, received {type(self.check_initialised)}."
-            )
-        if not isinstance(self.check_alive, bool):
-            raise TypeError(f"FilterWheelConfig: check_alive must be bool, received {type(self.check_alive)}.")
-        self.available_filters = FilterWheel._validate_available_filters(
-            available_filters=self.available_filters,
-        )
-
-
 class FilterWheelFactory:
     """Factory for creating FilterWheel instances from a typed FilterWheelConfig."""
 
@@ -437,7 +480,7 @@ class FilterWheelFactory:
                 controller_type=VirtualPeripheralController,
                 action="FilterWheelFactory.create",
             )
-            return VirtualFilterWheel(
+            filter_wheel = VirtualFilterWheel(
                 peripheral_ctrl=peripheral_ctrl,
                 name=config.name or "Virtual Filter Wheel",
                 available_filters=config.available_filters,
@@ -445,6 +488,8 @@ class FilterWheelFactory:
                 check_alive=config.check_alive,
                 **binding_options,
             )
+            filter_wheel.config = config.copy()
+            return filter_wheel
 
         if config.binding == BindingType.ASI_TIGER:
             from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
@@ -455,7 +500,7 @@ class FilterWheelFactory:
                 controller_type=TigerPeripheralController,
                 action="FilterWheelFactory.create",
             )
-            return TigerFilterWheel(
+            filter_wheel = TigerFilterWheel(
                 peripheral_ctrl=peripheral_ctrl,
                 name=config.name or "ASI Tiger Filter Wheel",
                 available_filters=config.available_filters,
@@ -463,5 +508,7 @@ class FilterWheelFactory:
                 check_alive=config.check_alive,
                 **binding_options,
             )
+            filter_wheel.config = config.copy()
+            return filter_wheel
 
         raise ValueError(f"FilterWheelFactory.create: unsupported filter wheel binding {config.binding}.")

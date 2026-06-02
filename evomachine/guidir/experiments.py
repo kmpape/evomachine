@@ -14,7 +14,7 @@ from delta.utils import CroppingBox as DeltaCroppingBox
 
 from evomachine.acquisition_bkp import AbstractCamera
 from evomachine.commands import AutomatonCommand, AutomatonCommandType
-from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
+from evomachine.config import CameraSystemConfig, ImageProcessorConfig, get_logger
 from evomachine.coordinates import Coordinate, CoordinateFactory
 from evomachine.guidir.figures import FigureMultiWindow, ChannelPlotter
 from evomachine.guidir.guitemplates import EvoGUIThread, EvoPanelTemplate, EvoWorkerTemplate
@@ -29,7 +29,7 @@ class ExperimentWorker(EvoWorkerTemplate):
     def __init__(
             self,
             queue_manager: QueueManager,
-            config_camera: ConfigCamera,
+            config_camera: CameraSystemConfig,
             signal_enable_button: pyqtSignal,
             signal_disable_button: pyqtSignal,
             signal_set_button_color: pyqtSignal,
@@ -317,8 +317,8 @@ class ExperimentPanel(EvoPanelTemplate):
     def __init__(
             self,
             queue_manager: QueueManager,
-            camera_config: ConfigCamera,
-            processor_config: ConfigImageProcessor,
+            camera_config: CameraSystemConfig,
+            processor_config: ImageProcessorConfig,
             start_strategy_event: Event,
             stop_strategy_event: Event,
             stop_event: Event,
@@ -740,7 +740,7 @@ class PositionDialog(QDialog):
             ref_data: dict[int, np.ndarray],
             focus_data: dict[str, Any],
             roi_data: dict[int, dict[str, Any]],
-            processor_config: ConfigImageProcessor,
+            processor_config: ImageProcessorConfig,
      ):
         super().__init__()  # noqa
         self.setWindowTitle("Field of Views")
@@ -755,7 +755,7 @@ class PositionDialog(QDialog):
         self.ref_data: dict[int, np.ndarray] = ref_data
         self.focus_data: dict[str, Any] = focus_data
         self.roi_data: dict[int, dict[str, Any]] = roi_data
-        self.processor_config: ConfigImageProcessor = processor_config
+        self.processor_config: ImageProcessorConfig = processor_config
         self.channel_to_index = self.processor_config.channel_to_index
 
         self.fovs: dict[int, Coordinate] = fov_data["fovs"]

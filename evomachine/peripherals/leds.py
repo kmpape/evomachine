@@ -6,8 +6,9 @@ import threading
 import time
 from typing import Any
 
-from evomachine.peripherals.peripherals import Peripheral, PeripheralController, get_peripheral_controller
 from evomachine.bindings.binding_types import BindingType
+from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
+from evomachine.peripherals.peripherals import Peripheral, update_dataclass_config
 from evomachine.types import BrightnessType, LEDType
 
 
@@ -65,6 +66,22 @@ class LedConfig:
                 available_leds=self.available_leds,
             )
 
+    def copy(self) -> "LedConfig":
+        return LedConfig(**self.__dict__)
+
+    def updated(self, **kwargs: Any) -> "LedConfig":
+        unknown_keys = [key for key in kwargs if key not in self.__dict__]
+        if unknown_keys:
+            raise ValueError(f"LedConfig.updated: unknown fields {unknown_keys}.")
+        values = dict(self.__dict__)
+        values.update(kwargs)
+        return LedConfig(**values)
+
+    def update_from_mapping(self, updates: dict[str, Any]) -> "LedConfig":
+        if not isinstance(updates, dict):
+            raise TypeError("LedConfig.update_from_mapping: updates must be dict.")
+        return self.updated(**updates)
+
 
 class LedSource(Peripheral):
     """Base class for LEDs controlled by one peripheral controller."""
@@ -116,6 +133,7 @@ class LedSource(Peripheral):
             led_type: LedState(led_type=led_type) for led_type in self.available_leds
         }
         self._timers: dict[LEDType, threading.Timer] = {}
+        self.config: LedConfig | None = None
 
     @staticmethod
     def validate_available_leds(available_leds: list[LEDType]) -> list[LEDType]:
@@ -273,6 +291,41 @@ class LedSource(Peripheral):
             Copy of the logical LED list controlled by this source.
         """
         return list(self.available_leds)
+
+    def update_config(self, config: LedConfig | None = None, **updates: Any) -> None:
+        """Replace or update LED source configuration at runtime."""
+        current_config = self.config
+        if current_config is None:
+            if config is None:
+                raise RuntimeError("LedSource.update_config: this source was not created from a LedConfig.")
+            new_config = config.copy()
+        else:
+            new_config = update_dataclass_config(current_config=current_config, replacement=config, **updates)
+        if current_config is not None and new_config.binding != current_config.binding:
+            raise RuntimeError("LedSource.update_config: changing binding requires recreating the LED source.")
+        was_initialised = self.is_initialised()
+        reinitialise = (
+            current_config is not None
+            and (
+                new_config.available_leds != current_config.available_leds
+                or new_config.led_to_internal != current_config.led_to_internal
+            )
+        )
+        if reinitialise and was_initialised:
+            self.stop()
+            self.finalise(force=True)
+        self.config = new_config.copy()
+        self.name = new_config.name or self.name
+        self.available_leds = self.validate_available_leds(new_config.available_leds)
+        self.led_to_internal = self._validate_led_to_internal(
+            led_to_internal=self.led_to_internal if new_config.led_to_internal is None else new_config.led_to_internal,
+            available_leds=self.available_leds,
+        )
+        self.check_initialised = new_config.check_initialised
+        self.check_alive = new_config.check_alive
+        self._states = {led_type: self._states.get(led_type, LedState(led_type=led_type)) for led_type in self.available_leds}
+        if reinitialise and was_initialised:
+            self.initialise(force=True)
 
     def set_led(
             self,
@@ -666,6 +719,19 @@ class LedManager(Peripheral):
         for source in self.led_sources:
             source.finalise(force=force)
 
+    def update_config(self, source_configs: list[LedConfig]) -> None:
+        """Update managed LED source configs in source order."""
+        if not isinstance(source_configs, list) or len(source_configs) != len(self.led_sources):
+            raise ValueError("LedManager.update_config: source_configs must match managed source count.")
+        for source, config in zip(self.led_sources, source_configs):
+            source.update_config(config=config)
+        self._led_to_source = {}
+        for source in self.led_sources:
+            for led_type in source.get_available_leds():
+                if led_type in self._led_to_source:
+                    raise ValueError(f"LedManager: {led_type} is handled by more than one LedSource.")
+                self._led_to_source[led_type] = source
+
     def get_available_leds(self) -> list[LEDType]:
         """
         Return every logical LED routed by this manager.
@@ -822,7 +888,7 @@ class LedFactory:
                 controller_type=VirtualPeripheralController,
                 action="LedFactory.create",
             )
-            return VirtualLedSource(
+            source = VirtualLedSource(
                 peripheral_ctrl=peripheral_ctrl,
                 available_leds=config.available_leds,
                 led_to_internal=config.led_to_internal,
@@ -831,6 +897,8 @@ class LedFactory:
                 check_alive=config.check_alive,
                 **binding_options,
             )
+            source.config = config.copy()
+            return source
 
         if config.binding == BindingType.ASI_TIGER:
             from evomachine.bindings.asitiger.leds import TigerLedSource
@@ -841,7 +909,7 @@ class LedFactory:
                 controller_type=TigerPeripheralController,
                 action="LedFactory.create",
             )
-            return TigerLedSource(
+            source = TigerLedSource(
                 peripheral_ctrl=peripheral_ctrl,
                 available_leds=config.available_leds,
                 led_to_internal=config.led_to_internal,
@@ -850,6 +918,8 @@ class LedFactory:
                 check_alive=config.check_alive,
                 **binding_options,
             )
+            source.config = config.copy()
+            return source
 
         if config.binding == BindingType.SYNCBOARD:
             from evomachine.bindings.syncboard.leds import SyncBoardLedSource
@@ -860,7 +930,7 @@ class LedFactory:
                 controller_type=SyncBoardPeripheralController,
                 action="LedFactory.create",
             )
-            return SyncBoardLedSource(
+            source = SyncBoardLedSource(
                 peripheral_ctrl=peripheral_ctrl,
                 available_leds=config.available_leds,
                 led_to_internal=config.led_to_internal,
@@ -869,6 +939,8 @@ class LedFactory:
                 check_alive=config.check_alive,
                 **binding_options,
             )
+            source.config = config.copy()
+            return source
 
         if config.binding == BindingType.KWR103:
             from evomachine.bindings.kwr103.leds import KWR103LedSource
@@ -879,7 +951,7 @@ class LedFactory:
                 controller_type=KWR103PeripheralController,
                 action="LedFactory.create",
             )
-            return KWR103LedSource(
+            source = KWR103LedSource(
                 peripheral_ctrl=peripheral_ctrl,
                 available_leds=config.available_leds,
                 led_to_internal=config.led_to_internal,
@@ -888,5 +960,7 @@ class LedFactory:
                 check_alive=config.check_alive,
                 **binding_options,
             )
+            source.config = config.copy()
+            return source
 
         raise ValueError(f"LedFactory.create: unsupported LED binding {config.binding}.")

@@ -6,8 +6,8 @@ import pytest
 import skimage.io
 import tifffile
 
-import evomachine.config_types as config_types
-from evomachine.config_types import FileNameConfig, FrameMetaData, FrameMetaDataFactory
+from evomachine.filemanager import FileNameConfig
+from evomachine.frame import FrameMetaData, FrameMetaDataFactory
 from evomachine.coordinates import Coordinate
 from evomachine.filemanager import FileManager
 from evomachine.peripherals.stage import Stage
@@ -158,8 +158,6 @@ def test_old_frame_symbols_are_removed() -> None:
     -------
     None
     """
-    assert not hasattr(config_types, "Config" + "Frame")
-    assert not hasattr(config_types, "Config" + "FrameFactory")
     with pytest.raises(TypeError):
         FrameMetaData(
             frame_id=0,

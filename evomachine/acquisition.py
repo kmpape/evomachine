@@ -7,8 +7,8 @@ from pathlib import Path
 import numpy as np
 
 from evomachine.peripherals.camera import Camera
-from evomachine.config_types import Frame, FrameMetaData
 from evomachine.coordinates import Coordinate
+from evomachine.frame import Frame, FrameMetaData
 from evomachine.peripherals.dmd import Dmd
 from evomachine.filemanager import FileManager
 from evomachine.peripherals.filterwheel import FilterWheel

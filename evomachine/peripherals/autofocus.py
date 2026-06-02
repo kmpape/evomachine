@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from evomachine.bindings.binding_types import BindingType
-from evomachine.peripherals.peripherals import Peripheral, PeripheralController, get_peripheral_controller
+from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
+from evomachine.peripherals.peripherals import Peripheral, update_dataclass_config
 from evomachine.types import AutoFocusStatusType
 
 
@@ -41,6 +42,22 @@ class AutofocusConfig:
             )
         if not isinstance(self.check_alive, bool):
             raise TypeError(f"AutofocusConfig: check_alive must be bool, received {type(self.check_alive)}.")
+
+    def copy(self) -> "AutofocusConfig":
+        return AutofocusConfig(**self.__dict__)
+
+    def updated(self, **kwargs: Any) -> "AutofocusConfig":
+        unknown_keys = [key for key in kwargs if key not in self.__dict__]
+        if unknown_keys:
+            raise ValueError(f"AutofocusConfig.updated: unknown fields {unknown_keys}.")
+        values = dict(self.__dict__)
+        values.update(kwargs)
+        return AutofocusConfig(**values)
+
+    def update_from_mapping(self, updates: dict[str, Any]) -> "AutofocusConfig":
+        if not isinstance(updates, dict):
+            raise TypeError("AutofocusConfig.update_from_mapping: updates must be dict.")
+        return self.updated(**updates)
 
 
 class Autofocus(Peripheral):
@@ -80,6 +97,7 @@ class Autofocus(Peripheral):
         self._is_alive: bool = False
         self._check_initialised: bool = check_initialised
         self._check_alive: bool = check_alive
+        self.config: AutofocusConfig | None = None
 
     def _require_ready(self, action: str) -> None:
         """
@@ -168,6 +186,22 @@ class Autofocus(Peripheral):
             True when the autofocus peripheral is marked initialised.
         """
         return self._is_initialised
+
+    def update_config(self, config: AutofocusConfig | None = None, **updates: Any) -> None:
+        """Replace or update generic autofocus configuration."""
+        current_config = self.config
+        if current_config is None:
+            if config is None:
+                raise RuntimeError("Autofocus.update_config: this autofocus was not created from an AutofocusConfig.")
+            new_config = config.copy()
+        else:
+            new_config = update_dataclass_config(current_config=current_config, replacement=config, **updates)
+        if current_config is not None and new_config.binding != current_config.binding:
+            raise RuntimeError("Autofocus.update_config: changing binding requires recreating the autofocus.")
+        self.config = new_config.copy()
+        self.name = new_config.name or self.name
+        self._check_initialised = new_config.check_initialised
+        self._check_alive = new_config.check_alive
 
     def stop(self) -> None:
         """
@@ -398,13 +432,15 @@ class AutofocusFactory:
                 controller_type=VirtualPeripheralController,
                 action="AutofocusFactory.create",
             )
-            return VirtualAutofocus(
+            autofocus = VirtualAutofocus(
                 peripheral_ctrl=peripheral_ctrl,
                 name=config.name or VirtualAutofocus.DEFAULT_NAME,
                 check_initialised=config.check_initialised,
                 check_alive=config.check_alive,
                 **binding_options,
             )
+            autofocus.config = config.copy()
+            return autofocus
 
         if config.binding == BindingType.ASI_TIGER:
             from evomachine.bindings.asitiger.autofocus import TigerAutofocus
@@ -415,12 +451,14 @@ class AutofocusFactory:
                 controller_type=TigerPeripheralController,
                 action="AutofocusFactory.create",
             )
-            return TigerAutofocus(
+            autofocus = TigerAutofocus(
                 peripheral_ctrl=peripheral_ctrl,
                 name=config.name or TigerAutofocus.DEFAULT_NAME,
                 check_initialised=config.check_initialised,
                 check_alive=config.check_alive,
                 **binding_options,
             )
+            autofocus.config = config.copy()
+            return autofocus
 
         raise ValueError(f"AutofocusFactory.create: unsupported autofocus binding {config.binding}.")

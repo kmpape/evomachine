@@ -5,7 +5,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from evomachine.bindings.binding_types import BindingType
-from evomachine.peripherals.peripherals import Peripheral, PeripheralController, get_peripheral_controller
+from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
+from evomachine.peripherals.peripherals import Peripheral, update_dataclass_config
 
 
 @dataclass
@@ -110,6 +111,22 @@ class PhotodiodeConfig:
         if not isinstance(self.check_alive, bool):
             raise TypeError(f"PhotodiodeConfig: check_alive must be bool, received {type(self.check_alive)}.")
 
+    def copy(self) -> "PhotodiodeConfig":
+        return PhotodiodeConfig(**self.__dict__)
+
+    def updated(self, **kwargs: Any) -> "PhotodiodeConfig":
+        unknown_keys = [key for key in kwargs if key not in self.__dict__]
+        if unknown_keys:
+            raise ValueError(f"PhotodiodeConfig.updated: unknown fields {unknown_keys}.")
+        values = dict(self.__dict__)
+        values.update(kwargs)
+        return PhotodiodeConfig(**values)
+
+    def update_from_mapping(self, updates: dict[str, Any]) -> "PhotodiodeConfig":
+        if not isinstance(updates, dict):
+            raise TypeError("PhotodiodeConfig.update_from_mapping: updates must be dict.")
+        return self.updated(**updates)
+
 
 class Photodiode(Peripheral):
     """Base class for photodiode sensors that report normalised light readings."""
@@ -162,6 +179,7 @@ class Photodiode(Peripheral):
         self.check_initialised: bool = check_initialised
         self.check_alive: bool = check_alive
         self._is_initialised: bool = False
+        self.config: PhotodiodeConfig | None = None
 
     @staticmethod
     def validate_channel(channel: int) -> int:
@@ -312,6 +330,31 @@ class Photodiode(Peripheral):
             maximum_reading=maximum_reading,
         )
 
+    def update_config(self, config: PhotodiodeConfig | None = None, **updates: Any) -> None:
+        """Replace or update photodiode configuration at runtime."""
+        current_config = self.config
+        if current_config is None:
+            if config is None:
+                raise RuntimeError("Photodiode.update_config: this photodiode was not created from a PhotodiodeConfig.")
+            new_config = config.copy()
+        else:
+            new_config = update_dataclass_config(current_config=current_config, replacement=config, **updates)
+        if current_config is not None and new_config.binding != current_config.binding:
+            raise RuntimeError("Photodiode.update_config: changing binding requires recreating the photodiode.")
+        was_initialised = self.is_initialised()
+        reinitialise = current_config is not None and new_config.channel != current_config.channel
+        if reinitialise and was_initialised:
+            self.stop()
+            self.finalise(force=True)
+        self.config = new_config.copy()
+        self.channel = new_config.channel
+        self.name = new_config.name or self.name
+        self.reading_range = new_config.reading_range
+        self.check_initialised = new_config.check_initialised
+        self.check_alive = new_config.check_alive
+        if reinitialise and was_initialised:
+            self.initialise(force=True)
+
     def read_photodiode(self) -> float:
         """
         Return the current photodiode reading scaled to [0, 100].
@@ -458,7 +501,7 @@ class PhotodiodeFactory:
                 controller_type=VirtualPeripheralController,
                 action="PhotodiodeFactory.create",
             )
-            return VirtualPhotodiode(
+            photodiode = VirtualPhotodiode(
                 peripheral_ctrl=peripheral_ctrl,
                 channel=config.channel,
                 reading_range=config.reading_range,
@@ -467,6 +510,8 @@ class PhotodiodeFactory:
                 check_alive=config.check_alive,
                 **binding_options,
             )
+            photodiode.config = config.copy()
+            return photodiode
 
         if config.binding == BindingType.SYNCBOARD:
             from evomachine.bindings.syncboard.peripheralcontroller import SyncBoardPeripheralController
@@ -477,7 +522,7 @@ class PhotodiodeFactory:
                 controller_type=SyncBoardPeripheralController,
                 action="PhotodiodeFactory.create",
             )
-            return SyncBoardPhotodiode(
+            photodiode = SyncBoardPhotodiode(
                 peripheral_ctrl=peripheral_ctrl,
                 channel=config.channel,
                 reading_range=config.reading_range,
@@ -486,5 +531,7 @@ class PhotodiodeFactory:
                 check_alive=config.check_alive,
                 **binding_options,
             )
+            photodiode.config = config.copy()
+            return photodiode
 
         raise ValueError(f"PhotodiodeFactory.create: unsupported photodiode binding {config.binding}.")

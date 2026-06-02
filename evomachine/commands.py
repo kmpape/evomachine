@@ -9,8 +9,9 @@ import numpy as np
 from delta.utils import CroppingBox as DeltaCroppingBox
 
 from evomachine.config import DMD_WIDTH_HEIGHT, EVO_FORMATTER, get_logger
-from evomachine.config_types import ConfigImageProcessor, FrameMetaData
 from evomachine.coordinates import Coordinate
+from evomachine.frame import FrameMetaData
+from evomachine.image_processing_config import ImageProcessorConfig
 from evomachine.types import AutomatonCommandType, FilterWheelType, FocusStatusType, LEDType, MagnetModeType
 from evomachine.utils import EvoCroppingBox
 
@@ -117,8 +118,8 @@ class CommandFactory:
     match the type and ID of the initial command. The data will be stored in command_id and the field
     command_execution_time will contain the time just after executing the command.
     """
-    def __init__(self, cfg: ConfigImageProcessor):
-        self._cfg: ConfigImageProcessor = cfg
+    def __init__(self, cfg: ImageProcessorConfig):
+        self._cfg: ImageProcessorConfig = cfg
         "Image processor config used for checking channels of imaging commands."
         self._command_id_counter: int = -1
         "Command ID generator. First ID is 0. Does not care for overflow."
@@ -212,7 +213,7 @@ class CommandFactory:
         ----------
         frame_metadata  : One FrameMetaData object or a list of FrameMetaData objects used by FrameAcquisitionManager.
         segment         : Segments image and tracks cells if True. See channels for channel requirements. If segment is
-                          True, and ConfigImageProcessor.preproc_enabled is False, this function throws an exception.
+                          True, and ImageProcessorConfig.preproc_enabled is False, this function throws an exception.
         save            : Save image(s). Uses ConfigDevice.path_to_save passed to Automaton.
         filename_suffix : Suffix to append to filenames.
 

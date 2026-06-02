@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 
 from evomachine.config import DMD_WIDTH_HEIGHT
-from evomachine.peripherals.peripherals import SocketPeripheralController
+from evomachine.peripherals.peripheralcontrollers import SocketPeripheralController
 
 logger = logging.getLogger(__name__)
 
@@ -156,9 +156,11 @@ class EmDmdWindowPeripheralController(SocketPeripheralController):
         self._is_initialised = False
 
     def _disconnect(self) -> None:
-        close = getattr(self.s, "close", None)
-        if callable(close):
-            close()
+        try:
+            close = self.s.close
+        except AttributeError as error:
+            raise TypeError("EmDmdWindowPeripheralController._disconnect: socket must expose close().") from error
+        close()
         time.sleep(1)
         if self._process is not None and self._process.poll() != 0:
             logger.warning("EmDmdWindowPeripheralController: Forcing C program shutdown.")

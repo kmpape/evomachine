@@ -4,7 +4,7 @@ from typing import Any
 
 from syncboard.syncboardcontroller import SyncBoardController
 
-from evomachine.peripherals.peripherals import SerialPeripheralController, SerialPeripheralControllerConfig
+from evomachine.peripherals.peripheralcontrollers import SerialPeripheralController, SerialPeripheralControllerConfig
 from evomachine.bindings.binding_types import BindingType
 
 

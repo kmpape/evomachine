@@ -10,7 +10,7 @@ import time
 import numpy as np
 
 from evomachine.config import EVOMACHINE_DIR
-from evomachine.config_types import DMDCalibConfigType
+from evomachine.peripherals.dmd import DmdCalibrationConfig
 from evomachine.peripherals.camera import Camera
 from evomachine.peripherals.dmd import Dmd
 from evomachine.peripherals.filterwheel import FilterWheel
@@ -81,7 +81,7 @@ class ProjectionManager:
 
     def dmd_calibrate(
             self,
-            cfg: DMDCalibConfigType,
+            cfg: DmdCalibrationConfig,
             filename: str | Path | None = None,
     ) -> tuple[list, np.ndarray, np.ndarray, Path] | tuple[None, None, None, None]:
         """
@@ -103,8 +103,8 @@ class ProjectionManager:
             or a tuple of None values when calibration aborts.
         """
         error_return_value = (None, None, None, None)
-        if not isinstance(cfg, DMDCalibConfigType):
-            raise TypeError(f"ProjectionManager.dmd_calibrate: cfg must be DMDCalibConfigType, received {type(cfg)}.")
+        if not isinstance(cfg, DmdCalibrationConfig):
+            raise TypeError(f"ProjectionManager.dmd_calibrate: cfg must be DmdCalibrationConfig, received {type(cfg)}.")
         if not self.devices_are_initialised():
             logger.error("ProjectionManager.dmd_calibrate: devices are not initialised. Returning.")
             return error_return_value
@@ -183,7 +183,7 @@ class ProjectionManager:
             candidate = self.calibration_directory / f"dmd_calibration_data_{datestr}_v{calib_version}.pkl"
         return candidate
 
-    def _build_calibration_grid(self, cfg: DMDCalibConfigType) -> tuple[np.ndarray, np.ndarray]:
+    def _build_calibration_grid(self, cfg: DmdCalibrationConfig) -> tuple[np.ndarray, np.ndarray]:
         """
         Build DMD row and column calibration grids from a calibration config.
 
@@ -226,7 +226,7 @@ class ProjectionManager:
         if callable(disable_live_mode):
             disable_live_mode()
 
-    def _configure_calibration_peripherals(self, cfg: DMDCalibConfigType) -> None:
+    def _configure_calibration_peripherals(self, cfg: DmdCalibrationConfig) -> None:
         """
         Apply camera, LED, and filter wheel settings used for DMD calibration.
 
@@ -270,7 +270,7 @@ class ProjectionManager:
             return
         self.led_manager.set_led(led_type=channel, brightness=brightness)
 
-    def _measure_on_screen_intensity(self, cfg: DMDCalibConfigType) -> float | None:
+    def _measure_on_screen_intensity(self, cfg: DmdCalibrationConfig) -> float | None:
         """
         Estimate the on-screen calibration intensity.
 
@@ -312,7 +312,7 @@ class ProjectionManager:
 
     def _measure_minimum_required_intensity(
             self,
-            cfg: DMDCalibConfigType,
+            cfg: DmdCalibrationConfig,
             max_intensity: float,
     ) -> float | None:
         """
@@ -354,7 +354,7 @@ class ProjectionManager:
 
     def _scan_calibration_grid(
             self,
-            cfg: DMDCalibConfigType,
+            cfg: DmdCalibrationConfig,
             rows: np.ndarray,
             cols: np.ndarray,
             min_intensity: float,

@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
 
-from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
+from evomachine.config import CameraSystemConfig, ImageProcessorConfig, get_logger
 from evomachine.guidir.guitypes import NORMAL, ButtonState
 from evomachine.guidir.queuemanager import QueueManager
 
@@ -91,8 +91,8 @@ class EvoPanelTemplate(QWidget):
     def __init__(
             self,
             queue_manager: QueueManager,
-            camera_config: ConfigCamera,
-            processor_config: ConfigImageProcessor,
+            camera_config: CameraSystemConfig,
+            processor_config: ImageProcessorConfig,
             start_strategy_event: Event,
             stop_strategy_event: Event,
             stop_event: Event,
@@ -103,9 +103,9 @@ class EvoPanelTemplate(QWidget):
 
         self.queue_manager: QueueManager = queue_manager
         "Use to place device requests. Use to register to process callbacks."
-        self.camera_config: ConfigCamera = camera_config
+        self.camera_config: CameraSystemConfig = camera_config
         "Camera configuration at initialisation."
-        self.processor_config: ConfigImageProcessor = processor_config
+        self.processor_config: ImageProcessorConfig = processor_config
         "Image processor configuration at initialisation."
         self.start_strategy_event: Event = start_strategy_event
         "When set, Automaton switches from GUI mode to strategy mode."

@@ -13,18 +13,10 @@ from evomachine.bindings.software_focus.software_focus_algorithms import (
     SteelFocusAlgorithm,
     create_software_focus_algorithm,
 )
-from evomachine.config_types import (
-    ConfigFocus,
-    ConfigFocusFactory,
-    FrameMetaData,
-    SoftwareFocusConfig,
-    SoftwareFocusConfigFactory,
-    SoftwareFocusConfigNew,
-    SoftwareFocusConfigNewFactory,
-)
 from evomachine.coordinates import Coordinate
+from evomachine.frame import FrameMetaData
 from evomachine.peripherals.leds import LedState
-from evomachine.softwarefocus import SoftwareFocus
+from evomachine.softwarefocus import SoftwareFocus, SoftwareFocusConfig, SoftwareFocusConfigFactory
 from evomachine.types import FilterWheelType, FocusAlgorithmType, FocusCurveType, FocusStatusType, LEDType
 
 
@@ -402,31 +394,6 @@ def _image() -> np.ndarray:
     return np.arange(36, dtype=np.float64).reshape(6, 6)
 
 
-def _legacy_config(**kwargs) -> SoftwareFocusConfig:
-    """
-    Return a valid legacy SoftwareFocusConfig with optional field overrides.
-
-    Parameters
-    ----------
-    **kwargs
-        SoftwareFocusConfig field values to override.
-
-    Returns
-    -------
-    SoftwareFocusConfig
-        Valid legacy software focus configuration.
-    """
-    values = {
-        "exposure_time": 200,
-        "focus_channel": LEDType.LED_450_NM,
-        "brightness": 29,
-        "rel_range": 50,
-        "step_size": 5,
-    }
-    values.update(kwargs)
-    return SoftwareFocusConfig(**values)
-
-
 def _frame(
         frame_id: int = -1,
         led_type: LEDType = LEDType.LED_450_NM,
@@ -463,19 +430,19 @@ def _frame(
     )
 
 
-def _config_new(**kwargs) -> SoftwareFocusConfigNew:
+def _config(**kwargs) -> SoftwareFocusConfig:
     """
-    Return a valid SoftwareFocusConfigNew with optional field overrides.
+    Return a valid SoftwareFocusConfig with optional field overrides.
 
     Parameters
     ----------
     **kwargs
-        SoftwareFocusConfigNew field values to override.
+        SoftwareFocusConfig field values to override.
 
     Returns
     -------
-    SoftwareFocusConfigNew
-        Valid new software focus configuration.
+    SoftwareFocusConfig
+        Valid software focus configuration.
     """
     values = {
         "focus_frames": [_frame()],
@@ -487,11 +454,11 @@ def _config_new(**kwargs) -> SoftwareFocusConfigNew:
         "cropping_box": None,
     }
     values.update(kwargs)
-    return SoftwareFocusConfigNew(**values)
+    return SoftwareFocusConfig(**values)
 
 
 def _software_focus(
-        config: SoftwareFocusConfigNew | None = None,
+        config: SoftwareFocusConfig | None = None,
         filter_wheel: FakeFilterWheel | None = None,
 ) -> tuple[SoftwareFocus, FakeStage, FakeCamera, FakeLedManager, FakeDmd]:
     """
@@ -500,7 +467,7 @@ def _software_focus(
     Parameters
     ----------
     config
-        Optional new software focus config.
+        Optional software focus config.
     filter_wheel
         Optional fake filter wheel.
 
@@ -522,7 +489,7 @@ def _software_focus(
     )
     focus = SoftwareFocus(
         acquisition_manager=acquisition_manager,
-        config=_config_new() if config is None else config,
+        config=_config() if config is None else config,
     )
     return focus, stage, camera, leds, dmd
 
@@ -588,9 +555,9 @@ def test_algorithm_factory_selects_algorithms() -> None:
         create_software_focus_algorithm("STEEL")
 
 
-def test_legacy_software_focus_config_alias_factory_and_updates() -> None:
+def test_software_focus_config_validation_and_factory() -> None:
     """
-    Check legacy SoftwareFocusConfig aliases still work for old callers.
+    Check software focus config validation and factory defaults.
 
     Parameters
     ----------
@@ -600,50 +567,19 @@ def test_legacy_software_focus_config_alias_factory_and_updates() -> None:
     -------
     None
     """
-    config = _legacy_config()
-    frame = FrameMetaData(frame_id=0, leds={LEDType.LED_450_NM: 50}, filter_wheel=None, exposure=100)
-    updated = config.updated(brightness=10, focus_frames=[frame])
+    config = SoftwareFocusConfigFactory.default_config()
 
-    assert ConfigFocus is SoftwareFocusConfig
-    assert isinstance(ConfigFocusFactory.default_config(), SoftwareFocusConfig)
-    assert isinstance(SoftwareFocusConfigFactory.default_config(), SoftwareFocusConfig)
-    assert updated.brightness == 10
-    assert updated.focus_frames == [frame]
-    assert config.brightness == 29
-    assert config.update_from_mapping({"step_size": 10}).step_size == 10
-    with pytest.raises(ValueError):
-        config.updated(unknown=1)
-    with pytest.raises(TypeError):
-        config.update_from_mapping([("brightness", 10)])
-    with pytest.raises(TypeError):
-        _legacy_config(focus_frames=["bad"])
-
-
-def test_software_focus_config_new_validation_and_factory() -> None:
-    """
-    Check new software focus config validation and factory defaults.
-
-    Parameters
-    ----------
-    None
-
-    Returns
-    -------
-    None
-    """
-    config = SoftwareFocusConfigNewFactory.default_config()
-
-    assert isinstance(config, SoftwareFocusConfigNew)
+    assert isinstance(config, SoftwareFocusConfig)
     assert config.focus_frames[0].leds == {LEDType.LED_450_NM: 29}
     assert config.copy().focus_frames == config.focus_frames
     with pytest.raises(TypeError):
-        _config_new(focus_frames=[])
+        _config(focus_frames=[])
     with pytest.raises(TypeError):
-        _config_new(acquisition_settings="bad")
+        _config(acquisition_settings="bad")
     with pytest.raises(TypeError):
-        _config_new(algorithm_kwargs={1: "bad"})
+        _config(algorithm_kwargs={1: "bad"})
     with pytest.raises(ValueError):
-        _config_new(cropping_box=[])
+        _config(cropping_box=[])
 
 
 def test_software_focus_update_config_and_fovs() -> None:
@@ -659,8 +595,8 @@ def test_software_focus_update_config_and_fovs() -> None:
     None
     """
     focus, _, _, _, _ = _software_focus()
-    default_replacement = _config_new(focus_frames=[_frame(exposure=80)])
-    fov_replacement = _config_new(focus_frames=[_frame(exposure=90)])
+    default_replacement = _config(focus_frames=[_frame(exposure=80)])
+    fov_replacement = _config(focus_frames=[_frame(exposure=90)])
 
     focus.initialise_fovs([1, 2], fov_configs={2: fov_replacement})
     assert not hasattr(focus.get_fov_result(1), "fov_id")
@@ -693,7 +629,7 @@ def test_software_focus_score_image_crops_and_averages() -> None:
     """
     focus, _, _, _, _ = _software_focus()
     img = _image()
-    config = _config_new(algorithm=FocusAlgorithmType.STEEL, algorithm_kwargs={"rowshift": 1, "colshift": 2})
+    config = _config(algorithm=FocusAlgorithmType.STEEL, algorithm_kwargs={"rowshift": 1, "colshift": 2})
     scorer = create_software_focus_algorithm(FocusAlgorithmType.STEEL, rowshift=1, colshift=2)
     first_box = CroppingBox(xtl=0, xbr=3, ytl=0, ybr=3)
     second_box = CroppingBox(xtl=2, xbr=6, ytl=2, ybr=6)
@@ -749,7 +685,7 @@ def test_software_focus_run_uses_fov_specific_config() -> None:
     None
     """
     focus, _, camera, leds, _ = _software_focus()
-    fov_config = _config_new(
+    fov_config = _config(
         focus_frames=[_frame(led_type=LEDType.LED_565_NM, brightness=20, exposure=60)],
         acquisition_settings=FrameAcquisitionSettings(illuminate_dmd=False, restore_leds_after=False),
         rel_range=2,
@@ -781,7 +717,7 @@ def test_software_focus_run_averages_multiple_frame_metadata_scores() -> None:
     frame_b = _frame(frame_id=2, led_type=LEDType.LED_565_NM, brightness=20, exposure=60, filter_wheel=FilterWheelType.FILTER_592nm)
     filter_wheel = FakeFilterWheel()
     focus, _, camera, leds, _ = _software_focus(
-        config=_config_new(focus_frames=[frame_a, frame_b]),
+        config=_config(focus_frames=[frame_a, frame_b]),
         filter_wheel=filter_wheel,
     )
 
@@ -809,7 +745,7 @@ def test_software_focus_run_rejects_missing_filter_wheel_for_frame_metadata() ->
     None
     """
     frame = _frame(frame_id=1, led_type=LEDType.LED_450_NM, brightness=10, exposure=50, filter_wheel=FilterWheelType.FILTER_465nm)
-    focus, _, _, leds, _ = _software_focus(config=_config_new(focus_frames=[frame]))
+    focus, _, _, leds, _ = _software_focus(config=_config(focus_frames=[frame]))
 
     with pytest.raises(RuntimeError, match="filter wheel"):
         focus.run(fov_id=0)

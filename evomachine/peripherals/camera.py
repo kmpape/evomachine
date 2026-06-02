@@ -2,13 +2,205 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from evomachine.bindings.binding_types import BindingType
-from evomachine.config_types import ImageConfigType
-from evomachine.peripherals.peripherals import Peripheral, PeripheralController, get_peripheral_controller
+from evomachine.exceptions import ConfigError, ErrorCode
+from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
+from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig, update_dataclass_config
+from evomachine.types import FilterWheelType, LEDType
+
+
+def _get_evomachine_dir() -> Path:
+    from evomachine.config import EVOMACHINE_DIR
+
+    return EVOMACHINE_DIR
+
+
+def _use_sync_board() -> bool:
+    from evomachine.config import USE_SYNC_BOARD
+
+    return USE_SYNC_BOARD
+
+
+@dataclass
+class ImageConfigType:
+    pxl_horiz: int
+    pxl_vert: int
+    pxl_dtype: np.dtype
+
+    @property
+    def shape(self) -> tuple[int, int]:
+        return self.pxl_vert, self.pxl_horiz
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.pxl_horiz, int) or not self.pxl_horiz > 0:
+            raise ConfigError(error_code=ErrorCode.ERROR_IMAGE_CONFIG, message=f"Invalid pxl_horiz: {self.pxl_horiz}")
+        if not isinstance(self.pxl_vert, int) or not self.pxl_vert > 0:
+            raise ConfigError(error_code=ErrorCode.ERROR_IMAGE_CONFIG, message=f"Invalid pxl_vert: {self.pxl_vert}")
+        if not isinstance(self.pxl_dtype, np.dtype):
+            raise ConfigError(error_code=ErrorCode.ERROR_IMAGE_CONFIG, message=f"Invalid pxl_dtype: {self.pxl_dtype}")
+
+    def copy(self) -> "ImageConfigType":
+        return ImageConfigType(**self.__dict__)
+
+    def __str__(self) -> str:
+        lines = ["ImageConfigType"]
+        for index, (key, value) in enumerate(self.__dict__.items()):
+            lines.append(f"{' └─ ' if index == len(self.__dict__) - 1 else ' ├─ '}{key}: {value}")
+        return "\n".join(lines)
+
+
+class ImageConfigTypeFactory:
+    @staticmethod
+    def pv_cam() -> ImageConfigType:
+        return ImageConfigType(pxl_horiz=3200, pxl_vert=3200, pxl_dtype=np.dtype("uint16"))
+
+    @staticmethod
+    def delta() -> ImageConfigType:
+        return ImageConfigType(pxl_horiz=696, pxl_vert=520, pxl_dtype=np.dtype("float32"))
+
+
+@dataclass
+class ObjectiveConfigType:
+    na: float
+    mag: int
+    descr: str | None = "UNKNOWN OBJECTIVE"
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.na, float) or not 0 < self.na:
+            raise ConfigError(error_code=ErrorCode.ERROR, message=f"Invalid numerical_aperture: {self.na}")
+        if not isinstance(self.mag, int) or not self.mag > 0:
+            raise ConfigError(error_code=ErrorCode.ERROR, message=f"Invalid magnification: {self.mag}")
+
+    def copy(self) -> "ObjectiveConfigType":
+        return ObjectiveConfigType(**self.__dict__)
+
+    def __str__(self) -> str:
+        lines = ["ObjectiveConfigType"]
+        for index, (key, value) in enumerate(self.__dict__.items()):
+            lines.append(f"{' └─ ' if index == len(self.__dict__) - 1 else ' ├─ '}{key}: {value}")
+        return "\n".join(lines)
+
+
+class ObjectiveConfigTypeFactory:
+    @staticmethod
+    def default_oil() -> ObjectiveConfigType:
+        return ObjectiveConfigType(na=1.4, mag=60, descr="Nikon Plan Apo lambda 60x/1.4 Oil")
+
+    @staticmethod
+    def default_air() -> ObjectiveConfigType:
+        return ObjectiveConfigType(na=0.95, mag=40, descr="Nikon Plan Fluor 40x/0.95")
+
+
+@dataclass
+class CameraSystemConfig:
+    objective: ObjectiveConfigType
+    image: ImageConfigType
+    focus: Any
+    autofocus: Any
+    leds: list[LEDType]
+    filters: list[FilterWheelType]
+    path_to_save: Path
+    default_exposure_time: float | int = 200
+    default_focus_channel_id: int = 0
+    cam_pxl_size: float = 6.5
+
+    def copy(self) -> "CameraSystemConfig":
+        return CameraSystemConfig(**self.__dict__)
+
+    @property
+    def pxl_size(self) -> float:
+        return self.cam_pxl_size / self.objective.mag
+
+    @property
+    def fov_size(self) -> float:
+        return self.cam_pxl_size / self.objective.mag * self.image.pxl_vert
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.objective, ObjectiveConfigType):
+            raise TypeError(f"objective must be an ObjectiveConfigType object. Provided {self.objective}.")
+        if not isinstance(self.image, ImageConfigType):
+            raise TypeError(f"image must be an ImageConfigType object. Provided {self.image}.")
+        if not (isinstance(self.leds, list) and all(isinstance(led, LEDType) for led in self.leds)) \
+                or len(self.leds) == 0 or LEDType.NO_LED not in self.leds:
+            raise ConfigError("Invalid LED list.", ErrorCode.ERROR_CONFIG)
+        if not (isinstance(self.filters, list) and all(isinstance(filter_type, FilterWheelType) for filter_type in self.filters)) \
+                or len(self.filters) == 0:
+            raise ConfigError("Invalid filter list.", ErrorCode.ERROR_CONFIG)
+        if isinstance(self.path_to_save, str):
+            self.path_to_save = Path(self.path_to_save)
+        if not isinstance(self.path_to_save, Path):
+            raise ConfigError("Invalid path_to_save.", ErrorCode.ERROR_CONFIG)
+        if not self.image.pxl_vert == self.image.pxl_horiz:
+            raise ConfigError("Currently limited to square images.", ErrorCode.ERROR_FOCUS_CONFIG)
+        if not isinstance(self.default_exposure_time, int | float) or self.default_exposure_time <= 0:
+            raise TypeError(f"Invalid default_exposure_time {self.default_exposure_time}.")
+        if not (isinstance(self.default_focus_channel_id, int) and 0 <= self.default_focus_channel_id < len(self.leds)):
+            raise TypeError(f"Invalid default_focus_channel_id {self.default_focus_channel_id}.")
+
+
+class CameraSystemConfigFactory:
+    @staticmethod
+    def get_available_leds() -> list[LEDType]:
+        if _use_sync_board():
+            return [
+                LEDType.NO_LED,
+                LEDType.LED_385_NM,
+                LEDType.LED_450_NM,
+                LEDType.LED_515_NM,
+                LEDType.LED_565_NM,
+                LEDType.LED_645_NM,
+                LEDType.LED_OVERHEAD,
+                LEDType.LED_OVERHEAD_TIGER,
+            ]
+        return [LEDType.NO_LED, LEDType.LED_405_NM, LEDType.LED_450_NM, LEDType.LED_505_NM, LEDType.LED_538_NM]
+
+    @staticmethod
+    def get_available_filters() -> list[FilterWheelType]:
+        return [
+            FilterWheelType.FILTER,
+            FilterWheelType.FILTER_465nm,
+            FilterWheelType.FILTER_527nm,
+            FilterWheelType.FILTER_592nm,
+            FilterWheelType.BLOCKING,
+            FilterWheelType.NO_FILTER,
+        ]
+
+    @staticmethod
+    def default_oil_config(path_to_save: Path | None = None) -> CameraSystemConfig:
+        from evomachine.bindings.asitiger.autofocus import TigerAutofocusConfigFactory
+        from evomachine.softwarefocus import SoftwareFocusConfigFactory
+
+        evomachine_dir = _get_evomachine_dir()
+        return CameraSystemConfig(
+            objective=ObjectiveConfigTypeFactory.default_oil(),
+            image=ImageConfigTypeFactory.pv_cam(),
+            focus=SoftwareFocusConfigFactory.default_config(),
+            autofocus=TigerAutofocusConfigFactory.default_oil_config(),
+            leds=CameraSystemConfigFactory.get_available_leds(),
+            filters=CameraSystemConfigFactory.get_available_filters(),
+            path_to_save=evomachine_dir.parent / "images/DEFAULT" if path_to_save is None else path_to_save,
+        )
+
+    @staticmethod
+    def default_air_config(path_to_save: Path | None = None) -> CameraSystemConfig:
+        from evomachine.bindings.asitiger.autofocus import TigerAutofocusConfigFactory
+        from evomachine.softwarefocus import SoftwareFocusConfigFactory
+
+        evomachine_dir = _get_evomachine_dir()
+        return CameraSystemConfig(
+            objective=ObjectiveConfigTypeFactory.default_air(),
+            image=ImageConfigTypeFactory.pv_cam(),
+            focus=SoftwareFocusConfigFactory.default_config(),
+            autofocus=TigerAutofocusConfigFactory.default_config(),
+            leds=CameraSystemConfigFactory.get_available_leds(),
+            filters=CameraSystemConfigFactory.get_available_filters(),
+            path_to_save=evomachine_dir.parent / "images/DEFAULT" if path_to_save is None else path_to_save,
+        )
 
 
 @dataclass
@@ -56,6 +248,22 @@ class CameraConfig:
             raise TypeError(f"CameraConfig: check_alive must be bool, received {type(self.check_alive)}.")
         if self.imaging_mode is not None and not isinstance(self.imaging_mode, str):
             raise TypeError(f"CameraConfig: imaging_mode must be str or None, received {type(self.imaging_mode)}.")
+
+    def copy(self) -> "CameraConfig":
+        return CameraConfig(**self.__dict__)
+
+    def updated(self, **kwargs: Any) -> "CameraConfig":
+        unknown_keys = [key for key in kwargs if key not in self.__dict__]
+        if unknown_keys:
+            raise ValueError(f"CameraConfig.updated: unknown fields {unknown_keys}.")
+        values = dict(self.__dict__)
+        values.update(kwargs)
+        return CameraConfig(**values)
+
+    def update_from_mapping(self, updates: dict[str, Any]) -> "CameraConfig":
+        if not isinstance(updates, dict):
+            raise TypeError("CameraConfig.update_from_mapping: updates must be dict.")
+        return self.updated(**updates)
 
 
 class Camera(Peripheral):
@@ -111,6 +319,7 @@ class Camera(Peripheral):
         self._is_alive: bool = False
         self._check_initialised: bool = check_initialised
         self._check_alive: bool = check_alive
+        self.config: CameraConfig | None = None
         # TODO(Codex): Add one status flag here to track whether the camera is live streaming or not.
 
     @staticmethod
@@ -297,6 +506,45 @@ class Camera(Peripheral):
         """
         return self._current_exposure
 
+    def update_config(self, config: CameraConfig | None = None, **updates: Any) -> None:
+        """
+        Replace or update camera runtime configuration.
+
+        Image shape/dtype changes require reinitialisation because frame
+        validation depends on the image config. Exposure, imaging mode, name,
+        and readiness checks are applied in place when possible.
+        """
+        current_config = self.config
+        if current_config is None:
+            if config is None:
+                raise RuntimeError("Camera.update_config: this camera was not created from a CameraConfig.")
+            new_config = config.copy()
+        else:
+            new_config = update_dataclass_config(current_config=current_config, replacement=config, **updates)
+        if new_config.binding != (current_config.binding if current_config is not None else new_config.binding):
+            raise RuntimeError("Camera.update_config: changing camera binding requires recreating the camera.")
+
+        was_initialised = self.is_initialised()
+        reinitialise = current_config is not None and new_config.image != current_config.image
+        if reinitialise and was_initialised:
+            self.stop()
+            self.finalise(force=True)
+
+        self.config = new_config.copy()
+        self.image = new_config.image
+        self.name = new_config.name or self.name
+        self.default_exposure_time = self._validate_exposure_time(new_config.default_exposure_time)
+        self.imaging_mode = new_config.imaging_mode
+        self._check_initialised = new_config.check_initialised
+        self._check_alive = new_config.check_alive
+
+        if reinitialise and was_initialised:
+            self.initialise(force=True)
+        elif was_initialised:
+            self.set_exposure(self.default_exposure_time)
+            if self.imaging_mode is not None:
+                self.set_imaging_mode(self.imaging_mode)
+
     def set_imaging_mode(self, imaging_mode: str) -> None:
         """
         Set a binding-specific camera imaging mode.
@@ -455,7 +703,7 @@ class CameraFactory:
                 controller_type=VirtualPeripheralController,
                 action="CameraFactory.create",
             )
-            return VirtualCamera(
+            camera = VirtualCamera(
                 peripheral_ctrl=peripheral_ctrl,
                 image=config.image,
                 name=config.name or VirtualCamera.DEFAULT_NAME,
@@ -465,11 +713,13 @@ class CameraFactory:
                 check_alive=config.check_alive,
                 **binding_options,
             )
+            camera.config = config.copy()
+            return camera
 
         if config.binding == BindingType.MMC:
             from evomachine.bindings.mmc.camera import MMCCamera
 
-            return MMCCamera(
+            camera = MMCCamera(
                 image=config.image,
                 name=config.name or MMCCamera.DEFAULT_NAME,
                 default_exposure_time=config.default_exposure_time,
@@ -478,11 +728,13 @@ class CameraFactory:
                 check_alive=config.check_alive,
                 **binding_options,
             )
+            camera.config = config.copy()
+            return camera
 
         if config.binding == BindingType.PVCAM:
             from evomachine.bindings.pvcam.camera import PVCAMCamera
 
-            return PVCAMCamera(
+            camera = PVCAMCamera(
                 image=config.image,
                 name=config.name or PVCAMCamera.DEFAULT_NAME,
                 default_exposure_time=config.default_exposure_time,
@@ -491,5 +743,7 @@ class CameraFactory:
                 check_alive=config.check_alive,
                 **binding_options,
             )
+            camera.config = config.copy()
+            return camera
 
         raise ValueError(f"CameraFactory.create: unsupported camera binding {config.binding}.")

@@ -8,7 +8,9 @@ from evomachine.acquisition import FrameAcquisitionManager
 from evomachine.automaton import Automaton
 from evomachine.commands import AutomatonCommand, CommandFactory
 from evomachine.config import DMD_WIDTH_HEIGHT
-from evomachine.config_types import ConfigImageProcessorFactory, DMDCalibConfigType, Frame, FrameMetaData
+from evomachine.frame import Frame, FrameMetaData
+from evomachine.image_processing_config import ImageProcessorConfigFactory
+from evomachine.peripherals.dmd import DmdCalibrationConfig
 from evomachine.coordinates import Coordinate
 from evomachine.navigation import FocusNavigator
 from evomachine.peripherals.dmd import Dmd
@@ -241,9 +243,9 @@ class FakeProjectionManager(ProjectionManager):
 
     def __init__(self):
         """Initialise fake projection state."""
-        self.calls: list[tuple[DMDCalibConfigType, str | None]] = []
+        self.calls: list[tuple[DmdCalibrationConfig, str | None]] = []
 
-    def dmd_calibrate(self, cfg: DMDCalibConfigType, filename: str | Path | None = None):
+    def dmd_calibrate(self, cfg: DmdCalibrationConfig, filename: str | Path | None = None):
         """Record one calibration request."""
         self.calls.append((cfg, filename))
         return [], np.eye(3), np.eye(3), Path("calibration.pkl")
@@ -283,10 +285,10 @@ def make_cfg():
 
     Returns
     -------
-    ConfigImageProcessor
+    ImageProcessorConfig
         Test config.
     """
-    return ConfigImageProcessorFactory.default_config(
+    return ImageProcessorConfigFactory.default_config(
         channels=[LEDType.LED_450_NM, LEDType.LED_565_NM],
         channels_seg=[LEDType.LED_450_NM],
     )
@@ -479,7 +481,7 @@ def test_automaton_dmd_calibrate_delegates_to_projection_manager() -> None:
     None
     """
     automaton, _, _, projection_manager, _, _ = make_automaton()
-    cfg = DMDCalibConfigType(
+    cfg = DmdCalibrationConfig(
         channel=LEDType.LED_450_NM,
         brightness=10,
         exposure=50,

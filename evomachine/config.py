@@ -1,17 +1,7 @@
-from dataclasses import dataclass
 from datetime import datetime
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-
-import delta
-from delta.utils import CroppingBox
-from delta.rttypes import TrackingSetting
-
-from evomachine.exceptions import ConfigError, ErrorCode
-from evomachine.types import ChamberOrientationType, FilterWheelType, FocusAlgorithmType, LEDType
-from evomachine.config_types import ConfigFocus, ConfigFocusFactory, ImageConfigType, ImageConfigTypeFactory, \
-    ObjectiveConfigType, ObjectiveConfigTypeFactory, SoftwareFocusConfig, SoftwareFocusConfigFactory
 
 # Path to large data storage to store logs and files
 EVOMACHINE_DIR: Path = Path(__file__).resolve().parents[1]
@@ -60,3 +50,44 @@ def get_logger(name: str, is_gui: bool = False) -> logging.Logger:
 
     logger.propagate = False
     return logger
+
+
+def __getattr__(name: str):
+    """Lazy compatibility exports for config classes moved to domain modules."""
+    if name in {"ConfigCRISP", "TigerAutofocusConfig"}:
+        from evomachine.bindings.asitiger.autofocus import TigerAutofocusConfig
+
+        return TigerAutofocusConfig
+    if name in {"ConfigCRISPFactory", "TigerAutofocusConfigFactory"}:
+        from evomachine.bindings.asitiger.autofocus import TigerAutofocusConfigFactory
+
+        return TigerAutofocusConfigFactory
+    if name in {"ConfigFocus", "SoftwareFocusConfig"}:
+        from evomachine.softwarefocus import SoftwareFocusConfig
+
+        return SoftwareFocusConfig
+    if name in {"ConfigFocusFactory", "SoftwareFocusConfigFactory"}:
+        from evomachine.softwarefocus import SoftwareFocusConfigFactory
+
+        return SoftwareFocusConfigFactory
+    if name in {"ConfigImageProcessor", "ImageProcessorConfig"}:
+        from evomachine.image_processing_config import ImageProcessorConfig
+
+        return ImageProcessorConfig
+    if name in {"ConfigImageProcessorFactory", "ImageProcessorConfigFactory"}:
+        from evomachine.image_processing_config import ImageProcessorConfigFactory
+
+        return ImageProcessorConfigFactory
+    if name in {"ConfigCamera", "CameraSystemConfig"}:
+        from evomachine.peripherals.camera import CameraSystemConfig
+
+        return CameraSystemConfig
+    if name in {"ConfigCameraFactory", "CameraSystemConfigFactory"}:
+        from evomachine.peripherals.camera import CameraSystemConfigFactory
+
+        return CameraSystemConfigFactory
+    if name in {"ImageConfigType", "ImageConfigTypeFactory", "ObjectiveConfigType", "ObjectiveConfigTypeFactory"}:
+        from evomachine.peripherals import camera
+
+        return getattr(camera, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

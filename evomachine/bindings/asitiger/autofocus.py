@@ -26,6 +26,30 @@ class TigerAutofocusConfig:
     min_snr: int | float = 2
     min_error: int | float = 100
 
+    @staticmethod
+    def get_attr_from_str(attr_name: str, attr_value_str: str) -> int | float:
+        if attr_name in {"lock_range", "objective_na", "min_snr", "min_error"}:
+            return float(attr_value_str)
+        return int(attr_value_str)
+
+    @staticmethod
+    def attr_is_valid(attr_name: str, attr_value: Any) -> bool:
+        if attr_name == "averaging":
+            return isinstance(attr_value, int) and not isinstance(attr_value, bool) and 0 <= attr_value < 100
+        if attr_name == "led_intensity":
+            return isinstance(attr_value, int) and not isinstance(attr_value, bool) and 1 < attr_value <= 100
+        if attr_name == "loop_gain":
+            return isinstance(attr_value, int) and not isinstance(attr_value, bool) and 1 <= attr_value <= 100
+        if attr_name == "update_rate":
+            return isinstance(attr_value, int) and not isinstance(attr_value, bool) and attr_value >= 0
+        if attr_name == "lock_range":
+            return isinstance(attr_value, int | float) and not isinstance(attr_value, bool) and 0 < attr_value < 1
+        if attr_name == "objective_na":
+            return isinstance(attr_value, int | float) and not isinstance(attr_value, bool) and 0 < attr_value < 10
+        if attr_name in {"min_snr", "min_error"}:
+            return isinstance(attr_value, int | float) and not isinstance(attr_value, bool) and attr_value >= 0
+        return False
+
     def __post_init__(self) -> None:
         """
         Validate ASI Tiger CRISP configuration after construction.

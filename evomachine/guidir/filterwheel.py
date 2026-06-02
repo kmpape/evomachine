@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
 
-from evomachine.config import ConfigCamera, ConfigImageProcessor, get_logger
+from evomachine.config import CameraSystemConfig, ImageProcessorConfig, get_logger
 from evomachine.types import FilterWheelType
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
 from evomachine.guidir.guitypes import SMALL, CENTER, LEFT, RIGHT, NORMAL
@@ -47,8 +47,8 @@ class FilterWheelPanel(EvoPanelTemplate):
     def __init__(
             self,
             queue_manager: QueueManager,
-            camera_config: ConfigCamera,
-            processor_config: ConfigImageProcessor,
+            camera_config: CameraSystemConfig,
+            processor_config: ImageProcessorConfig,
             start_strategy_event: Event,
             stop_strategy_event: Event,
             stop_event: Event,

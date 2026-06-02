@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import threading
+from typing import Any
 
 import numpy as np
 from delta.utils import CroppingBox
@@ -10,9 +11,95 @@ from evomachine.acquisition import FrameAcquisitionManager, FrameAcquisitionSett
 from evomachine.bindings.software_focus.software_focus_algorithms import (
     create_software_focus_algorithm,
 )
-from evomachine.config_types import Frame, SoftwareFocusConfigNew
 from evomachine.coordinates import Coordinate
+from evomachine.frame import Frame, FrameMetaData
 from evomachine.types import FocusCurveType, FocusStatusType, UNKNOWN_FOV_ID
+from evomachine.types import FocusAlgorithmType, LEDType
+
+
+@dataclass
+class SoftwareFocusConfig:
+    """Configuration object for acquisition-backed software focus."""
+
+    focus_frames: list[FrameMetaData]
+    acquisition_settings: FrameAcquisitionSettings | None
+    rel_range: int
+    step_size: int
+    algorithm: FocusAlgorithmType
+    algorithm_kwargs: dict[str, Any] = field(default_factory=dict)
+    cropping_box: CroppingBox | list[CroppingBox] | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.focus_frames, list) or not self.focus_frames:
+            raise TypeError("SoftwareFocusConfig: focus_frames must be a non-empty list[FrameMetaData].")
+        if not all(isinstance(frame, FrameMetaData) for frame in self.focus_frames):
+            raise TypeError("SoftwareFocusConfig: every focus frame must be FrameMetaData.")
+        if self.acquisition_settings is not None and not isinstance(self.acquisition_settings, FrameAcquisitionSettings):
+            raise TypeError("SoftwareFocusConfig: acquisition_settings must be FrameAcquisitionSettings or None.")
+        if not isinstance(self.rel_range, int) or isinstance(self.rel_range, bool) or not 0 < self.rel_range < 2000:
+            raise TypeError("SoftwareFocusConfig: rel_range must be int in (0, 2000).")
+        if not isinstance(self.step_size, int) or isinstance(self.step_size, bool) or not 0 < self.step_size <= self.rel_range:
+            raise TypeError("SoftwareFocusConfig: step_size must be int in [1, rel_range].")
+        if not isinstance(self.algorithm, FocusAlgorithmType):
+            raise TypeError("SoftwareFocusConfig: algorithm must be FocusAlgorithmType.")
+        if not isinstance(self.algorithm_kwargs, dict):
+            raise TypeError("SoftwareFocusConfig: algorithm_kwargs must be dict[str, Any].")
+        if not all(isinstance(key, str) for key in self.algorithm_kwargs):
+            raise TypeError("SoftwareFocusConfig: algorithm_kwargs keys must be str.")
+        self.cropping_box = self._validate_cropping_box(self.cropping_box)
+
+    @staticmethod
+    def _validate_cropping_box(
+            cropping_box: CroppingBox | list[CroppingBox] | None,
+    ) -> CroppingBox | list[CroppingBox] | None:
+        if cropping_box is None or isinstance(cropping_box, CroppingBox):
+            return cropping_box
+        if isinstance(cropping_box, list):
+            if not cropping_box:
+                raise ValueError("SoftwareFocusConfig: cropping_box list must not be empty.")
+            if not all(isinstance(box, CroppingBox) for box in cropping_box):
+                raise TypeError("SoftwareFocusConfig: every cropping_box entry must be CroppingBox.")
+            return list(cropping_box)
+        raise TypeError("SoftwareFocusConfig: cropping_box must be CroppingBox, list[CroppingBox], or None.")
+
+    def copy(self) -> "SoftwareFocusConfig":
+        return SoftwareFocusConfig(**self.__dict__)
+
+    def updated(self, **kwargs: Any) -> "SoftwareFocusConfig":
+        unknown_keys = [key for key in kwargs if key not in self.__dict__]
+        if unknown_keys:
+            raise ValueError(f"SoftwareFocusConfig.updated: unknown fields {unknown_keys}.")
+        values = dict(self.__dict__)
+        values.update(kwargs)
+        return SoftwareFocusConfig(**values)
+
+    def update_from_mapping(self, updates: dict[str, Any]) -> "SoftwareFocusConfig":
+        if not isinstance(updates, dict):
+            raise TypeError("SoftwareFocusConfig.update_from_mapping: updates must be dict.")
+        return self.updated(**updates)
+
+
+class SoftwareFocusConfigFactory:
+    """Factory for software focus configuration defaults."""
+
+    @staticmethod
+    def default_config() -> SoftwareFocusConfig:
+        return SoftwareFocusConfig(
+            focus_frames=[
+                FrameMetaData(
+                    frame_id=-1,
+                    leds={LEDType.LED_450_NM: 29},
+                    filter_wheel=None,
+                    exposure=200,
+                )
+            ],
+            acquisition_settings=None,
+            rel_range=50,
+            step_size=5,
+            algorithm=FocusAlgorithmType.STEEL,
+            algorithm_kwargs={"rowshift": 25, "colshift": 0},
+            cropping_box=CroppingBox(xtl=200, xbr=3000, ytl=300, ybr=2900),
+        )
 
 
 @dataclass
@@ -45,7 +132,7 @@ class SoftwareFocus:
     def __init__(
             self,
             acquisition_manager: FrameAcquisitionManager,
-            config: SoftwareFocusConfigNew,
+            config: SoftwareFocusConfig,
     ):
         """
         Initialise a software focus orchestrator.
@@ -55,7 +142,7 @@ class SoftwareFocus:
         acquisition_manager
             FrameAcquisitionManager used for all camera and peripheral capture.
         config
-            Default SoftwareFocusConfigNew controlling scan range and scoring.
+            Default SoftwareFocusConfig controlling scan range and scoring.
 
         Returns
         -------
@@ -66,20 +153,20 @@ class SoftwareFocus:
                 f"SoftwareFocus.__init__: acquisition_manager must be FrameAcquisitionManager, "
                 f"received {type(acquisition_manager)}."
             )
-        if not isinstance(config, SoftwareFocusConfigNew):
-            raise TypeError(f"SoftwareFocus.__init__: config must be SoftwareFocusConfigNew, received {type(config)}.")
+        if not isinstance(config, SoftwareFocusConfig):
+            raise TypeError(f"SoftwareFocus.__init__: config must be SoftwareFocusConfig, received {type(config)}.")
         if acquisition_manager.stage is None:
             raise ValueError("SoftwareFocus.__init__: acquisition_manager must have a stage.")
         self.acquisition_manager: FrameAcquisitionManager = acquisition_manager
-        self.default_config: SoftwareFocusConfigNew = config
+        self.default_config: SoftwareFocusConfig = config
         self._fov_results: dict[int, SoftwareFocusResult] = {}
-        self._fov_config: dict[int, SoftwareFocusConfigNew] = {}
+        self._fov_config: dict[int, SoftwareFocusConfig] = {}
         self._stop_requested: bool = False
 
     def initialise_fovs(
             self,
             fov_ids: list[int],
-            fov_configs: dict[int, SoftwareFocusConfigNew] | None = None,
+            fov_configs: dict[int, SoftwareFocusConfig] | None = None,
     ) -> None:
         """
         Initialise empty focus results and optional configs for fovs.
@@ -109,7 +196,7 @@ class SoftwareFocus:
         if fov_configs is None:
             return
         if not isinstance(fov_configs, dict):
-            raise TypeError("SoftwareFocus.initialise_fovs: fov_configs must be dict[int, SoftwareFocusConfigNew].")
+            raise TypeError("SoftwareFocus.initialise_fovs: fov_configs must be dict[int, SoftwareFocusConfig].")
         for fov_id, config in fov_configs.items():
             if fov_id not in self._fov_results:
                 raise KeyError(f"SoftwareFocus.initialise_fovs: unknown config fov ID {fov_id}.")
@@ -117,7 +204,7 @@ class SoftwareFocus:
 
     def update_config(
             self,
-            config: SoftwareFocusConfigNew,
+            config: SoftwareFocusConfig,
             fov_id: int | None = None,
     ) -> None:
         """
@@ -126,7 +213,7 @@ class SoftwareFocus:
         Parameters
         ----------
         config
-            Replacement SoftwareFocusConfigNew.
+            Replacement SoftwareFocusConfig.
         fov_id
             Optional fov ID. If None, update the default config.
 
@@ -146,7 +233,7 @@ class SoftwareFocus:
     def score_image(
             self,
             img: np.ndarray,
-            config: SoftwareFocusConfigNew | None = None,
+            config: SoftwareFocusConfig | None = None,
             cropping_box: CroppingBox | list[CroppingBox] | None = None,
     ) -> float:
         """
@@ -157,7 +244,7 @@ class SoftwareFocus:
         img
             Image array to score.
         config
-            SoftwareFocusConfigNew selecting the algorithm and parameters.
+            SoftwareFocusConfig selecting the algorithm and parameters.
         cropping_box
             Optional crop override. If None, config.cropping_box is used.
 
@@ -171,7 +258,7 @@ class SoftwareFocus:
             algorithm=config.algorithm,
             **config.algorithm_kwargs,
         )
-        crop_selection = config.cropping_box if cropping_box is None else SoftwareFocusConfigNew._validate_cropping_box(
+        crop_selection = config.cropping_box if cropping_box is None else SoftwareFocusConfig._validate_cropping_box(
             cropping_box,
         )
         if crop_selection is None:
@@ -295,22 +382,22 @@ class SoftwareFocus:
         )
 
     @staticmethod
-    def _validate_config(config: SoftwareFocusConfigNew) -> SoftwareFocusConfigNew:
+    def _validate_config(config: SoftwareFocusConfig) -> SoftwareFocusConfig:
         """
         Return a validated new software focus config.
 
         Parameters
         ----------
         config
-            Candidate SoftwareFocusConfigNew.
+            Candidate SoftwareFocusConfig.
 
         Returns
         -------
-        SoftwareFocusConfigNew
+        SoftwareFocusConfig
             Validated config.
         """
-        if not isinstance(config, SoftwareFocusConfigNew):
-            raise TypeError(f"SoftwareFocus: config must be SoftwareFocusConfigNew, received {type(config)}.")
+        if not isinstance(config, SoftwareFocusConfig):
+            raise TypeError(f"SoftwareFocus: config must be SoftwareFocusConfig, received {type(config)}.")
         return config
 
     def _resolve_fov_id(self, fov_id: int | None) -> int:
@@ -337,7 +424,7 @@ class SoftwareFocus:
         return UNKNOWN_FOV_ID
 
     @staticmethod
-    def _make_z_coordinates(current_z: int | float, config: SoftwareFocusConfigNew) -> np.ndarray:
+    def _make_z_coordinates(current_z: int | float, config: SoftwareFocusConfig) -> np.ndarray:
         """
         Return scan Z coordinates around the current Z coordinate.
 
@@ -387,7 +474,7 @@ class SoftwareFocus:
             self,
             frame: Frame,
             frames_per_z: int,
-            config: SoftwareFocusConfigNew,
+            config: SoftwareFocusConfig,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Score a captured Z stack and return per-Z scores and mean frames.

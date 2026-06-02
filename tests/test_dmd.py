@@ -11,7 +11,7 @@ from evomachine.bindings.pygame.dmd import PygameDmd
 from evomachine.bindings.pygame.peripheralcontroller import PygameDmdPeripheralController
 from evomachine.bindings.virtual.dmd import VirtualDmd, VirtualDmdPeripheralController
 from evomachine.peripherals.dmd import Dmd, DmdConfig, DmdFactory
-from evomachine.peripherals.peripherals import PeripheralController, SocketPeripheralController
+from evomachine.peripherals.peripheralcontrollers import PeripheralController, SocketPeripheralController
 from evomachine.bindings.binding_types import BindingType
 
 # TODO(CODEX): Make these Fake classes import dependent. If some global variable is true, the real classes are imported and the real bindings tested. For security reasons, we need test settings defined somewhere.
@@ -26,6 +26,11 @@ class FakeSocket:
 
     def close(self):
         self.closed = True
+
+
+class FakeSocketWithoutClose:
+    def sendall(self, data):
+        return
 
 
 class FakeSurface:
@@ -341,6 +346,13 @@ def test_socket_controller_shutdown_honours_close_on_shutdown():
 
     controller.shutdown(force=True)
     assert fake_socket.closed
+
+
+def test_socket_controller_shutdown_requires_close_method():
+    controller = SocketTestController(socket_obj=FakeSocketWithoutClose())
+
+    with pytest.raises(TypeError, match="close"):
+        controller.shutdown()
 
 
 def test_em_dmd_window_binding_sends_transposed_image_bytes(tmp_path):

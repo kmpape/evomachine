@@ -1,7 +1,8 @@
 import pytest
 
 from evomachine.commands import CommandFactory
-from evomachine.config_types import ConfigImageProcessorFactory, FrameMetaData
+from evomachine.frame import FrameMetaData
+from evomachine.image_processing_config import ImageProcessorConfigFactory
 from evomachine.types import LEDType
 
 
@@ -18,7 +19,7 @@ def make_factory() -> CommandFactory:
     CommandFactory
         Command factory configured for tests.
     """
-    cfg = ConfigImageProcessorFactory.default_config(
+    cfg = ImageProcessorConfigFactory.default_config(
         channels=[LEDType.LED_450_NM, LEDType.LED_565_NM],
         channels_seg=[LEDType.LED_450_NM],
     )

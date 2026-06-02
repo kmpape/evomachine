@@ -14,13 +14,108 @@ from PIL import Image, ImageDraw, ImageFont
 import skimage.color
 import skimage.io
 
-from evomachine.peripherals.peripherals import Peripheral, PeripheralController, get_peripheral_controller
+from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
+from evomachine.peripherals.peripherals import Peripheral, update_dataclass_config
 from evomachine.bindings.binding_types import BindingType
 from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT
+from evomachine.types import LEDType
 
 logger = logging.getLogger(__name__)
 
 ARR_TYPE = np.uint8
+
+
+@dataclass
+class DmdCalibrationConfig:
+    channel: LEDType | list[LEDType]
+    brightness: float | int
+    exposure: float | int
+    line_width: int
+    step: int
+    delay: float | int
+    start_row: int
+    end_row: int
+    start_col: int
+    end_col: int
+    on_mothermachine: bool
+
+    def __post_init__(self) -> None:
+        if not ((0 <= self.start_row) and (self.start_row < self.end_row) and (self.end_row < 2716)):
+            raise ValueError("Indices must be within DMD boundaries.")
+        if not ((0 <= self.start_col) and (self.start_col < self.end_col) and (self.end_col < 1600)):
+            raise ValueError("Indices must be within DMD boundaries.")
+
+    def copy(self) -> "DmdCalibrationConfig":
+        return DmdCalibrationConfig(**self.__dict__)
+
+    def updated(self, **kwargs: Any) -> "DmdCalibrationConfig":
+        unknown_keys = [key for key in kwargs if key not in self.__dict__]
+        if unknown_keys:
+            raise ValueError(f"DmdCalibrationConfig.updated: unknown fields {unknown_keys}.")
+        values = dict(self.__dict__)
+        values.update(kwargs)
+        return DmdCalibrationConfig(**values)
+
+    def update_from_mapping(self, updates: dict[str, Any]) -> "DmdCalibrationConfig":
+        if not isinstance(updates, dict):
+            raise TypeError("DmdCalibrationConfig.update_from_mapping: updates must be dict.")
+        return self.updated(**updates)
+
+    def __str__(self) -> str:
+        lines = ["DmdCalibrationConfig"]
+        for index, (key, value) in enumerate(self.__dict__.items()):
+            lines.append(f"{' └─ ' if index == len(self.__dict__) - 1 else ' ├─ '}{key}: {value}")
+        return "\n".join(lines)
+
+
+class DmdCalibrationConfigFactory:
+    @staticmethod
+    def default(channel: LEDType | list[LEDType] = LEDType.LED_450_NM) -> DmdCalibrationConfig:
+        return DmdCalibrationConfig(
+            channel=channel,
+            brightness=29,
+            exposure=100,
+            line_width=5,
+            step=150,
+            delay=0.75,
+            start_row=200,
+            end_row=2500,
+            start_col=0,
+            end_col=1599,
+            on_mothermachine=True,
+        )
+
+    @staticmethod
+    def thin_fluo_slide(channel: LEDType = LEDType.LED_565_NM) -> DmdCalibrationConfig:
+        return DmdCalibrationConfig(
+            channel=channel,
+            brightness=29,
+            exposure=100,
+            line_width=5,
+            step=150,
+            delay=0.5,
+            start_row=200,
+            end_row=2200,
+            start_col=0,
+            end_col=1599,
+            on_mothermachine=False,
+        )
+
+    @staticmethod
+    def fluo_slide(channel: LEDType = LEDType.LED_450_NM) -> DmdCalibrationConfig:
+        return DmdCalibrationConfig(
+            channel=channel,
+            brightness=0.4,
+            exposure=50,
+            line_width=2,
+            step=50,
+            delay=0.5,
+            start_row=200,
+            end_row=2200,
+            start_col=0,
+            end_col=1599,
+            on_mothermachine=False,
+        )
 
 
 @dataclass
@@ -84,6 +179,22 @@ class DmdConfig:
             raise TypeError(
                 f"DmdConfig: calibration_file must be Path, str, or None, received {type(self.calibration_file)}."
             )
+
+    def copy(self) -> "DmdConfig":
+        return DmdConfig(**self.__dict__)
+
+    def updated(self, **kwargs: Any) -> "DmdConfig":
+        unknown_keys = [key for key in kwargs if key not in self.__dict__]
+        if unknown_keys:
+            raise ValueError(f"DmdConfig.updated: unknown fields {unknown_keys}.")
+        values = dict(self.__dict__)
+        values.update(kwargs)
+        return DmdConfig(**values)
+
+    def update_from_mapping(self, updates: dict[str, Any]) -> "DmdConfig":
+        if not isinstance(updates, dict):
+            raise TypeError("DmdConfig.update_from_mapping: updates must be dict.")
+        return self.updated(**updates)
 
     @staticmethod
     def _validate_size(
@@ -197,6 +308,7 @@ class Dmd(Peripheral):
         self._calib_data: list | None = None
         self._homography_mat: np.ndarray | None = None
         self._homography_mat_inv: np.ndarray | None = None
+        self.config: DmdConfig | None = None
         self.calibrate(filepath=self._calib_file)
 
     @staticmethod
@@ -250,6 +362,26 @@ class Dmd(Peripheral):
         filepath = self._calib_file if filepath is None else Path(filepath)
         self._calib_data, self._homography_mat, self._homography_mat_inv = self.load_calibration_data(filepath=filepath)
         self._calib_file = filepath
+
+    def update_config(self, config: DmdConfig | None = None, **updates: Any) -> None:
+        """Replace or update DMD configuration at runtime."""
+        current_config = self.config
+        if current_config is None:
+            if config is None:
+                raise RuntimeError("Dmd.update_config: this DMD was not created from a DmdConfig.")
+            new_config = config.copy()
+        else:
+            new_config = update_dataclass_config(current_config=current_config, replacement=config, **updates)
+        if current_config is not None and new_config.binding != current_config.binding:
+            raise RuntimeError("Dmd.update_config: changing DMD binding requires recreating the DMD.")
+        self.config = new_config.copy()
+        self.name = new_config.name or self.name
+        self.check_initialised = new_config.check_initialised
+        self.check_alive = new_config.check_alive
+        self.width_height_DMD = new_config.width_height_DMD
+        self.width_height_CAM = new_config.width_height_CAM
+        self._calib_file = new_config.calibration_file or self._calib_file
+        self.calibrate(filepath=self._calib_file)
 
     def get_calibration_data(self) -> tuple[list, np.ndarray, np.ndarray, Path] | tuple[None, None, None, Path]:
         """Return loaded calibration data, homographies, and the calibration filename."""
@@ -684,7 +816,7 @@ class DmdFactory:
                 controller_type=EmDmdWindowPeripheralController,
                 action="DmdFactory.create",
             )
-            return EmDmdWindowDmd(
+            dmd = EmDmdWindowDmd(
                 peripheral_ctrl=peripheral_ctrl,
                 name=config.name or EmDmdWindowDmd.DEFAULT_NAME,
                 check_initialised=config.check_initialised,
@@ -692,6 +824,8 @@ class DmdFactory:
                 **dmd_options,
                 **binding_options,
             )
+            dmd.config = config.copy()
+            return dmd
         if config.binding == BindingType.PYGAME:
             from evomachine.bindings.pygame.dmd import PygameDmd
             from evomachine.bindings.pygame.peripheralcontroller import PygameDmdPeripheralController
@@ -709,7 +843,7 @@ class DmdFactory:
                 action="DmdFactory.create",
             )
             peripheral_ctrl.configure_display(**controller_options)
-            return PygameDmd(
+            dmd = PygameDmd(
                 peripheral_ctrl=peripheral_ctrl,
                 name=config.name or PygameDmd.DEFAULT_NAME,
                 check_initialised=config.check_initialised,
@@ -717,6 +851,8 @@ class DmdFactory:
                 **dmd_options,
                 **binding_options,
             )
+            dmd.config = config.copy()
+            return dmd
         if config.binding == BindingType.VIRTUAL:
             from evomachine.bindings.virtual.dmd import VirtualDmd
             from evomachine.bindings.virtual.dmd import VirtualDmdPeripheralController
@@ -726,7 +862,7 @@ class DmdFactory:
                 controller_type=VirtualDmdPeripheralController,
                 action="DmdFactory.create",
             )
-            return VirtualDmd(
+            dmd = VirtualDmd(
                 peripheral_ctrl=peripheral_ctrl,
                 name=config.name or VirtualDmd.DEFAULT_NAME,
                 check_initialised=config.check_initialised,
@@ -734,4 +870,6 @@ class DmdFactory:
                 **dmd_options,
                 **binding_options,
             )
+            dmd.config = config.copy()
+            return dmd
         raise ValueError(f"DmdFactory.create: unsupported binding {config.binding}.")

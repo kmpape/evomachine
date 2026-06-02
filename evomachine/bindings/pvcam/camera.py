@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 
 from evomachine.peripherals.camera import Camera
-from evomachine.config_types import ImageConfigType
+from evomachine.peripherals.camera import ImageConfigType
 
 
 class PVCAMCamera(Camera):

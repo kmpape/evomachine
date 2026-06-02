@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.acquisition_bkp import AbstractCamera
-from evomachine.config import ConfigCamera, ConfigCRISP, ConfigFocus, ConfigImageProcessor, get_logger
+from evomachine.config import CameraSystemConfig, ConfigCRISP, ConfigFocus, ImageProcessorConfig, get_logger
 from evomachine.types import FocusAlgorithmType, LEDType
 from evomachine.guidir.figures import FigureWindow
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
@@ -97,8 +97,8 @@ class FocusPanel(EvoPanelTemplate):
     def __init__(
             self,
             queue_manager: QueueManager,
-            camera_config: ConfigCamera,
-            processor_config: ConfigImageProcessor,
+            camera_config: CameraSystemConfig,
+            processor_config: ImageProcessorConfig,
             start_strategy_event: Event,
             stop_strategy_event: Event,
             stop_event: Event,

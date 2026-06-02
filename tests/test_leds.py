@@ -11,7 +11,7 @@ from evomachine.bindings.syncboard.peripheralcontroller import SyncBoardPeripher
 from evomachine.bindings.virtual.leds import VirtualLedSource
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
 from evomachine.peripherals.leds import LedConfig, LedFactory, LedManager, LedSource
-from evomachine.peripherals.peripherals import PeripheralController
+from evomachine.peripherals.peripheralcontrollers import PeripheralController
 from evomachine.bindings.binding_types import BindingType
 from evomachine.types import BrightnessType, LEDType
 

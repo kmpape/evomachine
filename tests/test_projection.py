@@ -3,7 +3,7 @@ import pickle
 
 import numpy as np
 
-from evomachine.config_types import DMDCalibConfigType
+from evomachine.peripherals.dmd import DmdCalibrationConfig
 from evomachine.projection import ProjectionManager
 from evomachine.types import FilterWheelType, LEDType
 
@@ -373,7 +373,7 @@ class FakePhotodiode:
     """Photodiode fake reserved for ProjectionManager construction tests."""
 
 
-def make_config() -> DMDCalibConfigType:
+def make_config() -> DmdCalibrationConfig:
     """
     Return a small DMD calibration config for tests.
 
@@ -383,10 +383,10 @@ def make_config() -> DMDCalibConfigType:
 
     Returns
     -------
-    DMDCalibConfigType
+    DmdCalibrationConfig
         Calibration config scanning four DMD points.
     """
-    return DMDCalibConfigType(
+    return DmdCalibrationConfig(
         channel=LEDType.LED_450_NM,
         brightness=25,
         exposure=12,

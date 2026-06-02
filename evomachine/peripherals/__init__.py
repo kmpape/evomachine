@@ -1,7 +1,6 @@
 """Compatibility exports for peripheral base classes and helpers."""
 
-from evomachine.peripherals.peripherals import (
-    Peripheral,
+from evomachine.peripherals.peripheralcontrollers import (
     PeripheralController,
     PeripheralControllerConfig,
     PeripheralControllerFactory,
@@ -12,6 +11,7 @@ from evomachine.peripherals.peripherals import (
     get_peripheral_controller,
     normalise_peripheral_controllers,
 )
+from evomachine.peripherals.peripherals import Peripheral
 
 __all__ = [
     "Peripheral",

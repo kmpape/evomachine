@@ -11,8 +11,10 @@ from delta.rt import PositionRT
 
 from evomachine.commands import AutomatonCommand, CommandFactory
 from evomachine.config import get_logger
-from evomachine.config_types import ConfigCamera, ConfigImageProcessor, FrameMetaDataFactory
 from evomachine.coordinates import Coordinate
+from evomachine.frame import FrameMetaDataFactory
+from evomachine.image_processing_config import ImageProcessorConfig
+from evomachine.peripherals.camera import CameraSystemConfig
 from evomachine.peripherals.dmd import Dmd
 from evomachine.types import LEDType
 
@@ -56,10 +58,10 @@ class AbstractStrategy(ABC):
         Strategy instance that can be initialised by Automaton.
     """
 
-    def __init__(self, cfg: ConfigImageProcessor):
+    def __init__(self, cfg: ImageProcessorConfig):
         self.callback_counter: int = 0
         "Incremented after each callback. First callback is 0."
-        self.cfg: ConfigImageProcessor = cfg
+        self.cfg: ImageProcessorConfig = cfg
         "Image processor configuration object."
         self.fovs: dict[int, Coordinate] = {}
         "Dictionary indexed by FoV ID with FoV coordinates."
@@ -71,7 +73,7 @@ class AbstractStrategy(ABC):
         "Optional path to save images."
         self.command_factory: CommandFactory = CommandFactory(cfg=cfg)
         "Factory object used to create AutomatonCommand objects."
-        self.config_camera: ConfigCamera | None = None
+        self.config_camera: CameraSystemConfig | None = None
         "Camera configuration object injected during initialise()."
         self.dmd: Dmd | None = None
         "DMD object injected during initialise()."
@@ -131,7 +133,7 @@ class AbstractStrategy(ABC):
             self,
             fovs: dict[int, Coordinate],
             region_of_interests: dict[int, list[int]],
-            config_camera: ConfigCamera | None,
+            config_camera: CameraSystemConfig | None,
             fov_processors: list[PositionRT],
             dmd: Dmd,
     ) -> list[AutomatonCommand]:
@@ -308,7 +310,7 @@ class NoStrategy(AbstractStrategy):
 class BasicStrategy(AbstractStrategy):
     """Simple built-in imaging strategy for tests and minimal acquisitions."""
 
-    def __init__(self, cfg: ConfigImageProcessor, save_path: str):
+    def __init__(self, cfg: ImageProcessorConfig, save_path: str):
         """
         Initialise the basic strategy.
 
@@ -393,6 +395,7 @@ class BasicStrategy(AbstractStrategy):
         return [self.command_factory.command_live_mode(status=True)]
 
 
+# TODO(CODEX): Move this _default_strategies_folder to class definition as class attribute
 def _default_strategies_folder() -> Path:
     """
     Return the default repository strategies folder.
@@ -490,7 +493,7 @@ def list_strategy_definitions(strategy_folder: str | Path | None = None) -> list
     return sorted(definitions, key=lambda item: (str(item.file_path), item.name))
 
 
-def create_strategy_from_definition(name: str, file_path: str | Path, cfg: ConfigImageProcessor) -> AbstractStrategy:
+def create_strategy_from_definition(name: str, file_path: str | Path, cfg: ImageProcessorConfig) -> AbstractStrategy:
     """
     Create a strategy object from a discovered name/file pair.
 

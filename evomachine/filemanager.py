@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 import json
 from pathlib import Path
@@ -9,8 +10,45 @@ import numpy as np
 import skimage.io
 import tifffile
 
-from evomachine.config_types import FileNameConfig, FrameMetaData
+from evomachine.frame import FrameMetaData
 from evomachine.types import FilterWheelType, LEDType
+
+
+@dataclass
+class FileNameConfig:
+    """Configuration object for FileManager output paths and filename patterns."""
+
+    directory: Path
+    filename_pattern: str = "{channel}_FOV{fov_id}_X{x}_Y{y}_Z{z}_F{filter_wheel}_{timestamp}"
+    create_directory: bool = True
+
+    def __post_init__(self) -> None:
+        if isinstance(self.directory, str):
+            self.directory = Path(self.directory)
+        if not isinstance(self.directory, Path):
+            raise TypeError(f"FileNameConfig: directory must be Path or str, received {type(self.directory)}.")
+        if not isinstance(self.filename_pattern, str):
+            raise TypeError(f"FileNameConfig: filename_pattern must be str, received {type(self.filename_pattern)}.")
+        if self.filename_pattern == "":
+            raise ValueError("FileNameConfig: filename_pattern must not be empty.")
+        if not isinstance(self.create_directory, bool):
+            raise TypeError(f"FileNameConfig: create_directory must be bool, received {type(self.create_directory)}.")
+
+    def copy(self) -> "FileNameConfig":
+        return FileNameConfig(**self.__dict__)
+
+    def updated(self, **kwargs: Any) -> "FileNameConfig":
+        unknown_keys = [key for key in kwargs if key not in self.__dict__]
+        if unknown_keys:
+            raise ValueError(f"FileNameConfig.updated: unknown fields {unknown_keys}.")
+        values = dict(self.__dict__)
+        values.update(kwargs)
+        return FileNameConfig(**values)
+
+    def update_from_mapping(self, updates: dict[str, Any]) -> "FileNameConfig":
+        if not isinstance(updates, dict):
+            raise TypeError(f"FileNameConfig.update_from_mapping: updates must be dict, received {type(updates)}.")
+        return self.updated(**updates)
 
 
 class FileManager:
