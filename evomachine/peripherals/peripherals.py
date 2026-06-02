@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any
@@ -96,10 +95,116 @@ def update_dataclass_config(current_config: Any, replacement: Any | None = None,
     return type(current_config)(**values)
 
 
-class Peripheral(ABC):
-    """Base interface shared by all high-level peripheral devices."""
+class Peripheral:
+    """Base class shared by all high-level peripheral devices."""
 
-    @abstractmethod
+    def __init__(
+            self,
+            name: str,
+            check_initialised: bool = True,
+            check_alive: bool = True,
+            config: Any | None = None,
+    ):
+        """
+        Initialise shared peripheral lifecycle and configuration state.
+
+        Parameters
+        ----------
+        name
+            Human-readable peripheral name.
+        check_initialised
+            If True, public hardware methods require successful initialise().
+        check_alive
+            If True, public hardware methods require a live backing device.
+        config
+            Optional config object used to create this peripheral.
+
+        Returns
+        -------
+        None
+        """
+        self.name: str = name
+        self._is_initialised: bool = False
+        self._is_alive: bool = False
+        self._check_initialised: bool = check_initialised
+        self._check_alive: bool = check_alive
+        self.config: Any | None = config.copy() if hasattr(config, "copy") else config
+
+    def _require_ready(self, action: str) -> None:
+        """
+        Raise when a hardware action is blocked by readiness checks.
+
+        Parameters
+        ----------
+        action
+            Human-readable action name used in exception messages.
+
+        Returns
+        -------
+        None
+        """
+        if self._check_initialised and not self.is_initialised():
+            raise RuntimeError(f"{type(self).__name__}.{action}: {self.name} is not initialised.")
+        if self._check_alive and not self.is_alive():
+            raise RuntimeError(f"{type(self).__name__}.{action}: {self.name} is not alive.")
+
+    def initialise(self, force: bool = False) -> None:
+        """
+        Initialise the peripheral if needed.
+
+        Parameters
+        ----------
+        force
+            If True, run initialisation even when already initialised.
+
+        Returns
+        -------
+        None
+        """
+        if self._is_initialised and not force:
+            return
+        self._before_initialise(force=force)
+        initialise_result = self._initialise(force=force)
+        self._is_initialised = True if initialise_result is None else bool(initialise_result)
+        if self._check_initialised and not self._is_initialised:
+            raise RuntimeError(f"{type(self).__name__}.initialise: {self.name} failed to initialise.")
+        self._is_alive = self._check_is_alive()
+        if self._check_alive and not self._is_alive:
+            raise RuntimeError(f"{type(self).__name__}.initialise: {self.name} is not alive after initialisation.")
+        self._post_initialise(force=force)
+
+    def _before_initialise(self, force: bool = False) -> None:
+        """
+        Run subclass-specific checks before binding initialisation.
+
+        Parameters
+        ----------
+        force
+            If True, initialise was forced.
+
+        Returns
+        -------
+        None
+        """
+        return
+
+    def finalise(self, force: bool = False) -> None:
+        """
+        Finalise the peripheral and clear lifecycle flags.
+
+        Parameters
+        ----------
+        force
+            If True, force binding-specific cleanup where supported.
+
+        Returns
+        -------
+        None
+        """
+        self._finalise(force=force)
+        self._is_initialised = False
+        self._is_alive = False
+
     def is_alive(self) -> bool:
         """
         Return whether the peripheral reports an active backing device.
@@ -113,9 +218,24 @@ class Peripheral(ABC):
         bool
             True when the peripheral is alive.
         """
-        raise NotImplementedError
+        self._is_alive = self._check_is_alive()
+        return self._is_alive
 
-    @abstractmethod
+    def is_initialised(self) -> bool:
+        """
+        Return whether initialise has succeeded.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        bool
+            True when the peripheral is marked initialised.
+        """
+        return self._is_initialised
+
     def stop(self) -> None:
         """
         Stop peripheral activity without finalising the peripheral.
@@ -130,15 +250,169 @@ class Peripheral(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
-    def initialise(self, force: bool = False) -> None:
+    def update_config(self, config: Any | None = None, **updates: Any) -> None:
         """
-        Initialise the peripheral.
+        Replace or update the stored peripheral configuration.
+
+        Parameters
+        ----------
+        config
+            Optional replacement config. If None, keyword updates are applied to
+            the current config.
+        updates
+            Field updates applied to the current config.
+
+        Returns
+        -------
+        None
+        """
+        current_config = self.config
+        if current_config is None:
+            if config is None:
+                raise RuntimeError(f"{type(self).__name__}.update_config: {self.name} has no stored config.")
+            new_config = config.copy() if hasattr(config, "copy") else config
+        else:
+            new_config = update_dataclass_config(current_config=current_config, replacement=config, **updates)
+        if (
+                current_config is not None
+                and hasattr(current_config, "binding")
+                and hasattr(new_config, "binding")
+                and new_config.binding != current_config.binding
+        ):
+            raise RuntimeError(f"{type(self).__name__}.update_config: changing binding requires recreating the peripheral.")
+        was_initialised = self.is_initialised()
+        reinitialise = current_config is not None and self._config_requires_reinitialise(current_config, new_config)
+        if reinitialise and was_initialised:
+            self._before_config_reinitialise()
+            self.finalise(force=True)
+        self.config = new_config.copy() if hasattr(new_config, "copy") else new_config
+        self._apply_base_config(config=new_config)
+        self._apply_config(config=new_config)
+        if reinitialise and was_initialised:
+            self.initialise(force=True)
+            self._after_config_reinitialise()
+
+    def _apply_base_config(self, config: Any) -> None:
+        """
+        Apply config fields common to most peripherals.
+
+        Parameters
+        ----------
+        config
+            Config object with optional name/check fields.
+
+        Returns
+        -------
+        None
+        """
+        name = getattr(config, "name", None)
+        if name:
+            self.name = name
+        if hasattr(config, "check_initialised"):
+            self._check_initialised = config.check_initialised
+        if hasattr(config, "check_alive"):
+            self._check_alive = config.check_alive
+
+    def _post_initialise(self, force: bool = False) -> None:
+        """
+        Run subclass-specific work after successful initialisation.
 
         Parameters
         ----------
         force
-            If True, run initialisation even when already initialised.
+            If True, initialise was forced.
+
+        Returns
+        -------
+        None
+        """
+        return
+
+    def _config_requires_reinitialise(self, current_config: Any, new_config: Any) -> bool:
+        """
+        Return whether applying a config requires reinitialisation.
+
+        Parameters
+        ----------
+        current_config
+            Current config object.
+        new_config
+            Replacement config object.
+
+        Returns
+        -------
+        bool
+            True when update_config should finalise and initialise.
+        """
+        return False
+
+    def _before_config_reinitialise(self) -> None:
+        """
+        Run subclass-specific work before config-driven finalisation.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.stop()
+
+    def _after_config_reinitialise(self) -> None:
+        """
+        Run subclass-specific work after config-driven reinitialisation.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        return
+
+    def _apply_config(self, config: Any) -> None:
+        """
+        Apply subclass-specific config fields.
+
+        Parameters
+        ----------
+        config
+            Config object being applied.
+
+        Returns
+        -------
+        None
+        """
+        return
+
+    def _initialise(self, force: bool = False) -> bool:
+        """
+        Run binding-specific initialisation.
+
+        Parameters
+        ----------
+        force
+            If True, force binding-specific initialisation.
+
+        Returns
+        -------
+        bool
+            True when initialisation succeeded.
+        """
+        raise NotImplementedError
+
+    def _finalise(self, force: bool = False) -> None:
+        """
+        Run binding-specific finalisation.
+
+        Parameters
+        ----------
+        force
+            If True, force binding-specific finalisation.
 
         Returns
         -------
@@ -146,19 +420,18 @@ class Peripheral(ABC):
         """
         raise NotImplementedError
 
-    @abstractmethod
-    def finalise(self, force: bool = False) -> None:
+    def _check_is_alive(self) -> bool:
         """
-        Finalise the peripheral and release its active lifecycle state.
+        Return whether the binding-specific backing device is alive.
 
         Parameters
         ----------
-        force
-            If True, force binding-specific finalisation where supported.
+        None
 
         Returns
         -------
-        None
+        bool
+            True when the backing device is alive.
         """
         raise NotImplementedError
 

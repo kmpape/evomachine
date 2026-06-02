@@ -35,18 +35,6 @@ class FrameAcquisitionSettings:
     "Disable all LEDs after the acquisition call completes."
 
     def __post_init__(self) -> None:
-        """
-        Validate frame acquisition settings after construction.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-            The dataclass fields are validated in place.
-        """
         for field_name in ("save", "normalise", "illuminate_dmd", "clear_dmd_after", "restore_leds_after", "disable_leds_after"):
             value = getattr(self, field_name)
             if not isinstance(value, bool):

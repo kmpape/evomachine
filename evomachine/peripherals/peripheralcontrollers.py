@@ -16,18 +16,6 @@ class PeripheralControllerConfig:
     initialise: bool = True
 
     def __post_init__(self) -> None:
-        """
-        Validate peripheral controller configuration after construction.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-            The dataclass fields are validated in place.
-        """
         if not isinstance(self.binding, BindingType):
             raise TypeError(
                 f"PeripheralControllerConfig: binding must be BindingType, "
@@ -66,18 +54,6 @@ class SerialPeripheralControllerConfig(PeripheralControllerConfig):
     close_on_shutdown: bool = True
 
     def __post_init__(self) -> None:
-        """
-        Validate serial peripheral controller configuration after construction.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-            The dataclass fields are validated in place.
-        """
         super().__post_init__()
         if self.binding not in {
             BindingType.ASI_TIGER,
@@ -133,18 +109,6 @@ class SocketPeripheralControllerConfig(PeripheralControllerConfig):
     close_on_shutdown: bool = True
 
     def __post_init__(self) -> None:
-        """
-        Validate socket peripheral controller configuration after construction.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-            The dataclass fields are validated in place.
-        """
         super().__post_init__()
         if not isinstance(self.host, str):
             raise TypeError(f"SocketPeripheralControllerConfig: host must be str, received {type(self.host)}.")

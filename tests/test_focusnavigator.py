@@ -7,13 +7,17 @@ from types import SimpleNamespace
 import pytest
 
 from evomachine.navigation import (
+    FovConfig,
     FocusNavigator,
     FocusNavigatorConfig,
+    FocusNavigatorFovRecord,
 )
 from evomachine.coordinates import Coordinate, CoordinateBounds
 from evomachine.peripherals.autofocus import Autofocus
 from evomachine.peripherals.stage import Stage
+from evomachine.softwarefocus import SoftwareFocusConfigFactory
 from evomachine.types import AutoFocusStatusType, FocusStatusType
+from evomachine.utils import validate_dataclass_fields
 
 
 class FakeStage(Stage):
@@ -218,6 +222,7 @@ class FakeAutofocus(Autofocus):
         self.status = status
         self.initialise_success = initialise_success
         self.history: list[str] = []
+        self.configs: list[object] = []
         super().__init__(name="Fake Autofocus", check_initialised=False, check_alive=False)
 
     def _initialise(self, force: bool = False) -> bool:
@@ -300,6 +305,7 @@ class FakeAutofocus(Autofocus):
             Configured initialisation result.
         """
         self.history.append(f"initialise:{config}")
+        self.configs.append(config)
         if self.initialise_success and lock_after_initialise:
             self.locked = True
         return self.initialise_success
@@ -412,8 +418,9 @@ class FakeSoftwareFocus:
         self.z_by_fov = z_by_fov or {}
         self.runs: list[int] = []
         self.initialised_fovs: list[int] = []
+        self.initialised_fov_configs = None
 
-    def initialise_fovs(self, fov_ids: list[int]) -> None:
+    def initialise_fovs(self, fov_ids: list[int], fov_configs=None) -> None:
         """
         Record initialised fov IDs.
 
@@ -421,12 +428,15 @@ class FakeSoftwareFocus:
         ----------
         fov_ids
             FoV IDs supplied by FocusNavigator.
+        fov_configs
+            Optional software focus configs supplied by FocusNavigator.
 
         Returns
         -------
         None
         """
         self.initialised_fovs = list(fov_ids)
+        self.initialised_fov_configs = fov_configs
 
     def run(self, fov_id: int):
         """
@@ -522,12 +532,54 @@ def test_focus_navigator_config_validation() -> None:
     None
     """
     assert FocusNavigatorConfig().max_refocus_trials == 10
+    assert isinstance(FocusNavigatorConfig().default_fov_config, FovConfig)
+    assert isinstance(
+        FocusNavigatorFovRecord(
+            fov_id=0,
+            coordinate=Coordinate(0, 0, 0),
+            fov_config=FovConfig(),
+        ),
+        FocusNavigatorFovRecord,
+    )
     with pytest.raises(TypeError):
         FocusNavigatorConfig(use_autofocus="yes")
     with pytest.raises(ValueError):
         FocusNavigatorConfig(max_refocus_trials=0)
     with pytest.raises(ValueError):
         FocusNavigatorConfig(out_of_focus_wait_s=-1)
+
+
+def test_validate_dataclass_fields_accepts_lists_and_none() -> None:
+    """
+    Check shared dataclass validation accepts list type options and explicit None.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    validate_dataclass_fields(
+        dataclass_name="ExampleConfig",
+        checks=[
+            ("hello", [str, int]),
+            (None, [str, None]),
+            (1.0, (int, float)),
+        ],
+    )
+    with pytest.raises(TypeError, match="argument 0"):
+        validate_dataclass_fields(
+            dataclass_name="ExampleConfig",
+            checks=[(None, [str])],
+        )
+    with pytest.raises(TypeError, match="str \\| None") as exc_info:
+        validate_dataclass_fields(
+            dataclass_name="ExampleConfig",
+            checks=[(1, [str, None])],
+        )
+    assert "received int" in str(exc_info.value)
 
 
 def test_initialise_fovs_registers_xy_only_when_using_autofocus() -> None:
@@ -625,6 +677,96 @@ def test_channel_change_move_unlocks_focuses_locks_and_records_z() -> None:
     assert result.is_locked
 
 
+def test_initialise_fovs_passes_per_fov_software_focus_configs() -> None:
+    """
+    Check fov-specific software focus configs are passed to SoftwareFocus initialisation.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    software_focus_config = SoftwareFocusConfigFactory.default_config()
+    navigator, _, _, software_focus, _ = _navigator(FocusNavigatorConfig(use_autofocus=True))
+    fov_config = FovConfig(software_focus_config=software_focus_config)
+
+    navigator.initialise_fovs(_fovs(), fov_configs={1: fov_config})
+
+    assert software_focus.initialised_fov_configs == {1: software_focus_config}
+
+
+def test_per_fov_autofocus_config_reinitialises_on_config_change() -> None:
+    """
+    Check moving between fovs with different autofocus configs reinitialises autofocus.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    navigator, _, autofocus, _, _ = _navigator(
+        FocusNavigatorConfig(use_autofocus=True, post_autofocus_wait_s=0),
+    )
+    navigator.initialise_fovs(
+        _fovs(),
+        fov_configs={
+            0: FovConfig(autofocus_initialise_config="cfg-a"),
+            1: FovConfig(autofocus_initialise_config="cfg-a"),
+            2: FovConfig(autofocus_initialise_config="cfg-b"),
+        },
+    )
+
+    navigator.move(0, manage_focus=False)
+    navigator.move(1, manage_focus=False)
+    navigator.move(2, manage_focus=False)
+
+    assert autofocus.configs == ["cfg-a", "cfg-b"]
+
+
+def test_arrival_software_focus_runs_before_autofocus_lock() -> None:
+    """
+    Check arrival software focus happens before per-fov autofocus reinitialisation.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    stage = FakeStage()
+    software_focus = FakeSoftwareFocus(stage=stage, z_by_fov={1: 66})
+    navigator, _, autofocus, _, _ = _navigator(
+        FocusNavigatorConfig(use_autofocus=True, post_autofocus_wait_s=0, post_move_wait_s=0),
+        autofocus=FakeAutofocus(locked=False),
+        software_focus=software_focus,
+        stage=stage,
+    )
+    navigator.initialise_fovs(
+        _fovs(),
+        fov_configs={
+            1: FovConfig(
+                run_software_focus_on_arrival=True,
+                autofocus_initialise_config="arrival",
+            ),
+        },
+    )
+
+    result = navigator.move(1, manage_focus=False)
+
+    assert software_focus.runs == [1]
+    assert autofocus.history == ["initialise:arrival", "lock"]
+    assert result.is_locked
+    assert navigator.get_fov_state(1).coordinate.z == 66
+
+
 def test_locked_autofocus_records_z_without_refocusing() -> None:
     """
     Check locked autofocus records current Z and does not run recovery.
@@ -696,9 +838,9 @@ def test_lost_lock_raises_when_refocus_disabled() -> None:
         navigator.manage_focus(0)
 
 
-def test_max_refocus_trials_raises_at_configured_limit() -> None:
+def test_max_refocus_trials_returns_skipped_record_at_configured_limit() -> None:
     """
-    Check max_refocus_trials is enforced before starting a new trial.
+    Check max_refocus_trials returns a skipped fov record.
 
     Parameters
     ----------
@@ -714,11 +856,11 @@ def test_max_refocus_trials_raises_at_configured_limit() -> None:
         software_focus=FakeSoftwareFocus(stage=FakeStage(), statuses={0: FocusStatusType.BAD_FOCUS_CURVE}),
     )
     navigator.initialise_fovs(_fovs())
-    with pytest.raises(RuntimeError):
-        navigator.manage_focus(0)
+    result = navigator.manage_focus(0)
 
-    with pytest.raises(RuntimeError, match="maximum refocus trials"):
-        navigator.manage_focus(0)
+    assert result.skipped
+    assert result.max_refocus_trials_reached
+    assert result.refocusing
 
 
 def test_recovery_via_previous_fov_without_software_focus() -> None:

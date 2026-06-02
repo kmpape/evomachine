@@ -13,6 +13,92 @@ pd.set_option('display.max_columns', None)
 pd.set_option('display.expand_frame_repr', False)
 
 
+def validate_dataclass_fields(
+        dataclass_name: str,
+        checks: list[tuple[Any, type | tuple[type | None, ...] | list[type | None]]],
+) -> None:
+    """
+    Validate positional dataclass field values against expected runtime types.
+
+    Parameters
+    ----------
+    dataclass_name
+        Name of the dataclass being validated, used in the error message.
+    checks
+        List of ``(value, expected_type)`` pairs. The expected type can be a
+        single type, a tuple of types, or a list of types. Use None in a tuple
+        or list to allow None values.
+
+    Returns
+    -------
+    None
+        Raises TypeError when one of the values has the wrong runtime type.
+    """
+    if not isinstance(dataclass_name, str):
+        raise TypeError("validate_dataclass_fields: dataclass_name must be str.")
+    if not isinstance(checks, list):
+        raise TypeError("validate_dataclass_fields: checks must be list.")
+    for argument_number, check in enumerate(checks):
+        if not isinstance(check, tuple) or len(check) != 2:
+            raise TypeError("validate_dataclass_fields: each check must be a tuple[value, type].")
+        value, expected_type = check
+        allowed_types = _normalise_allowed_dataclass_types(expected_type)
+        if not isinstance(value, allowed_types):
+            expected_name = " | ".join(_dataclass_type_name(type_item) for type_item in allowed_types)
+            raise TypeError(
+                f"{dataclass_name}: argument {argument_number} must be {expected_name}, "
+                f"received {type(value).__name__}."
+            )
+
+
+def _normalise_allowed_dataclass_types(
+        expected_type: type | tuple[type | None, ...] | list[type | None],
+) -> tuple[type, ...]:
+    """
+    Return expected dataclass validation types as an isinstance-compatible tuple.
+
+    Parameters
+    ----------
+    expected_type
+        Single type, tuple of types, or list of types. None is converted to
+        type(None).
+
+    Returns
+    -------
+    tuple[type, ...]
+        Runtime types accepted by isinstance.
+    """
+    if isinstance(expected_type, list):
+        expected_items = tuple(expected_type)
+    elif isinstance(expected_type, tuple):
+        expected_items = expected_type
+    else:
+        expected_items = (expected_type,)
+    allowed_types = tuple(type(None) if type_item is None else type_item for type_item in expected_items)
+    if not allowed_types or not all(isinstance(type_item, type) for type_item in allowed_types):
+        raise TypeError("validate_dataclass_fields: expected type must be type, tuple[type], or list[type].")
+    return allowed_types
+
+
+def _dataclass_type_name(type_item: type) -> str:
+    """
+    Return a readable type name for dataclass validation errors.
+
+    Parameters
+    ----------
+    type_item
+        Runtime type included in an allowed type list.
+
+    Returns
+    -------
+    str
+        Human-readable type name.
+    """
+    if type_item is type(None):
+        return "None"
+    return type_item.__name__
+
+
 def channel_extend_img(
         img: np.ndarray,
         channel_dict: dict[Any, int],
@@ -120,18 +206,6 @@ class RotationParameters:
     hough_threshold: float = 0.7
 
     def __post_init__(self) -> None:
-        """
-        Validate rotation correction parameters.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-            The dataclass fields are validated in place.
-        """
         for field_name in ["cutoff_frequency_ratio", "min_exposure", "max_exposure", "hough_threshold"]:
             value = getattr(self, field_name)
             if not isinstance(value, int | float):
@@ -252,18 +326,6 @@ class EvoCroppingBox:
     is_none: bool = False
 
     def __post_init__(self) -> None:
-        """
-        Validate cropping box coordinates after construction.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-            The dataclass fields are validated in place.
-        """
         for field_name in ["xtl", "ytl", "xbr", "ybr"]:
             value = getattr(self, field_name)
             if not isinstance(value, int):

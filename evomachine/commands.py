@@ -46,18 +46,6 @@ class AutomatonCommand:
     "Field of view ID. Used for commands sent to GUI."
 
     def __post_init__(self) -> None:
-        """
-        Validate automaton command metadata after construction.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-            The dataclass fields are validated in place.
-        """
         if not isinstance(self.command_id, int):
             raise TypeError(f"AutomatonCommand: command_id must be int, received {type(self.command_id)}.")
         if not isinstance(self.command_type, AutomatonCommandType):

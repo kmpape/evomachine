@@ -67,8 +67,8 @@ class AbstractStrategy(ABC):
         "Dictionary indexed by FoV ID with FoV coordinates."
         self.region_of_interests: dict[int, list[int]] = {}
         "Dictionary indexed by FoV ID with ROI IDs."
-        self.fov_processors: list[PositionRT] = []
-        "Processors for FoV data, ROI boxes, and cell lineages. Treat as read-only."
+        self.fov_processors: dict[int, PositionRT] = {}
+        "Processors for FoV data, ROI boxes, and cell lineages keyed by FoV ID. Treat as read-only."
         self.path_to_save: Path | None = None
         "Optional path to save images."
         self.command_factory: CommandFactory = CommandFactory(cfg=cfg)
@@ -110,7 +110,7 @@ class AbstractStrategy(ABC):
         None
         """
         state["dmd"] = None
-        state["fov_processors"] = []
+        state["fov_processors"] = {}
         self.__dict__.update(state)
 
     @abstractmethod
@@ -134,7 +134,7 @@ class AbstractStrategy(ABC):
             fovs: dict[int, Coordinate],
             region_of_interests: dict[int, list[int]],
             config_camera: CameraSystemConfig | None,
-            fov_processors: list[PositionRT],
+            fov_processors: dict[int, PositionRT],
             dmd: Dmd,
     ) -> list[AutomatonCommand]:
         """
@@ -149,7 +149,7 @@ class AbstractStrategy(ABC):
         config_camera
             Camera configuration object, when available.
         fov_processors
-            FoV processors indexed by FoV ID.
+            FoV processors keyed by FoV ID.
         dmd
             DMD object available for pattern construction.
 
@@ -164,9 +164,9 @@ class AbstractStrategy(ABC):
             raise TypeError(
                 "AbstractStrategy.initialise: region_of_interests must be dict[int, list[int]]."
             )
-        if not isinstance(fov_processors, list):
+        if not isinstance(fov_processors, dict):
             raise TypeError(
-                f"AbstractStrategy.initialise: fov_processors must be list, received {type(fov_processors)}."
+                f"AbstractStrategy.initialise: fov_processors must be dict, received {type(fov_processors)}."
             )
         if not isinstance(dmd, Dmd):
             raise TypeError(f"AbstractStrategy.initialise: dmd must be Dmd, received {type(dmd)}.")

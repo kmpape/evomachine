@@ -4,7 +4,7 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from evomachine.coordinates import Coordinate, CoordinateBounds
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
-from evomachine.peripherals.peripherals import Peripheral, update_dataclass_config
+from evomachine.peripherals.peripherals import Peripheral
 from evomachine.bindings.binding_types import BindingType
 from evomachine.types import AxisType, FovDirectionType, PositiveScalingType, UNKNOWN_FOV_ID
 
@@ -46,18 +46,6 @@ class StageConfig:
     coordinate_bounds: CoordinateBounds | None = None
 
     def __post_init__(self) -> None:
-        """
-        Validate stage factory configuration after construction.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-            The dataclass fields are validated in place.
-        """
         if not isinstance(self.binding, BindingType):
             raise TypeError(f"StageConfig: binding must be BindingType, received {type(self.binding)}.")
         if not isinstance(self.fov_step_size, int | float):
@@ -146,16 +134,11 @@ class Stage(Peripheral):
         """
         if fov_step_size <= 0:
             raise ValueError(f"Stage.__init__: fov_step_size must be positive, received {fov_step_size}.")
-        self.name: str = name
-        "Name displayed in logs and error messages to identify the stage."
-        self._is_initialised: bool = False
-        "Set to True when initialisation has completed successfully."
-        self._is_alive: bool = False
-        "Set by is_alive."
-        self._check_initialised: bool = check_initialised
-        "If True, public hardware-querying methods raise RuntimeError when the stage has not been initialised."
-        self._check_alive: bool = check_alive
-        "If True, public hardware-querying methods raise RuntimeError when the stage does not report alive."
+        super().__init__(
+            name=name,
+            check_initialised=check_initialised,
+            check_alive=check_alive,
+        )
         self._current_coordinate: Coordinate = Coordinate.none_coordinate()
         "Current coordinate as returned by hardware queries and updated after moves. Axes are None when unknown."
         self._current_fov_id: int = self.UNKNOWN_FOV_ID
@@ -166,8 +149,6 @@ class Stage(Peripheral):
         "Field-of-view step size in stage coordinate units. Used for FoV movement targets."
         self._coordinate_bounds: CoordinateBounds | None = coordinate_bounds.copy() if coordinate_bounds else None
         "Software movement bounds. Set via constructor."
-        self.config: StageConfig | None = None
-        "Validated factory configuration used to create or update this stage."
         self._fov_direction_to_axis_sign: dict[FovDirectionType, tuple[AxisType, int]] = {
             FovDirectionType.UP: (AxisType.Y, -1),
             FovDirectionType.DOWN: (AxisType.Y, +1),
@@ -218,95 +199,10 @@ class Stage(Peripheral):
         """
         self._current_coordinate = self._current_coordinate.merge(update=coordinate)
 
-    def _require_ready(self, action: str) -> None:
-        """
-        Raise when a hardware action is not allowed by current readiness checks.
-
-        Parameters
-        ----------
-        action
-            Human-readable action name used in exception messages.
-
-        Returns
-        -------
-        None
-        """
-        if self._check_initialised and not self._is_initialised:
-            raise RuntimeError(f"Stage.{action}: stage is not initialised.")
-        if self._check_alive and not self.is_alive():
-            raise RuntimeError(f"Stage.{action}: stage is not alive.")
-
-    def initialise(self, force: bool = False) -> None:
-        """
-        Initialise the stage and cache its current hardware coordinates.
-
-        Parameters
-        ----------
-        force
-            If True, run initialisation even if the stage is already initialised.
-
-        Returns
-        -------
-        None
-        """
-        if self._is_initialised and not force:
-            return
-        self._is_initialised = self._initialise(force=force)
-        if self._check_initialised and not self._is_initialised:
-            raise RuntimeError("Stage.initialise: stage failed to initialise.")
-        self._is_alive = self._check_is_alive()
-        if self._check_alive and not self._is_alive:
-            raise RuntimeError("Stage.initialise: stage is not alive after initialisation.")
+    def _post_initialise(self, force: bool = False) -> None:
+        """Cache current hardware coordinates after initialisation."""
         if self._is_alive:
             self._current_coordinate = self._get_coordinates()
-
-    def finalise(self, force: bool = False) -> None:
-        """
-        Finalise the stage and clear lifecycle flags.
-
-        Parameters
-        ----------
-        force
-            If True, subclass implementations may force cleanup.
-
-        Returns
-        -------
-        None
-        """
-        self._finalise(force=force)
-        self._is_initialised = False
-        self._is_alive = False
-
-    def is_alive(self) -> bool:
-        """
-        Query whether the stage hardware is alive.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        bool
-            True when the subclass reports the hardware is alive.
-        """
-        self._is_alive = self._check_is_alive()
-        return self._is_alive
-
-    def is_initialised(self) -> bool:
-        """
-        Return whether initialise has succeeded.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        bool
-            True when the stage is marked initialised.
-        """
-        return self._is_initialised
 
     def stop(self) -> None:
         """
@@ -397,31 +293,25 @@ class Stage(Peripheral):
             raise ValueError(f"Stage.set_fov_step_size: fov_step_size must be positive, received {fov_step_size}.")
         self._fov_step_size = fov_step_size
 
+    def _apply_config(self, config: StageConfig) -> None:
+        """Apply stage-specific config fields."""
+        self._fov_step_size = config.fov_step_size
+        self._coordinate_bounds = config.coordinate_bounds.copy() if config.coordinate_bounds else None
+        if config.initial_coordinate is not None:
+            self._current_coordinate = config.initial_coordinate.copy()
+
+    def _config_requires_reinitialise(self, current_config: StageConfig, new_config: StageConfig) -> bool:
+        """Return True because stage config updates currently reinitialise live stages."""
+        return True
+
+    def _after_config_reinitialise(self) -> None:
+        """Apply configured initial coordinate after reinitialisation when present."""
+        if self.config is not None and self.config.initial_coordinate is not None:
+            self._current_coordinate = self.config.initial_coordinate.copy()
+
     def update_config(self, config: StageConfig | None = None, **updates) -> None:
         """Replace or update stage configuration at runtime."""
-        current_config = self.config
-        if current_config is None:
-            if config is None:
-                raise RuntimeError("Stage.update_config: this stage was not created from a StageConfig.")
-            new_config = config.copy()
-        else:
-            new_config = update_dataclass_config(current_config=current_config, replacement=config, **updates)
-        if current_config is not None and new_config.binding != current_config.binding:
-            raise RuntimeError("Stage.update_config: changing stage binding requires recreating the stage.")
-        was_initialised = self.is_initialised()
-        if was_initialised:
-            self.stop()
-            self.finalise(force=True)
-        self.config = new_config.copy()
-        self.name = new_config.name or self.name
-        self._fov_step_size = new_config.fov_step_size
-        self._coordinate_bounds = new_config.coordinate_bounds.copy() if new_config.coordinate_bounds else None
-        self._check_initialised = new_config.check_initialised
-        self._check_alive = new_config.check_alive
-        if new_config.initial_coordinate is not None:
-            self._current_coordinate = new_config.initial_coordinate.copy()
-        if was_initialised:
-            self.initialise(force=True)
+        super().update_config(config=config, **updates)
 
     def get_coordinate_bounds(self) -> CoordinateBounds:
         """

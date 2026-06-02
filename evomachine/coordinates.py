@@ -334,17 +334,6 @@ class CoordinateBounds:
     high: Coordinate | None = None
 
     def __post_init__(self) -> None:
-        """
-        Validate coordinate bounds after construction.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-        """
         if self.low is not None and not isinstance(self.low, Coordinate):
             raise TypeError(f"CoordinateBounds: low must be Coordinate or None, received {type(self.low)}.")
         if self.high is not None and not isinstance(self.high, Coordinate):

@@ -51,18 +51,6 @@ class TigerAutofocusConfig:
         return False
 
     def __post_init__(self) -> None:
-        """
-        Validate ASI Tiger CRISP configuration after construction.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-            The dataclass fields are validated in place.
-        """
         if not isinstance(self.averaging, int) or isinstance(self.averaging, bool) or not 0 <= self.averaging < 100:
             raise TypeError(f"TigerAutofocusConfig: averaging must be int in [0, 100), received {self.averaging}.")
         if (

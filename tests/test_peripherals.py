@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import pytest
 
 from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
@@ -16,8 +18,158 @@ from evomachine.peripherals.peripheralcontrollers import (
     PeripheralControllerFactory,
     SerialPeripheralControllerConfig,
 )
-from evomachine.peripherals.peripherals import PeripheralController as CompatibilityPeripheralController
+from evomachine.peripherals.peripherals import (
+    Peripheral,
+    PeripheralConfig,
+    PeripheralController as CompatibilityPeripheralController,
+)
 from evomachine.bindings.binding_types import BindingType
+
+
+@dataclass
+class TrackingPeripheralConfig(PeripheralConfig):
+    """Config used to exercise the shared Peripheral base class."""
+
+    value: int = 1
+    reinitialise: bool = False
+
+
+class TrackingPeripheral(Peripheral):
+    """Peripheral implementation that records shared base hook calls."""
+
+    def __init__(self, config: TrackingPeripheralConfig):
+        """
+        Initialise the tracking peripheral test double.
+
+        Parameters
+        ----------
+        config
+            TrackingPeripheralConfig stored on the base class and applied by
+            update_config().
+
+        Returns
+        -------
+        None
+        """
+        self.events: list[str] = []
+        self.value: int = config.value
+        self.alive: bool = True
+        super().__init__(
+            name=config.name or "Tracking Peripheral",
+            check_initialised=config.check_initialised,
+            check_alive=config.check_alive,
+            config=config,
+        )
+
+    def _initialise(self, force: bool = False) -> None:
+        """
+        Record initialisation and return None to exercise legacy success handling.
+
+        Parameters
+        ----------
+        force
+            Whether initialisation was forced.
+
+        Returns
+        -------
+        None
+        """
+        self.events.append(f"initialise:{force}")
+
+    def _finalise(self, force: bool = False) -> None:
+        """
+        Record finalisation.
+
+        Parameters
+        ----------
+        force
+            Whether finalisation was forced.
+
+        Returns
+        -------
+        None
+        """
+        self.events.append(f"finalise:{force}")
+
+    def _check_is_alive(self) -> bool:
+        """
+        Return the configured liveness state.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        bool
+            True when the tracking peripheral should report alive.
+        """
+        return self.alive
+
+    def stop(self) -> None:
+        """
+        Record stop calls.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.events.append("stop")
+
+    def _apply_config(self, config: TrackingPeripheralConfig) -> None:
+        """
+        Apply tracking config fields.
+
+        Parameters
+        ----------
+        config
+            New tracking peripheral config.
+
+        Returns
+        -------
+        None
+        """
+        self.value = config.value
+
+    def _config_requires_reinitialise(
+            self,
+            current_config: TrackingPeripheralConfig,
+            new_config: TrackingPeripheralConfig,
+    ) -> bool:
+        """
+        Return whether the new config requests reinitialisation.
+
+        Parameters
+        ----------
+        current_config
+            Current tracking config.
+        new_config
+            Candidate replacement tracking config.
+
+        Returns
+        -------
+        bool
+            True when update_config() should run the reinitialisation hooks.
+        """
+        return not current_config.reinitialise and new_config.reinitialise
+
+    def _after_config_reinitialise(self) -> None:
+        """
+        Record the post-reinitialisation hook.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.events.append("after_reinitialise")
 
 
 class FakeInnerConnection:
@@ -127,6 +279,73 @@ class TrackingPeripheralController(PeripheralController):
 
     def _shutdown(self, force: bool = False) -> None:
         self.events.append(f"shutdown:{force}")
+
+
+def test_peripheral_base_lifecycle_and_readiness_checks():
+    """Check shared Peripheral lifecycle flags and readiness errors."""
+    peripheral = TrackingPeripheral(
+        config=TrackingPeripheralConfig(binding=BindingType.VIRTUAL)
+    )
+
+    with pytest.raises(RuntimeError, match="not initialised"):
+        peripheral._require_ready(action="act")
+
+    peripheral.initialise()
+
+    assert peripheral.is_initialised()
+    assert peripheral.is_alive()
+    assert peripheral.events == ["initialise:False"]
+    peripheral._require_ready(action="act")
+
+    peripheral.finalise(force=True)
+
+    assert peripheral.events == ["initialise:False", "finalise:True"]
+    assert not peripheral.is_initialised()
+
+
+def test_peripheral_base_update_config_applies_fields_without_reinitialise():
+    """Check shared config updates apply base and subclass fields."""
+    peripheral = TrackingPeripheral(
+        config=TrackingPeripheralConfig(binding=BindingType.VIRTUAL)
+    )
+
+    peripheral.update_config(name="Renamed", value=3)
+
+    assert peripheral.name == "Renamed"
+    assert peripheral.value == 3
+    assert peripheral.config.value == 3
+    assert peripheral.events == []
+
+
+def test_peripheral_base_update_config_reinitialises_when_hook_requests_it():
+    """Check shared config updates run stop/finalise/initialise hooks."""
+    peripheral = TrackingPeripheral(
+        config=TrackingPeripheralConfig(binding=BindingType.VIRTUAL)
+    )
+    peripheral.initialise()
+
+    peripheral.update_config(reinitialise=True)
+
+    assert peripheral.is_initialised()
+    assert peripheral.events == [
+        "initialise:False",
+        "stop",
+        "finalise:True",
+        "initialise:True",
+        "after_reinitialise",
+    ]
+
+
+def test_peripheral_base_update_config_rejects_binding_changes():
+    """Check shared config updates reject runtime binding changes."""
+    peripheral = TrackingPeripheral(
+        config=TrackingPeripheralConfig(binding=BindingType.VIRTUAL)
+    )
+
+    with pytest.raises(RuntimeError, match="changing binding"):
+        peripheral.update_config(
+            config=TrackingPeripheralConfig(binding=BindingType.ASI_TIGER)
+        )
 
 
 def test_peripheral_controller_config_rejects_non_binding_type():

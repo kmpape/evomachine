@@ -10,7 +10,7 @@ import numpy as np
 from evomachine.bindings.binding_types import BindingType
 from evomachine.exceptions import ConfigError, ErrorCode
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
-from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig, update_dataclass_config
+from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
 from evomachine.types import FilterWheelType, LEDType
 
 
@@ -216,18 +216,6 @@ class CameraConfig:
     imaging_mode: str | None = None
 
     def __post_init__(self) -> None:
-        """
-        Validate camera configuration after construction.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-            The dataclass fields are validated in place.
-        """
         if not isinstance(self.binding, BindingType):
             raise TypeError(f"CameraConfig: binding must be BindingType, received {type(self.binding)}.")
         if not isinstance(self.image, ImageConfigType):
@@ -310,16 +298,15 @@ class Camera(Peripheral):
         """
         if not isinstance(image, ImageConfigType):
             raise TypeError(f"Camera.__init__: image must be ImageConfigType, received {type(image)}.")
+        super().__init__(
+            name=name,
+            check_initialised=check_initialised,
+            check_alive=check_alive,
+        )
         self.image: ImageConfigType = image
-        self.name: str = name
         self.default_exposure_time: float | int = self._validate_exposure_time(default_exposure_time)
         self.imaging_mode: str | None = imaging_mode
         self._current_exposure: float | int | None = None
-        self._is_initialised: bool = False
-        self._is_alive: bool = False
-        self._check_initialised: bool = check_initialised
-        self._check_alive: bool = check_alive
-        self.config: CameraConfig | None = None
         # TODO(Codex): Add one status flag here to track whether the camera is live streaming or not.
 
     @staticmethod
@@ -345,96 +332,11 @@ class Camera(Peripheral):
             raise ValueError(f"Camera._validate_exposure_time: exposure_time must be positive, received {exposure_time}.")
         return exposure_time
 
-    def _require_ready(self, action: str) -> None:
-        """
-        Raise when a camera action is not allowed by current readiness checks.
-
-        Parameters
-        ----------
-        action
-            Human-readable action name used in exception messages.
-
-        Returns
-        -------
-        None
-        """
-        if self._check_initialised and not self._is_initialised:
-            raise RuntimeError(f"Camera.{action}: camera is not initialised.")
-        if self._check_alive and not self.is_alive():
-            raise RuntimeError(f"Camera.{action}: camera is not alive.")
-
-    def initialise(self, force: bool = False) -> None:
-        """
-        Initialise the camera and apply default exposure and imaging mode.
-
-        Parameters
-        ----------
-        force
-            If True, run initialisation even when already initialised.
-
-        Returns
-        -------
-        None
-        """
-        if self._is_initialised and not force:
-            return
-        self._is_initialised = self._initialise(force=force)
-        if self._check_initialised and not self._is_initialised:
-            raise RuntimeError("Camera.initialise: camera failed to initialise.")
-        self._is_alive = self._check_is_alive()
-        if self._check_alive and not self._is_alive:
-            raise RuntimeError("Camera.initialise: camera is not alive after initialisation.")
+    def _post_initialise(self, force: bool = False) -> None:
+        """Apply default exposure and imaging mode after initialisation."""
         self.set_exposure(self.default_exposure_time)
         if self.imaging_mode is not None:
             self.set_imaging_mode(self.imaging_mode)
-
-    def finalise(self, force: bool = False) -> None:
-        """
-        Finalise the camera and clear lifecycle flags.
-
-        Parameters
-        ----------
-        force
-            If True, binding implementations may force cleanup.
-
-        Returns
-        -------
-        None
-        """
-        self._finalise(force=force)
-        self._is_initialised = False
-        self._is_alive = False
-
-    def is_alive(self) -> bool:
-        """
-        Query whether the camera hardware is alive.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        bool
-            True when the subclass reports the camera is alive.
-        """
-        self._is_alive = self._check_is_alive()
-        return self._is_alive
-
-    def is_initialised(self) -> bool:
-        """
-        Return whether initialise has succeeded.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        bool
-            True when the camera is marked initialised.
-        """
-        return self._is_initialised
 
     def stop(self) -> None:
         """
@@ -514,36 +416,27 @@ class Camera(Peripheral):
         validation depends on the image config. Exposure, imaging mode, name,
         and readiness checks are applied in place when possible.
         """
-        current_config = self.config
-        if current_config is None:
-            if config is None:
-                raise RuntimeError("Camera.update_config: this camera was not created from a CameraConfig.")
-            new_config = config.copy()
-        else:
-            new_config = update_dataclass_config(current_config=current_config, replacement=config, **updates)
-        if new_config.binding != (current_config.binding if current_config is not None else new_config.binding):
-            raise RuntimeError("Camera.update_config: changing camera binding requires recreating the camera.")
-
         was_initialised = self.is_initialised()
-        reinitialise = current_config is not None and new_config.image != current_config.image
-        if reinitialise and was_initialised:
-            self.stop()
-            self.finalise(force=True)
-
-        self.config = new_config.copy()
-        self.image = new_config.image
-        self.name = new_config.name or self.name
-        self.default_exposure_time = self._validate_exposure_time(new_config.default_exposure_time)
-        self.imaging_mode = new_config.imaging_mode
-        self._check_initialised = new_config.check_initialised
-        self._check_alive = new_config.check_alive
-
-        if reinitialise and was_initialised:
-            self.initialise(force=True)
-        elif was_initialised:
+        current_config = self.config
+        reinitialise = False
+        if current_config is not None:
+            candidate_config = current_config.updated(**updates) if config is None else config
+            reinitialise = candidate_config.image != current_config.image
+        super().update_config(config=config, **updates)
+        if was_initialised and not reinitialise:
             self.set_exposure(self.default_exposure_time)
             if self.imaging_mode is not None:
                 self.set_imaging_mode(self.imaging_mode)
+
+    def _apply_config(self, config: CameraConfig) -> None:
+        """Apply camera-specific config fields."""
+        self.image = config.image
+        self.default_exposure_time = self._validate_exposure_time(config.default_exposure_time)
+        self.imaging_mode = config.imaging_mode
+
+    def _config_requires_reinitialise(self, current_config: CameraConfig, new_config: CameraConfig) -> bool:
+        """Return whether camera config changes require reinitialisation."""
+        return new_config.image != current_config.image
 
     def set_imaging_mode(self, imaging_mode: str) -> None:
         """

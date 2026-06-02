@@ -6,7 +6,7 @@ from typing import Any
 
 from evomachine.bindings.binding_types import BindingType
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
-from evomachine.peripherals.peripherals import Peripheral, update_dataclass_config
+from evomachine.peripherals.peripherals import Peripheral
 from evomachine.types import FilterWheelType
 
 
@@ -21,17 +21,6 @@ class FilterWheelConfig:
     check_alive: bool = True
 
     def __post_init__(self) -> None:
-        """
-        Validate filter wheel factory configuration.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-        """
         if not isinstance(self.binding, BindingType):
             raise TypeError(f"FilterWheelConfig: binding must be BindingType, received {type(self.binding)}.")
         if self.name is not None and not isinstance(self.name, str):
@@ -99,16 +88,15 @@ class FilterWheel(Peripheral):
         -------
         None
         """
-        self.name: str = name
+        super().__init__(
+            name=name,
+            check_initialised=check_initialised,
+            check_alive=check_alive,
+        )
         self._available_filters: list[FilterWheelType] = self._validate_available_filters(
             available_filters=available_filters,
         )
-        self._is_initialised: bool = False
-        self._is_alive: bool = False
-        self._check_initialised: bool = check_initialised
-        self._check_alive: bool = check_alive
         self._current_filter_type: FilterWheelType = FilterWheelType.UNKNOWN
-        self.config: FilterWheelConfig | None = None
 
     @staticmethod
     def _validate_available_filters(available_filters: list[FilterWheelType]) -> list[FilterWheelType]:
@@ -156,98 +144,12 @@ class FilterWheel(Peripheral):
             raise TypeError(f"FilterWheel.{action}: expected FilterWheelType, received {type(filter_type)}.")
         return filter_type
 
-    def _require_ready(self, action: str) -> None:
-        """
-        Raise when a hardware action is not allowed by current readiness checks.
-
-        Parameters
-        ----------
-        action
-            Human-readable action name used in exception messages.
-
-        Returns
-        -------
-        None
-        """
-        if self._check_initialised and not self._is_initialised:
-            raise RuntimeError(f"FilterWheel.{action}: filter wheel is not initialised.")
-        if self._check_alive and not self.is_alive():
-            raise RuntimeError(f"FilterWheel.{action}: filter wheel is not alive.")
-
-    def initialise(self, force: bool = False) -> None:
-        """
-        Initialise the filter wheel and cache its current hardware position.
-
-        Parameters
-        ----------
-        force
-            If True, run initialisation even if the filter wheel is already
-            initialised.
-
-        Returns
-        -------
-        None
-        """
-        if self._is_initialised and not force:
-            return
-        self._is_initialised = self._initialise(force=force)
-        if self._check_initialised and not self._is_initialised:
-            raise RuntimeError("FilterWheel.initialise: filter wheel failed to initialise.")
-        self._is_alive = self._check_is_alive()
-        if self._check_alive and not self._is_alive:
-            raise RuntimeError("FilterWheel.initialise: filter wheel is not alive after initialisation.")
+    def _post_initialise(self, force: bool = False) -> None:
+        """Cache current hardware filter after initialisation."""
         self._current_filter_type = self._validate_filter_type(
             filter_type=self._get_filter_wheel(),
             action="initialise",
         )
-
-    def finalise(self, force: bool = False) -> None:
-        """
-        Finalise the filter wheel and clear lifecycle flags.
-
-        Parameters
-        ----------
-        force
-            If True, subclass implementations may force cleanup.
-
-        Returns
-        -------
-        None
-        """
-        self._finalise(force=force)
-        self._is_initialised = False
-        self._is_alive = False
-
-    def is_alive(self) -> bool:
-        """
-        Query whether the filter wheel hardware is alive.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        bool
-            True when the subclass reports the hardware is alive.
-        """
-        self._is_alive = self._check_is_alive()
-        return self._is_alive
-
-    def is_initialised(self) -> bool:
-        """
-        Return whether initialise has succeeded.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        bool
-            True when the filter wheel is marked initialised.
-        """
-        return self._is_initialised
 
     def stop(self) -> None:
         """
@@ -281,30 +183,23 @@ class FilterWheel(Peripheral):
         """
         return list(self._available_filters)
 
-    def update_config(self, config: "FilterWheelConfig | None" = None, **updates: Any) -> None:
-        """Replace or update filter wheel configuration at runtime."""
-        current_config = self.config
-        if current_config is None:
-            if config is None:
-                raise RuntimeError("FilterWheel.update_config: this filter wheel was not created from a FilterWheelConfig.")
-            new_config = config.copy()
-        else:
-            new_config = update_dataclass_config(current_config=current_config, replacement=config, **updates)
-        if current_config is not None and new_config.binding != current_config.binding:
-            raise RuntimeError("FilterWheel.update_config: changing binding requires recreating the filter wheel.")
-        was_initialised = self.is_initialised()
-        reinitialise = current_config is not None and new_config.available_filters != current_config.available_filters
-        if reinitialise and was_initialised:
-            self.finalise(force=True)
-        self.config = new_config.copy()
-        self.name = new_config.name or self.name
-        self._available_filters = self._validate_available_filters(new_config.available_filters)
-        self._check_initialised = new_config.check_initialised
-        self._check_alive = new_config.check_alive
+    def _apply_config(self, config: FilterWheelConfig) -> None:
+        """Apply filter-wheel-specific config fields."""
+        self._available_filters = self._validate_available_filters(config.available_filters)
         if self._current_filter_type not in self._available_filters:
             self._current_filter_type = FilterWheelType.UNKNOWN
-        if reinitialise and was_initialised:
-            self.initialise(force=True)
+
+    def _config_requires_reinitialise(self, current_config: FilterWheelConfig, new_config: FilterWheelConfig) -> bool:
+        """Return whether filter wheel config changes require reinitialisation."""
+        return new_config.available_filters != current_config.available_filters
+
+    def _before_config_reinitialise(self) -> None:
+        """Finalise filter wheel before config reinitialisation without stop."""
+        return
+
+    def update_config(self, config: "FilterWheelConfig | None" = None, **updates: Any) -> None:
+        """Replace or update filter wheel configuration at runtime."""
+        super().update_config(config=config, **updates)
 
     def get_filter_wheel(self) -> FilterWheelType:
         """

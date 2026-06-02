@@ -230,7 +230,7 @@ def test_strategy_initialise_injects_dmd() -> None:
         fovs={0: Coordinate(0, 0, 0)},
         region_of_interests={0: []},
         config_camera=CameraSystemConfigFactory.default_air_config(),
-        fov_processors=[],
+        fov_processors={},
         dmd=dmd,
     )
 
@@ -264,7 +264,7 @@ def test_strategy_serialization_excludes_dmd() -> None:
     restored = pickle.loads(pickle.dumps(strategy))
 
     assert restored.dmd is None
-    assert restored.fov_processors == []
+    assert restored.fov_processors == {}
 
 
 def test_invalid_strategy_command_list_raises_runtime_error() -> None:
@@ -291,7 +291,7 @@ def test_invalid_strategy_command_list_raises_runtime_error() -> None:
             fovs={0: Coordinate(0, 0, 0)},
             region_of_interests={0: []},
             config_camera=CameraSystemConfigFactory.default_air_config(),
-            fov_processors=[],
+            fov_processors={},
             dmd=FakeDmd(),
         )
 

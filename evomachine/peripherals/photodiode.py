@@ -6,7 +6,7 @@ from typing import Any
 
 from evomachine.bindings.binding_types import BindingType
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
-from evomachine.peripherals.peripherals import Peripheral, update_dataclass_config
+from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
 
 
 @dataclass
@@ -17,18 +17,6 @@ class PhotodiodeReadingRange:
     maximum_reading: float
 
     def __post_init__(self) -> None:
-        """
-        Validate raw photodiode reading bounds after construction.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-            The dataclass fields are validated in place.
-        """
         self.minimum_reading = self._validate_reading(
             reading=self.minimum_reading,
             name="minimum_reading",
@@ -67,49 +55,22 @@ class PhotodiodeReadingRange:
 
 
 @dataclass
-class PhotodiodeConfig:
+class PhotodiodeConfig(PeripheralConfig):
     """Configuration object used by PhotodiodeFactory to create photodiodes."""
 
-    binding: BindingType
     channel: int = 8
-    name: str | None = None
     reading_range: PhotodiodeReadingRange = field(
         default_factory=lambda: PhotodiodeReadingRange(0.0, 1.0)
     )
-    check_initialised: bool = True
-    check_alive: bool = True
 
     def __post_init__(self) -> None:
-        """
-        Validate photodiode configuration after construction.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        None
-            The dataclass fields are validated in place.
-        """
-        if not isinstance(self.binding, BindingType):
-            raise TypeError(
-                f"PhotodiodeConfig: binding must be BindingType, received {type(self.binding)}."
-            )
+        super().__post_init__()
         self.channel = Photodiode.validate_channel(channel=self.channel)
-        if self.name is not None and not isinstance(self.name, str):
-            raise TypeError(f"PhotodiodeConfig: name must be str or None, received {type(self.name)}.")
         if not isinstance(self.reading_range, PhotodiodeReadingRange):
             raise TypeError(
                 "PhotodiodeConfig: reading_range must be PhotodiodeReadingRange, "
                 f"received {type(self.reading_range)}."
             )
-        if not isinstance(self.check_initialised, bool):
-            raise TypeError(
-                f"PhotodiodeConfig: check_initialised must be bool, received {type(self.check_initialised)}."
-            )
-        if not isinstance(self.check_alive, bool):
-            raise TypeError(f"PhotodiodeConfig: check_alive must be bool, received {type(self.check_alive)}.")
 
     def copy(self) -> "PhotodiodeConfig":
         return PhotodiodeConfig(**self.__dict__)
@@ -175,11 +136,11 @@ class Photodiode(Peripheral):
         self.peripheral_ctrl: PeripheralController = peripheral_ctrl
         self.channel: int = self.validate_channel(channel=channel)
         self.reading_range: PhotodiodeReadingRange = reading_range
-        self.name: str = name
-        self.check_initialised: bool = check_initialised
-        self.check_alive: bool = check_alive
-        self._is_initialised: bool = False
-        self.config: PhotodiodeConfig | None = None
+        super().__init__(
+            name=name,
+            check_initialised=check_initialised,
+            check_alive=check_alive,
+        )
 
     @staticmethod
     def validate_channel(channel: int) -> int:
@@ -202,93 +163,17 @@ class Photodiode(Peripheral):
             raise ValueError(f"Photodiode.validate_channel: channel must be positive, received {channel}.")
         return channel
 
-    def _require_ready(self, action: str) -> None:
-        """
-        Raise when a photodiode action is not allowed by readiness checks.
-
-        Parameters
-        ----------
-        action
-            Human-readable action name used in exception messages.
-
-        Returns
-        -------
-        None
-        """
-        if self.check_initialised and not self._is_initialised:
-            raise RuntimeError(f"Photodiode.{action}: photodiode is not initialised.")
-        if self.check_alive and not self.is_alive():
-            raise RuntimeError(f"Photodiode.{action}: photodiode is not alive.")
-
-    def initialise(self, force: bool = False) -> None:
-        """
-        Initialise the photodiode after checking its peripheral controller.
-
-        Parameters
-        ----------
-        force
-            If True, run initialisation even when already initialised.
-
-        Returns
-        -------
-        None
-        """
-        if self._is_initialised and not force:
-            return
-        if self.check_initialised and not self.peripheral_ctrl.is_initialised():
+    def _before_initialise(self, force: bool = False) -> None:
+        """Check the controller before photodiode initialisation."""
+        if self._check_initialised and not self.peripheral_ctrl.is_initialised():
             raise RuntimeError(
                 f"Photodiode.initialise: {self.peripheral_ctrl.name} is not initialised."
             )
-        if self.check_alive and not self.peripheral_ctrl.is_alive():
+        if self._check_alive and not self.peripheral_ctrl.is_alive():
             raise RuntimeError(f"Photodiode.initialise: {self.peripheral_ctrl.name} is not alive.")
-        self._is_initialised = self._initialise(force=force)
-        if self.check_initialised and not self._is_initialised:
-            raise RuntimeError("Photodiode.initialise: photodiode failed to initialise.")
 
-    def finalise(self, force: bool = False) -> None:
-        """
-        Finalise the photodiode and clear lifecycle state.
-
-        Parameters
-        ----------
-        force
-            If True, binding implementations may force cleanup.
-
-        Returns
-        -------
-        None
-        """
-        self._finalise(force=force)
-        self._is_initialised = False
-
-    def is_initialised(self) -> bool:
-        """
-        Return whether initialise has succeeded.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        bool
-            True when the photodiode is marked initialised.
-        """
-        return self._is_initialised
-
-    def is_alive(self) -> bool:
-        """
-        Query whether the photodiode controller is alive.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        bool
-            True when the underlying peripheral controller reports alive.
-        """
+    def _check_is_alive(self) -> bool:
+        """Return whether the photodiode controller is alive."""
         return self.peripheral_ctrl.is_alive()
 
     def stop(self) -> None:
@@ -330,30 +215,18 @@ class Photodiode(Peripheral):
             maximum_reading=maximum_reading,
         )
 
+    def _apply_config(self, config: PhotodiodeConfig) -> None:
+        """Apply photodiode-specific config fields."""
+        self.channel = config.channel
+        self.reading_range = config.reading_range
+
+    def _config_requires_reinitialise(self, current_config: PhotodiodeConfig, new_config: PhotodiodeConfig) -> bool:
+        """Return whether photodiode config changes require reinitialisation."""
+        return new_config.channel != current_config.channel
+
     def update_config(self, config: PhotodiodeConfig | None = None, **updates: Any) -> None:
         """Replace or update photodiode configuration at runtime."""
-        current_config = self.config
-        if current_config is None:
-            if config is None:
-                raise RuntimeError("Photodiode.update_config: this photodiode was not created from a PhotodiodeConfig.")
-            new_config = config.copy()
-        else:
-            new_config = update_dataclass_config(current_config=current_config, replacement=config, **updates)
-        if current_config is not None and new_config.binding != current_config.binding:
-            raise RuntimeError("Photodiode.update_config: changing binding requires recreating the photodiode.")
-        was_initialised = self.is_initialised()
-        reinitialise = current_config is not None and new_config.channel != current_config.channel
-        if reinitialise and was_initialised:
-            self.stop()
-            self.finalise(force=True)
-        self.config = new_config.copy()
-        self.channel = new_config.channel
-        self.name = new_config.name or self.name
-        self.reading_range = new_config.reading_range
-        self.check_initialised = new_config.check_initialised
-        self.check_alive = new_config.check_alive
-        if reinitialise and was_initialised:
-            self.initialise(force=True)
+        super().update_config(config=config, **updates)
 
     def read_photodiode(self) -> float:
         """

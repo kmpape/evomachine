@@ -132,19 +132,23 @@ class Automaton:
         self._cfg = cfg_processor
         self._channel_to_index: dict[LEDType, int] = self._cfg.channel_to_index
         self._curr_fov_id: int = 0
-        self._curr_period: int = 0
         self._curr_step: int = 0
         self._fovs: dict[int, Coordinate] = {}
         self._fov_to_roi: dict[int, list[int]] = {}
         self._cropping_boxes: dict[int, list[Any]] = {}
-        self._fov_processors: list[Any] = []
-        self._all_frames_raw: list[np.ndarray] = []
-        self._all_frames: list[np.ndarray] = []
-        self._ref_frames: list[np.ndarray] = []
+        self._fov_processors: dict[int, Any] = {}
+        self._skip_image_fov_id: int | None = None
+        self._skip_image_reason: str | None = None
+
+        # TODO(CODEX): refactor _all_frames_raw to store Frame objects instead
+        self._all_frames_raw: dict[int, np.ndarray] = {}
+        self._all_frames: dict[int, np.ndarray] = {}
+        self._ref_frames: dict[int, np.ndarray] = {}
+
         self._fov_list_is_initialised = False
         self._strategy_is_initialised = False
         self._reference_frames_is_initialised = False
-        self._fov_processors_is_initialised: list[bool] = []
+        self._fov_processors_is_initialised: dict[int, bool] = {}
         self.next_commands: list[AutomatonCommand] = []
         self.last_commands: list[AutomatonCommand] = []
         self._start_strategy_event = start_strategy_event
@@ -237,9 +241,12 @@ class Automaton:
             fov_id_to_coordinate=self._fovs,
             use_autofocus=use_autofocus,
         )
-        self._fov_processors_is_initialised = [True for _ in self._fovs]
+        self._fov_processors = {}
+        self._fov_processors_is_initialised = {fov_id: True for fov_id in self._fovs}
         self._fov_list_is_initialised = True
         self._reference_frames_is_initialised = True
+        self._skip_image_fov_id = None
+        self._skip_image_reason = None
         first_fov_id = next(iter(self._fovs))
         self._curr_fov_id = first_fov_id
         self._initialise_strategy()
@@ -424,7 +431,7 @@ class Automaton:
         Returns
         -------
         Any
-            FocusNavigatorResult returned by FocusNavigator.move().
+            FocusNavigatorFovRecord returned by FocusNavigator.move().
         """
         target_fov_id = command.command_args
         if target_fov_id is None:
@@ -433,8 +440,12 @@ class Automaton:
             target_fov_id = self.get_next_fov_id(current_fov=self._curr_fov_id)
         result = self.focus_navigator.move(fov_id=target_fov_id)
         self._curr_fov_id = target_fov_id
-        if self._fovs and target_fov_id == next(iter(self._fovs)):
-            self._curr_period += 1
+        if getattr(result, "skipped", False):
+            self._skip_image_fov_id = target_fov_id
+            self._skip_image_reason = getattr(result, "skip_reason", None)
+        else:
+            self._skip_image_fov_id = None
+            self._skip_image_reason = None
         return result
 
     def _execute_image(self, command: AutomatonCommand) -> dict[str, Any]:
@@ -459,6 +470,13 @@ class Automaton:
             metadata.callback_id = self._strategy.callback_counter
             if metadata.fov_id < 0:
                 metadata.fov_id = self._curr_fov_id
+        if any(metadata.fov_id == self._skip_image_fov_id for metadata in metadata_items):
+            return {
+                "skipped": True,
+                "skip_reason": self._skip_image_reason,
+                "frame_metadata": metadata_items,
+                "saved_paths": [None for _ in metadata_items],
+            }
         frame = self.acquisition_manager.take_frame(
             frame_metadata=frame_metadata,
             settings=FrameAcquisitionSettings(save=command.command_args["save"]),
@@ -497,10 +515,10 @@ class Automaton:
             if channel_index is None:
                 continue
             fov_id = metadata.fov_id if metadata.fov_id >= 0 else self._curr_fov_id
-            self._all_frames_raw[fov_id][0, channel_index, :, :] = self._all_frames_raw[fov_id][1, channel_index, :, :]
-            self._all_frames[fov_id][0, channel_index, :, :] = self._all_frames[fov_id][1, channel_index, :, :]
-            self._all_frames_raw[fov_id][1, channel_index, :, :] = frame.array[frame_index]
-            self._all_frames[fov_id][1, channel_index, :, :] = normalise_frame(frame.array[frame_index])
+            self._all_frames_raw[fov_id][1, channel_index, :, :] = self._all_frames_raw[fov_id][0, channel_index, :, :]
+            self._all_frames[fov_id][1, channel_index, :, :] = self._all_frames[fov_id][0, channel_index, :, :]
+            self._all_frames_raw[fov_id][0, channel_index, :, :] = frame.array[frame_index]
+            self._all_frames[fov_id][0, channel_index, :, :] = normalise_frame(frame.array[frame_index])
 
     def _ensure_frame_buffers(self, frame: Frame) -> None:
         """
@@ -522,22 +540,19 @@ class Automaton:
         frame_shape = frame.array.shape[-2:]
         dtype = frame.array.dtype
         num_channels = len(self._channel_to_index)
-        num_fovs = max(self._fovs) + 1
-        # TODO(CODEX) refactor these arrays below to:
-        # - store the latest nsteps frames (replacing 2) and add this variable as class attribute for now. reference frame remains 2D.
-        # - refactor these arrays to be arrays of size num_fovs x nsteps x num_channels x *frame_shape, and store the latest frame in index 0 for easier access and appending new frames at index 1 before shifting. this will simplify the code and make it more efficient when we want to add more than 2 frames in the future.
-        self._all_frames_raw = [
-            np.zeros((2, num_channels, *frame_shape), dtype=dtype)
-            for _ in range(num_fovs)
-        ]
-        self._all_frames = [
-            np.zeros((2, num_channels, *frame_shape), dtype=np.float32)
-            for _ in range(num_fovs)
-        ]
-        self._ref_frames = [
-            np.zeros((num_channels, *frame_shape), dtype=dtype)
-            for _ in range(num_fovs)
-        ]
+        # TODO(CODEX): store the latest nsteps frames and keep the history length configurable.
+        self._all_frames_raw = {
+            fov_id: np.zeros((2, num_channels, *frame_shape), dtype=dtype)
+            for fov_id in self._fovs
+        }
+        self._all_frames = {
+            fov_id: np.zeros((2, num_channels, *frame_shape), dtype=np.float32)
+            for fov_id in self._fovs
+        }
+        self._ref_frames = {
+            fov_id: np.zeros((num_channels, *frame_shape), dtype=dtype)
+            for fov_id in self._fovs
+        }
 
     def _metadata_channel_index(self, metadata: FrameMetaData) -> int | None:
         """
@@ -603,7 +618,7 @@ class Automaton:
             raise RuntimeError("Automaton._execute_project_roi: dmd is required.")
         args = command.command_args
         fov_id = args["fov_id"]
-        if fov_id >= len(self._fov_processors):
+        if fov_id not in self._fov_processors:
             raise KeyError(f"Automaton._execute_project_roi: unknown fov ID {fov_id}.")
         processor = self._fov_processors[fov_id]
         roi_boxes = [processor.roi_boxes[roi_id] for roi_id in args["roi_ids"]]
@@ -957,7 +972,7 @@ class Automaton:
             and self._strategy_is_initialised
             and self._reference_frames_is_initialised
             and self._fov_list_is_initialised
-            and all(self._fov_processors_is_initialised)
+            and all(self._fov_processors_is_initialised.values())
         )
 
     def get_channel_to_index(self) -> dict[LEDType, int]:
@@ -995,23 +1010,6 @@ class Automaton:
             raise KeyError(f"Automaton.get_next_fov_id: unknown fov ID {current_fov}.")
         return keys[(keys.index(current_fov) + 1) % len(keys)]
 
-
-    # TODO(CODEX): I think that this should be removed, self._curr_period. We should have a callback counter, and maybe a command counter
-    def get_period(self) -> int:
-        """
-        Return the current acquisition period counter.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        int
-            Current period.
-        """
-        return self._curr_period
-
     # TODO(CODEX): this should be extracted from the navigator, which should give UNKNOWN_FOV_ID when the current fov is not known (if the coordinates don't match the current position)
     def get_fov_id(self) -> int:
         """
@@ -1028,10 +1026,9 @@ class Automaton:
         """
         return self._curr_fov_id
 
-    # TODO(CODEX): this should have a time id argument and return most recent one by default
-    def get_frame(self, fov_id: int, channel: LEDType) -> np.ndarray:
+    def get_frame(self, fov_id: int, channel: LEDType, time_id: int = 0) -> np.ndarray:
         """
-        Return the latest normalised frame for one fov and LED channel.
+        Return one normalised frame for one fov, LED channel, and time index.
 
         Parameters
         ----------
@@ -1039,13 +1036,22 @@ class Automaton:
             FoV ID.
         channel
             LED channel.
+        time_id
+            Frame history index. 0 is the most recent frame and 1 is the
+            previous frame.
 
         Returns
         -------
         np.ndarray
-            Latest normalised frame.
+            Normalised frame.
         """
-        return self._all_frames[fov_id][1, self._channel_to_index[channel], :, :]
+        if fov_id not in self._all_frames:
+            raise KeyError(f"Automaton.get_frame: unknown fov ID {fov_id}.")
+        if not isinstance(time_id, int) or isinstance(time_id, bool):
+            raise TypeError(f"Automaton.get_frame: time_id must be int, received {type(time_id)}.")
+        if not 0 <= time_id < self._all_frames[fov_id].shape[0]:
+            raise IndexError(f"Automaton.get_frame: time_id {time_id} is out of range.")
+        return self._all_frames[fov_id][time_id, self._channel_to_index[channel], :, :]
 
     def get_strategy_name(self) -> str:
         """
