@@ -25,10 +25,10 @@ from evomachine.commands import AutomatonCommand
 from evomachine.coordinates import Coordinate
 from evomachine.types import AutomatonCommandType, LEDType
 from evomachine.config import ImageProcessorConfig, get_logger
-from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoGUIThread, EvoWorkerTemplate, FolderExistsValidator, \
+from evomachine.guidir_bkp.guitemplates import EvoPanelTemplate, EvoGUIThread, EvoWorkerTemplate, FolderExistsValidator, \
     FilenameValidator, EVO_STYLE
-from evomachine.guidir.guitypes import SMALL, LEFT, RIGHT  # noqa
-from evomachine.guidir.queuemanager import QueueManager
+from evomachine.guidir_bkp.guitypes import SMALL, LEFT, RIGHT  # noqa
+from evomachine.guidir_bkp.queuemanager import QueueManager
 from evomachine.utils import EvoCroppingBox
 
 

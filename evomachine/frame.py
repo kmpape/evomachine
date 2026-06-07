@@ -163,7 +163,7 @@ class FrameMetaDataFactory:
 class Frame:
     """Store one or more acquired image arrays with their frame metadata."""
 
-    frame_metadata: list[FrameMetaData]
+    frame_metadata: list[FrameMetaData]  # TODO(CODEX): detail axes here, e.g. (Z, channels, x, y)
     array: np.ndarray
     saved_paths: list[Path | None] = field(default_factory=list)
 

@@ -771,3 +771,70 @@ def test_automaton_shutdown_stops_and_finalises_peripherals() -> None:
     assert acquisition_manager.stop_count == 1
     assert led_manager.finalise_count == 1
     assert automaton.has_shutdown()
+
+
+def test_automaton_run_services_bounded_gui_request_processor() -> None:
+    """
+    Check the typed GUI hook is called from the automaton loop with its budget.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    cfg = make_cfg()
+    shutdown_event = Event()
+    budgets: list[int] = []
+
+    def process_gui_requests(max_jobs: int) -> None:
+        budgets.append(max_jobs)
+        shutdown_event.set()
+
+    automaton = Automaton(
+        camera=FakePeripheral(),
+        stage=FakePeripheral(),
+        led_manager=FakeLedManager(),
+        acquisition_manager=FakeAcquisitionManager(),
+        focus_navigator=FakeFocusNavigator(),
+        strategy=FakeStrategy(cfg=cfg),
+        cfg_processor=cfg,
+        start_strategy_event=Event(),
+        stop_strategy_event=Event(),
+        stop_event=Event(),
+        shutdown_event=shutdown_event,
+        gui_request_processor=process_gui_requests,
+        gui_request_budget=3,
+    )
+
+    automaton.run()
+
+    assert budgets == [3]
+
+
+def test_automaton_gui_set_request_processor_updates_hook_and_budget() -> None:
+    """
+    Check the typed GUI hook can be installed after automaton construction.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    automaton, *_deps = make_automaton()
+    budgets: list[int] = []
+
+    def process_gui_requests(max_jobs: int) -> None:
+        budgets.append(max_jobs)
+
+    automaton.gui_set_request_processor(process_gui_requests, budget=5)
+    automaton.gui_process_requests()
+
+    assert budgets == [5]
+    assert automaton.gui_request_processor is process_gui_requests
+    assert automaton.gui_request_budget == 5

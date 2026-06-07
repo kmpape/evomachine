@@ -17,10 +17,10 @@ from evomachine.bindings.asitiger.autofocus import TigerAutofocusConfig
 from evomachine.config import ImageProcessorConfig, get_logger
 from evomachine.softwarefocus import SoftwareFocusConfig
 from evomachine.types import FocusAlgorithmType, LEDType
-from evomachine.guidir.figures import FigureWindow
-from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
-from evomachine.guidir.guitypes import SMALL, CENTER, LEFT, RIGHT, NORMAL
-from evomachine.guidir.queuemanager import QueueManager
+from evomachine.guidir_bkp.figures import FigureWindow
+from evomachine.guidir_bkp.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
+from evomachine.guidir_bkp.guitypes import SMALL, CENTER, LEFT, RIGHT, NORMAL
+from evomachine.guidir_bkp.queuemanager import QueueManager
 from evomachine.utils import EvoCroppingBox
 
 

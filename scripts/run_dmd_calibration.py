@@ -31,8 +31,6 @@ else:
 from evomachine.types import FilterWheelType, LEDType
 from evomachine.config_types import DMDCalibConfigTypeFactory
 from evomachine.coordinates import Coordinate
-from evomachine.guidir.newgui import EvoGUI
-from evomachine.guidir.queuemanager import QueueManager
 from evomachine.strategy import BasicStrategy
 from evomachine.utils import rotation_correction
 from delta.roirt import *

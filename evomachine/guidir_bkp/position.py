@@ -18,10 +18,10 @@ from typing import Any
 from evomachine.config import ImageProcessorConfig, get_logger
 from evomachine.coordinates import Coordinate, CoordinateFactory
 from evomachine.types import AutomatonCommandType, FovDirectionType
-from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
-from evomachine.guidir.guitypes import DisplayMode, Direction, ARROW_LEFT, ARROW_RIGHT, ARROW_UP, ARROW_DOWN, AXES, \
+from evomachine.guidir_bkp.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
+from evomachine.guidir_bkp.guitypes import DisplayMode, Direction, ARROW_LEFT, ARROW_RIGHT, ARROW_UP, ARROW_DOWN, AXES, \
     SMALL, CENTER, LEFT, RIGHT, NORMAL
-from evomachine.guidir.queuemanager import QueueManager
+from evomachine.guidir_bkp.queuemanager import QueueManager
 
 
 logger = get_logger(name=__name__, is_gui=True)

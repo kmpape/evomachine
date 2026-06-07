@@ -1,20 +1,18 @@
 from __future__ import annotations
 
 import copy
-import logging
-from multiprocessing import Event, Queue
-import queue
+from multiprocessing import Event
 import time
-import traceback
 from typing import Any
 
 import numpy as np
 
 from evomachine.acquisition import FrameAcquisitionManager, FrameAcquisitionSettings
 from evomachine.commands import AutomatonCommand, CommandFactory
-from evomachine.config import EVO_GUI_LOGGING_LEVEL, get_logger
+from evomachine.config import get_logger
 from evomachine.coordinates import Coordinate
 from evomachine.frame import Frame, FrameMetaData
+from evomachine.gui.protocol import GuiRequestProcessor
 from evomachine.image_processing_config import ImageProcessorConfig
 from evomachine.peripherals.dmd import DmdCalibrationConfig
 from evomachine.navigation import FocusNavigator
@@ -47,11 +45,9 @@ class Automaton:
             autofocus: Any | None = None,
             photodiode: Any | None = None,
             projection_manager: ProjectionManager | None = None,  #  TODO(CODEX): rename ProjectionManager class as DmdCalibrator
-            process_q: Queue | None = None,
-            gui_to_automaton_q: Queue | None = None,
-            automaton_to_gui_q: Queue | None = None,
-            queue_timeout: float = 0,
             run_timeout: float = 0,
+            gui_request_processor: GuiRequestProcessor | None = None,
+            gui_request_budget: int = 16,
     ):
         """
         Initialise the automaton with explicit peripherals and managers.
@@ -91,16 +87,13 @@ class Automaton:
             Optional photodiode peripheral.
         projection_manager
             Optional ProjectionManager used for DMD calibration.
-        process_q
-            Optional process-to-GUI queue.
-        gui_to_automaton_q
-            Optional GUI-to-automaton queue.
-        automaton_to_gui_q
-            Optional automaton-to-GUI queue.
-        queue_timeout
-            Queue polling timeout in seconds.
         run_timeout
             Delay between loop iterations in seconds.
+        gui_request_processor
+            Optional callback used by a typed GUI RPC server to process a
+            bounded number of pending GUI jobs on the automaton thread.
+        gui_request_budget
+            Maximum number of typed GUI jobs processed per automaton loop tick.
 
         Returns
         -------
@@ -155,11 +148,52 @@ class Automaton:
         self._stop_strategy_event = stop_strategy_event
         self._stop_event = stop_event
         self._shutdown_event = shutdown_event
-        self._process_q: Queue | None = process_q
-        self._gui_to_automaton_q: Queue | None = gui_to_automaton_q
-        self._automaton_to_gui_q: Queue | None = automaton_to_gui_q
-        self.queue_timeout = self._validate_non_negative_float(queue_timeout, "queue_timeout")
         self.run_timeout = self._validate_non_negative_float(run_timeout, "run_timeout")
+        if gui_request_processor is not None and not callable(gui_request_processor):
+            raise TypeError(
+                f"Automaton.__init__: gui_request_processor must be callable or None, "
+                f"received {type(gui_request_processor)}."
+            )
+        if not isinstance(gui_request_budget, int) or isinstance(gui_request_budget, bool):
+            raise TypeError(
+                f"Automaton.__init__: gui_request_budget must be int, received {type(gui_request_budget)}."
+            )
+        if gui_request_budget < 1:
+            raise ValueError(f"Automaton.__init__: gui_request_budget must be positive, received {gui_request_budget}.")
+        self.gui_request_processor = gui_request_processor
+        self.gui_request_budget = gui_request_budget
+
+    def gui_set_request_processor(
+            self,
+            processor: GuiRequestProcessor | None,
+            budget: int | None = None,
+    ) -> None:
+        """
+        Install or clear the typed GUI request processor used by the run loop.
+
+        Parameters
+        ----------
+        processor
+            Callable that processes up to the supplied number of pending GUI
+            requests, or None to clear the hook.
+        budget
+            Optional replacement per-loop processing budget.
+
+        Returns
+        -------
+        None
+        """
+        if processor is not None and not callable(processor):
+            raise TypeError(
+                f"Automaton.gui_set_request_processor: processor must be callable or None, received {type(processor)}."
+            )
+        if budget is not None:
+            if not isinstance(budget, int) or isinstance(budget, bool):
+                raise TypeError(f"Automaton.gui_set_request_processor: budget must be int, received {type(budget)}.")
+            if budget < 1:
+                raise ValueError(f"Automaton.gui_set_request_processor: budget must be positive, received {budget}.")
+            self.gui_request_budget = budget
+        self.gui_request_processor = processor
 
     # TODO(CODEX): Move _require_methods and _validate_non_negative_float to utils. check if other classes redefine similar functions and reuse.
     @staticmethod
@@ -337,9 +371,9 @@ class Automaton:
         )
         self._strategy_is_initialised = True
 
-    def _gui_process(self) -> None:
+    def gui_process_requests(self) -> None:
         """
-        Process queued GUI requests using the current legacy request format.
+        Process a bounded batch of typed GUI requests without owning transport code.
 
         Parameters
         ----------
@@ -349,21 +383,8 @@ class Automaton:
         -------
         None
         """
-        if self._gui_to_automaton_q is None or self._automaton_to_gui_q is None:
-            return
-        while not self._gui_to_automaton_q.empty():
-            try:
-                req_id, req_str, kwargs_dict = self._gui_to_automaton_q.get(timeout=self.queue_timeout)
-                req_args = ",".join(f"{key}=kwargs_dict['{key}']" for key in kwargs_dict)
-                try:
-                    req_ans = eval(f"{req_str}({req_args})")
-                    self._automaton_to_gui_q.put((req_id, req_ans))
-                except Exception as error:
-                    logger.error(f"Automaton._gui_process: failed to execute {req_str}({req_args}): {error}.")
-                    traceback.print_exc()
-                    self._automaton_to_gui_q.put((req_id, error))
-            except queue.Empty:
-                pass
+        if self.gui_request_processor is not None:
+            self.gui_request_processor(self.gui_request_budget)
 
     def _process(self, finalise: bool = False) -> None:
         """
@@ -409,11 +430,6 @@ class Automaton:
                 raise RuntimeError(f"Automaton._process: unsupported command type {command.command_type}.")
             command.command_execution_time = time.time()
             command.fov_id = self._curr_fov_id
-            self.fill_queue(
-                queue_data_type=AutomatonCommandType.PROCESS_DATA,
-                queue_data=command,
-                logging_level=logging.INFO,
-            )
         if not finalise:
             self.last_commands = self.next_commands
             self.next_commands = self._strategy.callback(
@@ -664,31 +680,6 @@ class Automaton:
         self.led_manager.disable_led()
         return pattern
 
-    def fill_queue(
-            self,
-            queue_data_type: AutomatonCommandType,
-            queue_data: AutomatonCommand,
-            logging_level: int = logging.INFO,
-    ) -> None:
-        """
-        Put copied command data onto the process queue when configured.
-
-        Parameters
-        ----------
-        queue_data_type
-            Queue message type.
-        queue_data
-            Command payload.
-        logging_level
-            Minimum GUI logging level filter.
-
-        Returns
-        -------
-        None
-        """
-        if self._process_q is not None and logging_level >= EVO_GUI_LOGGING_LEVEL:
-            self._process_q.put((queue_data_type, copy.copy(queue_data)))
-
     def run(self) -> None:
         """
         Run the GUI and strategy loops until shutdown is requested.
@@ -703,10 +694,11 @@ class Automaton:
         """
         while not self.has_shutdown():
             while not self.strategy_has_started() and not self.has_shutdown():
-                self._gui_process()
+                self.gui_process_requests()
                 if self.run_timeout > 0:
                     self.sleep(duration=self.run_timeout)
             while not self.strategy_has_stopped() and not self.has_shutdown():
+                self.gui_process_requests()
                 if not self.stopped():
                     self._process()
                 if self.run_timeout > 0:
@@ -729,25 +721,6 @@ class Automaton:
         live_mode = getattr(self.camera, method_name, None)
         if callable(live_mode):
             live_mode()
-
-    def override_parameter(self, fov_id: int, param_name: str, param_value: Any) -> None:
-        """
-        Placeholder for legacy GUI parameter overrides.
-
-        Parameters
-        ----------
-        fov_id
-            Field-of-view identifier from the GUI request.
-        param_name
-            Parameter name requested by the GUI.
-        param_value
-            Replacement parameter value requested by the GUI.
-
-        Returns
-        -------
-        None
-        """
-        raise NotImplementedError("Automaton.override_parameter: GUI parameter overrides are not refactored yet.")
 
     def dmd_calibrate(
             self,

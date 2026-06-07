@@ -17,8 +17,8 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.config import ImageProcessorConfig, get_logger
-from evomachine.guidir.guitypes import NORMAL, ButtonState
-from evomachine.guidir.queuemanager import QueueManager
+from evomachine.guidir_bkp.guitypes import NORMAL, ButtonState
+from evomachine.guidir_bkp.queuemanager import QueueManager
 
 
 logger = get_logger(name=__name__)

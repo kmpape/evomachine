@@ -1,0 +1,10 @@
+name: evomachine.gui
+contributions:
+  commands:
+    - id: evomachine.gui.evomachine_widget
+      title: EvoMachine GUI
+      python_name: evomachine.gui.plugin:EvoMachineNapariWidget
+  widgets:
+    - command: evomachine.gui.evomachine_widget
+      display_name: EvoMachine GUI
+

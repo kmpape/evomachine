@@ -14,9 +14,9 @@ from PyQt5.QtWidgets import (
 from typing import Any
 
 from evomachine.config import ImageProcessorConfig, get_logger
-from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
-from evomachine.guidir.guitypes import SMALL, CENTER, LEFT, RIGHT, NORMAL
-from evomachine.guidir.queuemanager import QueueManager
+from evomachine.guidir_bkp.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
+from evomachine.guidir_bkp.guitypes import SMALL, CENTER, LEFT, RIGHT, NORMAL
+from evomachine.guidir_bkp.queuemanager import QueueManager
 
 
 logger = get_logger(name=__name__, is_gui=True)
