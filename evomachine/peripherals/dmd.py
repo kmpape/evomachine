@@ -118,11 +118,10 @@ class DmdCalibrationConfigFactory:
         )
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DmdConfig(PeripheralConfig):
     """Configuration for creating a DMD wrapper from a peripheral controller."""
 
-    name: str = ""
     width_height_DMD: tuple[int, int] = DMD_WIDTH_HEIGHT
     width_height_CAM: tuple[int, int] = CAM_WIDTH_HEIGHT
     display_offset: tuple[int, int] = (0, 0)
@@ -130,9 +129,19 @@ class DmdConfig(PeripheralConfig):
     calibration_file: Path | None = None
 
     def __post_init__(self) -> None:
+        """
+        Validate DMD configuration after dataclass construction.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            The dataclass fields are validated in place.
+        """
         super().__post_init__()
-        if not isinstance(self.name, str):
-            raise TypeError(f"DmdConfig: name must be str, received {type(self.name)}.")
         self.width_height_DMD = self._validate_size(
             value=self.width_height_DMD,
             field_name="width_height_DMD",
@@ -157,22 +166,6 @@ class DmdConfig(PeripheralConfig):
             raise TypeError(
                 f"DmdConfig: calibration_file must be Path, str, or None, received {type(self.calibration_file)}."
             )
-
-    def copy(self) -> "DmdConfig":
-        return DmdConfig(**self.__dict__)
-
-    def updated(self, **kwargs: Any) -> "DmdConfig":
-        unknown_keys = [key for key in kwargs if key not in self.__dict__]
-        if unknown_keys:
-            raise ValueError(f"DmdConfig.updated: unknown fields {unknown_keys}.")
-        values = dict(self.__dict__)
-        values.update(kwargs)
-        return DmdConfig(**values)
-
-    def update_from_mapping(self, updates: dict[str, Any]) -> "DmdConfig":
-        if not isinstance(updates, dict):
-            raise TypeError("DmdConfig.update_from_mapping: updates must be dict.")
-        return self.updated(**updates)
 
     @staticmethod
     def _validate_size(
@@ -274,11 +267,9 @@ class Dmd(Peripheral):
             calibration_file: Path | None = None,
     ):
         self.peripheral_ctrl: PeripheralController = peripheral_ctrl
-        super().__init__(
-            name=name or self.DEFAULT_NAME,
-            check_initialised=check_initialised,
-            check_alive=check_alive,
-        )
+        self.name: str = name or self.DEFAULT_NAME
+        self.check_initialised: bool = check_initialised
+        self.check_alive: bool = check_alive
         self.width_height_DMD: tuple[int, int] = width_height_DMD
         self.width_height_CAM: tuple[int, int] = width_height_CAM
         self.default_line_width: int = self.DEFAULT_LINE_WIDTH
@@ -288,6 +279,7 @@ class Dmd(Peripheral):
         self._calib_data: list | None = None
         self._homography_mat: np.ndarray | None = None
         self._homography_mat_inv: np.ndarray | None = None
+        self.config: DmdConfig | None = None
         self.calibrate(filepath=self._calib_file)
 
     @staticmethod
@@ -308,12 +300,11 @@ class Dmd(Peripheral):
         homography_mat_inv, _ = cv2.findHomography(srcPoints=dmd_points, dstPoints=cam_points)
         return calib_data, homography_mat, homography_mat_inv
 
-    def _initialise(self, force: bool = False) -> bool:
+    def initialise(self, force: bool = False) -> None:
         """Initialise the underlying DMD peripheral controller."""
         self.peripheral_ctrl.initialise(force=force)
-        return self.peripheral_ctrl.is_initialised()
 
-    def _finalise(self, force: bool = False) -> None:
+    def finalise(self, force: bool = False) -> None:
         """Shutdown the underlying DMD peripheral controller."""
         self.peripheral_ctrl.shutdown(force=force)
 
@@ -321,14 +312,13 @@ class Dmd(Peripheral):
         """Blank the DMD display."""
         self.display_none()
 
-    def _check_is_alive(self) -> bool:
+    def is_alive(self) -> bool:
         """Return whether the underlying controller reports alive."""
         return self.peripheral_ctrl.is_alive()
 
     def is_initialised(self) -> bool:
         """Return whether the underlying controller reports initialised."""
-        self._is_initialised = self.peripheral_ctrl.is_initialised()
-        return self._is_initialised
+        return self.peripheral_ctrl.is_initialised()
 
     def is_calibrated(self) -> bool:
         """Return whether both homography matrices are available."""
@@ -343,26 +333,6 @@ class Dmd(Peripheral):
         filepath = self._calib_file if filepath is None else Path(filepath)
         self._calib_data, self._homography_mat, self._homography_mat_inv = self.load_calibration_data(filepath=filepath)
         self._calib_file = filepath
-
-    def update_config(self, config: DmdConfig | None = None, **updates: Any) -> None:
-        """Replace or update DMD configuration at runtime."""
-        super().update_config(config=config, **updates)
-
-    def _apply_base_config(self, config: DmdConfig) -> None:
-        """Apply common DMD config fields while preserving empty-name defaults."""
-        if config.name:
-            self.name = config.name
-        if hasattr(config, "check_initialised"):
-            self._check_initialised = config.check_initialised
-        if hasattr(config, "check_alive"):
-            self._check_alive = config.check_alive
-
-    def _apply_config(self, config: DmdConfig) -> None:
-        """Apply DMD-specific runtime config fields."""
-        self.width_height_DMD = config.width_height_DMD
-        self.width_height_CAM = config.width_height_CAM
-        self._calib_file = config.calibration_file or self._calib_file
-        self.calibrate(filepath=self._calib_file)
 
     def get_calibration_data(self) -> tuple[list, np.ndarray, np.ndarray, Path] | tuple[None, None, None, Path]:
         """Return loaded calibration data, homographies, and the calibration filename."""
@@ -502,7 +472,10 @@ class Dmd(Peripheral):
 
     def _check_ready(self) -> None:
         """Raise if display actions are not allowed by current readiness checks."""
-        self._require_ready(action="display")
+        if self.check_initialised and not self.is_initialised():
+            raise RuntimeError(f"{self.name}: DMD peripheral controller is not initialised.")
+        if self.check_alive and not self.is_alive():
+            raise RuntimeError(f"{self.name}: DMD peripheral controller is not alive.")
 
     def _normalise_display_image(self, img: np.ndarray) -> np.ndarray:
         """Validate a DMD image and return a 2D uint8 array ready for display transport."""

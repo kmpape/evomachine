@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np
 
-from evomachine.peripherals.camera import Camera
+from evomachine.peripherals.camera import Camera, CameraReadoutMode
 from evomachine.peripherals.camera import ImageConfigType
 
 
@@ -18,13 +18,13 @@ class MMCCamera(Camera):
             image: ImageConfigType,
             name: str = DEFAULT_NAME,
             default_exposure_time: float | int = 200,
-            imaging_mode: str | None = None,
+            readout_mode: CameraReadoutMode | None = None,
             check_initialised: bool = True,
             check_alive: bool = True,
             core: Any | None = None,
             studio: Any | None = None,
             camera_device: str = "Camera-1",
-            imaging_mode_property: str = "Port",
+            readout_mode_property: str = "Port",
     ):
         """
         Initialise a Micro-Manager camera wrapper.
@@ -37,8 +37,8 @@ class MMCCamera(Camera):
             Human-readable camera name.
         default_exposure_time
             Exposure time applied during initialise(), in milliseconds.
-        imaging_mode
-            Optional Micro-Manager imaging mode applied during initialise().
+        readout_mode
+            Optional Micro-Manager readout mode applied during initialise().
         check_initialised
             If True, inherited public methods require successful initialise().
         check_alive
@@ -49,8 +49,8 @@ class MMCCamera(Camera):
             Optional injected pycromanager Studio-compatible object.
         camera_device
             Micro-Manager device name used when setting imaging mode.
-        imaging_mode_property
-            Micro-Manager property name used when setting imaging mode.
+        readout_mode_property
+            Micro-Manager property name used when setting readout mode.
 
         Returns
         -------
@@ -59,12 +59,12 @@ class MMCCamera(Camera):
         self.core: Any | None = core
         self.studio: Any | None = studio
         self.camera_device: str = camera_device
-        self.imaging_mode_property: str = imaging_mode_property
+        self.readout_mode_property: str = readout_mode_property
         super().__init__(
             image=image,
             name=name,
             default_exposure_time=default_exposure_time,
-            imaging_mode=imaging_mode,
+            readout_mode=readout_mode,
             check_initialised=check_initialised,
             check_alive=check_alive,
         )
@@ -177,20 +177,20 @@ class MMCCamera(Camera):
         """
         self.core.set_exposure(exposure_time)
 
-    def _set_imaging_mode(self, imaging_mode: str) -> None:
+    def _set_readout_mode(self, readout_mode: CameraReadoutMode) -> None:
         """
-        Set a Micro-Manager camera imaging mode property.
+        Set a Micro-Manager camera readout mode property.
 
         Parameters
         ----------
-        imaging_mode
-            Mode value passed to Micro-Manager.
+        readout_mode
+            Readout mode value passed to Micro-Manager.
 
         Returns
         -------
         None
         """
-        self.core.set_property(self.camera_device, self.imaging_mode_property, imaging_mode)
+        self.core.set_property(self.camera_device, self.readout_mode_property, readout_mode.value)
 
     def _disable_live_mode(self) -> None:
         """

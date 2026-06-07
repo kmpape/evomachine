@@ -105,6 +105,7 @@ class AutomatonCommandType(EvoType):
     
     IMAGE = auto()
     MOVE = auto()
+    UPDATE_FOV_CONFIG = auto()
     PROJECT = auto()
     PROJECT_ROI = auto()
     WAIT = auto()

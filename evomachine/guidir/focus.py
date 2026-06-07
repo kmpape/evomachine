@@ -13,8 +13,9 @@ from PyQt5.QtWidgets import (
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
 
-from evomachine.acquisition_bkp import AbstractCamera
-from evomachine.config import CameraSystemConfig, ConfigCRISP, ConfigFocus, ImageProcessorConfig, get_logger
+from evomachine.bindings.asitiger.autofocus import TigerAutofocusConfig
+from evomachine.config import ImageProcessorConfig, get_logger
+from evomachine.softwarefocus import SoftwareFocusConfig
 from evomachine.types import FocusAlgorithmType, LEDType
 from evomachine.guidir.figures import FigureWindow
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
@@ -30,11 +31,11 @@ class FocusWorker(EvoWorkerTemplate):
     def __init__(
             self,
             labels_values: dict[str, list[QLabel | QLineEdit]],
-            this_cfg: ConfigFocus,
+            this_cfg: SoftwareFocusConfig,
             parent: QObject | None = None,
     ):
         super().__init__(parent)
-        self.this_cfg: ConfigFocus | ConfigCRISP = this_cfg
+        self.this_cfg: SoftwareFocusConfig | TigerAutofocusConfig = this_cfg
         self.labels_values: dict[str, list[QLabel, QLineEdit]] = labels_values
 
         # Available after calling the focus routine
@@ -45,6 +46,24 @@ class FocusWorker(EvoWorkerTemplate):
         self.prev_image: np.ndarray | None = None
         self.prev_z: float | None = None
         self.new_z: float | None = None
+
+    @staticmethod
+    def _normalise_frame(frame: np.ndarray) -> np.ndarray:
+        """
+        Return a colour-mapped normalised frame for display.
+
+        Parameters
+        ----------
+        frame
+            Two-dimensional image frame.
+
+        Returns
+        -------
+        np.ndarray
+            Normalised colour image.
+        """
+        norm = plt.Normalize(vmin=frame.min(), vmax=frame.max())
+        return plt.cm.jet(norm(frame))
 
     @pyqtSlot()
     def clear_config(self):
@@ -76,8 +95,8 @@ class FocusWorker(EvoWorkerTemplate):
         ax1.set_ylabel("Sharpness Scores")
         ax1.set_title("Focus Curve")
         best_index = np.argmax(self.focus_scores)
-        best_image = AbstractCamera.normalise_frame(self.focus_stack[:, :, best_index])
-        prev_image = AbstractCamera.normalise_frame(self.prev_image)
+        best_image = self._normalise_frame(self.focus_stack[:, :, best_index])
+        prev_image = self._normalise_frame(self.prev_image)
         ax2 = fig.add_subplot(gs[1, 0])
         ax2.imshow(prev_image)
         ax2.set_title(f"Before Focus\n Z={self.prev_z/10:.1f}")
@@ -97,7 +116,7 @@ class FocusPanel(EvoPanelTemplate):
     def __init__(
             self,
             queue_manager: QueueManager,
-            camera_config: CameraSystemConfig,
+            camera_config: Any,
             processor_config: ImageProcessorConfig,
             start_strategy_event: Event,
             stop_strategy_event: Event,
@@ -175,7 +194,7 @@ class FocusPanel(EvoPanelTemplate):
         if param_name == 'algorithm':
             val = self.algorithm_current_option
         else:
-            val = ConfigFocus.get_attr_from_str(
+            val = type(self.cfg_focus).get_attr_from_str(
                 attr_name=param_name,
                 attr_value_str=self.labels_values[param_name][1].text(),
             )

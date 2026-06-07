@@ -14,7 +14,9 @@ from delta.utils import CroppingBox as DeltaCroppingBox
 
 from evomachine.acquisition_bkp import AbstractCamera
 from evomachine.commands import AutomatonCommand, AutomatonCommandType
-from evomachine.config import CameraSystemConfig, ImageProcessorConfig, get_logger
+from typing import Any
+
+from evomachine.config import ImageProcessorConfig, get_logger
 from evomachine.coordinates import Coordinate, CoordinateFactory
 from evomachine.guidir.figures import FigureMultiWindow, ChannelPlotter
 from evomachine.guidir.guitemplates import EvoGUIThread, EvoPanelTemplate, EvoWorkerTemplate
@@ -29,7 +31,7 @@ class ExperimentWorker(EvoWorkerTemplate):
     def __init__(
             self,
             queue_manager: QueueManager,
-            config_camera: CameraSystemConfig,
+            config_camera: Any,
             signal_enable_button: pyqtSignal,
             signal_disable_button: pyqtSignal,
             signal_set_button_color: pyqtSignal,
@@ -317,7 +319,7 @@ class ExperimentPanel(EvoPanelTemplate):
     def __init__(
             self,
             queue_manager: QueueManager,
-            camera_config: CameraSystemConfig,
+            camera_config: Any,
             processor_config: ImageProcessorConfig,
             start_strategy_event: Event,
             stop_strategy_event: Event,

@@ -7,7 +7,7 @@ import pytest
 
 from evomachine.bindings.binding_types import BindingType
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
-from evomachine.peripherals.camera import CameraConfig, CameraFactory
+from evomachine.peripherals.camera import CameraConfig, CameraFactory, CameraReadoutMode
 from evomachine.peripherals.camera import ImageConfigType
 
 
@@ -77,7 +77,7 @@ def test_camera_config_validation() -> None:
     with pytest.raises(TypeError):
         CameraConfig(binding=BindingType.VIRTUAL, image=image, check_alive="yes")
     with pytest.raises(TypeError):
-        CameraConfig(binding=BindingType.VIRTUAL, image=image, imaging_mode=1)
+        CameraConfig(binding=BindingType.VIRTUAL, image=image, readout_mode=1)
 
 
 def test_virtual_camera_lifecycle_exposure_and_frame() -> None:
@@ -96,7 +96,7 @@ def test_virtual_camera_lifecycle_exposure_and_frame() -> None:
         binding=BindingType.VIRTUAL,
         image=_image_config(),
         default_exposure_time=50,
-        imaging_mode="virtual-mode",
+        readout_mode=CameraReadoutMode.SENSITIVITY,
     )
     camera = CameraFactory.create(
         config=config,
@@ -111,7 +111,7 @@ def test_virtual_camera_lifecycle_exposure_and_frame() -> None:
     assert camera.is_initialised()
     assert camera.is_alive()
     assert camera.get_exposure() == 50
-    assert camera.imaging_mode == "virtual-mode"
+    assert camera.readout_mode == CameraReadoutMode.SENSITIVITY
 
     frame = camera.get_frame()
     assert frame.shape == config.image.shape
@@ -359,7 +359,7 @@ def test_mmc_camera_factory_with_injected_core_and_studio() -> None:
             binding=BindingType.MMC,
             image=image,
             default_exposure_time=33,
-            imaging_mode="Dynamic Range",
+            readout_mode=CameraReadoutMode.DYNAMIC_RANGE,
         ),
         core=core,
         studio=studio,
@@ -537,7 +537,7 @@ def test_pvcam_camera_factory_with_injected_pyvcam_objects() -> None:
             binding=BindingType.PVCAM,
             image=image,
             default_exposure_time=44,
-            imaging_mode="Dynamic Range",
+            readout_mode=CameraReadoutMode.DYNAMIC_RANGE,
         ),
         pvc_module=pvc_module,
         camera_class=FakePVCameraClass,

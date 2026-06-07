@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
-from evomachine.peripherals.camera import Camera
+from evomachine.peripherals.camera import Camera, CameraReadoutMode
 from evomachine.peripherals.camera import ImageConfigType
 
 
@@ -23,7 +23,7 @@ class VirtualCamera(Camera):
             image: ImageConfigType,
             name: str = DEFAULT_NAME,
             default_exposure_time: float | int = 200,
-            imaging_mode: str | None = None,
+            readout_mode: CameraReadoutMode | None = None,
             check_initialised: bool = True,
             check_alive: bool = True,
             random_seed: int | None = 0,
@@ -41,8 +41,8 @@ class VirtualCamera(Camera):
             Human-readable camera name.
         default_exposure_time
             Exposure time applied during initialise(), in milliseconds.
-        imaging_mode
-            Optional simulated imaging mode name.
+        readout_mode
+            Optional simulated readout mode.
         check_initialised
             If True, inherited public methods require successful initialise().
         check_alive
@@ -68,7 +68,7 @@ class VirtualCamera(Camera):
             image=image,
             name=name,
             default_exposure_time=default_exposure_time,
-            imaging_mode=imaging_mode,
+            readout_mode=readout_mode,
             check_initialised=check_initialised,
             check_alive=check_alive,
         )

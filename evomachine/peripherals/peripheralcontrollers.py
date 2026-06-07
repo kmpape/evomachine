@@ -16,6 +16,18 @@ class PeripheralControllerConfig:
     initialise: bool = True
 
     def __post_init__(self) -> None:
+        """
+        Validate peripheral controller configuration after construction.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            The dataclass fields are validated in place.
+        """
         if not isinstance(self.binding, BindingType):
             raise TypeError(
                 f"PeripheralControllerConfig: binding must be BindingType, "
@@ -31,19 +43,6 @@ class PeripheralControllerConfig:
     def copy(self) -> "PeripheralControllerConfig":
         return type(self)(**self.__dict__)
 
-    def updated(self, **kwargs: Any) -> "PeripheralControllerConfig":
-        unknown_keys = [key for key in kwargs if key not in self.__dict__]
-        if unknown_keys:
-            raise ValueError(f"{type(self).__name__}.updated: unknown fields {unknown_keys}.")
-        values = dict(self.__dict__)
-        values.update(kwargs)
-        return type(self)(**values)
-
-    def update_from_mapping(self, updates: dict[str, Any]) -> "PeripheralControllerConfig":
-        if not isinstance(updates, dict):
-            raise TypeError(f"{type(self).__name__}.update_from_mapping: updates must be dict.")
-        return self.updated(**updates)
-
 
 @dataclass
 class SerialPeripheralControllerConfig(PeripheralControllerConfig):
@@ -54,6 +53,18 @@ class SerialPeripheralControllerConfig(PeripheralControllerConfig):
     close_on_shutdown: bool = True
 
     def __post_init__(self) -> None:
+        """
+        Validate serial peripheral controller configuration after construction.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            The dataclass fields are validated in place.
+        """
         super().__post_init__()
         if self.binding not in {
             BindingType.ASI_TIGER,
@@ -109,6 +120,18 @@ class SocketPeripheralControllerConfig(PeripheralControllerConfig):
     close_on_shutdown: bool = True
 
     def __post_init__(self) -> None:
+        """
+        Validate socket peripheral controller configuration after construction.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            The dataclass fields are validated in place.
+        """
         super().__post_init__()
         if not isinstance(self.host, str):
             raise TypeError(f"SocketPeripheralControllerConfig: host must be str, received {type(self.host)}.")
@@ -211,39 +234,6 @@ class PeripheralController(ABC):
             True when initialise() has succeeded.
         """
         return self._is_initialised
-
-    def update_config(self, config: PeripheralControllerConfig | None = None, **updates: Any) -> None:
-        """Replace or update controller configuration at runtime."""
-        from evomachine.peripherals.peripherals import update_dataclass_config
-
-        current_config = self.config
-        if current_config is None:
-            if config is None:
-                raise RuntimeError("PeripheralController.update_config: controller has no stored config.")
-            new_config = config.copy()
-        else:
-            new_config = update_dataclass_config(current_config=current_config, replacement=config, **updates)
-        if current_config is not None and new_config.binding != current_config.binding:
-            raise RuntimeError("PeripheralController.update_config: changing binding requires recreating the controller.")
-        was_initialised = self.is_initialised()
-        reinitialise = current_config is not None and self._config_requires_reinitialise(current_config, new_config)
-        if reinitialise and was_initialised:
-            self.shutdown(force=True)
-        self.config = new_config.copy()
-        self.name = new_config.name or self.name
-        self._apply_config(config=new_config)
-        if reinitialise and was_initialised:
-            self.initialise(force=True)
-
-    def _config_requires_reinitialise(
-            self,
-            current_config: PeripheralControllerConfig,
-            new_config: PeripheralControllerConfig,
-    ) -> bool:
-        return type(current_config) is not type(new_config)
-
-    def _apply_config(self, config: PeripheralControllerConfig) -> None:
-        return
 
     def stop(self) -> None:
         """
@@ -466,19 +456,6 @@ class SerialPeripheralController(PeripheralController):
             return
         self._disconnect()
 
-    def _config_requires_reinitialise(
-            self,
-            current_config: PeripheralControllerConfig,
-            new_config: PeripheralControllerConfig,
-    ) -> bool:
-        if not isinstance(current_config, SerialPeripheralControllerConfig) or not isinstance(new_config, SerialPeripheralControllerConfig):
-            return True
-        return current_config.port != new_config.port or current_config.hwid != new_config.hwid
-
-    def _apply_config(self, config: PeripheralControllerConfig) -> None:
-        if isinstance(config, SerialPeripheralControllerConfig):
-            self.close_on_shutdown = config.close_on_shutdown
-
 
 class SocketPeripheralController(PeripheralController):
     """Base class for PeripheralController implementations backed by a socket connection."""
@@ -593,19 +570,6 @@ class SocketPeripheralController(PeripheralController):
         if not (force or self.close_on_shutdown):
             return
         self._disconnect()
-
-    def _config_requires_reinitialise(
-            self,
-            current_config: PeripheralControllerConfig,
-            new_config: PeripheralControllerConfig,
-    ) -> bool:
-        if not isinstance(current_config, SocketPeripheralControllerConfig) or not isinstance(new_config, SocketPeripheralControllerConfig):
-            return True
-        return current_config.host != new_config.host or current_config.port != new_config.port
-
-    def _apply_config(self, config: PeripheralControllerConfig) -> None:
-        if isinstance(config, SocketPeripheralControllerConfig):
-            self.close_on_shutdown = config.close_on_shutdown
 
 
 class PeripheralControllerFactory:

@@ -53,39 +53,31 @@ def get_logger(name: str, is_gui: bool = False) -> logging.Logger:
 
 
 def __getattr__(name: str):
-    """Lazy compatibility exports for config classes moved to domain modules."""
-    if name in {"ConfigCRISP", "TigerAutofocusConfig"}:
+    """Lazy exports for config classes owned by domain modules."""
+    if name == "TigerAutofocusConfig":
         from evomachine.bindings.asitiger.autofocus import TigerAutofocusConfig
 
         return TigerAutofocusConfig
-    if name in {"ConfigCRISPFactory", "TigerAutofocusConfigFactory"}:
+    if name == "TigerAutofocusConfigFactory":
         from evomachine.bindings.asitiger.autofocus import TigerAutofocusConfigFactory
 
         return TigerAutofocusConfigFactory
-    if name in {"ConfigFocus", "SoftwareFocusConfig"}:
+    if name == "SoftwareFocusConfig":
         from evomachine.softwarefocus import SoftwareFocusConfig
 
         return SoftwareFocusConfig
-    if name in {"ConfigFocusFactory", "SoftwareFocusConfigFactory"}:
+    if name == "SoftwareFocusConfigFactory":
         from evomachine.softwarefocus import SoftwareFocusConfigFactory
 
         return SoftwareFocusConfigFactory
-    if name in {"ConfigImageProcessor", "ImageProcessorConfig"}:
+    if name == "ImageProcessorConfig":
         from evomachine.image_processing_config import ImageProcessorConfig
 
         return ImageProcessorConfig
-    if name in {"ConfigImageProcessorFactory", "ImageProcessorConfigFactory"}:
+    if name == "ImageProcessorConfigFactory":
         from evomachine.image_processing_config import ImageProcessorConfigFactory
 
         return ImageProcessorConfigFactory
-    if name in {"ConfigCamera", "CameraSystemConfig"}:
-        from evomachine.peripherals.camera import CameraSystemConfig
-
-        return CameraSystemConfig
-    if name in {"ConfigCameraFactory", "CameraSystemConfigFactory"}:
-        from evomachine.peripherals.camera import CameraSystemConfigFactory
-
-        return CameraSystemConfigFactory
     if name in {"ImageConfigType", "ImageConfigTypeFactory", "ObjectiveConfigType", "ObjectiveConfigTypeFactory"}:
         from evomachine.peripherals import camera
 

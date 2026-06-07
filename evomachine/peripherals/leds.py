@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import threading
 import time
 from typing import Any
 
 from evomachine.bindings.binding_types import BindingType
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
-from evomachine.peripherals.peripherals import Peripheral
+from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
 from evomachine.types import BrightnessType, LEDType
 
 
@@ -22,26 +22,28 @@ class LedState:
     stop_time: float | None = None
 
 
-@dataclass
-class LedConfig:
+@dataclass(kw_only=True)
+class LedConfig(PeripheralConfig):
     """Configuration object used by LedFactory to create LED sources."""
 
-    binding: BindingType
     available_leds: list[LEDType]
-    name: str | None = None
-    check_initialised: bool = True
-    check_alive: bool = True
     led_to_internal: dict[LEDType, Any] | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.binding, BindingType):
-            raise TypeError(f"LedConfig: binding must be BindingType, received {type(self.binding)}.")
-        if self.name is not None and not isinstance(self.name, str):
-            raise TypeError(f"LedConfig: name must be str or None, received {type(self.name)}.")
-        if not isinstance(self.check_initialised, bool):
-            raise TypeError(f"LedConfig: check_initialised must be bool, received {type(self.check_initialised)}.")
-        if not isinstance(self.check_alive, bool):
-            raise TypeError(f"LedConfig: check_alive must be bool, received {type(self.check_alive)}.")
+        """
+        Validate LED source configuration after dataclass construction.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+            The dataclass fields are validated in place. available_leds is
+            normalised to a copied list.
+        """
+        super().__post_init__()
         self.available_leds = LedSource.validate_available_leds(self.available_leds)
         if self.led_to_internal is not None:
             if not isinstance(self.led_to_internal, dict):
@@ -52,54 +54,6 @@ class LedConfig:
                 led_to_internal=self.led_to_internal,
                 available_leds=self.available_leds,
             )
-
-    def copy(self) -> "LedConfig":
-        return LedConfig(**self.__dict__)
-
-    def updated(self, **kwargs: Any) -> "LedConfig":
-        unknown_keys = [key for key in kwargs if key not in self.__dict__]
-        if unknown_keys:
-            raise ValueError(f"LedConfig.updated: unknown fields {unknown_keys}.")
-        values = dict(self.__dict__)
-        values.update(kwargs)
-        return LedConfig(**values)
-
-    def update_from_mapping(self, updates: dict[str, Any]) -> "LedConfig":
-        if not isinstance(updates, dict):
-            raise TypeError("LedConfig.update_from_mapping: updates must be dict.")
-        return self.updated(**updates)
-
-
-@dataclass
-class LedManagerConfig:
-    """Configuration object for LedManager runtime updates."""
-
-    name: str = "LED Manager"
-    source_configs: list[LedConfig] = field(default_factory=list)
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.name, str):
-            raise TypeError(f"LedManagerConfig: name must be str, received {type(self.name)}.")
-        if not isinstance(self.source_configs, list):
-            raise TypeError("LedManagerConfig: source_configs must be list[LedConfig].")
-        if not all(isinstance(config, LedConfig) for config in self.source_configs):
-            raise TypeError("LedManagerConfig: every source config must be LedConfig.")
-
-    def copy(self) -> "LedManagerConfig":
-        return LedManagerConfig(name=self.name, source_configs=[config.copy() for config in self.source_configs])
-
-    def updated(self, **kwargs: Any) -> "LedManagerConfig":
-        unknown_keys = [key for key in kwargs if key not in self.__dict__]
-        if unknown_keys:
-            raise ValueError(f"LedManagerConfig.updated: unknown fields {unknown_keys}.")
-        values = dict(self.__dict__)
-        values.update(kwargs)
-        return LedManagerConfig(**values)
-
-    def update_from_mapping(self, updates: dict[str, Any]) -> "LedManagerConfig":
-        if not isinstance(updates, dict):
-            raise TypeError("LedManagerConfig.update_from_mapping: updates must be dict.")
-        return self.updated(**updates)
 
 
 class LedSource(Peripheral):
@@ -139,20 +93,20 @@ class LedSource(Peripheral):
         None
         """
         self.peripheral_ctrl: PeripheralController = peripheral_ctrl
-        super().__init__(
-            name=name,
-            check_initialised=check_initialised,
-            check_alive=check_alive,
-        )
+        self.name: str = name
         self.available_leds: list[LEDType] = self.validate_available_leds(available_leds)
         self.led_to_internal: dict[LEDType, Any] = self._validate_led_to_internal(
             led_to_internal=led_to_internal,
             available_leds=self.available_leds,
         )
+        self.check_initialised: bool = check_initialised
+        self.check_alive: bool = check_alive
+        self._is_initialised: bool = False
         self._states: dict[LEDType, LedState] = {
             led_type: LedState(led_type=led_type) for led_type in self.available_leds
         }
         self._timers: dict[LEDType, threading.Timer] = {}
+        self.config: LedConfig | None = None
 
     @staticmethod
     def validate_available_leds(available_leds: list[LEDType]) -> list[LEDType]:
@@ -209,15 +163,58 @@ class LedSource(Peripheral):
             raise ValueError(f"LedSource: led_to_internal missing mappings for {missing_leds}.")
         return {led_type: led_to_internal[led_type] for led_type in available_leds}
 
-    def _before_initialise(self, force: bool = False) -> None:
-        """Check the controller before LED source initialisation."""
-        if self._check_initialised and not self.peripheral_ctrl.is_initialised():
-            raise RuntimeError(f"LedSource.initialise: {self.peripheral_ctrl.name} is not initialised.")
-        if self._check_alive and not self.peripheral_ctrl.is_alive():
-            raise RuntimeError(f"LedSource.initialise: {self.peripheral_ctrl.name} is not alive.")
+    def initialise(self, force: bool = False) -> None:
+        """
+        Initialise this LED source after checking its peripheral controller.
 
-    def _check_is_alive(self) -> bool:
-        """Return whether the LED source controller is alive."""
+        Parameters
+        ----------
+        force
+            If True, run initialisation even when this source is already marked
+            initialised.
+
+        Returns
+        -------
+        None
+        """
+        if self._is_initialised and not force:
+            return
+        if self.check_initialised and not self.peripheral_ctrl.is_initialised():
+            raise RuntimeError(f"LedSource.initialise: {self.peripheral_ctrl.name} is not initialised.")
+        if self.check_alive and not self.peripheral_ctrl.is_alive():
+            raise RuntimeError(f"LedSource.initialise: {self.peripheral_ctrl.name} is not alive.")
+        self._initialise(force=force)
+        self._is_initialised = True
+
+    def is_initialised(self) -> bool:
+        """
+        Return whether this LED source has been initialised.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        bool
+            True after initialise() succeeds, False after construction or
+            finalise().
+        """
+        return self._is_initialised
+
+    def is_alive(self) -> bool:
+        """
+        Query and return the liveness reported by the peripheral controller.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        bool
+            True when the underlying controller reports alive.
+        """
         return self.peripheral_ctrl.is_alive()
 
     def stop(self) -> None:
@@ -249,10 +246,9 @@ class LedSource(Peripheral):
         None
         """
         self._cancel_all_timers()
-        if self._is_initialised or not self._check_initialised:
+        if self._is_initialised or not self.check_initialised:
             self.disable_led()
         self._is_initialised = False
-        self._is_alive = False
 
     def get_available_leds(self) -> list[LEDType]:
         """
@@ -268,26 +264,6 @@ class LedSource(Peripheral):
             Copy of the logical LED list controlled by this source.
         """
         return list(self.available_leds)
-
-    def _apply_config(self, config: LedConfig) -> None:
-        """Apply LED-source-specific config fields."""
-        self.available_leds = self.validate_available_leds(config.available_leds)
-        self.led_to_internal = self._validate_led_to_internal(
-            led_to_internal=self.led_to_internal if config.led_to_internal is None else config.led_to_internal,
-            available_leds=self.available_leds,
-        )
-        self._states = {led_type: self._states.get(led_type, LedState(led_type=led_type)) for led_type in self.available_leds}
-
-    def _config_requires_reinitialise(self, current_config: LedConfig, new_config: LedConfig) -> bool:
-        """Return whether LED source config changes require reinitialisation."""
-        return (
-            new_config.available_leds != current_config.available_leds
-            or new_config.led_to_internal != current_config.led_to_internal
-        )
-
-    def update_config(self, config: LedConfig | None = None, **updates: Any) -> None:
-        """Replace or update LED source configuration at runtime."""
-        super().update_config(config=config, **updates)
 
     def set_led(
             self,
@@ -313,7 +289,7 @@ class LedSource(Peripheral):
         -------
         None
         """
-        self._require_ready(action="set_led")
+        self._check_ready()
         if not isinstance(led_type, LEDType):
             raise TypeError(f"LedSource.set_led: led_type must be LEDType, received {type(led_type)}.")
         if led_type not in self.available_leds:
@@ -341,7 +317,7 @@ class LedSource(Peripheral):
         -------
         None
         """
-        self._require_ready(action="disable_led")
+        self._check_ready()
         led_types = self.available_leds if led_type is None else [led_type]
         for selected_led_type in led_types:
             if selected_led_type not in self.available_leds:
@@ -389,6 +365,23 @@ class LedSource(Peripheral):
             True when the cached state has is_on=True.
         """
         return self.get_led_state(led_type=led_type).is_on
+
+    def _check_ready(self) -> None:
+        """
+        Raise if readiness checks block a LED hardware operation.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        if self.check_initialised and not self.is_initialised():
+            raise RuntimeError(f"LedSource: {self.name} is not initialised.")
+        if self.check_alive and not self.is_alive():
+            raise RuntimeError(f"LedSource: {self.name} is not alive.")
 
     @staticmethod
     def _validate_brightness(brightness: BrightnessType) -> BrightnessType:
@@ -499,7 +492,7 @@ class LedSource(Peripheral):
         for led_type in list(self._timers):
             self._cancel_timer(led_type=led_type)
 
-    def _initialise(self, force: bool = False) -> bool:
+    def _initialise(self, force: bool = False) -> None:
         """
         Run binding-specific LED source initialisation.
 
@@ -512,7 +505,7 @@ class LedSource(Peripheral):
         -------
         None
         """
-        return True
+        return
 
     @abstractmethod
     def _set_led(
@@ -576,40 +569,16 @@ class LedManager(Peripheral):
         -------
         None
         """
-        source_configs = [source.config.copy() for source in led_sources if source.config is not None]
-        if len(source_configs) != len(led_sources):
-            source_configs = []
-        super().__init__(
-            name=name,
-            check_initialised=False,
-            check_alive=False,
-            config=LedManagerConfig(name=name, source_configs=source_configs),
-        )
+        self.name: str = name
         self.led_sources: list[LedSource] = list(led_sources)
         if not self.led_sources:
             raise ValueError("LedManager: led_sources must not be empty.")
-        self._led_to_source: dict[LEDType, LedSource] = self._build_led_to_source()
-
-    def _build_led_to_source(self) -> dict[LEDType, LedSource]:
-        """
-        Build a routing table from logical LEDs to managed sources.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        dict[LEDType, LedSource]
-            Mapping from every routed LEDType to the source responsible for it.
-        """
-        led_to_source: dict[LEDType, LedSource] = {}
+        self._led_to_source: dict[LEDType, LedSource] = {}
         for source in self.led_sources:
             for led_type in source.get_available_leds():
-                if led_type in led_to_source:
+                if led_type in self._led_to_source:
                     raise ValueError(f"LedManager: {led_type} is handled by more than one LedSource.")
-                led_to_source[led_type] = source
-        return led_to_source
+                self._led_to_source[led_type] = source
 
     def initialise(self, force: bool = False) -> None:
         """
@@ -626,8 +595,6 @@ class LedManager(Peripheral):
         """
         for source in self.led_sources:
             source.initialise(force=force)
-        self._is_initialised = self.is_initialised()
-        self._is_alive = self.is_alive()
 
     def is_initialised(self) -> bool:
         """
@@ -642,8 +609,7 @@ class LedManager(Peripheral):
         bool
             True if all managed sources report initialised.
         """
-        self._is_initialised = all(source.is_initialised() for source in self.led_sources)
-        return self._is_initialised
+        return all(source.is_initialised() for source in self.led_sources)
 
     def is_alive(self) -> bool:
         """
@@ -659,8 +625,7 @@ class LedManager(Peripheral):
             True if every managed source reports alive.
         """
         source_states = [source.is_alive() for source in self.led_sources]
-        self._is_alive = all(source_states)
-        return self._is_alive
+        return all(source_states)
 
     def stop(self) -> None:
         """
@@ -691,57 +656,6 @@ class LedManager(Peripheral):
         """
         for source in self.led_sources:
             source.finalise(force=force)
-        self._is_initialised = False
-        self._is_alive = False
-
-    def update_config(
-            self,
-            config: LedManagerConfig | list[LedConfig] | None = None,
-            **updates: Any,
-    ) -> None:
-        """
-        Update managed LED source configs in source order.
-
-        Parameters
-        ----------
-        config
-            LedManagerConfig replacement, a backward-compatible list of
-            LedConfig values, or None to update the stored manager config with
-            keyword fields.
-        **updates
-            Field updates applied to the stored LedManagerConfig when config is
-            None.
-
-        Returns
-        -------
-        None
-        """
-        if isinstance(config, list):
-            manager_config = LedManagerConfig(name=self.name, source_configs=config)
-        else:
-            current_config = self.config
-            if current_config is None:
-                if config is None:
-                    raise RuntimeError("LedManager.update_config: manager has no stored config.")
-                manager_config = config.copy()
-            elif config is None:
-                manager_config = current_config.updated(**updates)
-            elif not updates:
-                if not isinstance(config, LedManagerConfig):
-                    raise TypeError(
-                        f"LedManager.update_config: expected LedManagerConfig, received {type(config)}."
-                    )
-                manager_config = config.copy()
-            else:
-                raise ValueError("LedManager.update_config: provide config or updates, not both.")
-
-        if len(manager_config.source_configs) != len(self.led_sources):
-            raise ValueError("LedManager.update_config: source_configs must match managed source count.")
-        self.name = manager_config.name
-        self.config = manager_config.copy()
-        for source, source_config in zip(self.led_sources, manager_config.source_configs):
-            source.update_config(config=source_config)
-        self._led_to_source = self._build_led_to_source()
 
     def get_available_leds(self) -> list[LEDType]:
         """

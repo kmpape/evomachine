@@ -14,8 +14,8 @@ from PyQt5.QtWidgets import (
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
 
-from evomachine.acquisition_bkp import AbstractCamera
-from evomachine.config import CameraSystemConfig, ConfigCRISP, ConfigFocus, ImageProcessorConfig, get_logger
+from evomachine.bindings.asitiger.autofocus import TigerAutofocusConfig
+from evomachine.config import ImageProcessorConfig, get_logger
 from evomachine.types import FocusAlgorithmType, LEDType
 from evomachine.guidir.figures import FigureWindow
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread, EVO_STYLE
@@ -47,8 +47,8 @@ class CrispWorker(EvoWorkerTemplate):
         self.locked_value: QLabel = locked_value
         self.is_locked = False
 
-    @pyqtSlot(ConfigCRISP)
-    def init_crisp(self, cfg_crisp: ConfigCRISP):
+    @pyqtSlot(TigerAutofocusConfig)
+    def init_crisp(self, cfg_crisp: TigerAutofocusConfig):
         self.show_processing()
         self.queue_manager.request(
             req_str='self.cam.autofocus_initialise',
@@ -114,7 +114,7 @@ class CrispWorker(EvoWorkerTemplate):
 
 
 class CRISPPanel(EvoPanelTemplate):
-    signal_init_crisp = pyqtSignal(ConfigCRISP)
+    signal_init_crisp = pyqtSignal(TigerAutofocusConfig)
     signal_init_crisp_values = pyqtSignal()
     signal_lock_crisp = pyqtSignal()
     signal_unlock_crisp = pyqtSignal()
@@ -123,7 +123,7 @@ class CRISPPanel(EvoPanelTemplate):
     def __init__(
             self,
             queue_manager: QueueManager,
-            camera_config: CameraSystemConfig,
+            camera_config: Any,
             processor_config: ImageProcessorConfig,
             start_strategy_event: Event,
             stop_strategy_event: Event,
@@ -221,7 +221,7 @@ class CRISPPanel(EvoPanelTemplate):
             self.labels_values[param_name][1].setText(str(getattr(self.cfg_default, param_name)))
 
     def get_param(self, param_name: str):
-        val = ConfigCRISP.get_attr_from_str(
+        val = TigerAutofocusConfig.get_attr_from_str(
             attr_name=param_name,
             attr_value_str=self.labels_values[param_name][1].text()
         )

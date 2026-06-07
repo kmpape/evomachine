@@ -12,6 +12,7 @@ from evomachine.config import DMD_WIDTH_HEIGHT, EVO_FORMATTER, get_logger
 from evomachine.coordinates import Coordinate
 from evomachine.frame import FrameMetaData
 from evomachine.image_processing_config import ImageProcessorConfig
+from evomachine.navigation import FovConfig
 from evomachine.types import AutomatonCommandType, FilterWheelType, FocusStatusType, LEDType, MagnetModeType
 from evomachine.utils import EvoCroppingBox
 
@@ -307,6 +308,36 @@ class CommandFactory:
         return AutomatonCommand(
             command_type=AutomatonCommandType.MOVE,
             command_args=fov_id,
+            command_id=self.get_next_id(),
+            command_creation_time=time(),
+        )
+
+    def command_update_fov_config(self, fov_id: int, fov_config: FovConfig) -> AutomatonCommand:
+        """
+        Create a command for replacing one FoV focus policy.
+
+        Parameters
+        ----------
+        fov_id
+            Registered FoV ID to update.
+        fov_config
+            Replacement focus policy for the FoV.
+
+        Returns
+        -------
+        AutomatonCommand
+            Command carrying the FoV ID and replacement FovConfig.
+        """
+        if not isinstance(fov_id, int) or isinstance(fov_id, bool):
+            raise TypeError(f"AutomatonCommandFactory.update_fov_config: fov_id must be int, received {type(fov_id)}.")
+        if not isinstance(fov_config, FovConfig):
+            raise TypeError(
+                f"AutomatonCommandFactory.update_fov_config: fov_config must be FovConfig, "
+                f"received {type(fov_config)}."
+            )
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.UPDATE_FOV_CONFIG,
+            command_args={"fov_id": fov_id, "fov_config": fov_config},
             command_id=self.get_next_id(),
             command_creation_time=time(),
         )

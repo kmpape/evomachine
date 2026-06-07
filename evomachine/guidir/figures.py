@@ -24,7 +24,7 @@ from delta.utils import CroppingBox as DeltaCroppingBox
 from evomachine.commands import AutomatonCommand
 from evomachine.coordinates import Coordinate
 from evomachine.types import AutomatonCommandType, LEDType
-from evomachine.config import CameraSystemConfig, ImageProcessorConfig, get_logger
+from evomachine.config import ImageProcessorConfig, get_logger
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoGUIThread, EvoWorkerTemplate, FolderExistsValidator, \
     FilenameValidator, EVO_STYLE
 from evomachine.guidir.guitypes import SMALL, LEFT, RIGHT  # noqa
@@ -429,7 +429,7 @@ class ImagePlotter(EvoPanelTemplate):
     def __init__(
             self,
             queue_manager: QueueManager,
-            camera_config: CameraSystemConfig,
+            camera_config: Any,
             processor_config: ImageProcessorConfig,
             start_strategy_event: Event,
             stop_strategy_event: Event,

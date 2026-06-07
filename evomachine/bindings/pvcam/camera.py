@@ -4,7 +4,7 @@ from typing import Any
 
 import numpy as np
 
-from evomachine.peripherals.camera import Camera
+from evomachine.peripherals.camera import Camera, CameraReadoutMode
 from evomachine.peripherals.camera import ImageConfigType
 
 
@@ -12,14 +12,19 @@ class PVCAMCamera(Camera):
     """Camera-only PVCAM binding backed by pyvcam."""
 
     DEFAULT_NAME = "PVCAM Camera"
-    DEFAULT_IMAGING_MODES = ["Sensitivity", "Speed", "Dynamic Range", "Sub-Electron"]
+    DEFAULT_READOUT_MODES = [
+        CameraReadoutMode.SENSITIVITY,
+        CameraReadoutMode.SPEED,
+        CameraReadoutMode.DYNAMIC_RANGE,
+        CameraReadoutMode.SUB_ELECTRON,
+    ]
 
     def __init__(
             self,
             image: ImageConfigType,
             name: str = DEFAULT_NAME,
             default_exposure_time: float | int = 200,
-            imaging_mode: str | None = None,
+            readout_mode: CameraReadoutMode | None = None,
             check_initialised: bool = True,
             check_alive: bool = True,
             pvc_module: Any | None = None,
@@ -27,7 +32,7 @@ class PVCAMCamera(Camera):
             camera: Any | None = None,
             frame_timeout_ms: int = 1000,
             exposure_mode: str = "Internal Trigger",
-            imaging_modes: list[str] | None = None,
+            readout_modes: list[CameraReadoutMode] | None = None,
     ):
         """
         Initialise a PVCAM camera wrapper.
@@ -40,8 +45,8 @@ class PVCAMCamera(Camera):
             Human-readable camera name.
         default_exposure_time
             Exposure time applied during initialise(), in milliseconds.
-        imaging_mode
-            Optional PVCAM imaging mode applied during initialise().
+        readout_mode
+            Optional PVCAM readout mode applied during initialise().
         check_initialised
             If True, inherited public methods require successful initialise().
         check_alive
@@ -56,8 +61,8 @@ class PVCAMCamera(Camera):
             Timeout passed to camera.get_frame().
         exposure_mode
             PVCAM exposure mode assigned during initialise().
-        imaging_modes
-            Ordered imaging mode names mapped to PVCAM readout_port indices.
+        readout_modes
+            Ordered readout modes mapped to PVCAM readout_port indices.
 
         Returns
         -------
@@ -72,12 +77,14 @@ class PVCAMCamera(Camera):
         self.camera: Any | None = camera
         self.frame_timeout_ms: int = frame_timeout_ms
         self.exposure_mode: str = exposure_mode
-        self.imaging_modes: list[str] = list(imaging_modes) if imaging_modes else list(self.DEFAULT_IMAGING_MODES)
+        self.readout_modes: list[CameraReadoutMode] = (
+            list(readout_modes) if readout_modes else list(self.DEFAULT_READOUT_MODES)
+        )
         super().__init__(
             image=image,
             name=name,
             default_exposure_time=default_exposure_time,
-            imaging_mode=imaging_mode,
+            readout_mode=readout_mode,
             check_initialised=check_initialised,
             check_alive=check_alive,
         )
@@ -190,19 +197,19 @@ class PVCAMCamera(Camera):
         """
         self.camera.exp_time = exposure_time
 
-    def _set_imaging_mode(self, imaging_mode: str) -> None:
+    def _set_readout_mode(self, readout_mode: CameraReadoutMode) -> None:
         """
-        Set PVCAM readout port by imaging mode name.
+        Set PVCAM readout port by readout mode.
 
         Parameters
         ----------
-        imaging_mode
-            Mode name present in imaging_modes.
+        readout_mode
+            Readout mode present in readout_modes.
 
         Returns
         -------
         None
         """
-        if imaging_mode not in self.imaging_modes:
-            raise ValueError(f"PVCAMCamera._set_imaging_mode: {imaging_mode} not in {self.imaging_modes}.")
-        self.camera.readout_port = self.imaging_modes.index(imaging_mode)
+        if readout_mode not in self.readout_modes:
+            raise ValueError(f"PVCAMCamera._set_readout_mode: {readout_mode} not in {self.readout_modes}.")
+        self.camera.readout_port = self.readout_modes.index(readout_mode)

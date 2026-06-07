@@ -13,7 +13,7 @@ from evomachine.frame import Frame, FrameMetaData
 from evomachine.image_processing_config import ImageProcessorConfigFactory
 from evomachine.peripherals.dmd import DmdCalibrationConfig
 from evomachine.coordinates import Coordinate
-from evomachine.navigation import FocusNavigator
+from evomachine.navigation import FocusNavigator, FovConfig
 from evomachine.peripherals.dmd import Dmd
 from evomachine.projection import ProjectionManager
 from evomachine.strategy import AbstractStrategy
@@ -228,11 +228,14 @@ class FakeFocusNavigator(FocusNavigator):
         """Initialise fake focus navigator state."""
         self.moves: list[int] = []
         self.fovs: dict[int, Coordinate] = {}
+        self.fov_configs = None
+        self.updated_fov_configs: list[tuple[int, FovConfig]] = []
         self.skipped_fov_ids: set[int] = set()
 
-    def initialise_fovs(self, fov_id_to_coordinate, use_autofocus=None) -> None:
+    def initialise_fovs(self, fov_id_to_coordinate, use_autofocus=None, fov_configs=None) -> None:
         """Record fov initialisation."""
         self.fovs = fov_id_to_coordinate
+        self.fov_configs = fov_configs
 
     def move(self, fov_id: int, manage_focus: bool = True):
         """Record one move request."""
@@ -243,6 +246,11 @@ class FakeFocusNavigator(FocusNavigator):
             skipped=fov_id in self.skipped_fov_ids,
             skip_reason="focus failed" if fov_id in self.skipped_fov_ids else None,
         )
+
+    def update_fov_config(self, fov_id: int, fov_config: FovConfig):
+        """Record one FoV config update request."""
+        self.updated_fov_configs.append((fov_id, fov_config))
+        return SimpleNamespace(fov_id=fov_id, fov_config=fov_config)
 
 
 class FakeProjectionManager(ProjectionManager):
@@ -421,6 +429,67 @@ def test_automaton_move_delegates_to_focus_navigator() -> None:
     assert focus_navigator.moves == [1]
     assert automaton.get_fov_id() == 1
     assert command.command_data.fov_id == 1
+
+
+def test_automaton_initialise_passes_strategy_fov_configs_to_focus_navigator() -> None:
+    """
+    Check strategy initial FoV configs are passed into focus navigator setup.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    cfg = make_cfg()
+    focus_navigator = FakeFocusNavigator()
+    strategy = FakeStrategy(cfg=cfg)
+    fov_config = FovConfig(run_software_focus_on_arrival=True)
+    strategy.fov_configs = {1: fov_config}
+    automaton = Automaton(
+        camera=FakePeripheral(),
+        stage=FakePeripheral(),
+        led_manager=FakeLedManager(),
+        acquisition_manager=FakeAcquisitionManager(),
+        focus_navigator=focus_navigator,
+        strategy=strategy,
+        cfg_processor=cfg,
+        start_strategy_event=Event(),
+        stop_strategy_event=Event(),
+        stop_event=Event(),
+        shutdown_event=Event(),
+        dmd=FakeDmd(),
+        projection_manager=FakeProjectionManager(),
+    )
+
+    automaton.initialise(fovs={1: Coordinate(0, 0, 0)})
+
+    assert focus_navigator.fov_configs == {1: fov_config}
+
+
+def test_automaton_update_fov_config_delegates_to_focus_navigator() -> None:
+    """
+    Check UPDATE_FOV_CONFIG commands update the focus navigator.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    automaton, _, focus_navigator, _, _, _ = make_automaton()
+    fov_config = FovConfig(lock_autofocus_on_fov=False)
+
+    command = CommandFactory(cfg=make_cfg()).command_update_fov_config(fov_id=1, fov_config=fov_config)
+    automaton.next_commands = [command]
+    automaton._process()
+
+    assert focus_navigator.updated_fov_configs == [(1, fov_config)]
+    assert command.command_data.fov_config is fov_config
 
 
 def test_automaton_move_next_wraps_registered_fov_order() -> None:

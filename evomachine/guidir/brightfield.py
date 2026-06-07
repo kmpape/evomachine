@@ -11,7 +11,9 @@ from PyQt5.QtWidgets import (
     QSizePolicy, QScrollArea, QFileDialog, QCheckBox
 )
 
-from evomachine.config import CameraSystemConfig, ImageProcessorConfig, get_logger
+from typing import Any
+
+from evomachine.config import ImageProcessorConfig, get_logger
 from evomachine.guidir.guitemplates import EvoPanelTemplate, EvoWorkerTemplate, EvoGUIThread
 from evomachine.guidir.guitypes import SMALL, CENTER, LEFT, RIGHT, NORMAL
 from evomachine.guidir.queuemanager import QueueManager
@@ -48,7 +50,7 @@ class BrightfieldPanel(EvoPanelTemplate):
     def __init__(
             self,
             queue_manager: QueueManager,
-            camera_config: CameraSystemConfig,
+            camera_config: Any,
             processor_config: ImageProcessorConfig,
             start_strategy_event: Event,
             stop_strategy_event: Event,

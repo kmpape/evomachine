@@ -440,6 +440,32 @@ class FocusNavigator:
         self._require_fov(fov_id=fov_id)
         return self._fov_states[fov_id]
 
+    def update_fov_config(self, fov_id: int, fov_config: FovConfig) -> FocusNavigatorFovRecord:
+        """
+        Replace the focus policy for one registered fov.
+
+        Parameters
+        ----------
+        fov_id
+            Registered FoV ID to update.
+        fov_config
+            Replacement focus policy.
+
+        Returns
+        -------
+        FocusNavigatorFovRecord
+            Updated FoV record.
+        """
+        self._require_fov(fov_id=fov_id)
+        if not isinstance(fov_config, FovConfig):
+            raise TypeError(f"FocusNavigator.update_fov_config: fov_config must be FovConfig, received {type(fov_config)}.")
+        self._fov_states[fov_id].fov_config = fov_config
+        if fov_config.software_focus_config is not None and self.software_focus is not None:
+            update_config = getattr(self.software_focus, "update_config", None)
+            if callable(update_config):
+                update_config(config=fov_config.software_focus_config, fov_id=fov_id)
+        return self._fov_states[fov_id]
+
     def get_next_fov_id(self, fov_id: int) -> int:
         """
         Return the next registered fov ID, wrapping at the end.

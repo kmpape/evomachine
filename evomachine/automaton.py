@@ -237,10 +237,6 @@ class Automaton:
         self._fovs = {fov_id: coordinate.copy() for fov_id, coordinate in fovs.items()}
         self._cropping_boxes = {} if cropping_boxes is None else copy.copy(cropping_boxes)
         self._fov_to_roi = {fov_id: [] for fov_id in self._fovs}
-        self.focus_navigator.initialise_fovs(
-            fov_id_to_coordinate=self._fovs,
-            use_autofocus=use_autofocus,
-        )
         self._fov_processors = {}
         self._fov_processors_is_initialised = {fov_id: True for fov_id in self._fovs}
         self._fov_list_is_initialised = True
@@ -250,6 +246,12 @@ class Automaton:
         first_fov_id = next(iter(self._fovs))
         self._curr_fov_id = first_fov_id
         self._initialise_strategy()
+        fov_configs = self._strategy.initial_fov_configs()
+        self.focus_navigator.initialise_fovs(
+            fov_id_to_coordinate=self._fovs,
+            use_autofocus=use_autofocus,
+            fov_configs=fov_configs or None,
+        )
 
     def initialise_devices(self) -> None:
         """
@@ -330,7 +332,6 @@ class Automaton:
         self.next_commands = self._strategy.initialise(
             fovs=self._fovs,
             region_of_interests=self._fov_to_roi,
-            config_camera=getattr(self.camera, "cfg", None),
             fov_processors=self._fov_processors,
             dmd=self.dmd,
         )
@@ -388,6 +389,8 @@ class Automaton:
             command.command_data = None
             if command.command_type == AutomatonCommandType.MOVE:
                 command.command_data = self._execute_move(command=command)
+            elif command.command_type == AutomatonCommandType.UPDATE_FOV_CONFIG:
+                command.command_data = self._execute_update_fov_config(command=command)
             elif command.command_type == AutomatonCommandType.IMAGE:
                 command.command_data = self._execute_image(command=command)
             elif command.command_type == AutomatonCommandType.PROJECT:
@@ -447,6 +450,28 @@ class Automaton:
             self._skip_image_fov_id = None
             self._skip_image_reason = None
         return result
+
+    def _execute_update_fov_config(self, command: AutomatonCommand) -> Any:
+        """
+        Execute one UPDATE_FOV_CONFIG command through FocusNavigator.
+
+        Parameters
+        ----------
+        command
+            UPDATE_FOV_CONFIG command to execute.
+
+        Returns
+        -------
+        Any
+            Updated FocusNavigatorFovRecord.
+        """
+        args = command.command_args
+        if not isinstance(args, dict):
+            raise TypeError("Automaton._execute_update_fov_config: command_args must be dict.")
+        return self.focus_navigator.update_fov_config(
+            fov_id=args["fov_id"],
+            fov_config=args["fov_config"],
+        )
 
     def _execute_image(self, command: AutomatonCommand) -> dict[str, Any]:
         """

@@ -14,7 +14,7 @@ from evomachine.config import get_logger
 from evomachine.coordinates import Coordinate
 from evomachine.frame import FrameMetaDataFactory
 from evomachine.image_processing_config import ImageProcessorConfig
-from evomachine.peripherals.camera import CameraSystemConfig
+from evomachine.navigation import FovConfig
 from evomachine.peripherals.dmd import Dmd
 from evomachine.types import LEDType
 
@@ -67,14 +67,14 @@ class AbstractStrategy(ABC):
         "Dictionary indexed by FoV ID with FoV coordinates."
         self.region_of_interests: dict[int, list[int]] = {}
         "Dictionary indexed by FoV ID with ROI IDs."
+        self.fov_configs: dict[int, FovConfig] = {}
+        "Optional per-FoV focus policies requested by this strategy."
         self.fov_processors: dict[int, PositionRT] = {}
         "Processors for FoV data, ROI boxes, and cell lineages keyed by FoV ID. Treat as read-only."
         self.path_to_save: Path | None = None
         "Optional path to save images."
         self.command_factory: CommandFactory = CommandFactory(cfg=cfg)
         "Factory object used to create AutomatonCommand objects."
-        self.config_camera: CameraSystemConfig | None = None
-        "Camera configuration object injected during initialise()."
         self.dmd: Dmd | None = None
         "DMD object injected during initialise()."
 
@@ -133,7 +133,6 @@ class AbstractStrategy(ABC):
             self,
             fovs: dict[int, Coordinate],
             region_of_interests: dict[int, list[int]],
-            config_camera: CameraSystemConfig | None,
             fov_processors: dict[int, PositionRT],
             dmd: Dmd,
     ) -> list[AutomatonCommand]:
@@ -146,8 +145,6 @@ class AbstractStrategy(ABC):
             Mapping from FoV ID to Coordinate.
         region_of_interests
             Mapping from FoV ID to ROI IDs.
-        config_camera
-            Camera configuration object, when available.
         fov_processors
             FoV processors keyed by FoV ID.
         dmd
@@ -174,13 +171,36 @@ class AbstractStrategy(ABC):
         self.fovs = fovs
         self.region_of_interests = region_of_interests
         self.command_factory.update_region_of_interests(region_of_interests=region_of_interests)
-        self.config_camera = config_camera
         self.fov_processors = fov_processors
         self.dmd = dmd
         command_list = self._initialise()
         if not self.is_valid_command_list(command_list):
             raise RuntimeError(f"AbstractStrategy.initialise: invalid command list ({command_list}).")
         return command_list
+
+    def initial_fov_configs(self) -> dict[int, FovConfig]:
+        """
+        Return per-FoV focus policies requested during strategy initialisation.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        dict[int, FovConfig]
+            Mapping from FoV ID to focus policy overrides.
+        """
+        if not isinstance(self.fov_configs, dict):
+            raise TypeError("AbstractStrategy.initial_fov_configs: fov_configs must be dict[int, FovConfig].")
+        for fov_id, fov_config in self.fov_configs.items():
+            if not isinstance(fov_id, int) or isinstance(fov_id, bool):
+                raise TypeError("AbstractStrategy.initial_fov_configs: every fov ID must be int.")
+            if fov_id not in self.fovs:
+                raise KeyError(f"AbstractStrategy.initial_fov_configs: unknown fov ID {fov_id}.")
+            if not isinstance(fov_config, FovConfig):
+                raise TypeError("AbstractStrategy.initial_fov_configs: every fov config must be FovConfig.")
+        return dict(self.fov_configs)
 
     @abstractmethod
     def _callback(

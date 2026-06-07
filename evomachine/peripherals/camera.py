@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from dataclasses import dataclass
-from pathlib import Path
+from enum import Enum
 from typing import Any
 
 import numpy as np
@@ -11,19 +11,6 @@ from evomachine.bindings.binding_types import BindingType
 from evomachine.exceptions import ConfigError, ErrorCode
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
 from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
-from evomachine.types import FilterWheelType, LEDType
-
-
-def _get_evomachine_dir() -> Path:
-    from evomachine.config import EVOMACHINE_DIR
-
-    return EVOMACHINE_DIR
-
-
-def _use_sync_board() -> bool:
-    from evomachine.config import USE_SYNC_BOARD
-
-    return USE_SYNC_BOARD
 
 
 @dataclass
@@ -96,128 +83,51 @@ class ObjectiveConfigTypeFactory:
         return ObjectiveConfigType(na=0.95, mag=40, descr="Nikon Plan Fluor 40x/0.95")
 
 
-@dataclass
-class CameraSystemConfig:
-    objective: ObjectiveConfigType
-    image: ImageConfigType
-    focus: Any
-    autofocus: Any
-    leds: list[LEDType]
-    filters: list[FilterWheelType]
-    path_to_save: Path
-    default_exposure_time: float | int = 200
-    default_focus_channel_id: int = 0
-    cam_pxl_size: float = 6.5
+def calculate_fov_size(camera_config: "CameraConfig", objective_config: ObjectiveConfigType) -> float:
+    """
+    Return the field-of-view size for a camera/objective pair.
 
-    def copy(self) -> "CameraSystemConfig":
-        return CameraSystemConfig(**self.__dict__)
+    Parameters
+    ----------
+    camera_config
+        Camera configuration containing image dimensions and sensor pixel size.
+    objective_config
+        Objective configuration containing magnification.
 
-    @property
-    def pxl_size(self) -> float:
-        return self.cam_pxl_size / self.objective.mag
-
-    @property
-    def fov_size(self) -> float:
-        return self.cam_pxl_size / self.objective.mag * self.image.pxl_vert
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.objective, ObjectiveConfigType):
-            raise TypeError(f"objective must be an ObjectiveConfigType object. Provided {self.objective}.")
-        if not isinstance(self.image, ImageConfigType):
-            raise TypeError(f"image must be an ImageConfigType object. Provided {self.image}.")
-        if not (isinstance(self.leds, list) and all(isinstance(led, LEDType) for led in self.leds)) \
-                or len(self.leds) == 0 or LEDType.NO_LED not in self.leds:
-            raise ConfigError("Invalid LED list.", ErrorCode.ERROR_CONFIG)
-        if not (isinstance(self.filters, list) and all(isinstance(filter_type, FilterWheelType) for filter_type in self.filters)) \
-                or len(self.filters) == 0:
-            raise ConfigError("Invalid filter list.", ErrorCode.ERROR_CONFIG)
-        if isinstance(self.path_to_save, str):
-            self.path_to_save = Path(self.path_to_save)
-        if not isinstance(self.path_to_save, Path):
-            raise ConfigError("Invalid path_to_save.", ErrorCode.ERROR_CONFIG)
-        if not self.image.pxl_vert == self.image.pxl_horiz:
-            raise ConfigError("Currently limited to square images.", ErrorCode.ERROR_FOCUS_CONFIG)
-        if not isinstance(self.default_exposure_time, int | float) or self.default_exposure_time <= 0:
-            raise TypeError(f"Invalid default_exposure_time {self.default_exposure_time}.")
-        if not (isinstance(self.default_focus_channel_id, int) and 0 <= self.default_focus_channel_id < len(self.leds)):
-            raise TypeError(f"Invalid default_focus_channel_id {self.default_focus_channel_id}.")
-
-
-class CameraSystemConfigFactory:
-    @staticmethod
-    def get_available_leds() -> list[LEDType]:
-        if _use_sync_board():
-            return [
-                LEDType.NO_LED,
-                LEDType.LED_385_NM,
-                LEDType.LED_450_NM,
-                LEDType.LED_515_NM,
-                LEDType.LED_565_NM,
-                LEDType.LED_645_NM,
-                LEDType.LED_OVERHEAD,
-                LEDType.LED_OVERHEAD_TIGER,
-            ]
-        return [LEDType.NO_LED, LEDType.LED_405_NM, LEDType.LED_450_NM, LEDType.LED_505_NM, LEDType.LED_538_NM]
-
-    @staticmethod
-    def get_available_filters() -> list[FilterWheelType]:
-        return [
-            FilterWheelType.FILTER,
-            FilterWheelType.FILTER_465nm,
-            FilterWheelType.FILTER_527nm,
-            FilterWheelType.FILTER_592nm,
-            FilterWheelType.BLOCKING,
-            FilterWheelType.NO_FILTER,
-        ]
-
-    @staticmethod
-    def default_oil_config(path_to_save: Path | None = None) -> CameraSystemConfig:
-        from evomachine.bindings.asitiger.autofocus import TigerAutofocusConfigFactory
-        from evomachine.softwarefocus import SoftwareFocusConfigFactory
-
-        evomachine_dir = _get_evomachine_dir()
-        return CameraSystemConfig(
-            objective=ObjectiveConfigTypeFactory.default_oil(),
-            image=ImageConfigTypeFactory.pv_cam(),
-            focus=SoftwareFocusConfigFactory.default_config(),
-            autofocus=TigerAutofocusConfigFactory.default_oil_config(),
-            leds=CameraSystemConfigFactory.get_available_leds(),
-            filters=CameraSystemConfigFactory.get_available_filters(),
-            path_to_save=evomachine_dir.parent / "images/DEFAULT" if path_to_save is None else path_to_save,
+    Returns
+    -------
+    float
+        Vertical field-of-view size in micrometres.
+    """
+    if not isinstance(camera_config, CameraConfig):
+        raise TypeError(f"calculate_fov_size: camera_config must be CameraConfig, received {type(camera_config)}.")
+    if not isinstance(objective_config, ObjectiveConfigType):
+        raise TypeError(
+            f"calculate_fov_size: objective_config must be ObjectiveConfigType, received {type(objective_config)}."
         )
-
-    @staticmethod
-    def default_air_config(path_to_save: Path | None = None) -> CameraSystemConfig:
-        from evomachine.bindings.asitiger.autofocus import TigerAutofocusConfigFactory
-        from evomachine.softwarefocus import SoftwareFocusConfigFactory
-
-        evomachine_dir = _get_evomachine_dir()
-        return CameraSystemConfig(
-            objective=ObjectiveConfigTypeFactory.default_air(),
-            image=ImageConfigTypeFactory.pv_cam(),
-            focus=SoftwareFocusConfigFactory.default_config(),
-            autofocus=TigerAutofocusConfigFactory.default_config(),
-            leds=CameraSystemConfigFactory.get_available_leds(),
-            filters=CameraSystemConfigFactory.get_available_filters(),
-            path_to_save=evomachine_dir.parent / "images/DEFAULT" if path_to_save is None else path_to_save,
-        )
+    return camera_config.sensor_pixel_size_um / objective_config.mag * camera_config.image.pxl_vert
 
 
-@dataclass
-class CameraConfig:
+class CameraReadoutMode(str, Enum):
+    """Supported camera readout modes for Kinetix/PVCAM-style cameras."""
+
+    DYNAMIC_RANGE = "Dynamic Range"
+    SENSITIVITY = "Sensitivity"
+    SPEED = "Speed"
+    SUB_ELECTRON = "Sub-Electron"
+
+
+@dataclass(kw_only=True)
+class CameraConfig(PeripheralConfig):
     """Configuration object used by CameraFactory to create camera devices."""
 
-    binding: BindingType
     image: ImageConfigType
     default_exposure_time: float | int = 200
-    name: str | None = None
-    check_initialised: bool = True
-    check_alive: bool = True
-    imaging_mode: str | None = None
+    sensor_pixel_size_um: float = 6.5
+    readout_mode: CameraReadoutMode | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.binding, BindingType):
-            raise TypeError(f"CameraConfig: binding must be BindingType, received {type(self.binding)}.")
+        super().__post_init__()
         if not isinstance(self.image, ImageConfigType):
             raise TypeError(f"CameraConfig: image must be ImageConfigType, received {type(self.image)}.")
         if not isinstance(self.default_exposure_time, int | float) or isinstance(self.default_exposure_time, bool):
@@ -228,30 +138,20 @@ class CameraConfig:
             raise ValueError(
                 f"CameraConfig: default_exposure_time must be positive, received {self.default_exposure_time}."
             )
-        if self.name is not None and not isinstance(self.name, str):
-            raise TypeError(f"CameraConfig: name must be str or None, received {type(self.name)}.")
-        if not isinstance(self.check_initialised, bool):
-            raise TypeError(f"CameraConfig: check_initialised must be bool, received {type(self.check_initialised)}.")
-        if not isinstance(self.check_alive, bool):
-            raise TypeError(f"CameraConfig: check_alive must be bool, received {type(self.check_alive)}.")
-        if self.imaging_mode is not None and not isinstance(self.imaging_mode, str):
-            raise TypeError(f"CameraConfig: imaging_mode must be str or None, received {type(self.imaging_mode)}.")
-
-    def copy(self) -> "CameraConfig":
-        return CameraConfig(**self.__dict__)
-
-    def updated(self, **kwargs: Any) -> "CameraConfig":
-        unknown_keys = [key for key in kwargs if key not in self.__dict__]
-        if unknown_keys:
-            raise ValueError(f"CameraConfig.updated: unknown fields {unknown_keys}.")
-        values = dict(self.__dict__)
-        values.update(kwargs)
-        return CameraConfig(**values)
-
-    def update_from_mapping(self, updates: dict[str, Any]) -> "CameraConfig":
-        if not isinstance(updates, dict):
-            raise TypeError("CameraConfig.update_from_mapping: updates must be dict.")
-        return self.updated(**updates)
+        if not isinstance(self.sensor_pixel_size_um, int | float) or isinstance(self.sensor_pixel_size_um, bool):
+            raise TypeError(
+                f"CameraConfig: sensor_pixel_size_um must be numeric, received {type(self.sensor_pixel_size_um)}."
+            )
+        if self.sensor_pixel_size_um <= 0:
+            raise ValueError(
+                f"CameraConfig: sensor_pixel_size_um must be positive, received {self.sensor_pixel_size_um}."
+            )
+        self.sensor_pixel_size_um = float(self.sensor_pixel_size_um)
+        if self.readout_mode is not None and not isinstance(self.readout_mode, CameraReadoutMode):
+            raise TypeError(
+                f"CameraConfig: readout_mode must be CameraReadoutMode or None, "
+                f"received {type(self.readout_mode)}."
+            )
 
 
 class Camera(Peripheral):
@@ -268,7 +168,7 @@ class Camera(Peripheral):
             image: ImageConfigType,
             name: str,
             default_exposure_time: float | int = 200,
-            imaging_mode: str | None = None,
+            readout_mode: CameraReadoutMode | None = None,
             check_initialised: bool = True,
             check_alive: bool = True,
     ):
@@ -283,8 +183,8 @@ class Camera(Peripheral):
             Human-readable camera name.
         default_exposure_time
             Exposure time applied during initialise(), in milliseconds.
-        imaging_mode
-            Optional binding-specific imaging mode applied during initialise().
+        readout_mode
+            Optional camera readout mode applied during initialise().
         check_initialised
             If True, public camera methods raise RuntimeError before
             initialise() succeeds.
@@ -298,15 +198,16 @@ class Camera(Peripheral):
         """
         if not isinstance(image, ImageConfigType):
             raise TypeError(f"Camera.__init__: image must be ImageConfigType, received {type(image)}.")
-        super().__init__(
-            name=name,
-            check_initialised=check_initialised,
-            check_alive=check_alive,
-        )
         self.image: ImageConfigType = image
+        self.name: str = name
         self.default_exposure_time: float | int = self._validate_exposure_time(default_exposure_time)
-        self.imaging_mode: str | None = imaging_mode
+        self.readout_mode: CameraReadoutMode | None = self._validate_readout_mode(readout_mode=readout_mode)
         self._current_exposure: float | int | None = None
+        self._is_initialised: bool = False
+        self._is_alive: bool = False
+        self._check_initialised: bool = check_initialised
+        self._check_alive: bool = check_alive
+        self.config: CameraConfig | None = None
         # TODO(Codex): Add one status flag here to track whether the camera is live streaming or not.
 
     @staticmethod
@@ -332,11 +233,118 @@ class Camera(Peripheral):
             raise ValueError(f"Camera._validate_exposure_time: exposure_time must be positive, received {exposure_time}.")
         return exposure_time
 
-    def _post_initialise(self, force: bool = False) -> None:
-        """Apply default exposure and imaging mode after initialisation."""
+    @staticmethod
+    def _validate_readout_mode(readout_mode: CameraReadoutMode | None) -> CameraReadoutMode | None:
+        """
+        Return a validated camera readout mode.
+
+        Parameters
+        ----------
+        readout_mode
+            Candidate camera readout mode.
+
+        Returns
+        -------
+        CameraReadoutMode | None
+            Validated camera readout mode.
+        """
+        if readout_mode is not None and not isinstance(readout_mode, CameraReadoutMode):
+            raise TypeError(
+                f"Camera._validate_readout_mode: readout_mode must be CameraReadoutMode or None, "
+                f"received {type(readout_mode)}."
+            )
+        return readout_mode
+
+    def _require_ready(self, action: str) -> None:
+        """
+        Raise when a camera action is not allowed by current readiness checks.
+
+        Parameters
+        ----------
+        action
+            Human-readable action name used in exception messages.
+
+        Returns
+        -------
+        None
+        """
+        if self._check_initialised and not self._is_initialised:
+            raise RuntimeError(f"Camera.{action}: camera is not initialised.")
+        if self._check_alive and not self.is_alive():
+            raise RuntimeError(f"Camera.{action}: camera is not alive.")
+
+    def initialise(self, force: bool = False) -> None:
+        """
+        Initialise the camera and apply default exposure and readout mode.
+
+        Parameters
+        ----------
+        force
+            If True, run initialisation even when already initialised.
+
+        Returns
+        -------
+        None
+        """
+        if self._is_initialised and not force:
+            return
+        self._is_initialised = self._initialise(force=force)
+        if self._check_initialised and not self._is_initialised:
+            raise RuntimeError("Camera.initialise: camera failed to initialise.")
+        self._is_alive = self._check_is_alive()
+        if self._check_alive and not self._is_alive:
+            raise RuntimeError("Camera.initialise: camera is not alive after initialisation.")
         self.set_exposure(self.default_exposure_time)
-        if self.imaging_mode is not None:
-            self.set_imaging_mode(self.imaging_mode)
+        if self.readout_mode is not None:
+            self.set_readout_mode(self.readout_mode)
+
+    def finalise(self, force: bool = False) -> None:
+        """
+        Finalise the camera and clear lifecycle flags.
+
+        Parameters
+        ----------
+        force
+            If True, binding implementations may force cleanup.
+
+        Returns
+        -------
+        None
+        """
+        self._finalise(force=force)
+        self._is_initialised = False
+        self._is_alive = False
+
+    def is_alive(self) -> bool:
+        """
+        Query whether the camera hardware is alive.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        bool
+            True when the subclass reports the camera is alive.
+        """
+        self._is_alive = self._check_is_alive()
+        return self._is_alive
+
+    def is_initialised(self) -> bool:
+        """
+        Return whether initialise has succeeded.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        bool
+            True when the camera is marked initialised.
+        """
+        return self._is_initialised
 
     def stop(self) -> None:
         """
@@ -408,54 +416,23 @@ class Camera(Peripheral):
         """
         return self._current_exposure
 
-    def update_config(self, config: CameraConfig | None = None, **updates: Any) -> None:
+    def set_readout_mode(self, readout_mode: CameraReadoutMode) -> None:
         """
-        Replace or update camera runtime configuration.
-
-        Image shape/dtype changes require reinitialisation because frame
-        validation depends on the image config. Exposure, imaging mode, name,
-        and readiness checks are applied in place when possible.
-        """
-        was_initialised = self.is_initialised()
-        current_config = self.config
-        reinitialise = False
-        if current_config is not None:
-            candidate_config = current_config.updated(**updates) if config is None else config
-            reinitialise = candidate_config.image != current_config.image
-        super().update_config(config=config, **updates)
-        if was_initialised and not reinitialise:
-            self.set_exposure(self.default_exposure_time)
-            if self.imaging_mode is not None:
-                self.set_imaging_mode(self.imaging_mode)
-
-    def _apply_config(self, config: CameraConfig) -> None:
-        """Apply camera-specific config fields."""
-        self.image = config.image
-        self.default_exposure_time = self._validate_exposure_time(config.default_exposure_time)
-        self.imaging_mode = config.imaging_mode
-
-    def _config_requires_reinitialise(self, current_config: CameraConfig, new_config: CameraConfig) -> bool:
-        """Return whether camera config changes require reinitialisation."""
-        return new_config.image != current_config.image
-
-    def set_imaging_mode(self, imaging_mode: str) -> None:
-        """
-        Set a binding-specific camera imaging mode.
+        Set the camera readout mode.
 
         Parameters
         ----------
-        imaging_mode
-            Binding-specific mode name.
+        readout_mode
+            Camera readout mode.
 
         Returns
         -------
         None
         """
-        self._require_ready(action="set_imaging_mode")
-        if not isinstance(imaging_mode, str):
-            raise TypeError(f"Camera.set_imaging_mode: imaging_mode must be str, received {type(imaging_mode)}.")
-        self._set_imaging_mode(imaging_mode=imaging_mode)
-        self.imaging_mode = imaging_mode
+        self._require_ready(action="set_readout_mode")
+        validated_readout_mode = self._validate_readout_mode(readout_mode=readout_mode)
+        self._set_readout_mode(readout_mode=validated_readout_mode)
+        self.readout_mode = validated_readout_mode
 
     def disable_live_mode(self) -> None:
         """
@@ -526,14 +503,14 @@ class Camera(Peripheral):
         """Set binding-specific exposure time."""
         raise NotImplementedError
 
-    def _set_imaging_mode(self, imaging_mode: str) -> None:
+    def _set_readout_mode(self, readout_mode: CameraReadoutMode) -> None:
         """
-        Set binding-specific imaging mode.
+        Set binding-specific readout mode.
 
         Parameters
         ----------
-        imaging_mode
-            Binding-specific mode name.
+        readout_mode
+            Camera readout mode.
 
         Returns
         -------
@@ -601,7 +578,7 @@ class CameraFactory:
                 image=config.image,
                 name=config.name or VirtualCamera.DEFAULT_NAME,
                 default_exposure_time=config.default_exposure_time,
-                imaging_mode=config.imaging_mode,
+                readout_mode=config.readout_mode,
                 check_initialised=config.check_initialised,
                 check_alive=config.check_alive,
                 **binding_options,
@@ -616,7 +593,7 @@ class CameraFactory:
                 image=config.image,
                 name=config.name or MMCCamera.DEFAULT_NAME,
                 default_exposure_time=config.default_exposure_time,
-                imaging_mode=config.imaging_mode,
+                readout_mode=config.readout_mode,
                 check_initialised=config.check_initialised,
                 check_alive=config.check_alive,
                 **binding_options,
@@ -631,7 +608,7 @@ class CameraFactory:
                 image=config.image,
                 name=config.name or PVCAMCamera.DEFAULT_NAME,
                 default_exposure_time=config.default_exposure_time,
-                imaging_mode=config.imaging_mode,
+                readout_mode=config.readout_mode,
                 check_initialised=config.check_initialised,
                 check_alive=config.check_alive,
                 **binding_options,

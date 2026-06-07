@@ -419,6 +419,7 @@ class FakeSoftwareFocus:
         self.runs: list[int] = []
         self.initialised_fovs: list[int] = []
         self.initialised_fov_configs = None
+        self.updated_configs: list[tuple[int, object]] = []
 
     def initialise_fovs(self, fov_ids: list[int], fov_configs=None) -> None:
         """
@@ -457,6 +458,23 @@ class FakeSoftwareFocus:
         if status == FocusStatusType.IN_FOCUS and fov_id in self.z_by_fov:
             self.stage.move(target=Coordinate(None, None, self.z_by_fov[fov_id]), block=True)
         return SimpleNamespace(focus_status=status)
+
+    def update_config(self, config, fov_id: int | None = None) -> None:
+        """
+        Record one config update.
+
+        Parameters
+        ----------
+        config
+            Replacement software focus config.
+        fov_id
+            Optional FoV ID for the replacement config.
+
+        Returns
+        -------
+        None
+        """
+        self.updated_configs.append((fov_id, config))
 
 
 def _navigator(
@@ -696,6 +714,55 @@ def test_initialise_fovs_passes_per_fov_software_focus_configs() -> None:
     navigator.initialise_fovs(_fovs(), fov_configs={1: fov_config})
 
     assert software_focus.initialised_fov_configs == {1: software_focus_config}
+
+
+def test_update_fov_config_stores_policy_and_updates_software_focus_config() -> None:
+    """
+    Check runtime FoV config updates are stored and propagated to SoftwareFocus.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    software_focus_config = SoftwareFocusConfigFactory.default_config()
+    navigator, _, _, software_focus, _ = _navigator(FocusNavigatorConfig(use_autofocus=True))
+    navigator.initialise_fovs(_fovs())
+    fov_config = FovConfig(
+        lock_autofocus_on_fov=False,
+        software_focus_config=software_focus_config,
+    )
+
+    record = navigator.update_fov_config(fov_id=1, fov_config=fov_config)
+
+    assert record.fov_config is fov_config
+    assert navigator.get_fov_state(1).fov_config is fov_config
+    assert software_focus.updated_configs == [(1, software_focus_config)]
+
+
+def test_update_fov_config_rejects_unknown_fov_and_bad_config() -> None:
+    """
+    Check runtime FoV config updates validate FoV IDs and config types.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    navigator, _, _, _, _ = _navigator(FocusNavigatorConfig(use_autofocus=True))
+    navigator.initialise_fovs(_fovs())
+
+    with pytest.raises(KeyError, match="unknown fov ID 99"):
+        navigator.update_fov_config(fov_id=99, fov_config=FovConfig())
+
+    with pytest.raises(TypeError, match="fov_config must be FovConfig"):
+        navigator.update_fov_config(fov_id=1, fov_config="bad")
 
 
 def test_per_fov_autofocus_config_reinitialises_on_config_change() -> None:

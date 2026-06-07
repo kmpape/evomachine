@@ -10,25 +10,24 @@ from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
 from evomachine.types import AutoFocusStatusType
 
 
-@dataclass
+@dataclass(kw_only=True)
 class AutofocusConfig(PeripheralConfig):
     """Configuration object used by AutofocusFactory to create autofocus peripherals."""
 
-    def copy(self) -> "AutofocusConfig":
-        return AutofocusConfig(**self.__dict__)
+    def __post_init__(self) -> None:
+        """
+        Validate autofocus factory configuration after construction.
 
-    def updated(self, **kwargs: Any) -> "AutofocusConfig":
-        unknown_keys = [key for key in kwargs if key not in self.__dict__]
-        if unknown_keys:
-            raise ValueError(f"AutofocusConfig.updated: unknown fields {unknown_keys}.")
-        values = dict(self.__dict__)
-        values.update(kwargs)
-        return AutofocusConfig(**values)
+        Parameters
+        ----------
+        None
 
-    def update_from_mapping(self, updates: dict[str, Any]) -> "AutofocusConfig":
-        if not isinstance(updates, dict):
-            raise TypeError("AutofocusConfig.update_from_mapping: updates must be dict.")
-        return self.updated(**updates)
+        Returns
+        -------
+        None
+            The dataclass fields are validated in place.
+        """
+        super().__post_init__()
 
 
 class Autofocus(Peripheral):
@@ -63,11 +62,100 @@ class Autofocus(Peripheral):
         -------
         None
         """
-        super().__init__(
-            name=name,
-            check_initialised=check_initialised,
-            check_alive=check_alive,
-        )
+        self.name: str = name
+        self._is_initialised: bool = False
+        self._is_alive: bool = False
+        self._check_initialised: bool = check_initialised
+        self._check_alive: bool = check_alive
+        self.config: AutofocusConfig | None = None
+
+    def _require_ready(self, action: str) -> None:
+        """
+        Raise when an autofocus action is not allowed by readiness checks.
+
+        Parameters
+        ----------
+        action
+            Human-readable action name used in exception messages.
+
+        Returns
+        -------
+        None
+        """
+        if self._check_initialised and not self._is_initialised:
+            raise RuntimeError(f"Autofocus.{action}: autofocus is not initialised.")
+        if self._check_alive and not self.is_alive():
+            raise RuntimeError(f"Autofocus.{action}: autofocus is not alive.")
+
+    def initialise(self, force: bool = False) -> None:
+        """
+        Initialise the autofocus peripheral.
+
+        Parameters
+        ----------
+        force
+            If True, run initialisation even when already initialised.
+
+        Returns
+        -------
+        None
+        """
+        if self._is_initialised and not force:
+            return
+        self._is_initialised = self._initialise(force=force)
+        if self._check_initialised and not self._is_initialised:
+            raise RuntimeError("Autofocus.initialise: autofocus failed to initialise.")
+        self._is_alive = self._check_is_alive()
+        if self._check_alive and not self._is_alive:
+            raise RuntimeError("Autofocus.initialise: autofocus is not alive after initialisation.")
+
+    def finalise(self, force: bool = False) -> None:
+        """
+        Finalise the autofocus peripheral and clear lifecycle flags.
+
+        Parameters
+        ----------
+        force
+            If True, subclass implementations may force cleanup.
+
+        Returns
+        -------
+        None
+        """
+        self._finalise(force=force)
+        self._is_initialised = False
+        self._is_alive = False
+
+    def is_alive(self) -> bool:
+        """
+        Query whether the autofocus peripheral is alive.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        bool
+            True when the subclass reports the peripheral is alive.
+        """
+        self._is_alive = self._check_is_alive()
+        return self._is_alive
+
+    def is_initialised(self) -> bool:
+        """
+        Return whether initialise has succeeded.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        bool
+            True when the autofocus peripheral is marked initialised.
+        """
+        return self._is_initialised
 
     def stop(self) -> None:
         """

@@ -6,8 +6,8 @@ import pytest
 from evomachine.commands import AutomatonCommand
 from evomachine.frame import FrameMetaData
 from evomachine.image_processing_config import ImageProcessorConfigFactory
-from evomachine.peripherals.camera import CameraSystemConfigFactory
 from evomachine.coordinates import Coordinate
+from evomachine.navigation import FovConfig
 from evomachine.peripherals.dmd import Dmd
 from evomachine.strategy import (
     AbstractStrategy,
@@ -229,7 +229,6 @@ def test_strategy_initialise_injects_dmd() -> None:
     commands = strategy.initialise(
         fovs={0: Coordinate(0, 0, 0)},
         region_of_interests={0: []},
-        config_camera=CameraSystemConfigFactory.default_air_config(),
         fov_processors={},
         dmd=dmd,
     )
@@ -252,11 +251,12 @@ def test_strategy_serialization_excludes_dmd() -> None:
     -------
     None
     """
+    cfg = ImageProcessorConfigFactory.default_config(
+        channels=[LEDType.LED_450_NM],
+        channels_seg=[LEDType.LED_450_NM],
+    )
     strategy = BasicStrategy(
-        cfg=ImageProcessorConfigFactory.default_config(
-            channels=[LEDType.LED_450_NM],
-            channels_seg=[LEDType.LED_450_NM],
-        ),
+        cfg=cfg,
         save_path=".",
     )
     strategy.dmd = FakeDmd()
@@ -290,10 +290,78 @@ def test_invalid_strategy_command_list_raises_runtime_error() -> None:
         strategy.initialise(
             fovs={0: Coordinate(0, 0, 0)},
             region_of_interests={0: []},
-            config_camera=CameraSystemConfigFactory.default_air_config(),
             fov_processors={},
             dmd=FakeDmd(),
         )
+
+
+def test_strategy_initial_fov_configs_validates_and_copies() -> None:
+    """
+    Check strategies expose validated per-FoV focus policies.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    cfg = ImageProcessorConfigFactory.default_config(
+        channels=[LEDType.LED_450_NM, LEDType.LED_565_NM],
+        channels_seg=[LEDType.LED_450_NM],
+    )
+    cfg.preproc_enabled = True
+    strategy = BasicStrategy(
+        cfg=cfg,
+        save_path=".",
+    )
+    fov_config = FovConfig(run_software_focus_on_arrival=True)
+    strategy.initialise(
+        fovs={1: Coordinate(0, 0, 0)},
+        region_of_interests={1: []},
+        fov_processors={},
+        dmd=FakeDmd(),
+    )
+    strategy.fov_configs = {1: fov_config}
+
+    initial_configs = strategy.initial_fov_configs()
+
+    assert initial_configs == {1: fov_config}
+    assert initial_configs is not strategy.fov_configs
+
+
+def test_strategy_initial_fov_configs_rejects_unknown_fov() -> None:
+    """
+    Check strategy FoV focus policies must reference known FoV IDs.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    cfg = ImageProcessorConfigFactory.default_config(
+        channels=[LEDType.LED_450_NM, LEDType.LED_565_NM],
+        channels_seg=[LEDType.LED_450_NM],
+    )
+    cfg.preproc_enabled = True
+    strategy = BasicStrategy(
+        cfg=cfg,
+        save_path=".",
+    )
+    strategy.initialise(
+        fovs={1: Coordinate(0, 0, 0)},
+        region_of_interests={1: []},
+        fov_processors={},
+        dmd=FakeDmd(),
+    )
+    strategy.fov_configs = {2: FovConfig()}
+
+    with pytest.raises(KeyError, match="unknown fov ID 2"):
+        strategy.initial_fov_configs()
 
 
 def test_strategy_discovery_and_creation_use_name_file_pair() -> None:

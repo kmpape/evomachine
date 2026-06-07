@@ -35,7 +35,7 @@ sys.path.append(str(WORKSPACE_ROOT / "asitiger"))
 sys.path.append(str(WORKSPACE_ROOT / "evomachine_repo"))
 
 
-from evomachine.config import CameraSystemConfig, ImageProcessorConfig, get_logger
+from evomachine.config import ImageProcessorConfig, get_logger
 from evomachine.guidir.crisp import CRISPPanel
 from evomachine.guidir.dmd import DMDPanel
 from evomachine.guidir.experiments import ExperimentPanel
@@ -72,7 +72,7 @@ class EvoGUI(QMainWindow):
     def __init__(
             self,
             queue_manager: QueueManager,
-            camera_config: CameraSystemConfig,
+            camera_config: Any,
             processor_config: ImageProcessorConfig,
             start_strategy_event: Event,
             stop_strategy_event: Event,
@@ -86,7 +86,7 @@ class EvoGUI(QMainWindow):
         self.panels: list[EvoPanelTemplate] = []
 
         self.queue_manager: QueueManager = queue_manager
-        self.camera_config: CameraSystemConfig = camera_config
+        self.camera_config: Any = camera_config
         self.processor_config: ImageProcessorConfig = processor_config
         self.start_strategy_event: Event = start_strategy_event
         self.stop_strategy_event: Event = stop_strategy_event
