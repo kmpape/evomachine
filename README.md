@@ -42,10 +42,13 @@ This project expects several sibling repositories to live next to the main
   Branches: `dev_main`
 - `em_dmd_window/`: DMD display/window helper used by projection bindings.  
   URL: `https://github.com/kmpape/em_dmd_window`
-  Branches: `master`
+  Branches: `master`  
 
 Keeping these repositories as siblings lets scripts, notebooks, and local
-imports resolve the hardware and processing dependencies during development.
+imports resolve the hardware and processing dependencies during development.  
+
+Additionally, a Windows PC runs the microfluidics controls independently:  
+- URL: `https://github.com/KSechkar/MM_microfluidics'  
 
 ## Code Structure
 
