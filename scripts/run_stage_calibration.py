@@ -18,7 +18,6 @@ sys.path.append(str(WORKSPACE_ROOT / "evomachine_repo"))
 sys.path.append(str(WORKSPACE_ROOT / "de-lta-rt"))
 
 from evomachine.acquisition_bkp import TestCamera, EvoCamera, EvoCamerav2
-from evomachine.automaton import Automaton
 from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, ConfigImageProcessorFactory, \
     EVOMACHINE_DIR, USE_DMD_SOCKET, USE_SYNC_BOARD
 if USE_DMD_SOCKET:

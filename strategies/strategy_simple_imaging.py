@@ -3,7 +3,7 @@ from __future__ import annotations
 from evomachine.commands import AutomatonCommand
 from evomachine.config_types import FrameMetaDataFactory, ImageProcessorConfig
 from evomachine.strategy import AbstractStrategy
-from evomachine.types import LEDType
+from evomachine.types import AutomatonCommandType, LEDType
 
 
 class SimpleImagingStrategy(AbstractStrategy):
@@ -28,6 +28,14 @@ class SimpleImagingStrategy(AbstractStrategy):
         self.exposure_ms: int = 100
         self.brightness: int = 10
         self.period_s: float = 180.0
+
+    def register_automaton_commands(self) -> set[AutomatonCommandType]:
+        """Return every command type this strategy may emit."""
+        return {
+            AutomatonCommandType.MOVE,
+            AutomatonCommandType.IMAGE,
+            AutomatonCommandType.WAIT,
+        }
 
     def _imaging_commands(self, segment: bool) -> list[AutomatonCommand]:
         """

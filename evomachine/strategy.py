@@ -16,7 +16,7 @@ from evomachine.frame import FrameMetaDataFactory
 from evomachine.image_processing_config import ImageProcessorConfig
 from evomachine.navigation import FovConfig
 from evomachine.peripherals.dmd import Dmd
-from evomachine.types import LEDType
+from evomachine.types import AutomatonCommandType, LEDType
 
 logger = get_logger(name=__name__)
 
@@ -134,7 +134,7 @@ class AbstractStrategy(ABC):
             fovs: dict[int, Coordinate],
             region_of_interests: dict[int, list[int]],
             fov_processors: dict[int, PositionRT],
-            dmd: Dmd,
+            dmd: Dmd | None,
     ) -> list[AutomatonCommand]:
         """
         Reset runtime state and initialise the strategy.
@@ -148,7 +148,7 @@ class AbstractStrategy(ABC):
         fov_processors
             FoV processors keyed by FoV ID.
         dmd
-            DMD object available for pattern construction.
+            Optional DMD object available for pattern construction.
 
         Returns
         -------
@@ -165,8 +165,8 @@ class AbstractStrategy(ABC):
             raise TypeError(
                 f"AbstractStrategy.initialise: fov_processors must be dict, received {type(fov_processors)}."
             )
-        if not isinstance(dmd, Dmd):
-            raise TypeError(f"AbstractStrategy.initialise: dmd must be Dmd, received {type(dmd)}.")
+        if dmd is not None and not isinstance(dmd, Dmd):
+            raise TypeError(f"AbstractStrategy.initialise: dmd must be Dmd or None, received {type(dmd)}.")
         self.callback_counter = 0
         self.fovs = fovs
         self.region_of_interests = region_of_interests
@@ -288,6 +288,21 @@ class AbstractStrategy(ABC):
         """
         return self.__class__.__name__
 
+    def register_automaton_commands(self) -> set[AutomatonCommandType]:
+        """
+        Return every AutomatonCommandType this strategy may emit.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        set[AutomatonCommandType]
+            Command types used during initialise(), callback(), or finalise().
+        """
+        return set()
+
     @staticmethod
     def is_valid_command_list(command_list: list[AutomatonCommand]) -> bool:
         """
@@ -308,6 +323,10 @@ class AbstractStrategy(ABC):
 
 class NoStrategy(AbstractStrategy):
     """Strategy that never schedules commands."""
+
+    def register_automaton_commands(self) -> set[AutomatonCommandType]:
+        """Return no registered command types."""
+        return set()
 
     def _callback(
             self,
@@ -351,6 +370,15 @@ class BasicStrategy(AbstractStrategy):
         self.imaging_channels: list[LEDType] = [LEDType.LED_565_NM]
         self.exposure_time: int = 100
         self.num_fovs: int | None = None
+
+    def register_automaton_commands(self) -> set[AutomatonCommandType]:
+        """Return every command type BasicStrategy may emit."""
+        return {
+            AutomatonCommandType.MOVE,
+            AutomatonCommandType.IMAGE,
+            AutomatonCommandType.WAIT,
+            AutomatonCommandType.LIVE_MODE,
+        }
 
     def _commands_for_fovs(self, segment: bool) -> list[AutomatonCommand]:
         """

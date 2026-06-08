@@ -6,7 +6,7 @@ from evomachine.commands import AutomatonCommand
 from evomachine.config import DMD_WIDTH_HEIGHT
 from evomachine.config_types import FrameMetaDataFactory, ImageProcessorConfig
 from evomachine.strategy import AbstractStrategy
-from evomachine.types import LEDType
+from evomachine.types import AutomatonCommandType, LEDType
 
 
 class DmdProjectFullFovStrategy(AbstractStrategy):
@@ -34,6 +34,15 @@ class DmdProjectFullFovStrategy(AbstractStrategy):
         self.projection_duration_s: float = 0.5
         self.wait_after_cycle_s: float = 30.0
         self.pattern: np.ndarray = np.ones(DMD_WIDTH_HEIGHT, dtype=np.uint8)
+
+    def register_automaton_commands(self) -> set[AutomatonCommandType]:
+        """Return every command type this strategy may emit."""
+        return {
+            AutomatonCommandType.MOVE,
+            AutomatonCommandType.IMAGE,
+            AutomatonCommandType.PROJECT,
+            AutomatonCommandType.WAIT,
+        }
 
     def _cycle_commands(self, project: bool) -> list[AutomatonCommand]:
         """

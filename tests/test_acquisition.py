@@ -34,6 +34,7 @@ class FakeCamera:
         self.exposures: list[float | int] = []
         self.normalise_calls: list[bool] = []
         self.stop_count = 0
+        self.live_mode_history: list[bool] = []
 
     def set_exposure(self, exposure_time: float | int) -> None:
         """
@@ -82,6 +83,34 @@ class FakeCamera:
         None
         """
         self.stop_count += 1
+
+    def enable_live_mode(self) -> None:
+        """
+        Record live-mode enable.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.live_mode_history.append(True)
+
+    def disable_live_mode(self) -> None:
+        """
+        Record live-mode disable.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        self.live_mode_history.append(False)
 
 
 class FakeLedManager:
@@ -533,6 +562,45 @@ def test_update_settings_changes_later_defaults() -> None:
 
     assert camera.normalise_calls == [True, False]
     assert dmd.full_count == 1
+
+
+def test_set_camera_live_mode_delegates_to_camera() -> None:
+    """
+    Check live-mode requests are routed through the acquisition manager.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    camera = FakeCamera()
+    manager = _manager(camera=camera)
+
+    manager.set_camera_live_mode(status=True)
+    manager.set_camera_live_mode(status=False)
+
+    assert camera.live_mode_history == [True, False]
+
+
+def test_set_camera_live_mode_validates_status() -> None:
+    """
+    Check live-mode status must be a boolean.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    manager = _manager()
+
+    with pytest.raises(TypeError, match="status must be bool"):
+        manager.set_camera_live_mode(status=1)
 
 
 def test_take_frame_uses_frame_metadata_dmd_pattern() -> None:

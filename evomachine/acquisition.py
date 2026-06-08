@@ -119,6 +119,28 @@ class FrameAcquisitionManager:
             raise ValueError("FrameAcquisitionManager.update_settings: unknown settings field.") from error
         return self.default_settings
 
+    def set_camera_live_mode(self, status: bool = False) -> None:
+        """
+        Set camera live mode when the camera exposes a compatible method.
+
+        Parameters
+        ----------
+        status
+            Desired live-mode state.
+
+        Returns
+        -------
+        None
+        """
+        if not isinstance(status, bool):
+            raise TypeError(
+                f"FrameAcquisitionManager.set_camera_live_mode: status must be bool, received {type(status)}."
+            )
+        method_name = "enable_live_mode" if status else "disable_live_mode"
+        live_mode = getattr(self.camera, method_name, None)
+        if callable(live_mode):
+            live_mode()
+
     def take_frame(
             self,
             frame_metadata: FrameMetaData | list[FrameMetaData],

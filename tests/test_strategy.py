@@ -12,6 +12,7 @@ from evomachine.peripherals.dmd import Dmd
 from evomachine.strategy import (
     AbstractStrategy,
     BasicStrategy,
+    NoStrategy,
     create_strategy_from_definition,
     list_strategy_definitions,
 )
@@ -237,6 +238,91 @@ def test_strategy_initialise_injects_dmd() -> None:
     image_command = next(command for command in commands if command.command_type == AutomatonCommandType.IMAGE)
     assert isinstance(image_command.command_args["frame_metadata"], list)
     assert all(isinstance(metadata, FrameMetaData) for metadata in image_command.command_args["frame_metadata"])
+
+
+def test_strategy_initialise_accepts_missing_dmd() -> None:
+    """
+    Check non-DMD strategies can initialise without a DMD object.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    cfg = ImageProcessorConfigFactory.default_config(
+        channels=[LEDType.LED_450_NM, LEDType.LED_565_NM],
+        channels_seg=[LEDType.LED_450_NM],
+    )
+    cfg.preproc_enabled = True
+    strategy = BasicStrategy(
+        cfg=cfg,
+        save_path=".",
+    )
+
+    commands = strategy.initialise(
+        fovs={0: Coordinate(0, 0, 0)},
+        region_of_interests={0: []},
+        fov_processors={},
+        dmd=None,
+    )
+
+    assert strategy.dmd is None
+    assert any(command.command_type == AutomatonCommandType.IMAGE for command in commands)
+
+
+def test_builtin_and_example_strategies_register_automaton_commands() -> None:
+    """
+    Check bundled strategies declare the command types they may emit.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    cfg = ImageProcessorConfigFactory.default_config(
+        channels=[LEDType.LED_450_NM, LEDType.LED_565_NM],
+        channels_seg=[LEDType.LED_450_NM],
+    )
+    assert NoStrategy(cfg=cfg).register_automaton_commands() == set()
+    assert BasicStrategy(cfg=cfg, save_path=".").register_automaton_commands() == {
+        AutomatonCommandType.MOVE,
+        AutomatonCommandType.IMAGE,
+        AutomatonCommandType.WAIT,
+        AutomatonCommandType.LIVE_MODE,
+    }
+    expected_by_strategy = {
+        "SimpleImagingStrategy": {
+            AutomatonCommandType.MOVE,
+            AutomatonCommandType.IMAGE,
+            AutomatonCommandType.WAIT,
+        },
+        "DmdProjectFullFovStrategy": {
+            AutomatonCommandType.MOVE,
+            AutomatonCommandType.IMAGE,
+            AutomatonCommandType.PROJECT,
+            AutomatonCommandType.WAIT,
+        },
+        "DmdProjectByRoiStrategy": {
+            AutomatonCommandType.MOVE,
+            AutomatonCommandType.IMAGE,
+            AutomatonCommandType.PROJECT_ROI,
+            AutomatonCommandType.WAIT,
+        },
+    }
+    definitions = {definition.name: definition for definition in list_strategy_definitions()}
+    for strategy_name, expected_commands in expected_by_strategy.items():
+        strategy = create_strategy_from_definition(
+            name=strategy_name,
+            file_path=definitions[strategy_name].file_path,
+            cfg=cfg,
+        )
+        assert strategy.register_automaton_commands() == expected_commands
 
 
 def test_strategy_serialization_excludes_dmd() -> None:

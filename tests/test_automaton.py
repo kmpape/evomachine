@@ -16,8 +16,8 @@ from evomachine.coordinates import Coordinate
 from evomachine.navigation import FocusNavigator, FovConfig
 from evomachine.peripherals.dmd import Dmd
 from evomachine.projection import ProjectionManager
-from evomachine.strategy import AbstractStrategy
-from evomachine.types import AutomatonCommandType, LEDType
+from evomachine.strategy import AbstractStrategy, BasicStrategy
+from evomachine.types import AutomatonCommandType, LEDType, UNKNOWN_FOV_ID
 
 
 class FakePeripheral:
@@ -36,8 +36,11 @@ class FakePeripheral:
         None
         """
         self.initialised = False
+        self.initialise_count = 0
         self.stop_count = 0
         self.finalise_count = 0
+        self.unlock_count = 0
+        self.live_mode_history: list[bool] = []
 
     def initialise(self, force: bool = False) -> None:
         """
@@ -52,6 +55,7 @@ class FakePeripheral:
         -------
         None
         """
+        self.initialise_count += 1
         self.initialised = True
 
     def is_initialised(self) -> bool:
@@ -98,6 +102,18 @@ class FakePeripheral:
         """
         self.finalise_count += 1
         self.initialised = False
+
+    def enable_live_mode(self) -> None:
+        """Record live-mode enable."""
+        self.live_mode_history.append(True)
+
+    def disable_live_mode(self) -> None:
+        """Record live-mode disable."""
+        self.live_mode_history.append(False)
+
+    def unlock(self) -> None:
+        """Record an unlock command."""
+        self.unlock_count += 1
 
 
 class FakeLedManager(FakePeripheral):
@@ -150,11 +166,14 @@ class FakeDmd(Dmd):
     def __init__(self):
         """Initialise fake DMD state."""
         self.initialised = False
+        self.initialise_count = 0
+        self.finalise_count = 0
         self.images: list[np.ndarray] = []
         self.none_count = 0
 
     def initialise(self, force: bool = False) -> None:
         """Mark fake DMD initialised."""
+        self.initialise_count += 1
         self.initialised = True
 
     def is_initialised(self) -> bool:
@@ -171,6 +190,7 @@ class FakeDmd(Dmd):
 
     def finalise(self, force: bool = False) -> None:
         """Mark fake DMD finalised."""
+        self.finalise_count += 1
         self.initialised = False
 
     def display_image(self, img: np.ndarray, _is_full_display: bool = False) -> None:
@@ -189,8 +209,20 @@ class FakeDmd(Dmd):
 class FakeAcquisitionManager(FrameAcquisitionManager):
     """Frame acquisition manager fake that returns deterministic frames."""
 
-    def __init__(self):
+    def __init__(
+            self,
+            camera: FakePeripheral | None = None,
+            led_manager: FakeLedManager | None = None,
+            stage: FakePeripheral | None = None,
+            dmd: FakeDmd | None = None,
+            filter_wheel: FakePeripheral | None = None,
+    ):
         """Initialise fake acquisition state."""
+        self.camera = camera if camera is not None else FakePeripheral()
+        self.led_manager = led_manager if led_manager is not None else FakeLedManager()
+        self.stage = stage
+        self.dmd = dmd
+        self.filter_wheel = filter_wheel
         self.calls: list[tuple[FrameMetaData | list[FrameMetaData], object]] = []
         self.stop_count = 0
 
@@ -224,10 +256,20 @@ class FakeAcquisitionManager(FrameAcquisitionManager):
 class FakeFocusNavigator(FocusNavigator):
     """Focus navigator fake that records moves and fovs."""
 
-    def __init__(self):
+    def __init__(
+            self,
+            stage: FakePeripheral | None = None,
+            autofocus: FakePeripheral | None = None,
+            software_focus: object | None = None,
+    ):
         """Initialise fake focus navigator state."""
+        self.stage = stage if stage is not None else FakePeripheral()
+        self.autofocus = autofocus
+        self.software_focus = software_focus
         self.moves: list[int] = []
         self.fovs: dict[int, Coordinate] = {}
+        self.fov_order: list[int] = []
+        self.current_fov_id: int = UNKNOWN_FOV_ID
         self.fov_configs = None
         self.updated_fov_configs: list[tuple[int, FovConfig]] = []
         self.skipped_fov_ids: set[int] = set()
@@ -235,11 +277,14 @@ class FakeFocusNavigator(FocusNavigator):
     def initialise_fovs(self, fov_id_to_coordinate, use_autofocus=None, fov_configs=None) -> None:
         """Record fov initialisation."""
         self.fovs = fov_id_to_coordinate
+        self.fov_order = list(fov_id_to_coordinate)
+        self.current_fov_id = UNKNOWN_FOV_ID
         self.fov_configs = fov_configs
 
     def move(self, fov_id: int, manage_focus: bool = True):
         """Record one move request."""
         self.moves.append(fov_id)
+        self.current_fov_id = fov_id
         return SimpleNamespace(
             fov_id=fov_id,
             manage_focus=manage_focus,
@@ -252,18 +297,53 @@ class FakeFocusNavigator(FocusNavigator):
         self.updated_fov_configs.append((fov_id, fov_config))
         return SimpleNamespace(fov_id=fov_id, fov_config=fov_config)
 
+    def get_current_fov_id(self) -> int:
+        """Return the fake current FOV ID."""
+        return self.current_fov_id
+
+    def get_next_fov_id(self, fov_id: int) -> int:
+        """Return the next fake FOV ID."""
+        if fov_id not in self.fov_order:
+            raise KeyError(f"unknown fov ID {fov_id}")
+        index = self.fov_order.index(fov_id)
+        return self.fov_order[(index + 1) % len(self.fov_order)]
+
 
 class FakeProjectionManager(ProjectionManager):
     """Projection manager fake that records calibration calls."""
 
-    def __init__(self):
+    def __init__(
+            self,
+            camera: FakePeripheral | None = None,
+            dmd: FakeDmd | None = None,
+            led_manager: FakeLedManager | None = None,
+            filter_wheel: FakePeripheral | None = None,
+            photodiode: FakePeripheral | None = None,
+    ):
         """Initialise fake projection state."""
+        self.camera = camera
+        self.dmd = dmd
+        self.led_manager = led_manager
+        self.filter_wheel = filter_wheel
+        self.photodiode = photodiode
         self.calls: list[tuple[DmdCalibrationConfig, str | None]] = []
 
     def dmd_calibrate(self, cfg: DmdCalibrationConfig, filename: str | Path | None = None):
         """Record one calibration request."""
         self.calls.append((cfg, filename))
         return [], np.eye(3), np.eye(3), Path("calibration.pkl")
+
+
+class FakeSoftwareFocus:
+    """Software-focus fake that records stop calls."""
+
+    def __init__(self):
+        """Initialise fake software-focus state."""
+        self.stop_count = 0
+
+    def stop(self) -> None:
+        """Record one stop request."""
+        self.stop_count += 1
 
 
 class FakeFovProcessor:
@@ -287,6 +367,20 @@ class FakeStrategy(AbstractStrategy):
         """Return no initial commands."""
         self.initialise_count += 1
         return []
+
+    def register_automaton_commands(self) -> set[AutomatonCommandType]:
+        """Return all command types manually exercised by automaton tests."""
+        return {
+            AutomatonCommandType.MOVE,
+            AutomatonCommandType.UPDATE_FOV_CONFIG,
+            AutomatonCommandType.IMAGE,
+            AutomatonCommandType.PROJECT,
+            AutomatonCommandType.PROJECT_ROI,
+            AutomatonCommandType.WAIT,
+            AutomatonCommandType.STOP,
+            AutomatonCommandType.LIVE_MODE,
+            AutomatonCommandType.SAVE_STATE,
+        }
 
     def _callback(self, fov_id: int, data: list[AutomatonCommand], errors: list[Exception]) -> list[AutomatonCommand]:
         """Record one callback and return no commands."""
@@ -335,24 +429,26 @@ def make_automaton():
     stage = FakePeripheral()
     led_manager = FakeLedManager()
     dmd = FakeDmd()
-    acquisition_manager = FakeAcquisitionManager()
-    focus_navigator = FakeFocusNavigator()
-    projection_manager = FakeProjectionManager()
+    photodiode = FakePeripheral()
+    acquisition_manager = FakeAcquisitionManager(camera=camera, led_manager=led_manager, stage=stage, dmd=dmd)
+    focus_navigator = FakeFocusNavigator(stage=stage)
+    projection_manager = FakeProjectionManager(
+        camera=camera,
+        dmd=dmd,
+        led_manager=led_manager,
+        photodiode=photodiode,
+    )
     strategy = FakeStrategy(cfg=cfg)
     automaton = Automaton(
-        camera=camera,
-        stage=stage,
-        led_manager=led_manager,
-        acquisition_manager=acquisition_manager,
-        focus_navigator=focus_navigator,
+        acq_mngr=acquisition_manager,
+        focus_nav=focus_navigator,
         strategy=strategy,
         cfg_processor=cfg,
         start_strategy_event=Event(),
         stop_strategy_event=Event(),
         stop_event=Event(),
         shutdown_event=Event(),
-        dmd=dmd,
-        projection_manager=projection_manager,
+        proj_mngr=projection_manager,
     )
     automaton.initialise(fovs={0: Coordinate(0, 0, 0), 1: Coordinate(1, 0, 0)})
     return automaton, acquisition_manager, focus_navigator, projection_manager, led_manager, dmd
@@ -360,7 +456,7 @@ def make_automaton():
 
 def test_automaton_constructor_validates_dependencies() -> None:
     """
-    Check constructor rejects dependencies missing required methods.
+    Check constructor rejects invalid manager dependencies.
 
     Parameters
     ----------
@@ -372,21 +468,73 @@ def test_automaton_constructor_validates_dependencies() -> None:
     """
     cfg = make_cfg()
 
-    with pytest.raises(TypeError):
+    with pytest.raises(TypeError, match="acq_mngr"):
         Automaton(
-            camera=object(),
-            stage=FakePeripheral(),
-            led_manager=FakeLedManager(),
-            acquisition_manager=FakeAcquisitionManager(),
-            focus_navigator=FakeFocusNavigator(),
+            acq_mngr=object(),
+            focus_nav=FakeFocusNavigator(),
             strategy=FakeStrategy(cfg=cfg),
             cfg_processor=cfg,
             start_strategy_event=Event(),
             stop_strategy_event=Event(),
             stop_event=Event(),
             shutdown_event=Event(),
-            dmd=FakeDmd(),
         )
+
+
+def test_automaton_direct_peripheral_attributes_are_removed() -> None:
+    """
+    Check Automaton does not expose duplicate direct peripheral ownership.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    automaton, *_deps = make_automaton()
+
+    for attribute_name in (
+        "camera",
+        "stage",
+        "led_manager",
+        "filter_wheel",
+        "dmd",
+        "autofocus",
+        "photodiode",
+        "acquisition_manager",
+        "focus_navigator",
+        "projection_manager",
+    ):
+        assert not hasattr(automaton, attribute_name)
+
+
+def test_automaton_exposes_shorthand_managers_and_cached_refs() -> None:
+    """
+    Check manager shorthand attributes and cached private dependencies.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    automaton, acquisition_manager, focus_navigator, projection_manager, led_manager, dmd = make_automaton()
+
+    assert automaton.acq_mngr is acquisition_manager
+    assert automaton.focus_nav is focus_navigator
+    assert automaton.proj_mngr is projection_manager
+    assert automaton._camera is acquisition_manager.camera
+    assert automaton._stage is focus_navigator.stage
+    assert automaton._led_mngr is led_manager
+    assert automaton._filt_wheel is acquisition_manager.filter_wheel
+    assert automaton._dmd is dmd
+    assert automaton._photodiode is projection_manager.photodiode
+    assert not hasattr(automaton, "_filter_wheel")
+    assert not hasattr(automaton, "_software_focus")
 
 
 def test_automaton_old_position_api_is_removed() -> None:
@@ -406,6 +554,23 @@ def test_automaton_old_position_api_is_removed() -> None:
     assert not hasattr(automaton, "get_pos_id")
     assert not hasattr(automaton, "get_next_pos_id")
     assert not hasattr(automaton, "get_period")
+
+
+def test_automaton_fov_id_is_unknown_before_first_move() -> None:
+    """
+    Check current FOV is not guessed during initialisation.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    automaton, *_deps = make_automaton()
+
+    assert automaton.get_fov_id() == UNKNOWN_FOV_ID
 
 
 def test_automaton_move_delegates_to_focus_navigator() -> None:
@@ -444,29 +609,357 @@ def test_automaton_initialise_passes_strategy_fov_configs_to_focus_navigator() -
     None
     """
     cfg = make_cfg()
-    focus_navigator = FakeFocusNavigator()
+    camera = FakePeripheral()
+    stage = FakePeripheral()
+    led_manager = FakeLedManager()
+    dmd = FakeDmd()
+    acquisition_manager = FakeAcquisitionManager(camera=camera, led_manager=led_manager, stage=stage, dmd=dmd)
+    focus_navigator = FakeFocusNavigator(stage=stage)
+    projection_manager = FakeProjectionManager(camera=camera, dmd=dmd, led_manager=led_manager)
     strategy = FakeStrategy(cfg=cfg)
     fov_config = FovConfig(run_software_focus_on_arrival=True)
     strategy.fov_configs = {1: fov_config}
     automaton = Automaton(
-        camera=FakePeripheral(),
-        stage=FakePeripheral(),
-        led_manager=FakeLedManager(),
-        acquisition_manager=FakeAcquisitionManager(),
-        focus_navigator=focus_navigator,
+        acq_mngr=acquisition_manager,
+        focus_nav=focus_navigator,
         strategy=strategy,
         cfg_processor=cfg,
         start_strategy_event=Event(),
         stop_strategy_event=Event(),
         stop_event=Event(),
         shutdown_event=Event(),
-        dmd=FakeDmd(),
-        projection_manager=FakeProjectionManager(),
+        proj_mngr=projection_manager,
     )
 
     automaton.initialise(fovs={1: Coordinate(0, 0, 0)})
 
     assert focus_navigator.fov_configs == {1: fov_config}
+
+
+def test_automaton_strategy_uses_acq_mngr_dmd() -> None:
+    """
+    Check strategy initialisation receives the acquisition-manager DMD.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    automaton, *_deps = make_automaton()
+
+    assert automaton._strategy.dmd is automaton.acq_mngr.dmd
+
+
+def test_automaton_constructor_allows_missing_acq_dmd() -> None:
+    """
+    Check Automaton allows FrameAcquisitionManager.dmd to be None.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    cfg = make_cfg()
+    camera = FakePeripheral()
+    stage = FakePeripheral()
+    led_manager = FakeLedManager()
+
+    automaton = Automaton(
+        acq_mngr=FakeAcquisitionManager(camera=camera, led_manager=led_manager, stage=stage, dmd=None),
+        focus_nav=FakeFocusNavigator(stage=stage),
+        strategy=None,
+        cfg_processor=cfg,
+        start_strategy_event=Event(),
+        stop_strategy_event=Event(),
+        stop_event=Event(),
+        shutdown_event=Event(),
+    )
+
+    assert automaton._dmd is None
+
+
+def test_automaton_dmd_free_basic_strategy_initialises_and_starts() -> None:
+    """
+    Check DMD-free imaging strategies can initialise and start.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    cfg = make_cfg()
+    cfg.preproc_enabled = True
+    camera = FakePeripheral()
+    stage = FakePeripheral()
+    led_manager = FakeLedManager()
+    automaton = Automaton(
+        acq_mngr=FakeAcquisitionManager(camera=camera, led_manager=led_manager, stage=stage, dmd=None),
+        focus_nav=FakeFocusNavigator(stage=stage),
+        strategy=BasicStrategy(cfg=cfg, save_path="."),
+        cfg_processor=cfg,
+        start_strategy_event=Event(),
+        stop_strategy_event=Event(),
+        stop_event=Event(),
+        shutdown_event=Event(),
+    )
+
+    automaton.initialise(fovs={0: Coordinate(0, 0, 0)})
+    automaton.start_strategy()
+
+    assert automaton.strategy_has_started()
+    assert automaton._strategy.dmd is None
+
+
+class MissingDmdStrategy(FakeStrategy):
+    """Strategy fake that declares DMD projection support."""
+
+    def register_automaton_commands(self) -> set[AutomatonCommandType]:
+        """Declare DMD projection."""
+        return {AutomatonCommandType.PROJECT}
+
+
+class InvalidCommandDeclarationStrategy(FakeStrategy):
+    """Strategy fake with invalid command declarations."""
+
+    def register_automaton_commands(self) -> set[AutomatonCommandType]:
+        """Return invalid command declaration entries."""
+        return {"bad"}
+
+
+def test_automaton_dmd_strategy_fails_when_dmd_missing() -> None:
+    """
+    Check strategies declaring DMD commands fail before strategy execution.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    cfg = make_cfg()
+    camera = FakePeripheral()
+    stage = FakePeripheral()
+    led_manager = FakeLedManager()
+    automaton = Automaton(
+        acq_mngr=FakeAcquisitionManager(camera=camera, led_manager=led_manager, stage=stage, dmd=None),
+        focus_nav=FakeFocusNavigator(stage=stage),
+        strategy=MissingDmdStrategy(cfg=cfg),
+        cfg_processor=cfg,
+        start_strategy_event=Event(),
+        stop_strategy_event=Event(),
+        stop_event=Event(),
+        shutdown_event=Event(),
+    )
+
+    with pytest.raises(RuntimeError, match="PROJECT: DMD"):
+        automaton.initialise(fovs={0: Coordinate(0, 0, 0)})
+
+
+def test_automaton_invalid_strategy_command_declaration_raises() -> None:
+    """
+    Check strategy command declarations must use AutomatonCommandType entries.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    cfg = make_cfg()
+    camera = FakePeripheral()
+    stage = FakePeripheral()
+    led_manager = FakeLedManager()
+    automaton = Automaton(
+        acq_mngr=FakeAcquisitionManager(camera=camera, led_manager=led_manager, stage=stage, dmd=None),
+        focus_nav=FakeFocusNavigator(stage=stage),
+        strategy=InvalidCommandDeclarationStrategy(cfg=cfg),
+        cfg_processor=cfg,
+        start_strategy_event=Event(),
+        stop_strategy_event=Event(),
+        stop_event=Event(),
+        shutdown_event=Event(),
+    )
+
+    with pytest.raises(TypeError, match="non-AutomatonCommandType"):
+        automaton.initialise(fovs={0: Coordinate(0, 0, 0)})
+
+
+def test_automaton_rejects_split_dmd_managers() -> None:
+    """
+    Check acquisition and projection managers cannot own different DMDs.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    cfg = make_cfg()
+    camera = FakePeripheral()
+    stage = FakePeripheral()
+    led_manager = FakeLedManager()
+
+    with pytest.raises(ValueError, match="proj_mngr.dmd"):
+        Automaton(
+            acq_mngr=FakeAcquisitionManager(
+                camera=camera,
+                led_manager=led_manager,
+                stage=stage,
+                dmd=FakeDmd(),
+            ),
+            focus_nav=FakeFocusNavigator(stage=stage),
+            strategy=FakeStrategy(cfg=cfg),
+            cfg_processor=cfg,
+            start_strategy_event=Event(),
+            stop_strategy_event=Event(),
+            stop_event=Event(),
+            shutdown_event=Event(),
+            proj_mngr=FakeProjectionManager(camera=camera, dmd=FakeDmd(), led_manager=led_manager),
+        )
+
+
+def test_automaton_initialise_without_strategy_sets_up_fovs_only() -> None:
+    """
+    Check strategy-less construction still supports device and FoV setup.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    cfg = make_cfg()
+    camera = FakePeripheral()
+    stage = FakePeripheral()
+    led_manager = FakeLedManager()
+    dmd = FakeDmd()
+    focus_navigator = FakeFocusNavigator(stage=stage)
+    automaton = Automaton(
+        acq_mngr=FakeAcquisitionManager(camera=camera, led_manager=led_manager, stage=stage, dmd=dmd),
+        focus_nav=focus_navigator,
+        strategy=None,
+        cfg_processor=cfg,
+        start_strategy_event=Event(),
+        stop_strategy_event=Event(),
+        stop_event=Event(),
+        shutdown_event=Event(),
+    )
+
+    automaton.initialise(fovs={1: Coordinate(0, 0, 0)})
+
+    assert focus_navigator.fovs == {1: Coordinate(0, 0, 0)}
+    assert automaton._strategy is None
+    assert not automaton._strategy_is_initialised
+    assert not automaton.is_initialised()
+    assert automaton.get_strategy_name() is None
+
+
+def test_automaton_start_strategy_requires_strategy() -> None:
+    """
+    Check strategy execution cannot start before a strategy is set.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    cfg = make_cfg()
+    stage = FakePeripheral()
+    automaton = Automaton(
+        acq_mngr=FakeAcquisitionManager(stage=stage, dmd=FakeDmd()),
+        focus_nav=FakeFocusNavigator(stage=stage),
+        strategy=None,
+        cfg_processor=cfg,
+        start_strategy_event=Event(),
+        stop_strategy_event=Event(),
+        stop_event=Event(),
+        shutdown_event=Event(),
+    )
+
+    with pytest.raises(RuntimeError, match="strategy is required"):
+        automaton.start_strategy()
+
+
+def test_automaton_set_strategy_initialises_after_fovs() -> None:
+    """
+    Check set_strategy initialises immediately when FoVs already exist.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    cfg = make_cfg()
+    stage = FakePeripheral()
+    focus_navigator = FakeFocusNavigator(stage=stage)
+    automaton = Automaton(
+        acq_mngr=FakeAcquisitionManager(stage=stage, dmd=FakeDmd()),
+        focus_nav=focus_navigator,
+        strategy=None,
+        cfg_processor=cfg,
+        start_strategy_event=Event(),
+        stop_strategy_event=Event(),
+        stop_event=Event(),
+        shutdown_event=Event(),
+    )
+    automaton.initialise(fovs={1: Coordinate(0, 0, 0)})
+    strategy = FakeStrategy(cfg=cfg)
+    fov_config = FovConfig(lock_autofocus_on_fov=False)
+    strategy.fov_configs = {1: fov_config}
+
+    automaton.set_strategy(strategy=strategy)
+
+    assert automaton._strategy is strategy
+    assert automaton._strategy_is_initialised
+    assert strategy.initialise_count == 1
+    assert focus_navigator.updated_fov_configs == [(1, fov_config)]
+    assert automaton.get_strategy_name() == "FakeStrategy"
+
+
+def test_automaton_set_strategy_rejects_after_start_event() -> None:
+    """
+    Check strategy replacement is blocked once strategy execution has started.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    automaton, *_deps = make_automaton()
+    original_strategy = automaton._strategy
+    automaton.start_strategy()
+    replacement = FakeStrategy(cfg=make_cfg())
+
+    with pytest.raises(RuntimeError, match="start_strategy_event"):
+        automaton.set_strategy(strategy=replacement)
+
+    assert automaton._strategy is original_strategy
 
 
 def test_automaton_update_fov_config_delegates_to_focus_navigator() -> None:
@@ -507,10 +1000,13 @@ def test_automaton_move_next_wraps_registered_fov_order() -> None:
     automaton, _, focus_navigator, _, _, _ = make_automaton()
     automaton.initialise(fovs={2: Coordinate(2, 0, 0), 7: Coordinate(7, 0, 0)})
 
-    automaton.next_commands = [CommandFactory(cfg=make_cfg()).command_move(fov_id=-1)]
+    automaton.next_commands = [
+        CommandFactory(cfg=make_cfg()).command_move(fov_id=2),
+        CommandFactory(cfg=make_cfg()).command_move(fov_id=-1),
+    ]
     automaton._process()
 
-    assert focus_navigator.moves[-1] == 7
+    assert focus_navigator.moves[-2:] == [2, 7]
     assert automaton.get_fov_id() == 7
 
 
@@ -659,6 +1155,44 @@ def test_automaton_project_uses_dmd_and_led_manager() -> None:
     assert led_manager.disable_count == 1
 
 
+def test_automaton_project_raises_when_dmd_missing() -> None:
+    """
+    Check runtime projection paths fail clearly when no DMD is configured.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    cfg = make_cfg()
+    camera = FakePeripheral()
+    stage = FakePeripheral()
+    led_manager = FakeLedManager()
+    automaton = Automaton(
+        acq_mngr=FakeAcquisitionManager(camera=camera, led_manager=led_manager, stage=stage, dmd=None),
+        focus_nav=FakeFocusNavigator(stage=stage),
+        strategy=None,
+        cfg_processor=cfg,
+        start_strategy_event=Event(),
+        stop_strategy_event=Event(),
+        stop_event=Event(),
+        shutdown_event=Event(),
+    )
+    image = np.ones(DMD_WIDTH_HEIGHT, dtype=np.uint8)
+    command = CommandFactory(cfg=make_cfg()).command_project(
+        channel=LEDType.LED_450_NM,
+        image=image,
+        duration=0.001,
+        brightness=10,
+    )
+
+    with pytest.raises(RuntimeError, match="DMD"):
+        automaton._execute_project(command=command)
+
+
 def test_automaton_project_roi_uses_dict_backed_fov_processors() -> None:
     """
     Check PROJECT_ROI looks up FOV processors by FOV ID.
@@ -752,6 +1286,67 @@ def test_automaton_dmd_calibrate_delegates_to_projection_manager() -> None:
     assert result[3] == Path("calibration.pkl")
 
 
+def test_automaton_initialises_unique_manager_devices_once() -> None:
+    """
+    Check shared manager-owned devices are initialised once by identity.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    automaton, acquisition_manager, focus_navigator, projection_manager, led_manager, dmd = make_automaton()
+
+    assert acquisition_manager.camera.initialise_count == 1
+    assert focus_navigator.stage.initialise_count == 1
+    assert led_manager.initialise_count == 1
+    assert dmd.initialise_count == 1
+    assert projection_manager.photodiode.initialise_count == 1
+
+
+def test_automaton_act_on_halt_uses_manager_paths() -> None:
+    """
+    Check halt cleanup uses acquisition and focus managers.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    cfg = make_cfg()
+    camera = FakePeripheral()
+    stage = FakePeripheral()
+    led_manager = FakeLedManager()
+    dmd = FakeDmd()
+    autofocus = FakePeripheral()
+    software_focus = FakeSoftwareFocus()
+    acquisition_manager = FakeAcquisitionManager(camera=camera, led_manager=led_manager, stage=stage, dmd=dmd)
+    focus_navigator = FakeFocusNavigator(stage=stage, autofocus=autofocus, software_focus=software_focus)
+    automaton = Automaton(
+        acq_mngr=acquisition_manager,
+        focus_nav=focus_navigator,
+        strategy=FakeStrategy(cfg=cfg),
+        cfg_processor=cfg,
+        start_strategy_event=Event(),
+        stop_strategy_event=Event(),
+        stop_event=Event(),
+        shutdown_event=Event(),
+    )
+
+    automaton.act_on_halt()
+
+    assert automaton._swfocus is software_focus
+    assert acquisition_manager.stop_count == 1
+    assert software_focus.stop_count == 1
+    assert autofocus.unlock_count == 1
+
+
 def test_automaton_shutdown_stops_and_finalises_peripherals() -> None:
     """
     Check shutdown uses current peripheral stop/finalise APIs.
@@ -764,12 +1359,16 @@ def test_automaton_shutdown_stops_and_finalises_peripherals() -> None:
     -------
     None
     """
-    automaton, acquisition_manager, _, _, led_manager, _ = make_automaton()
+    automaton, acquisition_manager, focus_navigator, projection_manager, led_manager, dmd = make_automaton()
 
     automaton.shutdown()
 
     assert acquisition_manager.stop_count == 1
+    assert acquisition_manager.camera.finalise_count == 1
+    assert focus_navigator.stage.finalise_count == 1
     assert led_manager.finalise_count == 1
+    assert dmd.finalise_count == 1
+    assert projection_manager.photodiode.finalise_count == 1
     assert automaton.has_shutdown()
 
 
@@ -794,11 +1393,8 @@ def test_automaton_run_services_bounded_gui_request_processor() -> None:
         shutdown_event.set()
 
     automaton = Automaton(
-        camera=FakePeripheral(),
-        stage=FakePeripheral(),
-        led_manager=FakeLedManager(),
-        acquisition_manager=FakeAcquisitionManager(),
-        focus_navigator=FakeFocusNavigator(),
+        acq_mngr=FakeAcquisitionManager(dmd=FakeDmd()),
+        focus_nav=FakeFocusNavigator(),
         strategy=FakeStrategy(cfg=cfg),
         cfg_processor=cfg,
         start_strategy_event=Event(),

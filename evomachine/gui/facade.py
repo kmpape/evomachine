@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from evomachine.config import get_logger
 from evomachine.gui.protocol import (
     ALWAYS_ALLOWED_MUTATING_COMMANDS,
     MUTATING_COMMANDS,
@@ -10,6 +11,9 @@ from evomachine.gui.protocol import (
     GuiResponse,
 )
 from evomachine.gui.request_map import GUI_REQUEST_HANDLERS, gui_coordinate_to_payload
+
+
+logger = get_logger(name=__name__)
 
 
 class AutomatonGuiFacade:
@@ -47,6 +51,22 @@ class AutomatonGuiFacade:
             raise ValueError(f"Unsupported GUI command {command}.") from error
         return handler(self, payload)
 
+    def gui_stage(self) -> Any:
+        focus_nav = getattr(self.automaton, "focus_nav", None)
+        stage = getattr(focus_nav, "stage", None)
+        if stage is None:
+            logger.warning("AutomatonGuiFacade: GUI stage request ignored because no stage is configured.")
+            raise RuntimeError("GUI stage request ignored because no stage is configured.")
+        return stage
+
+    def gui_led_manager(self) -> Any:
+        acq_mngr = getattr(self.automaton, "acq_mngr", None)
+        led_manager = getattr(acq_mngr, "led_manager", None)
+        if led_manager is None:
+            logger.warning("AutomatonGuiFacade: GUI LED request ignored because no LED manager is configured.")
+            raise RuntimeError("GUI LED request ignored because no LED manager is configured.")
+        return led_manager
+
     def gui_status_payload(self) -> dict[str, Any]:
         return {
             "devices_initialised": bool(self.automaton.devices_is_initialised()),
@@ -55,15 +75,16 @@ class AutomatonGuiFacade:
         }
 
     def gui_stage_status_payload(self) -> dict[str, Any]:
+        stage = self.gui_stage()
         return {
-            "is_initialised": bool(self.automaton.stage.is_initialised()),
-            "is_alive": bool(self.automaton.stage.is_alive()),
-            "fov_id": self.automaton.stage.get_fov_id(),
-            "fov_step_size": self.automaton.stage.get_fov_step_size(),
+            "is_initialised": bool(stage.is_initialised()),
+            "is_alive": bool(stage.is_alive()),
+            "fov_id": stage.get_fov_id(),
+            "fov_step_size": stage.get_fov_step_size(),
         }
 
     def gui_stage_coordinates_payload(self, query_hardware: bool) -> dict[str, Any]:
-        coordinate = self.automaton.stage.get_coordinates(query_hardware=query_hardware)
+        coordinate = self.gui_stage().get_coordinates(query_hardware=query_hardware)
         return {
             "coordinate": gui_coordinate_to_payload(coordinate),
             "stage": self.gui_stage_status_payload(),

@@ -18,7 +18,6 @@ sys.path.append(str(WORKSPACE_ROOT / "evomachine_repo"))
 sys.path.append(str(WORKSPACE_ROOT / "de-lta-rt"))
 
 from evomachine.acquisition_bkp import TestCamera, EvoCamera, EvoCamerav2
-from evomachine.automaton import Automaton
 from evomachine.config import ConfigCamera, ConfigCameraFactory, ConfigImageProcessor, ConfigImageProcessorFactory, \
     EVOMACHINE_DIR, USE_DMD_SOCKET, USE_SYNC_BOARD
 if USE_DMD_SOCKET:
@@ -92,30 +91,10 @@ dmd = DMDControl(debug_mode=True)
 
 strategy = BasicStrategy(save_path=str(camera_config.path_to_save))
 
-automaton = Automaton(
-    camera=cam,
-    cfg_processor=processor_config,
-    dmd=dmd,
-    strategy=strategy,
-    start_strategy_event=start_strategy_event,
-    stop_strategy_event=stop_strategy_event,
-    stop_event=stop_event,
-    shutdown_event=shutdown_event,
-    run_timeout=0,
+raise RuntimeError(
+    "scripts/run_image_processing.py is a legacy pre-manager Automaton script. "
+    "Rebuild it around FrameAcquisitionManager and FocusNavigator before use."
 )
-automaton.initialise_devices()
-
-use_autofocus = True
-field_of_views = {0: Coordinate(0, 0, 0), 1: Coordinate(0, 0, 0)}
-automaton.initialise_field_of_view_list(
-    field_of_views=field_of_views,
-    cropping_boxes=None,
-    use_autofocus=use_autofocus,
-)
-automaton.initialise_fov_focus(use_autofocus=use_autofocus)
-automaton.initialise_reference_frames()
-rotations = [rotation_correction(img) for img in frames]
-automaton.initialise_position_processor()
 
 proc = automaton._pos_processor[0]
 roi_boxes, cols_s_e = find_roi_boxes_rt(

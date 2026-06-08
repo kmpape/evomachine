@@ -3,7 +3,7 @@ from __future__ import annotations
 from evomachine.commands import AutomatonCommand
 from evomachine.config_types import FrameMetaDataFactory, ImageProcessorConfig
 from evomachine.strategy import AbstractStrategy
-from evomachine.types import LEDType
+from evomachine.types import AutomatonCommandType, LEDType
 
 
 class DmdProjectByRoiStrategy(AbstractStrategy):
@@ -33,6 +33,15 @@ class DmdProjectByRoiStrategy(AbstractStrategy):
         self.fill_x: float = 1.0
         self.fill_y: float = 1.0
         self.invert: bool = False
+
+    def register_automaton_commands(self) -> set[AutomatonCommandType]:
+        """Return every command type this strategy may emit."""
+        return {
+            AutomatonCommandType.MOVE,
+            AutomatonCommandType.IMAGE,
+            AutomatonCommandType.PROJECT_ROI,
+            AutomatonCommandType.WAIT,
+        }
 
     def _roi_ids_for_fov(self, fov_id: int) -> list[int]:
         """

@@ -87,54 +87,59 @@ def gui_stage_get_coordinates(facade: Any, payload: dict[str, Any]) -> dict[str,
 
 def gui_stage_move_absolute(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     coordinate = gui_coordinate_from_payload(payload)
-    facade.automaton.stage.move(target=coordinate, block=bool(payload.get("block", True)))
+    facade.gui_stage().move(target=coordinate, block=bool(payload.get("block", True)))
     return facade.gui_stage_coordinates_payload(query_hardware=False)
 
 
 def gui_stage_move_relative(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    current = facade.automaton.stage.get_coordinates(query_hardware=True)
+    current = facade.gui_stage().get_coordinates(query_hardware=True)
     target = Coordinate(
         x=None if payload.get("dx") is None else current.x + payload.get("dx"),
         y=None if payload.get("dy") is None else current.y + payload.get("dy"),
         z=None if payload.get("dz") is None else current.z + payload.get("dz"),
     )
-    facade.automaton.stage.move(target=target, block=bool(payload.get("block", True)))
+    facade.gui_stage().move(target=target, block=bool(payload.get("block", True)))
     return facade.gui_stage_coordinates_payload(query_hardware=False)
 
 
 def gui_stage_stop(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    facade.automaton.stage.stop()
+    facade.gui_stage().stop()
     return {"stage": facade.gui_stage_status_payload()}
 
 
 def gui_led_list(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    return {"leds": [led_type.name for led_type in facade.automaton.led_manager.get_available_leds()]}
+    led_manager = facade.gui_led_manager()
+    return {"leds": [led_type.name for led_type in led_manager.get_available_leds()]}
 
 
 def gui_led_set(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     led_type = gui_led_type_from_payload(payload["led"])
-    facade.automaton.led_manager.set_led(
+    led_manager = facade.gui_led_manager()
+    led_manager.set_led(
         led_type=led_type,
         brightness=payload.get("brightness", 100.0),
         duration=payload.get("duration"),
     )
-    return {"state": gui_led_state_to_payload(facade.automaton.led_manager.get_led_state(led_type))}
+    return {"state": gui_led_state_to_payload(led_manager.get_led_state(led_type))}
 
 
 def gui_led_disable(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     led_type = gui_led_type_from_payload(payload["led"])
-    facade.automaton.led_manager.disable_led(led_type=led_type)
-    return {"state": gui_led_state_to_payload(facade.automaton.led_manager.get_led_state(led_type))}
+    led_manager = facade.gui_led_manager()
+    led_manager.disable_led(led_type=led_type)
+    return {"state": gui_led_state_to_payload(led_manager.get_led_state(led_type))}
 
 
 def gui_led_disable_all(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    facade.automaton.led_manager.disable_led()
-    return {"leds": [led_type.name for led_type in facade.automaton.led_manager.get_available_leds()]}
+    led_manager = facade.gui_led_manager()
+    led_manager.disable_led()
+    return {"leds": [led_type.name for led_type in led_manager.get_available_leds()]}
 
 
 def gui_led_get_state(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     led_type = gui_led_type_from_payload(payload["led"])
-    return {"state": gui_led_state_to_payload(facade.automaton.led_manager.get_led_state(led_type))}
+    led_manager = facade.gui_led_manager()
+    return {"state": gui_led_state_to_payload(led_manager.get_led_state(led_type))}
 
 
 GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {

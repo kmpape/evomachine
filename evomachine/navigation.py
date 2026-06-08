@@ -9,7 +9,7 @@ from evomachine.coordinates import Coordinate
 from evomachine.peripherals.autofocus import Autofocus
 from evomachine.peripherals.stage import Stage
 from evomachine.softwarefocus import SoftwareFocus, SoftwareFocusConfig
-from evomachine.types import AutoFocusStatusType, FocusStatusType
+from evomachine.types import AutoFocusStatusType, FocusStatusType, UNKNOWN_FOV_ID
 from evomachine.utils import validate_dataclass_fields
 
 
@@ -483,6 +483,23 @@ class FocusNavigator:
         self._require_fov(fov_id=fov_id)
         index = self._fov_order.index(fov_id)
         return self._fov_order[(index + 1) % len(self._fov_order)]
+
+    def get_current_fov_id(self) -> int:
+        """
+        Return the current registered fov ID, or UNKNOWN_FOV_ID before movement.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        int
+            Current fov ID, or UNKNOWN_FOV_ID when no fov has been established.
+        """
+        if self._current_fov_id is None:
+            return UNKNOWN_FOV_ID
+        return self._current_fov_id
 
     @staticmethod
     def _validate_bool(value: bool, name: str) -> bool:

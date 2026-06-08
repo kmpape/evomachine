@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 from evomachine.coordinates import Coordinate
 from evomachine.types import LEDType
@@ -67,9 +68,11 @@ class FakeLedManager:
 
 
 class FakeAutomaton:
-    def __init__(self):
-        self.stage = FakeStage()
-        self.led_manager = FakeLedManager()
+    def __init__(self, with_stage: bool = True, with_led_manager: bool = True):
+        stage = FakeStage()
+        led_manager = FakeLedManager()
+        self.focus_nav = SimpleNamespace(stage=stage) if with_stage else SimpleNamespace()
+        self.acq_mngr = SimpleNamespace(led_manager=led_manager) if with_led_manager else SimpleNamespace()
         self.shutdown_count = 0
 
     def strategy_has_started(self):
@@ -117,3 +120,26 @@ def test_facade_rejects_mutating_requests_during_strategy() -> None:
     assert not rejected.ok
     assert allowed.ok
 
+
+def test_facade_stage_request_missing_stage_logs_and_returns_error(monkeypatch) -> None:
+    warnings = []
+    monkeypatch.setattr("evomachine.gui.facade.logger.warning", lambda message: warnings.append(message))
+    facade = AutomatonGuiFacade(FakeAutomaton(with_stage=False))
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.STAGE_STATUS))
+
+    assert not response.ok
+    assert "no stage is configured" in response.error
+    assert warnings == ["AutomatonGuiFacade: GUI stage request ignored because no stage is configured."]
+
+
+def test_facade_led_request_missing_led_manager_logs_and_returns_error(monkeypatch) -> None:
+    warnings = []
+    monkeypatch.setattr("evomachine.gui.facade.logger.warning", lambda message: warnings.append(message))
+    facade = AutomatonGuiFacade(FakeAutomaton(with_led_manager=False))
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.LED_LIST))
+
+    assert not response.ok
+    assert "no LED manager is configured" in response.error
+    assert warnings == ["AutomatonGuiFacade: GUI LED request ignored because no LED manager is configured."]

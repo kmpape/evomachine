@@ -64,25 +64,21 @@ def build_virtual_automaton():
         ),
         peripheral_controllers=dmd_controller,
     )
-    acquisition_manager = FrameAcquisitionManager(camera=camera, led_manager=led_manager, stage=stage)
-    focus_navigator = FocusNavigator(stage=stage)
+    acq_mngr = FrameAcquisitionManager(camera=camera, led_manager=led_manager, stage=stage, dmd=dmd)
+    focus_nav = FocusNavigator(stage=stage)
     cfg = ImageProcessorConfigFactory.default_config(
         channels=[LEDType.LED_450_NM, LEDType.LED_515_NM, LEDType.LED_565_NM],
         channels_seg=[LEDType.LED_450_NM],
     )
     automaton = Automaton(
-        camera=camera,
-        stage=stage,
-        led_manager=led_manager,
-        acquisition_manager=acquisition_manager,
-        focus_navigator=focus_navigator,
+        acq_mngr=acq_mngr,
+        focus_nav=focus_nav,
         strategy=NoStrategy(cfg=cfg),
         cfg_processor=cfg,
         start_strategy_event=Event(),
         stop_strategy_event=Event(),
         stop_event=Event(),
         shutdown_event=Event(),
-        dmd=dmd,
         run_timeout=0.01,
     )
     automaton.initialise(fovs={0: Coordinate(0, 0, 0)})

@@ -3,20 +3,27 @@ from __future__ import annotations
 import copy
 from multiprocessing import Event
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 
 from evomachine.acquisition import FrameAcquisitionManager, FrameAcquisitionSettings
-from evomachine.commands import AutomatonCommand, CommandFactory
+from evomachine.commands import AutomatonCommand
 from evomachine.config import get_logger
 from evomachine.coordinates import Coordinate
 from evomachine.frame import Frame, FrameMetaData
 from evomachine.gui.protocol import GuiRequestProcessor
 from evomachine.image_processing_config import ImageProcessorConfig
-from evomachine.peripherals.dmd import DmdCalibrationConfig
 from evomachine.navigation import FocusNavigator
+from evomachine.peripherals.autofocus import Autofocus
+from evomachine.peripherals.camera import Camera
+from evomachine.peripherals.dmd import Dmd, DmdCalibrationConfig
+from evomachine.peripherals.filterwheel import FilterWheel
+from evomachine.peripherals.leds import LedManager
+from evomachine.peripherals.photodiode import Photodiode
+from evomachine.peripherals.stage import Stage
 from evomachine.projection import ProjectionManager
+from evomachine.softwarefocus import SoftwareFocus
 from evomachine.strategy import AbstractStrategy
 from evomachine.types import AutomatonCommandType, LEDType
 from evomachine.utils import normalise_frame
@@ -25,48 +32,56 @@ logger = get_logger(name=__name__)
 
 
 class Automaton:
-    """Execute strategies using explicit peripherals and runtime manager objects."""
+    """Execute strategies through acquisition, focus, and projection managers."""
+
+    _COMMAND_REQUIREMENTS: ClassVar[dict[AutomatonCommandType, tuple[str, ...]]] = {
+        AutomatonCommandType.MOVE: ("focus_nav", "_stage"),
+        AutomatonCommandType.UPDATE_FOV_CONFIG: ("focus_nav", "_stage"),
+        AutomatonCommandType.IMAGE: ("acq_mngr", "_camera", "_led_mngr"),
+        AutomatonCommandType.LIVE_MODE: ("acq_mngr", "_camera", "_led_mngr"),
+        AutomatonCommandType.PROJECT: ("_dmd", "_led_mngr"),
+        AutomatonCommandType.PROJECT_ROI: ("_dmd", "_led_mngr"),
+        AutomatonCommandType.WAIT: (),
+        AutomatonCommandType.STOP: (),
+        AutomatonCommandType.SAVE_STATE: (),
+    }
+    _REQUIREMENT_LABELS: ClassVar[dict[str, str]] = {
+        "acq_mngr": "acquisition manager",
+        "focus_nav": "focus navigator",
+        "_camera": "camera",
+        "_stage": "stage",
+        "_led_mngr": "LED manager",
+        "_dmd": "DMD",
+    }
 
     def __init__(
             self,
-            camera: Any,  # TODO(CODEX): make automaton take one FrameAcquisitionManager and access through it if necessary
-            stage: Any,
-            led_manager: Any,
-            acquisition_manager: FrameAcquisitionManager,
-            focus_navigator: FocusNavigator,
-            strategy: AbstractStrategy,
+            acq_mngr: FrameAcquisitionManager,
+            focus_nav: FocusNavigator,
+            strategy: AbstractStrategy | None,
             cfg_processor: ImageProcessorConfig,
             start_strategy_event: Event,
             stop_strategy_event: Event,
             stop_event: Event,
             shutdown_event: Event,
-            filter_wheel: Any | None = None,
-            dmd: Any | None = None,
-            autofocus: Any | None = None,
-            photodiode: Any | None = None,
-            projection_manager: ProjectionManager | None = None,  #  TODO(CODEX): rename ProjectionManager class as DmdCalibrator
+            proj_mngr: ProjectionManager | None = None,
             run_timeout: float = 0,
             gui_request_processor: GuiRequestProcessor | None = None,
             gui_request_budget: int = 16,
     ):
         """
-        Initialise the automaton with explicit peripherals and managers.
-        # TODO(CODEX): explain how the automaton works here, e.g. gui vs strategy process
+        Initialise the automaton with runtime manager objects.
 
         Parameters
         ----------
-        camera
-            Camera peripheral used by the acquisition manager.
-        stage
-            Stage peripheral used by the focus navigator.
-        led_manager
-            LED manager used for waits and projections.
-        acquisition_manager
-            FrameAcquisitionManager used for image commands.
-        focus_navigator
-            FocusNavigator used for MOVE commands and focus recovery.
+        acq_mngr
+            FrameAcquisitionManager used for camera, LED, filter wheel, and DMD
+            commands.
+        focus_nav
+            FocusNavigator used for stage, autofocus, and software-focus work.
         strategy
-            Strategy that produces AutomatonCommand objects.
+            Strategy that produces AutomatonCommand objects, or None for
+            device-only startup.
         cfg_processor
             Image-processing configuration.
         start_strategy_event
@@ -77,16 +92,9 @@ class Automaton:
             Event that halts the current loop.
         shutdown_event
             Event that exits all loops.
-        filter_wheel
-            Optional filter wheel peripheral.
-        dmd
-            Optional DMD peripheral.
-        autofocus
-            Optional autofocus peripheral.
-        photodiode
-            Optional photodiode peripheral.
-        projection_manager
-            Optional ProjectionManager used for DMD calibration.
+        proj_mngr
+            Optional ProjectionManager used for DMD calibration and photodiode
+            workflows.
         run_timeout
             Delay between loop iterations in seconds.
         gui_request_processor
@@ -99,32 +107,29 @@ class Automaton:
         -------
         None
         """
-        self._require_methods(camera, "camera", ("initialise", "is_initialised", "stop", "finalise"))
-        self._require_methods(stage, "stage", ("initialise", "is_initialised", "stop", "finalise"))
-        self._require_methods(led_manager, "led_manager", ("initialise", "is_initialised", "set_led", "disable_led"))
-        if not isinstance(acquisition_manager, FrameAcquisitionManager):
-            raise TypeError("Automaton.__init__: acquisition_manager must be FrameAcquisitionManager.")
-        if not isinstance(focus_navigator, FocusNavigator):
-            raise TypeError("Automaton.__init__: focus_navigator must be FocusNavigator.")
-        if not isinstance(strategy, AbstractStrategy):
-            raise TypeError("Automaton.__init__: strategy must be AbstractStrategy.")
-        if projection_manager is not None and not isinstance(projection_manager, ProjectionManager):
-            raise TypeError("Automaton.__init__: projection_manager must be ProjectionManager or None.")
-        # TODO(CODEX) add "description strings" and type annotations everywhere
-        self.camera = camera
-        self.stage = stage
-        self.led_manager = led_manager
-        self.filter_wheel = filter_wheel
-        self.dmd = dmd
-        self.autofocus = autofocus
-        self.photodiode = photodiode
-        self.acquisition_manager = acquisition_manager
-        self.focus_navigator = focus_navigator
-        self.projection_manager = projection_manager
-        self._strategy = strategy
+        if not isinstance(acq_mngr, FrameAcquisitionManager):
+            raise TypeError("Automaton.__init__: acq_mngr must be FrameAcquisitionManager.")
+        if not isinstance(focus_nav, FocusNavigator):
+            raise TypeError("Automaton.__init__: focus_nav must be FocusNavigator.")
+        if strategy is not None and not isinstance(strategy, AbstractStrategy):
+            raise TypeError("Automaton.__init__: strategy must be AbstractStrategy or None.")
+        if proj_mngr is not None and not isinstance(proj_mngr, ProjectionManager):
+            raise TypeError("Automaton.__init__: proj_mngr must be ProjectionManager or None.")
+        self.acq_mngr = acq_mngr
+        self.focus_nav = focus_nav
+        self.proj_mngr = proj_mngr
+        self._camera: Camera = self.acq_mngr.camera
+        self._led_mngr: LedManager = self.acq_mngr.led_manager
+        self._filt_wheel: FilterWheel | None = self.acq_mngr.filter_wheel
+        self._dmd: Dmd | None = self.acq_mngr.dmd
+        self._stage: Stage = self.focus_nav.stage
+        self._autofocus: Autofocus | None = self.focus_nav.autofocus
+        self._swfocus: SoftwareFocus | None = self.focus_nav.software_focus
+        self._photodiode: Photodiode | None = self.proj_mngr.photodiode if self.proj_mngr is not None else None
+        self._validate_manager_device_consistency()
+        self._strategy: AbstractStrategy | None = strategy
         self._cfg = cfg_processor
         self._channel_to_index: dict[LEDType, int] = self._cfg.channel_to_index
-        self._curr_fov_id: int = 0
         self._curr_step: int = 0
         self._fovs: dict[int, Coordinate] = {}
         self._fov_to_roi: dict[int, list[int]] = {}
@@ -195,29 +200,6 @@ class Automaton:
             self.gui_request_budget = budget
         self.gui_request_processor = processor
 
-    # TODO(CODEX): Move _require_methods and _validate_non_negative_float to utils. check if other classes redefine similar functions and reuse.
-    @staticmethod
-    def _require_methods(obj: Any, name: str, methods: tuple[str, ...]) -> None:
-        """
-        Raise TypeError if an object does not expose required methods.
-
-        Parameters
-        ----------
-        obj
-            Object to inspect.
-        name
-            Dependency name used in error messages.
-        methods
-            Method names that must be callable.
-
-        Returns
-        -------
-        None
-        """
-        missing = [method for method in methods if not callable(getattr(obj, method, None))]
-        if missing:
-            raise TypeError(f"Automaton.__init__: {name} is missing callable methods {missing}.")
-
     @staticmethod
     def _validate_non_negative_float(value: float, name: str) -> float:
         """
@@ -240,6 +222,174 @@ class Automaton:
         if value < 0:
             raise ValueError(f"Automaton.__init__: {name} must be non-negative, received {value}.")
         return float(value)
+
+    def _validate_manager_device_consistency(self) -> None:
+        """
+        Raise if managers expose different objects for a shared device role.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        acquisition_stage = getattr(self.acq_mngr, "stage", None)
+        if acquisition_stage is not None and acquisition_stage is not self._stage:
+            raise ValueError(
+                "Automaton.__init__: acq_mngr.stage and focus_nav.stage "
+                "must refer to the same object."
+            )
+        if self.proj_mngr is None:
+            return
+        self._validate_shared_manager_device("camera", self._camera, getattr(self.proj_mngr, "camera", None))
+        self._validate_shared_manager_device("led_manager", self._led_mngr, getattr(self.proj_mngr, "led_manager", None))
+        self._validate_shared_manager_device(
+            "filter_wheel",
+            self._filt_wheel,
+            getattr(self.proj_mngr, "filter_wheel", None),
+        )
+        self._validate_shared_manager_device("dmd", self._dmd, getattr(self.proj_mngr, "dmd", None))
+
+    @staticmethod
+    def _validate_shared_manager_device(device_name: str, acq_device: Any, proj_device: Any) -> None:
+        """
+        Raise if two managers expose different non-None objects for one device.
+
+        Parameters
+        ----------
+        device_name
+            Attribute name to compare on both managers.
+        acq_device
+            Device exposed through FrameAcquisitionManager.
+        proj_device
+            Device exposed through ProjectionManager.
+
+        Returns
+        -------
+        None
+        """
+        if acq_device is not None and proj_device is not None and acq_device is not proj_device:
+            raise ValueError(
+                f"Automaton.__init__: acq_mngr.{device_name} and proj_mngr.{device_name} "
+                "must refer to the same object."
+            )
+
+    def _registered_strategy_commands(self) -> set[AutomatonCommandType]:
+        """
+        Return validated command types declared by the current strategy.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        set[AutomatonCommandType]
+            Command types declared by the current strategy.
+        """
+        if self._strategy is None:
+            return set()
+        command_types = self._strategy.register_automaton_commands()
+        if not isinstance(command_types, set):
+            raise TypeError(
+                f"Automaton: strategy.register_automaton_commands() must return set[AutomatonCommandType], "
+                f"received {type(command_types)}."
+            )
+        invalid_command_types = [
+            command_type
+            for command_type in command_types
+            if not isinstance(command_type, AutomatonCommandType)
+        ]
+        if invalid_command_types:
+            raise TypeError(
+                "Automaton: strategy.register_automaton_commands() returned non-AutomatonCommandType "
+                f"entries: {invalid_command_types}."
+            )
+        unsupported_command_types = command_types - set(self._COMMAND_REQUIREMENTS)
+        if unsupported_command_types:
+            unsupported_names = ", ".join(sorted(command_type.name for command_type in unsupported_command_types))
+            raise RuntimeError(f"Automaton: unsupported strategy command types: {unsupported_names}.")
+        return set(command_types)
+
+    def _validate_strategy_command_requirements(self) -> None:
+        """
+        Raise if the current strategy declares commands requiring missing devices.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        None
+        """
+        missing_requirements: set[str] = set()
+        for command_type in self._registered_strategy_commands():
+            for attribute_name in self._COMMAND_REQUIREMENTS[command_type]:
+                if getattr(self, attribute_name) is None:
+                    device_name = self._REQUIREMENT_LABELS.get(attribute_name, attribute_name)
+                    missing_requirements.add(f"{command_type.name}: {device_name}")
+        if missing_requirements:
+            missing = ", ".join(sorted(missing_requirements))
+            strategy_name = self.get_strategy_name() or "<none>"
+            raise RuntimeError(
+                f"Automaton: strategy {strategy_name} requires missing device(s): {missing}."
+            )
+
+    def _validate_commands_are_registered(self, commands: list[AutomatonCommand], source: str) -> None:
+        """
+        Raise if a strategy emitted a command type it did not declare. 
+        NOTE: the strategy test run does not enforce every branch of the strategy code to be covered, 
+        so this is not a guarantee that undeclared commands will never be emitted during actual runs. 
+
+        Parameters
+        ----------
+        commands
+            Command list returned by the strategy.
+        source
+            Human-readable strategy hook name used in error messages.
+
+        Returns
+        -------
+        None
+        """
+        registered_commands = self._registered_strategy_commands()
+        undeclared_commands = [
+            command.command_type
+            for command in commands
+            if command.command_type not in registered_commands
+        ]
+        if undeclared_commands:
+            names = ", ".join(sorted({command_type.name for command_type in undeclared_commands}))
+            raise RuntimeError(
+                f"Automaton: strategy {source} emitted undeclared command type(s): {names}."
+            )
+
+    def _require_runtime_devices(self, command_type: AutomatonCommandType, attribute_names: tuple[str, ...]) -> None:
+        """
+        Raise if a runtime command path needs a missing device.
+
+        Parameters
+        ----------
+        command_type
+            Command currently being executed.
+        attribute_names
+            Private/public attributes that must not be None.
+
+        Returns
+        -------
+        None
+        """
+        missing_devices = [
+            self._REQUIREMENT_LABELS.get(attribute_name, attribute_name)
+            for attribute_name in attribute_names
+            if getattr(self, attribute_name) is None
+        ]
+        if missing_devices:
+            missing = ", ".join(missing_devices)
+            raise RuntimeError(f"Automaton.{command_type.name}: missing required device(s): {missing}.")
 
     def initialise(
             self,
@@ -267,6 +417,8 @@ class Automaton:
             raise TypeError("Automaton.initialise: fovs must be a non-empty dict[int, Coordinate].")
         if not all(isinstance(key, int) and isinstance(value, Coordinate) for key, value in fovs.items()):
             raise TypeError("Automaton.initialise: fovs must map int to Coordinate.")
+        if self._strategy is not None:
+            self._validate_strategy_command_requirements()
         self.initialise_devices()
         self._fovs = {fov_id: coordinate.copy() for fov_id, coordinate in fovs.items()}
         self._cropping_boxes = {} if cropping_boxes is None else copy.copy(cropping_boxes)
@@ -277,15 +429,41 @@ class Automaton:
         self._reference_frames_is_initialised = True
         self._skip_image_fov_id = None
         self._skip_image_reason = None
-        first_fov_id = next(iter(self._fovs))
-        self._curr_fov_id = first_fov_id
-        self._initialise_strategy()
-        fov_configs = self._strategy.initial_fov_configs()
-        self.focus_navigator.initialise_fovs(
+        fov_configs = None
+        if self._strategy is not None:
+            self._initialise_strategy()
+            fov_configs = self._strategy.initial_fov_configs()
+        self.focus_nav.initialise_fovs(
             fov_id_to_coordinate=self._fovs,
             use_autofocus=use_autofocus,
             fov_configs=fov_configs or None,
         )
+
+    def set_strategy(self, strategy: AbstractStrategy) -> None:
+        """
+        Set or replace the strategy before strategy execution has started.
+
+        Parameters
+        ----------
+        strategy
+            Strategy to install.
+
+        Returns
+        -------
+        None
+        """
+        if self.strategy_has_started():
+            raise RuntimeError("Automaton.set_strategy: cannot set strategy after start_strategy_event is set.")
+        if not isinstance(strategy, AbstractStrategy):
+            raise TypeError(f"Automaton.set_strategy: strategy must be AbstractStrategy, received {type(strategy)}.")
+        self._strategy = strategy
+        self._strategy_is_initialised = False
+        self.next_commands = []
+        self.last_commands = []
+        if self._fov_list_is_initialised:
+            self._initialise_strategy()
+            for fov_id, fov_config in self._strategy.initial_fov_configs().items():
+                self.focus_nav.update_fov_config(fov_id=fov_id, fov_config=fov_config)
 
     def initialise_devices(self) -> None:
         """
@@ -322,7 +500,7 @@ class Automaton:
 
     def _iter_peripherals(self) -> list[Any]:
         """
-        Return configured peripherals in deterministic shutdown order.
+        Return lifecycle-capable manager-owned devices in deterministic order.
 
         Parameters
         ----------
@@ -333,18 +511,31 @@ class Automaton:
         list[Any]
             Configured peripheral objects.
         """
-        return [
-            device for device in (
-                self.camera,
-                self.stage,
-                self.led_manager,
-                self.filter_wheel,
-                self.dmd,
-                self.autofocus,
-                self.photodiode,
-            )
-            if device is not None
+        ordered_devices = [
+            self._camera,
+            self._stage,
+            self._led_mngr,
+            self._filt_wheel,
+            self._dmd,
+            self._autofocus,
         ]
+        if self.proj_mngr is not None:
+            ordered_devices.extend([
+                getattr(self.proj_mngr, "camera", None),
+                getattr(self.proj_mngr, "dmd", None),
+                getattr(self.proj_mngr, "led_manager", None),
+                getattr(self.proj_mngr, "filter_wheel", None),
+                self._photodiode,
+            ])
+        unique_devices: list[Any] = []
+        seen_ids: set[int] = set()
+        for device in ordered_devices:
+            if device is None or id(device) in seen_ids:
+                continue
+            if callable(getattr(device, "initialise", None)) and callable(getattr(device, "is_initialised", None)):
+                unique_devices.append(device)
+                seen_ids.add(id(device))
+        return unique_devices
 
     def _initialise_strategy(self) -> None:
         """
@@ -360,15 +551,17 @@ class Automaton:
         """
         if not self._fov_list_is_initialised:
             raise RuntimeError("Automaton._initialise_strategy: field of views are not initialised.")
-        if self.dmd is None:
-            raise RuntimeError("Automaton._initialise_strategy: dmd is required.")
+        if self._strategy is None:
+            raise RuntimeError("Automaton._initialise_strategy: strategy is required.")
+        self._validate_strategy_command_requirements()
         self._strategy.command_factory.update_region_of_interests(region_of_interests=self._fov_to_roi)
         self.next_commands = self._strategy.initialise(
             fovs=self._fovs,
             region_of_interests=self._fov_to_roi,
             fov_processors=self._fov_processors,
-            dmd=self.dmd,
+            dmd=self._dmd,
         )
+        self._validate_commands_are_registered(commands=self.next_commands, source="initialise")
         self._strategy_is_initialised = True
 
     def gui_process_requests(self) -> None:
@@ -399,11 +592,16 @@ class Automaton:
         -------
         None
         """
+        if self._strategy is None:
+            raise RuntimeError("Automaton._process: strategy is required.")
         if not self._strategy_is_initialised:
             raise RuntimeError("Automaton._process: strategy is not initialised.")
         if finalise:
             self.last_commands = self.next_commands
             self.next_commands = self._strategy.finalise()
+            self._validate_commands_are_registered(commands=self.next_commands, source="finalise")
+        else:
+            self._validate_commands_are_registered(commands=self.next_commands, source="next_commands")
         for command in self.next_commands:
             if self.stopped():
                 return
@@ -429,14 +627,15 @@ class Automaton:
             else:
                 raise RuntimeError(f"Automaton._process: unsupported command type {command.command_type}.")
             command.command_execution_time = time.time()
-            command.fov_id = self._curr_fov_id
+            command.fov_id = self.get_fov_id()
         if not finalise:
             self.last_commands = self.next_commands
             self.next_commands = self._strategy.callback(
-                fov_id=self._curr_fov_id,
+                fov_id=self.get_fov_id(),
                 data=self.last_commands,
                 errors=[],
             )
+            self._validate_commands_are_registered(commands=self.next_commands, source="callback")
 
     def _execute_move(self, command: AutomatonCommand) -> Any:
         """
@@ -456,9 +655,8 @@ class Automaton:
         if target_fov_id is None:
             return None
         if target_fov_id == -1:
-            target_fov_id = self.get_next_fov_id(current_fov=self._curr_fov_id)
-        result = self.focus_navigator.move(fov_id=target_fov_id)
-        self._curr_fov_id = target_fov_id
+            target_fov_id = self.focus_nav.get_next_fov_id(fov_id=self.get_fov_id())
+        result = self.focus_nav.move(fov_id=target_fov_id)
         if getattr(result, "skipped", False):
             self._skip_image_fov_id = target_fov_id
             self._skip_image_reason = getattr(result, "skip_reason", None)
@@ -484,7 +682,7 @@ class Automaton:
         args = command.command_args
         if not isinstance(args, dict):
             raise TypeError("Automaton._execute_update_fov_config: command_args must be dict.")
-        return self.focus_navigator.update_fov_config(
+        return self.focus_nav.update_fov_config(
             fov_id=args["fov_id"],
             fov_config=args["fov_config"],
         )
@@ -505,12 +703,14 @@ class Automaton:
         """
         frame_metadata = command.command_args["frame_metadata"]
         metadata_items = frame_metadata if isinstance(frame_metadata, list) else [frame_metadata]
+        if self._strategy is None:
+            raise RuntimeError("Automaton._execute_image: strategy is required.")
         for metadata in metadata_items:
             if not isinstance(metadata, FrameMetaData):
                 raise TypeError("Automaton._execute_image: frame_metadata entries must be FrameMetaData.")
             metadata.callback_id = self._strategy.callback_counter
             if metadata.fov_id < 0:
-                metadata.fov_id = self._curr_fov_id
+                metadata.fov_id = self.get_fov_id()
         if any(metadata.fov_id == self._skip_image_fov_id for metadata in metadata_items):
             return {
                 "skipped": True,
@@ -518,7 +718,7 @@ class Automaton:
                 "frame_metadata": metadata_items,
                 "saved_paths": [None for _ in metadata_items],
             }
-        frame = self.acquisition_manager.take_frame(
+        frame = self.acq_mngr.take_frame(
             frame_metadata=frame_metadata,
             settings=FrameAcquisitionSettings(save=command.command_args["save"]),
         )
@@ -555,7 +755,7 @@ class Automaton:
             channel_index = self._metadata_channel_index(metadata=metadata)
             if channel_index is None:
                 continue
-            fov_id = metadata.fov_id if metadata.fov_id >= 0 else self._curr_fov_id
+            fov_id = metadata.fov_id if metadata.fov_id >= 0 else self.get_fov_id()
             self._all_frames_raw[fov_id][1, channel_index, :, :] = self._all_frames_raw[fov_id][0, channel_index, :, :]
             self._all_frames[fov_id][1, channel_index, :, :] = self._all_frames[fov_id][0, channel_index, :, :]
             self._all_frames_raw[fov_id][0, channel_index, :, :] = frame.array[frame_index]
@@ -628,17 +828,17 @@ class Automaton:
         bool
             True after projection completes.
         """
-        if self.dmd is None:
-            raise RuntimeError("Automaton._execute_project: dmd is required.")
+        self._require_runtime_devices(AutomatonCommandType.PROJECT, ("_dmd", "_led_mngr"))
+        assert self._dmd is not None
         args = command.command_args
-        self.dmd.display_image(img=args["image"])
-        self.led_manager.set_led(
+        self._dmd.display_image(img=args["image"])
+        self._led_mngr.set_led(
             led_type=args["channel"],
             brightness=args["brightness"],
             duration=args["duration"] * 1000.0,
         )
         self.sleep(duration=args["duration"])
-        self.led_manager.disable_led()
+        self._led_mngr.disable_led()
         return True
 
     def _execute_project_roi(self, command: AutomatonCommand) -> np.ndarray:
@@ -655,29 +855,29 @@ class Automaton:
         np.ndarray
             DMD pattern displayed for the ROI projection.
         """
-        if self.dmd is None:
-            raise RuntimeError("Automaton._execute_project_roi: dmd is required.")
+        self._require_runtime_devices(AutomatonCommandType.PROJECT_ROI, ("_dmd", "_led_mngr"))
+        assert self._dmd is not None
         args = command.command_args
         fov_id = args["fov_id"]
         if fov_id not in self._fov_processors:
             raise KeyError(f"Automaton._execute_project_roi: unknown fov ID {fov_id}.")
         processor = self._fov_processors[fov_id]
         roi_boxes = [processor.roi_boxes[roi_id] for roi_id in args["roi_ids"]]
-        pattern = self.dmd.pattern_from_roi_boxes(
+        pattern = self._dmd.pattern_from_roi_boxes(
             boxes=roi_boxes,
             fill_x=args["fill_x"],
             fill_y=args["fill_y"],
             invert=args["invert"],
             warp=True,
         )
-        self.dmd.display_image(img=pattern)
-        self.led_manager.set_led(
+        self._dmd.display_image(img=pattern)
+        self._led_mngr.set_led(
             led_type=args["channel"],
             brightness=args["brightness"],
             duration=args["duration"] * 1000.0,
         )
         self.sleep(duration=args["duration"], set_live_mode=args["set_live_mode"])
-        self.led_manager.disable_led()
+        self._led_mngr.disable_led()
         return pattern
 
     def run(self) -> None:
@@ -717,10 +917,8 @@ class Automaton:
         -------
         None
         """
-        method_name = "enable_live_mode" if status else "disable_live_mode"
-        live_mode = getattr(self.camera, method_name, None)
-        if callable(live_mode):
-            live_mode()
+        self._require_runtime_devices(AutomatonCommandType.LIVE_MODE, ("acq_mngr", "_camera"))
+        self.acq_mngr.set_camera_live_mode(status=status)
 
     def dmd_calibrate(
             self,
@@ -742,9 +940,9 @@ class Automaton:
         tuple[list, np.ndarray, np.ndarray, Any] | tuple[None, None, None, None]
             ProjectionManager calibration result.
         """
-        if self.projection_manager is None:
-            raise RuntimeError("Automaton.dmd_calibrate: projection_manager is required.")
-        return self.projection_manager.dmd_calibrate(cfg=cfg, filename=filename)
+        if self.proj_mngr is None:
+            raise RuntimeError("Automaton.dmd_calibrate: proj_mngr is required.")
+        return self.proj_mngr.dmd_calibrate(cfg=cfg, filename=filename)
 
     def sleep(
             self,
@@ -775,12 +973,13 @@ class Automaton:
             raise ValueError(f"Automaton.sleep: duration must be non-negative, received {duration}.")
         end = time.perf_counter() + duration
         if set_live_mode:
-            self.led_manager.set_led(led_type=channel, brightness=brightness)
+            self._require_runtime_devices(AutomatonCommandType.WAIT, ("acq_mngr", "_camera", "_led_mngr"))
+            self._led_mngr.set_led(led_type=channel, brightness=brightness)
             self.set_cam_live_mode(status=True)
         while time.perf_counter() < end and not self.stopped() and not self.has_shutdown():
             time.sleep(min(0.01, max(0.0, end - time.perf_counter())))
         if set_live_mode:
-            self.led_manager.disable_led()
+            self._led_mngr.disable_led()
             self.set_cam_live_mode(status=False)
 
     def save_state(self, filename_suffix: str = "") -> None:
@@ -810,9 +1009,11 @@ class Automaton:
         -------
         None
         """
-        self.acquisition_manager.stop()
-        if self.autofocus is not None and callable(getattr(self.autofocus, "unlock", None)):
-            self.autofocus.unlock()
+        self.acq_mngr.stop()
+        if self._swfocus is not None and callable(getattr(self._swfocus, "stop", None)):
+            self._swfocus.stop()
+        if self._autofocus is not None and callable(getattr(self._autofocus, "unlock", None)):
+            self._autofocus.unlock()
 
     def shutdown(self) -> None:
         """
@@ -848,6 +1049,11 @@ class Automaton:
         -------
         None
         """
+        if self._strategy is None:
+            raise RuntimeError("Automaton.start_strategy: strategy is required.")
+        if not self._strategy_is_initialised:
+            raise RuntimeError("Automaton.start_strategy: strategy is not initialised.")
+        self._validate_strategy_command_requirements()
         self._start_strategy_event.set()
 
     def strategy_has_started(self) -> bool:
@@ -967,6 +1173,7 @@ class Automaton:
         """
         return (
             self.devices_is_initialised()
+            and self._strategy is not None
             and self._strategy_is_initialised
             and self._reference_frames_is_initialised
             and self._fov_list_is_initialised
@@ -988,10 +1195,9 @@ class Automaton:
         """
         return dict(self._channel_to_index)
 
-    # TODO(CODEX): can this function be inlined as it is only used once currently? also can keys[(keys.index(current_fov) + 1) % len(keys)] be improved?
     def get_next_fov_id(self, current_fov: int) -> int:
         """
-        Return the next fov ID, wrapping at the end.
+        Return the next fov ID using FocusNavigator ordering.
 
         Parameters
         ----------
@@ -1003,15 +1209,11 @@ class Automaton:
         int
             Next fov ID.
         """
-        keys = list(self._fovs)
-        if current_fov not in keys:
-            raise KeyError(f"Automaton.get_next_fov_id: unknown fov ID {current_fov}.")
-        return keys[(keys.index(current_fov) + 1) % len(keys)]
+        return self.focus_nav.get_next_fov_id(fov_id=current_fov)
 
-    # TODO(CODEX): this should be extracted from the navigator, which should give UNKNOWN_FOV_ID when the current fov is not known (if the coordinates don't match the current position)
     def get_fov_id(self) -> int:
         """
-        Return the current fov ID.
+        Return the current fov ID known by FocusNavigator.
 
         Parameters
         ----------
@@ -1022,7 +1224,7 @@ class Automaton:
         int
             Current fov ID.
         """
-        return self._curr_fov_id
+        return self.focus_nav.get_current_fov_id()
 
     def get_frame(self, fov_id: int, channel: LEDType, time_id: int = 0) -> np.ndarray:
         """
@@ -1051,7 +1253,7 @@ class Automaton:
             raise IndexError(f"Automaton.get_frame: time_id {time_id} is out of range.")
         return self._all_frames[fov_id][time_id, self._channel_to_index[channel], :, :]
 
-    def get_strategy_name(self) -> str:
+    def get_strategy_name(self) -> str | None:
         """
         Return the current strategy class name.
 
@@ -1061,7 +1263,9 @@ class Automaton:
 
         Returns
         -------
-        str
-            Strategy name.
+        str | None
+            Strategy name, or None when no strategy is set.
         """
+        if self._strategy is None:
+            return None
         return self._strategy.name()

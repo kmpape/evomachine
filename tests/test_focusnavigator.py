@@ -16,7 +16,7 @@ from evomachine.coordinates import Coordinate, CoordinateBounds
 from evomachine.peripherals.autofocus import Autofocus
 from evomachine.peripherals.stage import Stage
 from evomachine.softwarefocus import SoftwareFocusConfigFactory
-from evomachine.types import AutoFocusStatusType, FocusStatusType
+from evomachine.types import AutoFocusStatusType, FocusStatusType, UNKNOWN_FOV_ID
 from evomachine.utils import validate_dataclass_fields
 
 
@@ -638,6 +638,29 @@ def test_initialise_fovs_registers_full_coordinates_without_autofocus() -> None:
     navigator.initialise_fovs(_fovs())
 
     assert stage._fov_id_to_coordinate[0] == Coordinate(0, 0, 10, channel_id=0)
+
+
+def test_get_current_fov_id_is_unknown_until_move() -> None:
+    """
+    Check current FOV is only established by movement.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    navigator, _, _, _, _ = _navigator(FocusNavigatorConfig(use_autofocus=False))
+
+    navigator.initialise_fovs(_fovs())
+
+    assert navigator.get_current_fov_id() == UNKNOWN_FOV_ID
+
+    navigator.move(1, manage_focus=False)
+
+    assert navigator.get_current_fov_id() == 1
 
 
 def test_move_direct_without_autofocus_toggle() -> None:
