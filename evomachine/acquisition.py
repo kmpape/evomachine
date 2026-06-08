@@ -165,6 +165,7 @@ class FrameAcquisitionManager:
             Acquired image stack, metadata, and optional saved paths.
         """
         metadata_items = self._normalise_frame_metadata(frame_metadata=frame_metadata)
+        self._validate_frame_metadata_fov(frame_metadata=metadata_items)
         settings = self._normalise_settings(settings=settings)
         previous_led_states = self._capture_led_states() if settings.restore_leds_after else {}
         frames: list[np.ndarray] = []
@@ -214,6 +215,7 @@ class FrameAcquisitionManager:
         if self.stage is None:
             raise RuntimeError("FrameAcquisitionManager.take_z_stack: stage is required for Z-stack acquisition.")
         metadata_items = self._normalise_frame_metadata(frame_metadata=frame_metadata)
+        self._validate_frame_metadata_fov(frame_metadata=metadata_items)
         z_coordinates = self._validate_z_coordinates(z_coordinates=z_coordinates)
         settings = self._normalise_settings(settings=settings)
         previous_coordinate = self.stage.get_coordinates(query_hardware=True)
@@ -291,6 +293,29 @@ class FrameAcquisitionManager:
         if not all(isinstance(metadata, FrameMetaData) for metadata in frame_metadata):
             raise TypeError("FrameAcquisitionManager: every frame_metadata entry must be FrameMetaData.")
         return list(frame_metadata)
+
+    @staticmethod
+    def _validate_frame_metadata_fov(frame_metadata: list[FrameMetaData]) -> int:
+        """
+        Return the single FoV ID represented by a frame metadata list.
+
+        Parameters
+        ----------
+        frame_metadata
+            Validated non-empty metadata list.
+
+        Returns
+        -------
+        int
+            Shared FoV ID.
+        """
+        fov_ids = {metadata.fov_id for metadata in frame_metadata}
+        if len(fov_ids) > 1:
+            raise ValueError(
+                "FrameAcquisitionManager: all frame_metadata entries must have the same fov_id, "
+                f"received {sorted(fov_ids)}."
+            )
+        return next(iter(fov_ids))
 
     def _normalise_settings(self, settings: FrameAcquisitionSettings | None) -> FrameAcquisitionSettings:
         """

@@ -1,3 +1,4 @@
+from collections import deque
 from multiprocessing import Event
 from pathlib import Path
 from types import SimpleNamespace
@@ -412,13 +413,14 @@ def make_cfg():
     )
 
 
-def make_automaton():
+def make_automaton(**automaton_kwargs):
     """
     Return an automaton and its fake dependencies.
 
     Parameters
     ----------
-    None
+    **automaton_kwargs
+        Extra Automaton constructor arguments.
 
     Returns
     -------
@@ -450,6 +452,7 @@ def make_automaton():
         stop_event=Event(),
         shutdown_event=Event(),
         proj_mngr=projection_manager,
+        **automaton_kwargs,
     )
     automaton.initialise(fovs={0: Coordinate(0, 0, 0), 1: Coordinate(1, 0, 0)})
     return automaton, acquisition_manager, focus_navigator, projection_manager, led_manager, dmd
@@ -1040,6 +1043,7 @@ def test_automaton_image_uses_frame_metadata_and_updates_buffers() -> None:
     assert acquisition_manager.calls[0][1].save is True
     assert command.command_data["frame_metadata"] == [metadata]
     assert automaton.get_frame(0, LEDType.LED_450_NM, time_id=0).shape == (3, 4)
+    assert isinstance(automaton._all_frames[0], deque)
     assert isinstance(automaton._all_frames[0][0], Frame)
     assert automaton._all_frames[0][0].array[0, 0, 1] == 1
     assert not hasattr(automaton, "_all_frames_raw")
@@ -1099,12 +1103,97 @@ def test_automaton_frame_buffers_use_fov_ids_and_time_zero_latest() -> None:
     automaton._store_frame(frame=frame)
 
     assert set(automaton._all_frames) == {7}
-    assert automaton._all_frames[7] == [frame]
+    assert isinstance(automaton._all_frames[7], deque)
+    assert list(automaton._all_frames[7]) == [frame]
     np.testing.assert_allclose(automaton.get_frame(7, LEDType.LED_450_NM, time_id=0), normalise_frame(newer_frame))
     np.testing.assert_allclose(automaton.get_frame(7, LEDType.LED_450_NM, time_id=1), normalise_frame(older_frame))
     with pytest.raises(IndexError, match="time_id 2"):
         automaton.get_frame(7, LEDType.LED_450_NM, time_id=2)
     assert 2 not in automaton._all_frames
+
+
+def test_automaton_frame_history_default_keeps_two_frames_per_fov() -> None:
+    """
+    Check default frame history keeps only the newest two Frame objects.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    automaton, *_deps = make_automaton()
+    stored_frames = []
+    for frame_id in range(3):
+        frame = Frame(
+            frame_metadata=[
+                FrameMetaData(
+                    frame_id=frame_id,
+                    leds={LEDType.LED_450_NM: 20},
+                    filter_wheel=None,
+                    exposure=50,
+                    fov_id=0,
+                )
+            ],
+            array=np.stack([np.arange(12, dtype=np.uint16).reshape(3, 4) + frame_id]),
+        )
+        stored_frames.append(frame)
+        automaton._store_frame(frame=frame)
+
+    assert list(automaton._all_frames[0]) == [stored_frames[2], stored_frames[1]]
+
+
+def test_automaton_frame_history_none_keeps_all_frames_per_fov() -> None:
+    """
+    Check frame_history_limit=None keeps every stored Frame object.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    automaton, *_deps = make_automaton(frame_history_limit=None)
+    stored_frames = []
+    for frame_id in range(3):
+        frame = Frame(
+            frame_metadata=[
+                FrameMetaData(
+                    frame_id=frame_id,
+                    leds={LEDType.LED_450_NM: 20},
+                    filter_wheel=None,
+                    exposure=50,
+                    fov_id=0,
+                )
+            ],
+            array=np.stack([np.arange(12, dtype=np.uint16).reshape(3, 4) + frame_id]),
+        )
+        stored_frames.append(frame)
+        automaton._store_frame(frame=frame)
+
+    assert list(automaton._all_frames[0]) == [stored_frames[2], stored_frames[1], stored_frames[0]]
+
+
+def test_automaton_frame_history_limit_validates_constructor_value() -> None:
+    """
+    Check frame history limits are positive integers or None.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    with pytest.raises(ValueError, match="frame_history_limit"):
+        make_automaton(frame_history_limit=0)
+    with pytest.raises(TypeError, match="frame_history_limit"):
+        make_automaton(frame_history_limit=1.5)
 
 
 def test_automaton_skipped_move_suppresses_image_acquisition() -> None:

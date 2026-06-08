@@ -11,7 +11,7 @@ from evomachine.acquisition import FrameAcquisitionManager, FrameAcquisitionSett
 from evomachine.frame import FrameMetaData
 from evomachine.coordinates import Coordinate
 from evomachine.peripherals.leds import LedState
-from evomachine.types import LEDType
+from evomachine.types import LEDType, UNKNOWN_FOV_ID
 
 
 class FakeCamera:
@@ -500,6 +500,7 @@ def test_take_frame_uses_constructor_default_settings() -> None:
     frame = manager.take_frame(_metadata())
 
     assert frame.array.shape == (1, 3, 4)
+    assert frame.fov_id == UNKNOWN_FOV_ID
     assert camera.normalise_calls == [True]
     assert dmd.full_count == 0
 
@@ -624,6 +625,83 @@ def test_take_frame_uses_frame_metadata_dmd_pattern() -> None:
     assert dmd.full_count == 0
     assert len(dmd.images) == 1
     assert np.array_equal(dmd.images[0], pattern)
+
+
+def test_take_frame_sets_frame_fov_id_from_metadata() -> None:
+    """
+    Check acquired Frames inherit their FoV ID from metadata.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    manager = _manager(default_settings=FrameAcquisitionSettings(restore_leds_after=False))
+
+    frame = manager.take_frame(_metadata(fov_id=7))
+
+    assert frame.fov_id == 7
+
+
+def test_take_frame_rejects_mixed_fov_metadata_before_hardware_actions() -> None:
+    """
+    Check mixed-FoV acquisitions fail before peripherals are actuated.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    camera = FakeCamera()
+    led_manager = FakeLedManager()
+    dmd = FakeDmd()
+    manager = _manager(camera=camera, led_manager=led_manager, dmd=dmd)
+
+    with pytest.raises(ValueError, match="same fov_id"):
+        manager.take_frame([
+            _metadata(frame_id=1, fov_id=7),
+            _metadata(frame_id=2, fov_id=8),
+        ])
+
+    assert camera.normalise_calls == []
+    assert led_manager.commands == []
+    assert dmd.full_count == 0
+    assert dmd.images == []
+
+
+def test_take_z_stack_returns_one_fov_owned_frame() -> None:
+    """
+    Check Z-stack acquisition returns one Frame owned by the metadata FoV.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    stage = FakeStage()
+    manager = _manager(
+        stage=stage,
+        default_settings=FrameAcquisitionSettings(illuminate_dmd=False, restore_leds_after=False),
+    )
+
+    frame = manager.take_z_stack(
+        frame_metadata=_metadata(fov_id=7),
+        z_coordinates=[Coordinate(None, None, 1), Coordinate(None, None, 2)],
+    )
+
+    assert frame.fov_id == 7
+    assert frame.array.shape == (2, 3, 4)
+    assert [metadata.fov_id for metadata in frame.frame_metadata] == [7, 7]
+    assert stage.coordinate.z == 0
 
 
 def test_cleanup_runs_when_capture_raises() -> None:

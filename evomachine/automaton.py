@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 import copy
 from multiprocessing import Event
 import time
@@ -66,6 +67,7 @@ class Automaton:
             shutdown_event: Event,
             proj_mngr: ProjectionManager | None = None,
             run_timeout: float = 0,
+            frame_history_limit: int | None = 2,
             gui_request_processor: GuiRequestProcessor | None = None,
             gui_request_budget: int = 16,
     ):
@@ -97,6 +99,9 @@ class Automaton:
             workflows.
         run_timeout
             Delay between loop iterations in seconds.
+        frame_history_limit
+            Maximum number of raw Frame objects retained per FoV, or None to
+            retain all frames in memory.
         gui_request_processor
             Optional callback used by a typed GUI RPC server to process a
             bounded number of pending GUI jobs on the automaton thread.
@@ -159,7 +164,11 @@ class Automaton:
         self._skip_image_reason: str | None = None
         "Human-readable reason for skipping an image command."
 
-        self._all_frames: dict[int, list[Frame]] = {}
+        self.frame_history_limit: int | None = self._validate_frame_history_limit(
+            frame_history_limit=frame_history_limit,
+        )
+        "Maximum number of raw Frame objects retained per FoV, or None to retain all."
+        self._all_frames: dict[int, deque[Frame]] = {}
         "Raw acquired Frame objects keyed by FoV ID, newest frame first."
 
         self._fov_list_is_initialised: bool = False
@@ -252,6 +261,35 @@ class Automaton:
         if value < 0:
             raise ValueError(f"Automaton.__init__: {name} must be non-negative, received {value}.")
         return float(value)
+
+    @staticmethod
+    def _validate_frame_history_limit(frame_history_limit: int | None) -> int | None:
+        """
+        Return a validated per-FoV frame history limit.
+
+        Parameters
+        ----------
+        frame_history_limit
+            Positive frame count to retain per FoV, or None to retain all.
+
+        Returns
+        -------
+        int | None
+            Validated limit.
+        """
+        if frame_history_limit is None:
+            return None
+        if not isinstance(frame_history_limit, int) or isinstance(frame_history_limit, bool):
+            raise TypeError(
+                "Automaton.__init__: frame_history_limit must be int or None, "
+                f"received {type(frame_history_limit)}."
+            )
+        if frame_history_limit < 1:
+            raise ValueError(
+                "Automaton.__init__: frame_history_limit must be positive or None, "
+                f"received {frame_history_limit}."
+            )
+        return frame_history_limit
 
     def _validate_manager_device_consistency(self) -> None:
         """
@@ -779,26 +817,21 @@ class Automaton:
         -------
         None
         """
-        fov_ids = {
-            metadata.fov_id if metadata.fov_id >= 0 else self.get_fov_id()
-            for metadata in frame.frame_metadata
-        }
-        if any(fov_id not in self._fovs for fov_id in fov_ids):
-            unknown_fov_ids = [fov_id for fov_id in sorted(fov_ids) if fov_id not in self._fovs]
-            raise KeyError(f"Automaton._store_frame: unknown fov ID(s) {unknown_fov_ids}.")
-        for fov_id in fov_ids:
-            self._all_frames.setdefault(fov_id, []).insert(0, frame)
+        fov_id = frame.fov_id if frame.fov_id >= 0 else self.get_fov_id()
+        if fov_id not in self._fovs:
+            raise KeyError(f"Automaton._store_frame: unknown fov ID {fov_id}.")
+        if fov_id not in self._all_frames:
+            self._all_frames[fov_id] = deque(maxlen=self.frame_history_limit)
+        self._all_frames[fov_id].appendleft(frame)
 
-    def _frame_channel_arrays(self, frame: Frame, fov_id: int, channel: LEDType) -> list[np.ndarray]:
+    def _frame_channel_arrays(self, frame: Frame, channel: LEDType) -> list[np.ndarray]:
         """
-        Return raw image arrays from a stored Frame for one fov/channel.
+        Return raw image arrays from a stored Frame for one channel.
 
         Parameters
         ----------
         frame
             Stored frame to inspect.
-        fov_id
-            FoV ID to match against frame metadata.
         channel
             LED channel to match against frame metadata.
 
@@ -808,13 +841,9 @@ class Automaton:
             Matching raw image arrays in newest-first order within the Frame.
         """
         channel_index = self._channel_to_index[channel]
-        target_fov_id = fov_id
         matching_arrays: list[np.ndarray] = []
         for frame_index in reversed(range(len(frame.frame_metadata))):
             metadata = frame.frame_metadata[frame_index]
-            metadata_fov_id = metadata.fov_id if metadata.fov_id >= 0 else self.get_fov_id()
-            if metadata_fov_id != target_fov_id:
-                continue
             metadata_channel_index = self._metadata_channel_index(metadata=metadata)
             if metadata_channel_index == channel_index:
                 matching_arrays.append(frame.array[frame_index])
@@ -1278,7 +1307,7 @@ class Automaton:
         matching_frames = [
             frame_array
             for frame in self._all_frames[fov_id]
-            for frame_array in self._frame_channel_arrays(frame=frame, fov_id=fov_id, channel=channel)
+            for frame_array in self._frame_channel_arrays(frame=frame, channel=channel)
         ]
         if time_id >= len(matching_frames):
             raise IndexError(f"Automaton.get_frame: time_id {time_id} is out of range.")
