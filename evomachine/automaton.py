@@ -115,45 +115,73 @@ class Automaton:
             raise TypeError("Automaton.__init__: strategy must be AbstractStrategy or None.")
         if proj_mngr is not None and not isinstance(proj_mngr, ProjectionManager):
             raise TypeError("Automaton.__init__: proj_mngr must be ProjectionManager or None.")
-        self.acq_mngr = acq_mngr
-        self.focus_nav = focus_nav
-        self.proj_mngr = proj_mngr
+        self.acq_mngr: FrameAcquisitionManager = acq_mngr
+        "FrameAcquisitionManager used for camera, LED, filter wheel, and DMD acquisition commands."
+        self.focus_nav: FocusNavigator = focus_nav
+        "FocusNavigator used for stage movement, autofocus, and software-focus work."
+        self.proj_mngr: ProjectionManager | None = proj_mngr
+        "Optional ProjectionManager used for DMD calibration and photodiode workflows."
         self._camera: Camera = self.acq_mngr.camera
+        "Camera cached from acq_mngr for strategy requirement validation and lifecycle handling."
         self._led_mngr: LedManager = self.acq_mngr.led_manager
+        "LED manager cached from acq_mngr for illumination, projection, and lifecycle handling."
         self._filt_wheel: FilterWheel | None = self.acq_mngr.filter_wheel
+        "Optional filter wheel cached from acq_mngr for lifecycle and consistency checks."
         self._dmd: Dmd | None = self.acq_mngr.dmd
+        "Optional DMD cached from acq_mngr for projection commands."
         self._stage: Stage = self.focus_nav.stage
+        "Stage cached from focus_nav for lifecycle and requirement validation."
         self._autofocus: Autofocus | None = self.focus_nav.autofocus
+        "Optional autofocus cached from focus_nav for halt cleanup and lifecycle handling."
         self._swfocus: SoftwareFocus | None = self.focus_nav.software_focus
+        "Optional SoftwareFocus cached from focus_nav for halt cleanup."
         self._photodiode: Photodiode | None = self.proj_mngr.photodiode if self.proj_mngr is not None else None
+        "Optional photodiode cached from proj_mngr for lifecycle handling."
         self._validate_manager_device_consistency()
         self._strategy: AbstractStrategy | None = strategy
-        self._cfg = cfg_processor
+        "Strategy currently installed on the automaton, or None for device-only startup."
+        self._cfg: ImageProcessorConfig = cfg_processor
+        "Image-processing configuration used by strategy commands and frame channel lookup."
         self._channel_to_index: dict[LEDType, int] = self._cfg.channel_to_index
+        "Mapping from LED channel type to image channel index."
         self._curr_step: int = 0
+        "Current strategy step counter reserved for future strategy bookkeeping."
         self._fovs: dict[int, Coordinate] = {}
+        "Registered field-of-view coordinates keyed by FoV ID."
         self._fov_to_roi: dict[int, list[int]] = {}
+        "ROI IDs keyed by FoV ID for strategy command validation and projection."
         self._cropping_boxes: dict[int, list[Any]] = {}
+        "Cropping boxes keyed by FoV ID."
         self._fov_processors: dict[int, Any] = {}
+        "Runtime FoV processors keyed by FoV ID."
         self._skip_image_fov_id: int | None = None
+        "FoV ID whose next image command should be skipped after failed focus handling."
         self._skip_image_reason: str | None = None
+        "Human-readable reason for skipping an image command."
 
-        # TODO(CODEX): refactor _all_frames_raw to store Frame objects instead
-        self._all_frames_raw: dict[int, np.ndarray] = {}
-        self._all_frames: dict[int, np.ndarray] = {}
-        self._ref_frames: dict[int, np.ndarray] = {}
+        self._all_frames: dict[int, list[Frame]] = {}
+        "Raw acquired Frame objects keyed by FoV ID, newest frame first."
 
-        self._fov_list_is_initialised = False
-        self._strategy_is_initialised = False
-        self._reference_frames_is_initialised = False
+        self._fov_list_is_initialised: bool = False
+        "True after FoV state has been registered."
+        self._strategy_is_initialised: bool = False
+        "True after the current strategy has been initialised."
         self._fov_processors_is_initialised: dict[int, bool] = {}
+        "Initialisation status of each FoV processor keyed by FoV ID."
         self.next_commands: list[AutomatonCommand] = []
+        "Strategy commands scheduled for the next processing step."
         self.last_commands: list[AutomatonCommand] = []
-        self._start_strategy_event = start_strategy_event
-        self._stop_strategy_event = stop_strategy_event
-        self._stop_event = stop_event
-        self._shutdown_event = shutdown_event
-        self.run_timeout = self._validate_non_negative_float(run_timeout, "run_timeout")
+        "Strategy commands executed during the previous processing step."
+        self._start_strategy_event: Event = start_strategy_event
+        "Event set when strategy execution should begin."
+        self._stop_strategy_event: Event = stop_strategy_event
+        "Event set when strategy execution should stop."
+        self._stop_event: Event = stop_event
+        "Event set when current automaton work should halt."
+        self._shutdown_event: Event = shutdown_event
+        "Event set when all automaton loops should exit."
+        self.run_timeout: float = self._validate_non_negative_float(run_timeout, "run_timeout")
+        "Delay between run-loop ticks in seconds."
         if gui_request_processor is not None and not callable(gui_request_processor):
             raise TypeError(
                 f"Automaton.__init__: gui_request_processor must be callable or None, "
@@ -165,8 +193,10 @@ class Automaton:
             )
         if gui_request_budget < 1:
             raise ValueError(f"Automaton.__init__: gui_request_budget must be positive, received {gui_request_budget}.")
-        self.gui_request_processor = gui_request_processor
-        self.gui_request_budget = gui_request_budget
+        self.gui_request_processor: GuiRequestProcessor | None = gui_request_processor
+        "Optional callable that processes pending GUI requests on the automaton thread."
+        self.gui_request_budget: int = gui_request_budget
+        "Maximum number of GUI requests processed per automaton loop tick."
 
     def gui_set_request_processor(
             self,
@@ -426,7 +456,6 @@ class Automaton:
         self._fov_processors = {}
         self._fov_processors_is_initialised = {fov_id: True for fov_id in self._fovs}
         self._fov_list_is_initialised = True
-        self._reference_frames_is_initialised = True
         self._skip_image_fov_id = None
         self._skip_image_reason = None
         fov_configs = None
@@ -750,50 +779,46 @@ class Automaton:
         -------
         None
         """
-        self._ensure_frame_buffers(frame=frame)
-        for frame_index, metadata in enumerate(frame.frame_metadata):
-            channel_index = self._metadata_channel_index(metadata=metadata)
-            if channel_index is None:
-                continue
-            fov_id = metadata.fov_id if metadata.fov_id >= 0 else self.get_fov_id()
-            self._all_frames_raw[fov_id][1, channel_index, :, :] = self._all_frames_raw[fov_id][0, channel_index, :, :]
-            self._all_frames[fov_id][1, channel_index, :, :] = self._all_frames[fov_id][0, channel_index, :, :]
-            self._all_frames_raw[fov_id][0, channel_index, :, :] = frame.array[frame_index]
-            self._all_frames[fov_id][0, channel_index, :, :] = normalise_frame(frame.array[frame_index])
+        fov_ids = {
+            metadata.fov_id if metadata.fov_id >= 0 else self.get_fov_id()
+            for metadata in frame.frame_metadata
+        }
+        if any(fov_id not in self._fovs for fov_id in fov_ids):
+            unknown_fov_ids = [fov_id for fov_id in sorted(fov_ids) if fov_id not in self._fovs]
+            raise KeyError(f"Automaton._store_frame: unknown fov ID(s) {unknown_fov_ids}.")
+        for fov_id in fov_ids:
+            self._all_frames.setdefault(fov_id, []).insert(0, frame)
 
-    def _ensure_frame_buffers(self, frame: Frame) -> None:
+    def _frame_channel_arrays(self, frame: Frame, fov_id: int, channel: LEDType) -> list[np.ndarray]:
         """
-        Allocate frame buffers when image shape is first known.
+        Return raw image arrays from a stored Frame for one fov/channel.
 
         Parameters
         ----------
         frame
-            Frame whose image shape and dtype determine buffer allocation.
+            Stored frame to inspect.
+        fov_id
+            FoV ID to match against frame metadata.
+        channel
+            LED channel to match against frame metadata.
 
         Returns
         -------
-        None
+        list[np.ndarray]
+            Matching raw image arrays in newest-first order within the Frame.
         """
-        if self._all_frames_raw:
-            return
-        if not self._fovs:
-            raise RuntimeError("Automaton._ensure_frame_buffers: field of views are not initialised.")
-        frame_shape = frame.array.shape[-2:]
-        dtype = frame.array.dtype
-        num_channels = len(self._channel_to_index)
-        # TODO(CODEX): store the latest nsteps frames and keep the history length configurable.
-        self._all_frames_raw = {
-            fov_id: np.zeros((2, num_channels, *frame_shape), dtype=dtype)
-            for fov_id in self._fovs
-        }
-        self._all_frames = {
-            fov_id: np.zeros((2, num_channels, *frame_shape), dtype=np.float32)
-            for fov_id in self._fovs
-        }
-        self._ref_frames = {
-            fov_id: np.zeros((num_channels, *frame_shape), dtype=dtype)
-            for fov_id in self._fovs
-        }
+        channel_index = self._channel_to_index[channel]
+        target_fov_id = fov_id
+        matching_arrays: list[np.ndarray] = []
+        for frame_index in reversed(range(len(frame.frame_metadata))):
+            metadata = frame.frame_metadata[frame_index]
+            metadata_fov_id = metadata.fov_id if metadata.fov_id >= 0 else self.get_fov_id()
+            if metadata_fov_id != target_fov_id:
+                continue
+            metadata_channel_index = self._metadata_channel_index(metadata=metadata)
+            if metadata_channel_index == channel_index:
+                matching_arrays.append(frame.array[frame_index])
+        return matching_arrays
 
     def _metadata_channel_index(self, metadata: FrameMetaData) -> int | None:
         """
@@ -1175,7 +1200,6 @@ class Automaton:
             self.devices_is_initialised()
             and self._strategy is not None
             and self._strategy_is_initialised
-            and self._reference_frames_is_initialised
             and self._fov_list_is_initialised
             and all(self._fov_processors_is_initialised.values())
         )
@@ -1249,9 +1273,16 @@ class Automaton:
             raise KeyError(f"Automaton.get_frame: unknown fov ID {fov_id}.")
         if not isinstance(time_id, int) or isinstance(time_id, bool):
             raise TypeError(f"Automaton.get_frame: time_id must be int, received {type(time_id)}.")
-        if not 0 <= time_id < self._all_frames[fov_id].shape[0]:
+        if time_id < 0:
             raise IndexError(f"Automaton.get_frame: time_id {time_id} is out of range.")
-        return self._all_frames[fov_id][time_id, self._channel_to_index[channel], :, :]
+        matching_frames = [
+            frame_array
+            for frame in self._all_frames[fov_id]
+            for frame_array in self._frame_channel_arrays(frame=frame, fov_id=fov_id, channel=channel)
+        ]
+        if time_id >= len(matching_frames):
+            raise IndexError(f"Automaton.get_frame: time_id {time_id} is out of range.")
+        return normalise_frame(matching_frames[time_id])
 
     def get_strategy_name(self) -> str | None:
         """

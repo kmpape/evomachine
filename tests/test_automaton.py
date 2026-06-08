@@ -18,6 +18,7 @@ from evomachine.peripherals.dmd import Dmd
 from evomachine.projection import ProjectionManager
 from evomachine.strategy import AbstractStrategy, BasicStrategy
 from evomachine.types import AutomatonCommandType, LEDType, UNKNOWN_FOV_ID
+from evomachine.utils import normalise_frame
 
 
 class FakePeripheral:
@@ -1039,7 +1040,10 @@ def test_automaton_image_uses_frame_metadata_and_updates_buffers() -> None:
     assert acquisition_manager.calls[0][1].save is True
     assert command.command_data["frame_metadata"] == [metadata]
     assert automaton.get_frame(0, LEDType.LED_450_NM, time_id=0).shape == (3, 4)
-    assert automaton._all_frames_raw[0][0, 0, 0, 1] == 1
+    assert isinstance(automaton._all_frames[0][0], Frame)
+    assert automaton._all_frames[0][0].array[0, 0, 1] == 1
+    assert not hasattr(automaton, "_all_frames_raw")
+    assert not hasattr(automaton, "_ref_frames")
 
 
 def test_automaton_frame_buffers_use_fov_ids_and_time_zero_latest() -> None:
@@ -1054,7 +1058,7 @@ def test_automaton_frame_buffers_use_fov_ids_and_time_zero_latest() -> None:
     -------
     None
     """
-    automaton, acquisition_manager, *_deps = make_automaton()
+    automaton, *_deps = make_automaton()
     automaton.initialise(fovs={2: Coordinate(2, 0, 0), 7: Coordinate(7, 0, 0)})
     first_metadata = FrameMetaData(
         frame_id=0,
@@ -1070,25 +1074,37 @@ def test_automaton_frame_buffers_use_fov_ids_and_time_zero_latest() -> None:
         exposure=50,
         fov_id=7,
     )
+    older_frame = np.array(
+        [
+            [0, 1, 2, 3],
+            [4, 5, 6, 7],
+            [8, 9, 10, 11],
+        ],
+        dtype=np.uint16,
+    )
+    newer_frame = np.array(
+        [
+            [0, 10, 1, 2],
+            [3, 4, 5, 6],
+            [7, 8, 9, 11],
+        ],
+        dtype=np.uint16,
+    )
+    frame = Frame(
+        frame_metadata=[first_metadata, second_metadata],
+        array=np.stack([older_frame, newer_frame]),
+        saved_paths=[None, None],
+    )
 
-    automaton.next_commands = [
-        CommandFactory(cfg=make_cfg()).command_image(
-            frame_metadata=[first_metadata, second_metadata],
-            segment=False,
-            save=False,
-        ),
-    ]
-    automaton._process()
+    automaton._store_frame(frame=frame)
 
-    assert set(automaton._all_frames_raw) == {2, 7}
-    assert len(acquisition_manager.calls) == 1
-    assert automaton._all_frames_raw[7][0, 0, 0, 1] == 2
-    assert automaton._all_frames_raw[7][1, 0, 0, 1] == 1
-    automaton._all_frames[7][0, 0, 0, 1] = 10
-    automaton._all_frames[7][1, 0, 0, 1] = 5
-    assert automaton.get_frame(7, LEDType.LED_450_NM, time_id=0)[0, 1] == 10
-    assert automaton.get_frame(7, LEDType.LED_450_NM, time_id=1)[0, 1] == 5
-    assert 0 not in automaton._all_frames_raw
+    assert set(automaton._all_frames) == {7}
+    assert automaton._all_frames[7] == [frame]
+    np.testing.assert_allclose(automaton.get_frame(7, LEDType.LED_450_NM, time_id=0), normalise_frame(newer_frame))
+    np.testing.assert_allclose(automaton.get_frame(7, LEDType.LED_450_NM, time_id=1), normalise_frame(older_frame))
+    with pytest.raises(IndexError, match="time_id 2"):
+        automaton.get_frame(7, LEDType.LED_450_NM, time_id=2)
+    assert 2 not in automaton._all_frames
 
 
 def test_automaton_skipped_move_suppresses_image_acquisition() -> None:

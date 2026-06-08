@@ -6,8 +6,8 @@ import multiprocessing as mp
 import os
 import subprocess
 import sys
-import time
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any
 
 from evomachine.gui.facade import AutomatonGuiFacade
@@ -17,7 +17,11 @@ from evomachine.gui.socket_transport import GuiRpcServer, GuiSocketClient
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
-PLUGIN_NAME = "evomachine.gui"
+
+
+def _repo_root() -> Path:
+    """Return the source checkout root that contains the evomachine package."""
+    return Path(__file__).resolve().parents[2]
 
 
 def _build_common_parser(description: str) -> argparse.ArgumentParser:
@@ -68,7 +72,10 @@ def _run_napari(host: str, port: int, napari_args: Sequence[str]) -> int:
     env = dict(os.environ)
     env[GUI_HOST_ENV] = host
     env[GUI_PORT_ENV] = str(port)
-    command = ["napari", *napari_args, "--with", PLUGIN_NAME]
+    repo_root = str(_repo_root())
+    pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = repo_root if not pythonpath else os.pathsep.join([repo_root, pythonpath])
+    command = [sys.executable, "-m", "evomachine.gui.napari_app", *napari_args]
     completed = subprocess.run(command, env=env, check=False)
     return int(completed.returncode)
 

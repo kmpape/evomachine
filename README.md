@@ -69,6 +69,23 @@ The main Python package is `evomachine/evomachine`.
 - `softwarefocus.py` and `trackingrt.py` support software focus and real-time
   tracking workflows.
 
+## GUI Demo
+
+After activating the `delta_evomachine` environment, launch the Napari GUI demo
+with virtual peripherals from the repository root:
+
+```bash
+cd /home/idris/workspace_python/conda_evomachine3.9/evomachine_repo
+conda activate delta_evomachine
+python scripts/launch_gui.py --port 0
+```
+
+To smoke-test the automaton/socket startup without opening Napari:
+
+```bash
+python scripts/launch_gui.py --port 0 --no-napari
+```
+
 Other useful top-level folders in the main repository:
 
 - `tests/`: pytest coverage for the package.
