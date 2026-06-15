@@ -34,11 +34,12 @@ dependencies = [
 ]
 
 [tool.uv]
-# delta (editable sibling) pulls a heavy imaging stack via aicsimageio[all].
-# uv resolves these transitives to latest by default, and recent releases break
-# at import time (e.g. bfio's circular import). Pin them back to the versions the
-# old conda env was tested against so `import delta` works. These are NOT direct
-# evomachine deps — constraints only bite when delta drags them in.
+# The delta dependency currently pulls a heavy imaging stack via aicsimageio[all].
+# uv resolves these to the latest versions by default, and recent releases break
+# at import time (e.g. bfio's circular import). This section pins them back to the 
+# versions the old conda env was tested against so `import delta` works. These 
+# are NOT direct evomachine deps — these constraints only bite when delta drags them in.
+# TODO: fix this upstream in delta and remove this section
 constraint-dependencies = [
     "bfio==2.3.0",
     "aicsimageio==4.14.0",
