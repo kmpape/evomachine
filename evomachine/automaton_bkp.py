@@ -9,7 +9,6 @@ import pickle
 import queue
 import skimage
 import time
-import tensorrt  # noqa
 import tensorflow as tf
 import traceback
 from typing import Any

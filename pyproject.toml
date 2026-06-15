@@ -21,11 +21,11 @@ dependencies = [
     "pygame>=2.6",
     "PyQt5>=5.15",
     "pycromanager>=0.27",
-    # GPU stack for the Linux + CUDA microscope. tensorrt is imported in
-    # __init__.py purely so TensorFlow (pulled in by the `delta` sibling repo)
-    # finds it.
+    # GPU stack for the Linux + CUDA microscope. TensorFlow is pulled in by the
+    # `delta` sibling repo (it only requires `tensorflow >= 2.12`); we pin it here
+    # to 2.15 with the `[and-cuda]` extra to control the version and bundle the
+    # CUDA runtime libraries.
     "tensorflow[and-cuda]==2.15.*",
-    "tensorrt>=10,<11",
     # Local sibling repos (live next to this one in the workspace). They are real
     # installable packages; uv resolves them as editable path sources below, which
     # also pulls in delta's own dependency tree (pooch, xarray, aicsimageio, ...).

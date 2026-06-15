@@ -9,9 +9,6 @@ import matplotlib.pyplot as plt
 # 3 = INFO, WARNING, and ERROR messages are not printed
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '1'
 
-# Import tensorrt here otherwise TF does not find it
-import tensorrt
-
 # Set matplotlib loglevel
 plt.set_loglevel("warning")
 
