@@ -1,0 +1,76 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "evomachine"
+version = "0.1.0"
+description = "Microscope automation application (DE-LTA real-time evolution machine)."
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "numpy>=1.26,<2.0",
+    "pandas>=2.2",
+    "matplotlib>=3.10",
+    "scikit-image>=0.20,<0.21",
+    "opencv-python-headless>=4.10",
+    "pillow>=10.3",
+    "tifffile>=2022.4.8",
+    "numba>=0.60",
+    "pyserial>=3.5",
+    "pygame>=2.6",
+    "PyQt5>=5.15",
+    "pycromanager>=0.27",
+    # GPU stack for the Linux + CUDA microscope. tensorrt is imported in
+    # __init__.py purely so TensorFlow (pulled in by the `delta` sibling repo)
+    # finds it.
+    "tensorflow[and-cuda]==2.15.*",
+    "tensorrt>=10,<11",
+    # Local sibling repos (live next to this one in the workspace). They are real
+    # installable packages; uv resolves them as editable path sources below, which
+    # also pulls in delta's own dependency tree (pooch, xarray, aicsimageio, ...).
+    "delta2",
+    "asitiger",
+]
+
+[tool.uv]
+# delta (editable sibling) pulls a heavy imaging stack via aicsimageio[all].
+# uv resolves these transitives to latest by default, and recent releases break
+# at import time (e.g. bfio's circular import). Pin them back to the versions the
+# old conda env was tested against so `import delta` works. These are NOT direct
+# evomachine deps — constraints only bite when delta drags them in.
+constraint-dependencies = [
+    "bfio==2.3.0",
+    "aicsimageio==4.14.0",
+    "nd2==0.10.1",
+    "ome-types==0.5.3",
+    "ome-zarr==0.10.2",
+    "xarray==2024.7.0",
+    "netcdf4==1.7.2",
+    "pooch==1.8.2",
+    # zarr 2.15 imports cbuffer_sizes from numcodecs.blosc, removed in numcodecs
+    # >=0.16. Pin to the conda-tested numcodecs so zarr (and bfio via it) import.
+    "numcodecs==0.14.1",
+]
+
+[tool.uv.sources]
+delta2 = { path = "../de-lta-rt", editable = true }
+asitiger = { path = "../asitiger", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "pre-commit>=4.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["evomachine"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

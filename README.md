@@ -6,22 +6,30 @@ projection, strategies, and real-time processing workflows.
 
 ## Installation
 
-Use `mamba` to create the conda environment from the pinned environment file:
+Dependencies are managed with [uv](https://docs.astral.sh/uv/). From the repo
+root:
 
 ```bash
-cd /home/lady5906/workspace_python/evomachine/evomachine
-mamba env create -f environment.yml
-mamba activate delta_evomachine
+# creates .venv, installs the curated deps + the evomachine package (editable)
+uv sync
+
+# run anything inside the environment
+uv run python scripts/launch_gui.py
+uv run pytest
 ```
 
-To update an existing environment after `environment.yml` changes:
+Note: `uv sync` reads `pyproject.toml` and pins everything in `uv.lock`.
+This application targets the Linux + CUDA microscope machine, including the GPU stack (`tensorflow[and-cuda]` + `tensorrt`).
 
-```bash
-cd /home/lady5906/workspace_python/evomachine/evomachine
-mamba env update -f environment.yml --prune
-```
+### Out-of-band dependencies (WIP)
 
-The environment name is defined in `environment.yml` as `delta_evomachine`.
+`uv sync` does **not** install everything the application needs at runtime.
+The following must be present separately:
+
+- **Sibling repos** resolved via `sys.path` in `evomachine/__init__.py` — see
+  *Workspace Structure* below: `de-lta-rt` (imported as `delta`), `asitiger`,
+  `sync_board`, and `em_dmd_window`.
+- **`pyvcam`** (Photometrics PVCAM Python wrapper) — only needed for the PVCAM camera backend. Installed from the vendor, not on PyPI.
 
 ## Workspace Structure
 
