@@ -6,11 +6,44 @@ projection, strategies, and real-time processing workflows.
 
 ## Installation
 
-Dependencies are managed with [uv](https://docs.astral.sh/uv/). From the repo
-root:
+Dependencies are managed with [uv](https://docs.astral.sh/uv/).
+
+### 1. Clone the sibling repositories
+
+*Note: this is currently a bit of a hacky way to install other dependencies. The aim is to clean it up soon.*
+
+Three sibling repositories are installed by `uv` as **editable path
+dependencies** (declared in `[tool.uv.sources]`). They must already be cloned
+next to `evomachine` in the same parent folder, and checked out on the correct
+branch, *before* you run `uv sync` — otherwise the install will fail or pick up
+the wrong code:
+
+| Sibling folder | Imported as | Required branch |
+|---|---|---|
+| `de-lta-rt/`  | `delta`     | `dev_main` |
+| `asitiger/`   | `asitiger`  | `master`   |
+| `sync_board/` | `syncboard` | `Signals`  |
+
+Expected layout:
+
+```
+workspace/
+├── evomachine/      ← this repo
+├── de-lta-rt/       (dev_main)
+├── asitiger/        (master)
+└── sync_board/      (Signals)
+```
+
+The exact branches matter: e.g. `delta`'s real-time modules (`delta.rttypes`,
+`delta.rt`, `delta.imgops`) only exist on `de-lta-rt`'s `dev_main` branch.
+
+### 2. Install the environment
+
+From the `evomachine` repo root:
 
 ```bash
-# creates .venv, installs the curated deps + the evomachine package (editable)
+# creates .venv and installs: curated runtime deps, the three editable sibling
+# packages, the evomachine package (editable), and the dev tools
 uv sync
 
 # run anything inside the environment
@@ -18,18 +51,29 @@ uv run python scripts/launch_gui.py
 uv run pytest
 ```
 
-Note: `uv sync` reads `pyproject.toml` and pins everything in `uv.lock`.
-This application targets the Linux + CUDA microscope machine, including the GPU stack (`tensorflow[and-cuda]` + `tensorrt`).
+`uv sync` reads `pyproject.toml` and pins everything in `uv.lock`. This
+application targets the Linux + CUDA microscope machine, including the GPU stack.
 
-### Out-of-band dependencies (WIP)
+### Dev dependencies
 
-`uv sync` does **not** install everything the application needs at runtime.
-The following must be present separately:
+The dev tools (`pytest`, `pytest-cov`, `ruff`, `pre-commit`) live in the `dev`
+dependency group, which `uv sync` installs **by default**. For a runtime-only
+environment (e.g. on the microscope machine), skip them with:
 
-- **Sibling repos** resolved via `sys.path` in `evomachine/__init__.py` — see
-  *Workspace Structure* below: `de-lta-rt` (imported as `delta`), `asitiger`,
-  `sync_board`, and `em_dmd_window`.
-- **`pyvcam`** (Photometrics PVCAM Python wrapper) — only needed for the PVCAM camera backend. Installed from the vendor, not on PyPI.
+```bash
+uv sync --no-dev
+```
+
+### Out-of-band dependencies
+
+A couple of runtime dependencies are **not** installed by `uv sync` and must be
+provided separately:
+
+- **`em_dmd_window/`** — used by the DMD projection bindings via a compiled
+  binary (referenced by path, not pip-installed). Clone it as a sibling
+  (branch `master`) and build it.
+- **`pyvcam`** (Photometrics PVCAM Python wrapper) — only needed for the PVCAM
+  camera backend. Installed from the vendor, not on PyPI.
 
 ## Workspace Structure
 
