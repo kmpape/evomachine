@@ -31,6 +31,7 @@ dependencies = [
     # also pulls in delta's own dependency tree (pooch, xarray, aicsimageio, ...).
     "delta2",
     "asitiger",
+    "syncboard",
 ]
 
 [tool.uv]
@@ -57,6 +58,7 @@ constraint-dependencies = [
 [tool.uv.sources]
 delta2 = { path = "../de-lta-rt", editable = true }
 asitiger = { path = "../asitiger", editable = true }
+syncboard = { path = "../sync_board", editable = true }
 
 [dependency-groups]
 dev = [

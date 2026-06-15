@@ -599,6 +599,7 @@ dependencies = [
     { name = "pyqt5" },
     { name = "pyserial" },
     { name = "scikit-image" },
+    { name = "syncboard" },
     { name = "tensorflow", extra = ["and-cuda"] },
     { name = "tensorrt" },
     { name = "tifffile" },
@@ -627,6 +628,7 @@ requires-dist = [
     { name = "pyqt5", specifier = ">=5.15" },
     { name = "pyserial", specifier = ">=3.5" },
     { name = "scikit-image", specifier = ">=0.20,<0.21" },
+    { name = "syncboard", editable = "../sync_board" },
     { name = "tensorflow", extras = ["and-cuda"], specifier = "==2.15.*" },
     { name = "tensorrt", specifier = ">=10,<11" },
     { name = "tifffile", specifier = ">=2022.4.8" },
@@ -2181,6 +2183,17 @@ sdist = { url = "https://files.pythonhosted.org/packages/e8/c4/ba2f8066cceb6f233
 wheels = [
     { url = "https://files.pythonhosted.org/packages/32/46/9cb0e58b2deb7f82b84065f37f3bffeb12413f947f9388e4cac22c4621ce/sortedcontainers-2.4.0-py2.py3-none-any.whl", hash = "sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0", size = 29575, upload-time = "2021-05-16T22:03:41.177Z" },
 ]
+
+[[package]]
+name = "syncboard"
+version = "0.1.0"
+source = { editable = "../sync_board" }
+dependencies = [
+    { name = "pyserial" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "pyserial", specifier = ">=3.5" }]
 
 [[package]]
 name = "tblib"
