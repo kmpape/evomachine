@@ -21,38 +21,18 @@ dependencies = [
     "pygame>=2.6",
     "PyQt5>=5.15",
     "pycromanager>=0.27",
+    
     # GPU stack for the Linux + CUDA microscope. TensorFlow is pulled in by the
     # `delta` sibling repo (it only requires `tensorflow >= 2.12`); we pin it here
     # to 2.15 with the `[and-cuda]` extra to control the version and bundle the
     # CUDA runtime libraries.
     "tensorflow[and-cuda]==2.15.*",
-    # Local sibling repos (live next to this one in the workspace). They are real
-    # installable packages; uv resolves them as editable path sources below, which
-    # also pulls in delta's own dependency tree (pooch, xarray, aicsimageio, ...).
+    
+    # Local sibling repos (live next to this one in the workspace). Their paths are
+    # specified in the `[tool.uv.sources]` below.
     "delta2",
     "asitiger",
     "syncboard",
-]
-
-[tool.uv]
-# The delta dependency currently pulls a heavy imaging stack via aicsimageio[all].
-# uv resolves these to the latest versions by default, and recent releases break
-# at import time (e.g. bfio's circular import). This section pins them back to the 
-# versions the old conda env was tested against so `import delta` works. These 
-# are NOT direct evomachine deps — these constraints only bite when delta drags them in.
-# TODO: fix this upstream in delta and remove this section
-constraint-dependencies = [
-    "bfio==2.3.0",
-    "aicsimageio==4.14.0",
-    "nd2==0.10.1",
-    "ome-types==0.5.3",
-    "ome-zarr==0.10.2",
-    "xarray==2024.7.0",
-    "netcdf4==1.7.2",
-    "pooch==1.8.2",
-    # zarr 2.15 imports cbuffer_sizes from numcodecs.blosc, removed in numcodecs
-    # >=0.16. Pin to the conda-tested numcodecs so zarr (and bfio via it) import.
-    "numcodecs==0.14.1",
 ]
 
 [tool.uv.sources]
