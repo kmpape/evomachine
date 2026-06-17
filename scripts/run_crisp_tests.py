@@ -33,7 +33,7 @@ from evomachine.strategy import BasicStrategy
 from evomachine.utils import rotation_correction
 from delta.roirt import *
 from delta.rt import *
-from asitiger.command import CRISPState
+from asitiger.command import CRISPSetState
 
 
 camera_config: ConfigCamera = ConfigCameraFactory.default_air_config()
@@ -57,7 +57,7 @@ pos0 = {'X': 1319, 'Y': -73351}
 pos1 = {'X': 188, 'Y': 0}
 
 cam.autofocus_initialise(user_input=False)
-cam.tiger.crisp_get_set_state(card_address=cam.card_address_crisp, value=CRISPState.LOCK)
+cam.tiger.crisp_get_set_state(card_address=cam.card_address_crisp, value=CRISPSetState.LOCK)
 
 duration = 5
 now = time.perf_counter()
@@ -74,7 +74,7 @@ while now < end:
 
 print("End")
 
-cam.tiger.crisp_get_set_state(card_address=cam.card_address_crisp, value=CRISPState.UNLOCK)
+cam.tiger.crisp_get_set_state(card_address=cam.card_address_crisp, value=CRISPSetState.UNLOCK)
 
 # New function
 cam._move_stage_to_coord(pos0, block=True)

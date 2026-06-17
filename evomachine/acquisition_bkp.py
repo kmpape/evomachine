@@ -12,7 +12,7 @@ import skimage
 from serial import SerialException
 
 import com_ports
-from asitiger.command import CRISPState
+from asitiger.command import CRISPSetState
 from asitiger.status import CRISPStatus
 import asitiger.tigercontroller
 
@@ -1319,26 +1319,26 @@ class EvoCamera(AbstractCamera):
 
         is_success = True
         logger.info("CRISP: Setting IDLE status.")
-        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.IDLE)
+        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPSetState.IDLE)
         logger.info("CRISP: Resetting offsets.")
-        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.SET_OFFSET)
+        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPSetState.SET_OFFSET)
         time.sleep(cfg_crisp.pause_short)
         logger.info("CRISP: Setting LOG_CAL status.")
-        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.LOG_CAL)
+        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPSetState.LOG_CAL)
         time.sleep(cfg_crisp.pause_long)
         val = self.tiger.crisp_get_snr(card_address=self.card_address_crisp)
         if val < cfg_crisp.min_snr:
             is_success = False
             logger.warning(f"EvoCamera.autofocus: Low SNR = {val:.2d}. Increase CRISP LED intensity and repeat.")
         logger.info("CRISP: Setting DITHER status.")
-        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.DITHER)
+        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPSetState.DITHER)
         time.sleep(cfg_crisp.pause_long)
         val = self.tiger.crisp_get_err(card_address=self.card_address_crisp)
         if np.abs(val) < cfg_crisp.min_error:
             is_success = False
             logger.warning(f"EvoCamera.autofocus: Low error = {val}. Check ASI guide.")
         logger.info("CRISP: Setting SET_GAIN status.")
-        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.SET_GAIN)
+        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPSetState.SET_GAIN)
         time.sleep(cfg_crisp.pause_short)
         logger.info("CRISP: Setting UNLOCK status.")
         self.autofocus_unlock()
@@ -1350,7 +1350,7 @@ class EvoCamera(AbstractCamera):
             do_lock = True if user_input_str.lower() == "yes" else False
         if do_lock:
             logger.info("CRISP: Setting LOCK status.")
-            self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.LOCK)
+            self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPSetState.LOCK)
         time.sleep(cfg_crisp.pause_short)
         curr_state = self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=None)
         logger.info(f"CRISP: Finalising autofocus. Current state is {curr_state}.")
@@ -1361,7 +1361,7 @@ class EvoCamera(AbstractCamera):
     def autofocus_disable(self):
         if not self._tiger_is_alive:
             logger.error(f"EvoCamera.crisp_disable: Device not alive. Trying to disable anyway.")
-        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.IDLE)
+        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPSetState.IDLE)
 
     def autofocus_get_status(self) -> AutoFocusStatusType:
         retval: str = self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=None)
@@ -1415,10 +1415,10 @@ class EvoCamera(AbstractCamera):
         return True
 
     def _autofocus_lock(self):
-        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.LOCK)
+        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPSetState.LOCK)
 
     def autofocus_unlock(self):
-        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPState.UNLOCK)
+        self.tiger.crisp_get_set_state(card_address=self.card_address_crisp, value=CRISPSetState.UNLOCK)
 
     def _finalise(self):
         logger.info(f"EvoCamera.finalise: Finalising EvoCamera.")

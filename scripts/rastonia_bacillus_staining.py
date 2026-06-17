@@ -7,7 +7,7 @@ sys.path.append(str(WORKSPACE_ROOT / "asitiger"))
 sys.path.append(str(WORKSPACE_ROOT / "evomachine_repo"))
 sys.path.append(str(WORKSPACE_ROOT / "de-lta-rt"))
 
-from asitiger.command import CRISPState, Command
+from asitiger.command import CRISPSetState, Command
 IMAGE_DIR = Path(__file__).resolve().parents[1] / "images"
 from evomachine.acquisition_bkp import EvoCamera
 from evomachine.config import DEVICE_CONFIG_EVO_TEST, CRISP_CONFIG_DEFAULT, OBJECTIVE_CONFIG_OIL, \

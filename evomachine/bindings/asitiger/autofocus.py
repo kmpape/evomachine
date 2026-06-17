@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 import numpy as np
-from asitiger.command import CRISPState
+from asitiger.command import CRISPSetState
 
 from evomachine.peripherals.autofocus import Autofocus
 from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
@@ -208,7 +208,7 @@ class FakeTigerAutofocusController:
         """
         self.halt_was_called = True
 
-    def crisp_get_set_state(self, card_address: int, value: Any | None) -> str:
+    def crisp_get_set_state(self, card_address: int, value: CRISPSetState | None) -> str:
         """
         Record and apply a fake CRISP state command.
 
@@ -217,7 +217,8 @@ class FakeTigerAutofocusController:
         card_address
             CRISP card address used by the caller.
         value
-            CRISPState value to set, or None to query.
+            CRISPSetState value to set through LOCK F, or None to query
+            the current LOCK X status flag.
 
         Returns
         -------
@@ -225,17 +226,17 @@ class FakeTigerAutofocusController:
             Current fake CRISP status flag.
         """
         self.commands.append(("state", value))
-        if value == CRISPState.IDLE:
+        if value == CRISPSetState.IDLE:
             self.status_flag = AutoFocusStatusType.IDLE.value
-        elif value == CRISPState.LOG_CAL:
+        elif value == CRISPSetState.LOG_CAL:
             self.status_flag = AutoFocusStatusType.LOG_CAL.value
-        elif value == CRISPState.LOCK:
+        elif value == CRISPSetState.LOCK:
             self.status_flag = AutoFocusStatusType.IN_FOCUS.value
-        elif value == CRISPState.UNLOCK:
+        elif value == CRISPSetState.UNLOCK:
             self.status_flag = AutoFocusStatusType.READY.value
-        elif value == CRISPState.DITHER:
+        elif value == CRISPSetState.DITHER:
             self.status_flag = AutoFocusStatusType.OUT_OF_FOCUS.value
-        elif value == CRISPState.SET_GAIN:
+        elif value == CRISPSetState.SET_GAIN:
             self.status_flag = AutoFocusStatusType.READY.value
         return self.status_flag
 
@@ -528,18 +529,18 @@ class TigerAutofocus(Autofocus):
             return False
 
         is_success = True
-        self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPState.IDLE)
-        self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPState.SET_OFFSET)
+        self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.IDLE)
+        self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.SET_OFFSET)
         self.sleep(self.pause_short)
-        self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPState.LOG_CAL)
+        self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.LOG_CAL)
         self.sleep(self.pause_long)
         if self.tiger.crisp_get_snr(card_address=self.card_address) < tiger_config.min_snr:
             is_success = False
-        self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPState.DITHER)
+        self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.DITHER)
         self.sleep(self.pause_long)
         if np.abs(self.tiger.crisp_get_err(card_address=self.card_address)) < tiger_config.min_error:
             is_success = False
-        self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPState.SET_GAIN)
+        self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.SET_GAIN)
         self.sleep(self.pause_short)
         self._unlock()
         self.sleep(self.pause_short)
@@ -559,7 +560,7 @@ class TigerAutofocus(Autofocus):
         -------
         None
         """
-        self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPState.LOCK)
+        self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.LOCK)
 
     def _unlock(self) -> None:
         """
@@ -573,7 +574,7 @@ class TigerAutofocus(Autofocus):
         -------
         None
         """
-        self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPState.UNLOCK)
+        self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.UNLOCK)
 
     def _disable(self) -> None:
         """
@@ -587,7 +588,7 @@ class TigerAutofocus(Autofocus):
         -------
         None
         """
-        self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPState.IDLE)
+        self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.IDLE)
 
     def _get_status(self) -> AutoFocusStatusType:
         """

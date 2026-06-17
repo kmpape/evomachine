@@ -7,9 +7,12 @@ import time
 from typing import Any
 
 from evomachine.bindings.binding_types import BindingType
+from evomachine.config import get_logger
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
 from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
 from evomachine.types import BrightnessType, LEDType
+
+logger = get_logger(name=__name__, is_peripheral=True)
 
 
 @dataclass
@@ -178,11 +181,15 @@ class LedSource(Peripheral):
         None
         """
         if self._is_initialised and not force:
+            logger.debug("LedSource.initialise: %s already initialised; skipping.", self.name)
             return
         if self.check_initialised and not self.peripheral_ctrl.is_initialised():
+            logger.warning("LedSource.initialise: %s controller is not initialised.", self.peripheral_ctrl.name)
             raise RuntimeError(f"LedSource.initialise: {self.peripheral_ctrl.name} is not initialised.")
         if self.check_alive and not self.peripheral_ctrl.is_alive():
+            logger.warning("LedSource.initialise: %s controller is not alive.", self.peripheral_ctrl.name)
             raise RuntimeError(f"LedSource.initialise: {self.peripheral_ctrl.name} is not alive.")
+        logger.debug("LedSource.initialise: initialising %s with force=%s.", self.name, force)
         self._initialise(force=force)
         self._is_initialised = True
 
@@ -229,6 +236,7 @@ class LedSource(Peripheral):
         -------
         None
         """
+        logger.debug("LedSource.stop: disabling all LEDs for %s.", self.name)
         self.disable_led()
 
     def finalise(self, force: bool = False) -> None:
@@ -245,6 +253,7 @@ class LedSource(Peripheral):
         -------
         None
         """
+        logger.debug("LedSource.finalise: finalising %s with force=%s.", self.name, force)
         self._cancel_all_timers()
         if self._is_initialised or not self.check_initialised:
             self.disable_led()
@@ -299,6 +308,13 @@ class LedSource(Peripheral):
             raise ValueError(f"LedSource: duration must be non-negative, received {duration}.")
 
         self._cancel_timer(led_type=led_type)
+        logger.debug(
+            "LedSource.set_led: setting %s %s to brightness=%s duration=%s.",
+            self.name,
+            led_type,
+            brightness,
+            duration,
+        )
         self._set_led(led_type=led_type, brightness=brightness, duration=duration)
         self._update_state(led_type=led_type, brightness=brightness, duration=duration)
         self._start_timer(led_type=led_type, duration=duration)
@@ -321,8 +337,10 @@ class LedSource(Peripheral):
         led_types = self.available_leds if led_type is None else [led_type]
         for selected_led_type in led_types:
             if selected_led_type not in self.available_leds:
+                logger.warning("LedSource.disable_led: %s is not available for %s.", selected_led_type, self.name)
                 raise ValueError(f"LedSource.disable_led: {selected_led_type} is not available for {self.name}.")
             self._cancel_timer(led_type=selected_led_type)
+            logger.debug("LedSource.disable_led: disabling %s on %s.", selected_led_type, self.name)
             self._disable_led(led_type=selected_led_type)
             self._states[selected_led_type] = LedState(led_type=selected_led_type)
 
@@ -379,8 +397,10 @@ class LedSource(Peripheral):
         None
         """
         if self.check_initialised and not self.is_initialised():
+            logger.warning("LedSource: %s is not initialised.", self.name)
             raise RuntimeError(f"LedSource: {self.name} is not initialised.")
         if self.check_alive and not self.is_alive():
+            logger.warning("LedSource: %s is not alive.", self.name)
             raise RuntimeError(f"LedSource: {self.name} is not alive.")
 
     @staticmethod
@@ -593,6 +613,7 @@ class LedManager(Peripheral):
         -------
         None
         """
+        logger.debug("LedManager.initialise: initialising %s with force=%s.", self.name, force)
         for source in self.led_sources:
             source.initialise(force=force)
 
@@ -639,6 +660,7 @@ class LedManager(Peripheral):
         -------
         None
         """
+        logger.debug("LedManager.stop: disabling LEDs for %s.", self.name)
         self.disable_led()
 
     def finalise(self, force: bool = False) -> None:
@@ -654,6 +676,7 @@ class LedManager(Peripheral):
         -------
         None
         """
+        logger.debug("LedManager.finalise: finalising %s with force=%s.", self.name, force)
         for source in self.led_sources:
             source.finalise(force=force)
 
@@ -696,8 +719,16 @@ class LedManager(Peripheral):
         None
         """
         if led_type == LEDType.NO_LED:
+            logger.debug("LedManager.set_led: received NO_LED for %s; disabling all LEDs.", self.name)
             self.disable_led()
             return
+        logger.debug(
+            "LedManager.set_led: routing %s brightness=%s duration=%s through %s.",
+            led_type,
+            brightness,
+            duration,
+            self.name,
+        )
         source = self._get_source(led_type=led_type)
         source.set_led(led_type=led_type, brightness=brightness, duration=duration)
 
@@ -716,9 +747,11 @@ class LedManager(Peripheral):
         None
         """
         if led_type is None or led_type == LEDType.NO_LED:
+            logger.debug("LedManager.disable_led: disabling all LEDs for %s.", self.name)
             for source in self.led_sources:
                 source.disable_led()
             return
+        logger.debug("LedManager.disable_led: disabling %s through %s.", led_type, self.name)
         self._get_source(led_type=led_type).disable_led(led_type=led_type)
 
     def get_led_state(self, led_type: LEDType) -> LedState:

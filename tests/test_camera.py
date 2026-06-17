@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from io import StringIO
+import logging
 
 import numpy as np
 import pytest
 
 from evomachine.bindings.binding_types import BindingType
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
+from evomachine.peripherals import camera as camera_module
 from evomachine.peripherals.camera import CameraConfig, CameraFactory, CameraReadoutMode
 from evomachine.peripherals.camera import ImageConfigType
 
@@ -125,6 +128,39 @@ def test_virtual_camera_lifecycle_exposure_and_frame() -> None:
 
     camera.finalise()
     assert not camera.is_initialised()
+
+
+def test_camera_state_changes_emit_debug_logs() -> None:
+    """
+    Check camera state-changing operations emit peripheral debug logs.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    stream = StringIO()
+    handler = logging.StreamHandler(stream)
+    camera_module.logger.addHandler(handler)
+    try:
+        camera = CameraFactory.create(
+            config=CameraConfig(binding=BindingType.VIRTUAL, image=_image_config()),
+            peripheral_controllers=_initialised_virtual_controller(),
+            random_seed=3,
+        )
+
+        camera.initialise()
+        camera.set_exposure(80)
+
+        log_text = stream.getvalue()
+    finally:
+        camera_module.logger.removeHandler(handler)
+
+    assert "Camera.initialise" in log_text
+    assert "Camera.set_exposure" in log_text
 
 
 def test_virtual_camera_normalised_frame() -> None:

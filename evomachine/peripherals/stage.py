@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from dataclasses import dataclass
+from evomachine.config import get_logger
 from evomachine.coordinates import Coordinate, CoordinateBounds
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
 from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
 from evomachine.bindings.binding_types import BindingType
 from evomachine.types import AxisType, FovDirectionType, PositiveScalingType, UNKNOWN_FOV_ID
+
+logger = get_logger(name=__name__, is_peripheral=True)
 
 
 @dataclass(kw_only=True)
@@ -188,6 +191,7 @@ class Stage(Peripheral):
         None
         """
         self._current_coordinate = self._current_coordinate.merge(update=coordinate)
+        logger.debug("Stage._update_current_coordinate: %s coordinate is now %s.", self.name, self._current_coordinate)
 
     def _require_ready(self, action: str) -> None:
         """
@@ -203,8 +207,10 @@ class Stage(Peripheral):
         None
         """
         if self._check_initialised and not self._is_initialised:
+            logger.warning("Stage.%s: %s is not initialised.", action, self.name)
             raise RuntimeError(f"Stage.{action}: stage is not initialised.")
         if self._check_alive and not self.is_alive():
+            logger.warning("Stage.%s: %s is not alive.", action, self.name)
             raise RuntimeError(f"Stage.{action}: stage is not alive.")
 
     def initialise(self, force: bool = False) -> None:
@@ -221,15 +227,20 @@ class Stage(Peripheral):
         None
         """
         if self._is_initialised and not force:
+            logger.debug("Stage.initialise: %s already initialised; skipping.", self.name)
             return
+        logger.debug("Stage.initialise: initialising %s with force=%s.", self.name, force)
         self._is_initialised = self._initialise(force=force)
         if self._check_initialised and not self._is_initialised:
+            logger.warning("Stage.initialise: %s failed to initialise.", self.name)
             raise RuntimeError("Stage.initialise: stage failed to initialise.")
         self._is_alive = self._check_is_alive()
         if self._check_alive and not self._is_alive:
+            logger.warning("Stage.initialise: %s is not alive after initialisation.", self.name)
             raise RuntimeError("Stage.initialise: stage is not alive after initialisation.")
         if self._is_alive:
             self._current_coordinate = self._get_coordinates()
+        logger.debug("Stage.initialise: %s initialised at %s.", self.name, self._current_coordinate)
 
     def finalise(self, force: bool = False) -> None:
         """
@@ -244,6 +255,7 @@ class Stage(Peripheral):
         -------
         None
         """
+        logger.debug("Stage.finalise: finalising %s with force=%s.", self.name, force)
         self._finalise(force=force)
         self._is_initialised = False
         self._is_alive = False
@@ -292,6 +304,7 @@ class Stage(Peripheral):
         -------
         None
         """
+        logger.debug("Stage.stop: stopping %s.", self.name)
         self.halt()
 
     def get_coordinates(
@@ -367,6 +380,7 @@ class Stage(Peripheral):
         """
         if fov_step_size <= 0:
             raise ValueError(f"Stage.set_fov_step_size: fov_step_size must be positive, received {fov_step_size}.")
+        logger.debug("Stage.set_fov_step_size: setting %s fov step size to %s.", self.name, fov_step_size)
         self._fov_step_size = fov_step_size
 
     def get_coordinate_bounds(self) -> CoordinateBounds:
@@ -446,13 +460,17 @@ class Stage(Peripheral):
             if not isinstance(coordinate, Coordinate):
                 raise TypeError(f"Stage.set_fov_id_to_coordinate: FoV {registered_fov_id} is not a Coordinate.")
             if (not use_autofocus) and (not coordinate.has_z()):
+                logger.warning("Stage.set_fov_id_to_coordinate: FoV %s is missing Z without autofocus.", registered_fov_id)
                 return False
             if use_autofocus and coordinate.has_z():
+                logger.warning("Stage.set_fov_id_to_coordinate: FoV %s includes Z while autofocus is enabled.", registered_fov_id)
                 return False
             if self.coordinate_is_out_of_bounds(coordinate):
+                logger.warning("Stage.set_fov_id_to_coordinate: FoV %s coordinate is out of bounds: %s.", registered_fov_id, coordinate)
                 return False
             coordinates[registered_fov_id] = coordinate.copy()
         self._fov_id_to_coordinate = coordinates
+        logger.debug("Stage.set_fov_id_to_coordinate: registered %s FoVs for %s.", len(coordinates), self.name)
         return True
 
     @staticmethod
@@ -600,13 +618,17 @@ class Stage(Peripheral):
         self._require_ready(action="move")
         fov_id, move_coordinate, use_home = self._coordinate_from_move_target(target=target)
         if use_home:
+            logger.debug("Stage.move: homing %s with block=%s.", self.name, block)
             self._current_coordinate = self._home(block=block)
             self._current_fov_id = fov_id
             return
         if not move_coordinate.has_axis_value():
+            logger.debug("Stage.move: %s received empty move target; skipping.", self.name)
             return
         if self.coordinate_is_out_of_bounds(coordinate=move_coordinate):
+            logger.warning("Stage.move: %s coordinate is out of bounds: %s.", self.name, move_coordinate)
             raise ValueError(f"Stage.move: coordinate is out of bounds: {move_coordinate}.")
+        logger.debug("Stage.move: moving %s to %s with block=%s.", self.name, move_coordinate, block)
         self._update_current_coordinate(coordinate=self._move(coordinate=move_coordinate, block=block))
         self._current_fov_id = fov_id
 
@@ -656,6 +678,7 @@ class Stage(Peripheral):
         None
         """
         self._require_ready(action="zero_coordinates")
+        logger.debug("Stage.zero_coordinates: zeroing %s.", self.name)
         self._current_coordinate = self._zero_coordinates()
         self._current_fov_id = self.UNKNOWN_FOV_ID
 

@@ -5,9 +5,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from evomachine.bindings.binding_types import BindingType
+from evomachine.config import get_logger
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
 from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
 from evomachine.types import AutoFocusStatusType
+
+logger = get_logger(name=__name__, is_peripheral=True)
 
 
 @dataclass(kw_only=True)
@@ -83,8 +86,10 @@ class Autofocus(Peripheral):
         None
         """
         if self._check_initialised and not self._is_initialised:
+            logger.warning("Autofocus.%s: %s is not initialised.", action, self.name)
             raise RuntimeError(f"Autofocus.{action}: autofocus is not initialised.")
         if self._check_alive and not self.is_alive():
+            logger.warning("Autofocus.%s: %s is not alive.", action, self.name)
             raise RuntimeError(f"Autofocus.{action}: autofocus is not alive.")
 
     def initialise(self, force: bool = False) -> None:
@@ -101,13 +106,18 @@ class Autofocus(Peripheral):
         None
         """
         if self._is_initialised and not force:
+            logger.debug("Autofocus.initialise: %s already initialised; skipping.", self.name)
             return
+        logger.debug("Autofocus.initialise: initialising %s with force=%s.", self.name, force)
         self._is_initialised = self._initialise(force=force)
         if self._check_initialised and not self._is_initialised:
+            logger.warning("Autofocus.initialise: %s failed to initialise.", self.name)
             raise RuntimeError("Autofocus.initialise: autofocus failed to initialise.")
         self._is_alive = self._check_is_alive()
         if self._check_alive and not self._is_alive:
+            logger.warning("Autofocus.initialise: %s is not alive after initialisation.", self.name)
             raise RuntimeError("Autofocus.initialise: autofocus is not alive after initialisation.")
+        logger.debug("Autofocus.initialise: %s initialised.", self.name)
 
     def finalise(self, force: bool = False) -> None:
         """
@@ -122,6 +132,7 @@ class Autofocus(Peripheral):
         -------
         None
         """
+        logger.debug("Autofocus.finalise: finalising %s with force=%s.", self.name, force)
         self._finalise(force=force)
         self._is_initialised = False
         self._is_alive = False
@@ -169,6 +180,7 @@ class Autofocus(Peripheral):
         -------
         None
         """
+        logger.debug("Autofocus.stop: stopping %s.", self.name)
         self.disable()
 
     def configure(self, config: Any | None = None) -> bool:
@@ -187,6 +199,7 @@ class Autofocus(Peripheral):
             True when configuration was accepted by the binding.
         """
         self._require_ready(action="configure")
+        logger.debug("Autofocus.configure: configuring %s with %s.", self.name, config)
         return self._configure(config=config)
 
     def initialise_autofocus(
@@ -212,6 +225,11 @@ class Autofocus(Peripheral):
             checks.
         """
         self._require_ready(action="initialise_autofocus")
+        logger.debug(
+            "Autofocus.initialise_autofocus: initialising %s with lock_after_initialise=%s.",
+            self.name,
+            lock_after_initialise,
+        )
         return self._initialise_autofocus(config=config, lock_after_initialise=lock_after_initialise)
 
     def lock(self) -> None:
@@ -227,6 +245,7 @@ class Autofocus(Peripheral):
         None
         """
         self._require_ready(action="lock")
+        logger.debug("Autofocus.lock: locking %s.", self.name)
         self._lock()
 
     def unlock(self) -> None:
@@ -242,6 +261,7 @@ class Autofocus(Peripheral):
         None
         """
         self._require_ready(action="unlock")
+        logger.debug("Autofocus.unlock: unlocking %s.", self.name)
         self._unlock()
 
     def disable(self) -> None:
@@ -257,6 +277,7 @@ class Autofocus(Peripheral):
         None
         """
         self._require_ready(action="disable")
+        logger.debug("Autofocus.disable: disabling %s.", self.name)
         self._disable()
 
     def get_status(self) -> AutoFocusStatusType:

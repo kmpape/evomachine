@@ -4,7 +4,7 @@ import pytest
 
 from evomachine.peripherals.autofocus import AutofocusConfig, AutofocusFactory
 from evomachine.bindings.asitiger.autofocus import (
-    CRISPState,
+    CRISPSetState,
     FakeTigerAutofocusController,
     TigerAutofocus,
     TigerAutofocusConfig,
@@ -226,7 +226,7 @@ def test_tiger_autofocus_configure_sends_expected_commands() -> None:
     assert autofocus.configure()
 
     assert controller.tiger.commands == [
-        ("state", CRISPState.UNLOCK),
+        ("state", CRISPSetState.UNLOCK),
         ("objective_na", 0.9),
         ("led_intensity", 70),
         ("loop_gain", 10),
@@ -262,22 +262,22 @@ def test_tiger_autofocus_initialise_command_sequence_and_lock() -> None:
     assert autofocus.initialise_autofocus(lock_after_initialise=True)
 
     assert controller.tiger.commands == [
-        ("state", CRISPState.UNLOCK),
+        ("state", CRISPSetState.UNLOCK),
         ("objective_na", 0.9),
         ("led_intensity", 70),
         ("loop_gain", 10),
         ("averaging", 5),
         ("update_rate", 10),
         ("lock_range", 0.1),
-        ("state", CRISPState.IDLE),
-        ("state", CRISPState.SET_OFFSET),
-        ("state", CRISPState.LOG_CAL),
+        ("state", CRISPSetState.IDLE),
+        ("state", CRISPSetState.SET_OFFSET),
+        ("state", CRISPSetState.LOG_CAL),
         ("snr", None),
-        ("state", CRISPState.DITHER),
+        ("state", CRISPSetState.DITHER),
         ("error", None),
-        ("state", CRISPState.SET_GAIN),
-        ("state", CRISPState.UNLOCK),
-        ("state", CRISPState.LOCK),
+        ("state", CRISPSetState.SET_GAIN),
+        ("state", CRISPSetState.UNLOCK),
+        ("state", CRISPSetState.LOCK),
     ]
     assert autofocus.get_status() == AutoFocusStatusType.IN_FOCUS
     assert autofocus.is_locked()
@@ -306,7 +306,7 @@ def test_tiger_autofocus_initialise_returns_false_for_low_snr_or_error() -> None
         autofocus.initialise()
 
         assert not autofocus.initialise_autofocus(lock_after_initialise=True)
-        assert ("state", CRISPState.LOCK) not in controller.tiger.commands
+        assert ("state", CRISPSetState.LOCK) not in controller.tiger.commands
 
 
 def test_tiger_autofocus_disable_unlock_and_status() -> None:
@@ -332,6 +332,10 @@ def test_tiger_autofocus_disable_unlock_and_status() -> None:
 
     autofocus.lock()
     assert autofocus.get_status() == AutoFocusStatusType.IN_FOCUS
+    assert autofocus.is_locked()
+
+    controller.tiger.status_flag = AutoFocusStatusType.OUT_OF_FOCUS.value
+    assert autofocus.get_status() == AutoFocusStatusType.OUT_OF_FOCUS
     assert autofocus.is_locked()
 
     autofocus.unlock()

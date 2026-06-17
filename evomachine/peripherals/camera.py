@@ -8,9 +8,12 @@ from typing import Any
 import numpy as np
 
 from evomachine.bindings.binding_types import BindingType
+from evomachine.config import get_logger
 from evomachine.exceptions import ConfigError, ErrorCode
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
 from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
+
+logger = get_logger(name=__name__, is_peripheral=True)
 
 
 @dataclass
@@ -269,8 +272,10 @@ class Camera(Peripheral):
         None
         """
         if self._check_initialised and not self._is_initialised:
+            logger.warning("Camera.%s: %s is not initialised.", action, self.name)
             raise RuntimeError(f"Camera.{action}: camera is not initialised.")
         if self._check_alive and not self.is_alive():
+            logger.warning("Camera.%s: %s is not alive.", action, self.name)
             raise RuntimeError(f"Camera.{action}: camera is not alive.")
 
     def initialise(self, force: bool = False) -> None:
@@ -287,16 +292,21 @@ class Camera(Peripheral):
         None
         """
         if self._is_initialised and not force:
+            logger.debug("Camera.initialise: %s already initialised; skipping.", self.name)
             return
+        logger.debug("Camera.initialise: initialising %s with force=%s.", self.name, force)
         self._is_initialised = self._initialise(force=force)
         if self._check_initialised and not self._is_initialised:
+            logger.warning("Camera.initialise: %s failed to initialise.", self.name)
             raise RuntimeError("Camera.initialise: camera failed to initialise.")
         self._is_alive = self._check_is_alive()
         if self._check_alive and not self._is_alive:
+            logger.warning("Camera.initialise: %s is not alive after initialisation.", self.name)
             raise RuntimeError("Camera.initialise: camera is not alive after initialisation.")
         self.set_exposure(self.default_exposure_time)
         if self.readout_mode is not None:
             self.set_readout_mode(self.readout_mode)
+        logger.debug("Camera.initialise: %s initialised.", self.name)
 
     def finalise(self, force: bool = False) -> None:
         """
@@ -311,6 +321,7 @@ class Camera(Peripheral):
         -------
         None
         """
+        logger.debug("Camera.finalise: finalising %s with force=%s.", self.name, force)
         self._finalise(force=force)
         self._is_initialised = False
         self._is_alive = False
@@ -359,6 +370,7 @@ class Camera(Peripheral):
         None
         """
         self._require_ready(action="stop")
+        logger.debug("Camera.stop: stopping %s.", self.name)
         self._stop()
 
     def get_frame(self, normalise: bool = False) -> np.ndarray:
@@ -376,6 +388,7 @@ class Camera(Peripheral):
             Captured image frame.
         """
         self._require_ready(action="get_frame")
+        logger.debug("Camera.get_frame: capturing frame from %s with normalise=%s.", self.name, normalise)
         frame = self._get_frame()
         if not isinstance(frame, np.ndarray):
             raise TypeError(f"Camera.get_frame: _get_frame must return np.ndarray, received {type(frame)}.")
@@ -398,6 +411,7 @@ class Camera(Peripheral):
         """
         self._require_ready(action="set_exposure")
         validated_exposure_time = self._validate_exposure_time(exposure_time)
+        logger.debug("Camera.set_exposure: setting %s exposure to %s ms.", self.name, validated_exposure_time)
         self._set_exposure(exposure_time=validated_exposure_time)
         self._current_exposure = validated_exposure_time
 
@@ -431,6 +445,7 @@ class Camera(Peripheral):
         """
         self._require_ready(action="set_readout_mode")
         validated_readout_mode = self._validate_readout_mode(readout_mode=readout_mode)
+        logger.debug("Camera.set_readout_mode: setting %s readout mode to %s.", self.name, validated_readout_mode)
         self._set_readout_mode(readout_mode=validated_readout_mode)
         self.readout_mode = validated_readout_mode
 
@@ -447,6 +462,7 @@ class Camera(Peripheral):
         None
         """
         self._require_ready(action="disable_live_mode")
+        logger.debug("Camera.disable_live_mode: disabling live mode for %s.", self.name)
         self._disable_live_mode()
 
     @staticmethod

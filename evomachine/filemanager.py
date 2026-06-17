@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 from typing import Any
@@ -10,6 +9,13 @@ import numpy as np
 import skimage.io
 import tifffile
 
+from evomachine.config import (
+    TimeConfig,
+    ensure_timezone_aware,
+    format_timestamp_for_filename,
+    format_timezone_id,
+    now,
+)
 from evomachine.frame import FrameMetaData
 from evomachine.types import FilterWheelType, LEDType
 
@@ -21,6 +27,7 @@ class FileNameConfig:
     directory: Path
     filename_pattern: str = "{channel}_FOV{fov_id}_X{x}_Y{y}_Z{z}_F{filter_wheel}_{timestamp}"
     create_directory: bool = True
+    time_config: TimeConfig = field(default_factory=TimeConfig)
 
     def __post_init__(self) -> None:
         if isinstance(self.directory, str):
@@ -33,6 +40,8 @@ class FileNameConfig:
             raise ValueError("FileNameConfig: filename_pattern must not be empty.")
         if not isinstance(self.create_directory, bool):
             raise TypeError(f"FileNameConfig: create_directory must be bool, received {type(self.create_directory)}.")
+        if not isinstance(self.time_config, TimeConfig):
+            raise TypeError(f"FileNameConfig: time_config must be TimeConfig, received {type(self.time_config)}.")
 
     def copy(self) -> "FileNameConfig":
         return FileNameConfig(**self.__dict__)
@@ -175,7 +184,12 @@ class FileManager:
                 f"FileManager.save_frame: frame_metadata must be FrameMetaData, received {type(frame_metadata)}."
             )
         if frame_metadata.execution_time is None:
-            frame_metadata.execution_time = datetime.now()
+            frame_metadata.execution_time = now(config=self.config.time_config)
+        else:
+            frame_metadata.execution_time = ensure_timezone_aware(
+                value=frame_metadata.execution_time,
+                config=self.config.time_config,
+            )
         filename = self.get_filename(frame_metadata=frame_metadata)
         filename.parent.mkdir(parents=True, exist_ok=True)
         metadata = {"FrameMetaData": frame_metadata.to_metadata_dict()}
@@ -341,7 +355,10 @@ class FileManager:
         """
         coordinate = frame_metadata.coordinate
         coordinate_dict = coordinate.to_dict() if coordinate is not None else {}
-        timestamp_source = frame_metadata.execution_time or frame_metadata.creation_time
+        timestamp_source = ensure_timezone_aware(
+            value=frame_metadata.execution_time or frame_metadata.creation_time,
+            config=self.config.time_config,
+        )
         format_values = {
             "channel": self._format_channel(frame_metadata=frame_metadata),
             "fov_id": frame_metadata.fov_id,
@@ -349,7 +366,8 @@ class FileManager:
             "y": coordinate_dict.get("Y", ""),
             "z": coordinate_dict.get("Z", "auto"),
             "filter_wheel": self._format_filter_wheel(frame_metadata.filter_wheel),
-            "timestamp": timestamp_source.strftime("%Y-%m-%d_%H-%M-%S-%f"),
+            "timestamp": format_timestamp_for_filename(value=timestamp_source, config=self.config.time_config),
+            "timezone": format_timezone_id(value=timestamp_source, config=self.config.time_config),
             "frame_id": frame_metadata.frame_id,
             "callback_id": "" if frame_metadata.callback_id is None else frame_metadata.callback_id,
         }

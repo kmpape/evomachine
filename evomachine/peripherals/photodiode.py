@@ -5,8 +5,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from evomachine.bindings.binding_types import BindingType
+from evomachine.config import get_logger
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
 from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
+
+logger = get_logger(name=__name__, is_peripheral=True)
 
 
 @dataclass
@@ -185,8 +188,10 @@ class Photodiode(Peripheral):
         None
         """
         if self.check_initialised and not self._is_initialised:
+            logger.warning("Photodiode.%s: %s is not initialised.", action, self.name)
             raise RuntimeError(f"Photodiode.{action}: photodiode is not initialised.")
         if self.check_alive and not self.is_alive():
+            logger.warning("Photodiode.%s: %s is not alive.", action, self.name)
             raise RuntimeError(f"Photodiode.{action}: photodiode is not alive.")
 
     def initialise(self, force: bool = False) -> None:
@@ -203,15 +208,20 @@ class Photodiode(Peripheral):
         None
         """
         if self._is_initialised and not force:
+            logger.debug("Photodiode.initialise: %s already initialised; skipping.", self.name)
             return
         if self.check_initialised and not self.peripheral_ctrl.is_initialised():
+            logger.warning("Photodiode.initialise: %s controller is not initialised.", self.peripheral_ctrl.name)
             raise RuntimeError(
                 f"Photodiode.initialise: {self.peripheral_ctrl.name} is not initialised."
             )
         if self.check_alive and not self.peripheral_ctrl.is_alive():
+            logger.warning("Photodiode.initialise: %s controller is not alive.", self.peripheral_ctrl.name)
             raise RuntimeError(f"Photodiode.initialise: {self.peripheral_ctrl.name} is not alive.")
+        logger.debug("Photodiode.initialise: initialising %s with force=%s.", self.name, force)
         self._is_initialised = self._initialise(force=force)
         if self.check_initialised and not self._is_initialised:
+            logger.warning("Photodiode.initialise: %s failed to initialise.", self.name)
             raise RuntimeError("Photodiode.initialise: photodiode failed to initialise.")
 
     def finalise(self, force: bool = False) -> None:
@@ -227,6 +237,7 @@ class Photodiode(Peripheral):
         -------
         None
         """
+        logger.debug("Photodiode.finalise: finalising %s with force=%s.", self.name, force)
         self._finalise(force=force)
         self._is_initialised = False
 
@@ -273,6 +284,7 @@ class Photodiode(Peripheral):
         None
         """
         self._require_ready(action="stop")
+        logger.debug("Photodiode.stop: stopping %s.", self.name)
         self._stop()
 
     def set_reading_range(
@@ -294,6 +306,12 @@ class Photodiode(Peripheral):
         -------
         None
         """
+        logger.debug(
+            "Photodiode.set_reading_range: setting %s range to (%s, %s).",
+            self.name,
+            minimum_reading,
+            maximum_reading,
+        )
         self.reading_range = PhotodiodeReadingRange(
             minimum_reading=minimum_reading,
             maximum_reading=maximum_reading,
@@ -314,6 +332,7 @@ class Photodiode(Peripheral):
         """
         self._require_ready(action="read_photodiode")
         raw_reading = self._read_raw_photodiode()
+        logger.debug("Photodiode.read_photodiode: %s raw reading=%s.", self.name, raw_reading)
         return self._normalise_reading(raw_reading=raw_reading)
 
     def _normalise_reading(self, raw_reading: float) -> float:

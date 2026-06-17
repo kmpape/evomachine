@@ -6,6 +6,7 @@ from syncboard.syncboardcontroller import SyncBoardController
 
 from evomachine.peripherals.peripheralcontrollers import SerialPeripheralController, SerialPeripheralControllerConfig
 from evomachine.bindings.binding_types import BindingType
+from evomachine.config import configure_binding_loggers
 
 
 class SyncBoardPeripheralController(SerialPeripheralController):
@@ -25,6 +26,7 @@ class SyncBoardPeripheralController(SerialPeripheralController):
             name: str = "",
             close_on_shutdown: bool = True,
     ):
+        configure_binding_loggers()
         self.syncboard: SyncBoardController = syncboard
         super().__init__(name=name or self.DEFAULT_NAME, close_on_shutdown=close_on_shutdown)
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from dataclasses import dataclass
-import logging
 import os
 from pathlib import Path
 import pickle as pkl
@@ -17,10 +16,10 @@ import skimage.io
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
 from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
 from evomachine.bindings.binding_types import BindingType
-from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT
+from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT, get_logger
 from evomachine.types import LEDType
 
-logger = logging.getLogger(__name__)
+logger = get_logger(name=__name__, is_peripheral=True)
 
 ARR_TYPE = np.uint8
 
@@ -302,14 +301,17 @@ class Dmd(Peripheral):
 
     def initialise(self, force: bool = False) -> None:
         """Initialise the underlying DMD peripheral controller."""
+        logger.debug("Dmd.initialise: initialising %s with force=%s.", self.name, force)
         self.peripheral_ctrl.initialise(force=force)
 
     def finalise(self, force: bool = False) -> None:
         """Shutdown the underlying DMD peripheral controller."""
+        logger.debug("Dmd.finalise: finalising %s with force=%s.", self.name, force)
         self.peripheral_ctrl.shutdown(force=force)
 
     def stop(self) -> None:
         """Blank the DMD display."""
+        logger.debug("Dmd.stop: blanking %s.", self.name)
         self.display_none()
 
     def is_alive(self) -> bool:
@@ -331,6 +333,7 @@ class Dmd(Peripheral):
     def calibrate(self, filepath: Path | None = None) -> None:
         """Load calibration data from filepath or the configured calibration file."""
         filepath = self._calib_file if filepath is None else Path(filepath)
+        logger.debug("Dmd.calibrate: loading calibration for %s from %s.", self.name, filepath)
         self._calib_data, self._homography_mat, self._homography_mat_inv = self.load_calibration_data(filepath=filepath)
         self._calib_file = filepath
 
@@ -473,8 +476,10 @@ class Dmd(Peripheral):
     def _check_ready(self) -> None:
         """Raise if display actions are not allowed by current readiness checks."""
         if self.check_initialised and not self.is_initialised():
+            logger.warning("%s: DMD peripheral controller is not initialised.", self.name)
             raise RuntimeError(f"{self.name}: DMD peripheral controller is not initialised.")
         if self.check_alive and not self.is_alive():
+            logger.warning("%s: DMD peripheral controller is not alive.", self.name)
             raise RuntimeError(f"{self.name}: DMD peripheral controller is not alive.")
 
     def _normalise_display_image(self, img: np.ndarray) -> np.ndarray:
@@ -496,12 +501,15 @@ class Dmd(Peripheral):
 
     def display_none(self) -> None:
         """Display a black screen."""
+        logger.debug("Dmd.display_none: displaying black screen on %s.", self.name)
         self.display_image(self.get_zero_array())
 
     def display_full(self, force_display: bool = False) -> None:
         """Display a white screen."""
         if not force_display and self.is_full_display():
+            logger.debug("Dmd.display_full: %s already full display; skipping.", self.name)
             return
+        logger.debug("Dmd.display_full: displaying full screen on %s with force_display=%s.", self.name, force_display)
         self.display_image(self.get_one_array(), _is_full_display=True)
 
     def get_zero_array(self, img_size: tuple[int, int] | None = None) -> np.ndarray:

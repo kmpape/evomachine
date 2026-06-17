@@ -130,3 +130,6 @@ dmypy.json
 
 # Image data collected on the mother machine
 images/
+
+# Logs
+logs/

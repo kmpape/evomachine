@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
 import logging
 from pathlib import Path
 import pickle
@@ -9,7 +8,7 @@ import time
 
 import numpy as np
 
-from evomachine.config import EVOMACHINE_DIR
+from evomachine.config import EVOMACHINE_DIR, format_timestamp_for_filename, now
 from evomachine.peripherals.dmd import DmdCalibrationConfig
 from evomachine.peripherals.camera import Camera
 from evomachine.peripherals.dmd import Dmd
@@ -175,7 +174,8 @@ class ProjectionManager:
         """
         if filename is not None:
             return Path(filename)
-        datestr = datetime.today().strftime("%Y-%m-%d")
+        timestamp = now()
+        datestr = format_timestamp_for_filename(value=timestamp)
         calib_version = 0
         candidate = self.calibration_directory / f"dmd_calibration_data_{datestr}_v{calib_version}.pkl"
         while candidate.exists():

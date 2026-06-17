@@ -1,7 +1,7 @@
 import sys
 sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/asitiger")
 sys.path.append("/home/hslab/workspace_python/conda_evomachine3.9/evomachine_repo")
-from asitiger.command import CRISPState, Command
+from asitiger.command import CRISPSetState, Command
 from evomachine.acquisition_bkp import EvoCamera, DMDControl
 from evomachine.config import DEVICE_CONFIG_EVO_TEST, CRISP_CONFIG_DEFAULT, OBJECTIVE_CONFIG_OIL, OBJECTIVE_CONFIG_AIR
 from evomachine.utils import Timer

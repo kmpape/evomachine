@@ -1,4 +1,5 @@
 from pathlib import Path
+import logging
 
 import evomachine.config as evomachine_config
 from evomachine.bindings.em_dmd_window.peripheralcontroller import EM_DMD_PROGRAM_PATH
@@ -19,13 +20,22 @@ def test_evomachine_config_uses_repository_log_folder():
 
 
 def test_syncboard_serialconnection_uses_repository_log_folder():
+    """
+    Check SyncBoard leaves file logging to evomachine.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
     from syncboard import serialconnection
 
-    log_path = Path(serialconnection.file_handler.baseFilename)
-
-    assert log_path.parent == SYNC_BOARD_REPO / "logs"
-    assert log_path.parent.exists()
-    assert "/home/hslab/" not in str(log_path)
+    assert not hasattr(serialconnection, "file_handler")
+    assert not hasattr(serialconnection, "LOG_DIR")
+    assert logging.getLogger("syncboard.serialconnection").handlers == []
 
 
 def test_em_dmd_window_path_uses_sibling_repository_layout():

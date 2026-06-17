@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 
+from evomachine.config import ensure_timezone_aware, format_timezone_id, now
 from evomachine.coordinates import Coordinate
 from evomachine.types import BrightnessType, EvoType, ExposureType, FilterWheelType, LEDType, UNKNOWN_FOV_ID
 
@@ -37,7 +38,7 @@ class FrameMetaData:
     "Field-of-view ID for this image plane, or UNKNOWN_FOV_ID before the automaton resolves it."
     coordinate: Coordinate | None = None
     "Stage coordinate associated with this image plane when known."
-    creation_time: datetime = field(default_factory=datetime.now)
+    creation_time: datetime = field(default_factory=now)
     "Time when the metadata object was created."
     execution_time: datetime | None = None
     "Time when acquisition for this image plane actually ran."
@@ -74,8 +75,11 @@ class FrameMetaData:
             raise TypeError(f"FrameMetaData: coordinate must be Coordinate or None, received {type(self.coordinate)}.")
         if not isinstance(self.creation_time, datetime):
             raise TypeError(f"FrameMetaData: creation_time must be datetime, received {type(self.creation_time)}.")
+        self.creation_time = ensure_timezone_aware(value=self.creation_time)
         if self.execution_time is not None and not isinstance(self.execution_time, datetime):
             raise TypeError(f"FrameMetaData: execution_time must be datetime or None, received {type(self.execution_time)}.")
+        if self.execution_time is not None:
+            self.execution_time = ensure_timezone_aware(value=self.execution_time)
         if self.callback_id is not None and (not isinstance(self.callback_id, int) or isinstance(self.callback_id, bool)):
             raise TypeError(f"FrameMetaData: callback_id must be int or None, received {type(self.callback_id)}.")
         if not isinstance(self.additional_metadata, dict):
@@ -97,7 +101,9 @@ class FrameMetaData:
             "fov_id": self.fov_id,
             "coordinate": None if self.coordinate is None else self.coordinate.to_dict(),
             "creation_time": self.creation_time.isoformat(),
+            "creation_timezone": format_timezone_id(value=self.creation_time),
             "execution_time": None if self.execution_time is None else self.execution_time.isoformat(),
+            "execution_timezone": None if self.execution_time is None else format_timezone_id(value=self.execution_time),
             "additional_metadata": self.additional_metadata,
         }
         try:

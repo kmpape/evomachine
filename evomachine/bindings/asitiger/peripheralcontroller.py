@@ -11,6 +11,7 @@ from evomachine.bindings.asitiger.card_addresses import (
     CARD_ADDRESS_FILTER_WHEEL,
     CARD_ADDRESS_LED,
 )
+from evomachine.config import configure_binding_loggers
 
 
 class TigerPeripheralController(SerialPeripheralController):
@@ -33,6 +34,7 @@ class TigerPeripheralController(SerialPeripheralController):
             card_address_led: int = CARD_ADDRESS_LED,
             card_address_filter_wheel: int = CARD_ADDRESS_FILTER_WHEEL,
     ):
+        configure_binding_loggers()
         self.tiger: TigerController = tiger
         self.card_address_crisp: int = self._validate_card_address(
             card_address=card_address_crisp,

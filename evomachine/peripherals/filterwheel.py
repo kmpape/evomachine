@@ -5,9 +5,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from evomachine.bindings.binding_types import BindingType
+from evomachine.config import get_logger
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
 from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
 from evomachine.types import FilterWheelType
+
+logger = get_logger(name=__name__, is_peripheral=True)
 
 
 @dataclass(kw_only=True)
@@ -141,8 +144,10 @@ class FilterWheel(Peripheral):
         None
         """
         if self._check_initialised and not self._is_initialised:
+            logger.warning("FilterWheel.%s: %s is not initialised.", action, self.name)
             raise RuntimeError(f"FilterWheel.{action}: filter wheel is not initialised.")
         if self._check_alive and not self.is_alive():
+            logger.warning("FilterWheel.%s: %s is not alive.", action, self.name)
             raise RuntimeError(f"FilterWheel.{action}: filter wheel is not alive.")
 
     def initialise(self, force: bool = False) -> None:
@@ -160,17 +165,22 @@ class FilterWheel(Peripheral):
         None
         """
         if self._is_initialised and not force:
+            logger.debug("FilterWheel.initialise: %s already initialised; skipping.", self.name)
             return
+        logger.debug("FilterWheel.initialise: initialising %s with force=%s.", self.name, force)
         self._is_initialised = self._initialise(force=force)
         if self._check_initialised and not self._is_initialised:
+            logger.warning("FilterWheel.initialise: %s failed to initialise.", self.name)
             raise RuntimeError("FilterWheel.initialise: filter wheel failed to initialise.")
         self._is_alive = self._check_is_alive()
         if self._check_alive and not self._is_alive:
+            logger.warning("FilterWheel.initialise: %s is not alive after initialisation.", self.name)
             raise RuntimeError("FilterWheel.initialise: filter wheel is not alive after initialisation.")
         self._current_filter_type = self._validate_filter_type(
             filter_type=self._get_filter_wheel(),
             action="initialise",
         )
+        logger.debug("FilterWheel.initialise: %s initialised at %s.", self.name, self._current_filter_type)
 
     def finalise(self, force: bool = False) -> None:
         """
@@ -185,6 +195,7 @@ class FilterWheel(Peripheral):
         -------
         None
         """
+        logger.debug("FilterWheel.finalise: finalising %s with force=%s.", self.name, force)
         self._finalise(force=force)
         self._is_initialised = False
         self._is_alive = False
@@ -235,6 +246,7 @@ class FilterWheel(Peripheral):
         -------
         None
         """
+        logger.debug("FilterWheel.stop: %s has no generic stop command; skipping.", self.name)
         return
 
     def get_available_filters(self) -> list[FilterWheelType]:
@@ -287,9 +299,12 @@ class FilterWheel(Peripheral):
         self._require_ready(action="set_filter_wheel")
         filter_type = self._validate_filter_type(filter_type=filter_type, action="set_filter_wheel")
         if filter_type not in self._available_filters:
+            logger.warning("FilterWheel.set_filter_wheel: %s unavailable filter %s.", self.name, filter_type)
             raise ValueError(f"FilterWheel.set_filter_wheel: unavailable filter {filter_type}.")
         if not force and filter_type == self._current_filter_type:
+            logger.debug("FilterWheel.set_filter_wheel: %s already at %s; skipping.", self.name, filter_type)
             return
+        logger.debug("FilterWheel.set_filter_wheel: setting %s to %s with force=%s.", self.name, filter_type, force)
         self._set_filter_wheel(filter_type=filter_type)
         self._current_filter_type = filter_type
 

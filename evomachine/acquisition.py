@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 
+from evomachine.config import get_logger, now
 from evomachine.peripherals.camera import Camera
 from evomachine.coordinates import Coordinate
 from evomachine.frame import Frame, FrameMetaData
@@ -15,6 +15,8 @@ from evomachine.peripherals.filterwheel import FilterWheel
 from evomachine.peripherals.leds import LedManager, LedState
 from evomachine.peripherals.stage import Stage
 from evomachine.types import LEDType
+
+logger = get_logger(name=__name__)
 
 
 @dataclass
@@ -170,6 +172,12 @@ class FrameAcquisitionManager:
         previous_led_states = self._capture_led_states() if settings.restore_leds_after else {}
         frames: list[np.ndarray] = []
         saved_paths: list[Path | None] = []
+        logger.debug(
+            "FrameAcquisitionManager.take_frame: acquiring %s frame(s) for fov_id=%s with save=%s.",
+            len(metadata_items),
+            metadata_items[0].fov_id,
+            settings.save,
+        )
         # Cleanup must run even when DMD display, LED/filter setup, camera
         # capture, or saving raises.
         try:
@@ -409,11 +417,14 @@ class FrameAcquisitionManager:
         """
         if self.dmd is not None and settings.illuminate_dmd:
             if frame_metadata.dmd_pattern is None:
+                logger.debug("FrameAcquisitionManager: displaying full DMD illumination.")
                 self.dmd.display_full()
             else:
+                logger.debug("FrameAcquisitionManager: displaying metadata DMD pattern.")
                 self.dmd.display_image(frame_metadata.dmd_pattern)
         if frame_metadata.filter_wheel is not None:
             if self.filter_wheel is None:
+                logger.warning("FrameAcquisitionManager: filter wheel requested but no filter wheel was provided.")
                 raise RuntimeError(
                     "FrameAcquisitionManager: frame metadata requested filter wheel control but no filter wheel was provided."
                 )
@@ -423,13 +434,15 @@ class FrameAcquisitionManager:
         if frame_metadata.leds is not None:
             for led_type, brightness in frame_metadata.leds.items():
                 self.led_manager.set_led(led_type=led_type, brightness=brightness)
-        frame_metadata.execution_time = datetime.now()
+        frame_metadata.execution_time = now()
         frame = self.camera.get_frame(normalise=settings.normalise)
         if not settings.save:
             return frame, None
         if self.file_manager is None:
+            logger.warning("FrameAcquisitionManager: saving requested but no file manager was provided.")
             raise RuntimeError("FrameAcquisitionManager: saving requested but no file manager was provided.")
         saved_path = self.file_manager.save_frame(frame=frame, frame_metadata=frame_metadata)
+        logger.debug("FrameAcquisitionManager: saved frame to %s.", saved_path)
         return frame, saved_path
 
     def _capture_led_states(self) -> dict[LEDType, LedState]:

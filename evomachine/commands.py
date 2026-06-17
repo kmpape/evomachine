@@ -1,14 +1,15 @@
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum, auto
 import logging
-from time import time, gmtime, strftime
+from time import time
 from typing import Any
 
 import numpy as np
 
 from delta.utils import CroppingBox as DeltaCroppingBox
 
-from evomachine.config import DMD_WIDTH_HEIGHT, EVO_FORMATTER, get_logger
+from evomachine.config import DMD_WIDTH_HEIGHT, EVO_FORMATTER, format_timestamp_for_display, get_logger, get_timezone
 from evomachine.coordinates import Coordinate
 from evomachine.frame import FrameMetaData
 from evomachine.image_processing_config import ImageProcessorConfig
@@ -71,7 +72,9 @@ class AutomatonCommand:
 
     @staticmethod
     def _get_time(t: float | None) -> str:
-        return "None" if t is None else strftime('%Y-%m-%d %H:%M:%S', gmtime(t))
+        if t is None:
+            return "None"
+        return format_timestamp_for_display(datetime.fromtimestamp(t, tz=get_timezone()))
 
     def get_exec_time(self):
         return self._get_time(self.command_execution_time)
