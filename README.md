@@ -8,19 +8,39 @@ projection, strategies, and real-time processing workflows.
 
 Dependencies are managed with [uv](https://docs.astral.sh/uv/).
 
-### 1. Clone the sibling repositories
+### Sibling dependencies: two install modes
 
-*Note: this is currently a bit of a hacky way to install other dependencies. The aim is to clean it up soon.*
+Three sibling repositories (`de-lta-rt` → `delta2`, `asitiger`, `sync_board` →
+`syncboard`) are dependencies of `evomachine`. They are wired up so the *same*
+`pyproject.toml` supports two workflows:
 
-Three sibling repositories are installed by `uv` as **editable path
-dependencies** (declared in `[tool.uv.sources]`). They must already be cloned
-next to `evomachine` in the same parent folder, and checked out on the correct
-branch, *before* you run `uv sync` — otherwise the install will fail or pick up
-the wrong code:
+- **Production / reproducible (`--no-sources`)** — installs each sibling from a
+  pinned **git release tag**, declared in `[project.dependencies]`. Nothing
+  depends on what is checked out locally, so deploys are reproducible.
+- **Development (default)** — the `[tool.uv.sources]` table overrides those git
+  specs with **editable local checkouts** living next to this repo, so changes
+  in a sibling are picked up immediately.
+
+| Command | Siblings resolved from | Use for |
+|---|---|---|
+| `uv sync` | local editable checkouts (`../de-lta-rt`, …) | day-to-day development |
+| `uv sync --no-sources` | pinned git tags | the microscope machine / deploys |
+| `uv sync --no-sources-package asitiger` | `asitiger` from git, the rest editable | mixed: hack on one sibling only |
+
+> **Status:** the git tags in `[project.dependencies]` are currently
+> `REPLACE-WITH-TAG` placeholders. The `--no-sources` (production) path is not
+> usable until each sibling has been committed, pushed, and tagged, and the tags
+> filled in here — see "Releasing the siblings" below. The default editable
+> `uv sync` works today.
+
+#### Development setup (editable)
+
+The sibling repos must already be cloned next to `evomachine` in the same parent
+folder, and checked out on the correct branch, *before* you run `uv sync`:
 
 | Sibling folder | Imported as | Required branch |
 |---|---|---|
-| `de-lta-rt/`  | `delta`     | `dev_main` |
+| `de-lta-rt/`  | `delta2`    | `dev_main` |
 | `asitiger/`   | `asitiger`  | `master`   |
 | `sync_board/` | `syncboard` | `Signals`  |
 
@@ -37,8 +57,6 @@ workspace/
 The exact branches matter: e.g. `delta`'s real-time modules (`delta.rttypes`,
 `delta.rt`, `delta.imgops`) only exist on `de-lta-rt`'s `dev_main` branch.
 
-### 2. Install the environment
-
 From the `evomachine` repo root:
 
 ```bash
@@ -53,6 +71,32 @@ uv run pytest
 
 `uv sync` reads `pyproject.toml` and pins everything in `uv.lock`. This
 application targets the Linux + CUDA microscope machine, including the GPU stack.
+
+#### Releasing the siblings (enabling `--no-sources`)
+
+To make the production path work, each sibling needs a git tag pointing at the
+exact commit to deploy. For each of `de-lta-rt`, `asitiger`, and `sync_board`:
+
+```bash
+# inside the sibling repo, with the intended code committed and pushed
+git tag v0.2.0           # pick a version
+git push origin v0.2.0
+```
+
+Then replace the `@REPLACE-WITH-TAG` placeholders in `[project.dependencies]`
+with the chosen tags and regenerate the locked production resolution:
+
+```bash
+uv lock --no-sources     # pins the resolved git commits into uv.lock
+```
+
+Deploys then run `uv sync --no-sources --frozen` for a fully reproducible
+install.
+
+> **Note on `uv.lock`:** the lockfile records a single resolution. Commit the
+> `--no-sources` (git-pinned) lock as canonical. A plain editable `uv sync`
+> re-resolves to the local paths and will modify `uv.lock` locally — don't
+> commit that change.
 
 ### Dev dependencies
 
