@@ -6,26 +6,25 @@ projection, strategies, and real-time processing workflows.
 
 ## Installation
 
-Dependencies are managed with [uv](https://docs.astral.sh/uv/).
+Dependencies are managed with [uv](https://docs.astral.sh/uv/) and specified in the [pyproject.toml](pyproject.toml) file.
 
-### 1. Clone the sibling repositories
+### Production / deployment
 
-*Note: this is currently a bit of a hacky way to install other dependencies. The aim is to clean it up soon.*
+*Follow this workflow if you're installing `evomachine` on a microscope (see next section for local development).*
 
-Three sibling repositories are installed by `uv` as **editable path
-dependencies** (declared in `[tool.uv.sources]`). They must already be cloned
-next to `evomachine` in the same parent folder, and checked out on the correct
-branch, *before* you run `uv sync` — otherwise the install will fail or pick up
-the wrong code:
+From the `evomachine` repo root:
+```bash
+uv sync --no-sources --no-dev
+```
+which will create a new `.venv` virtual environment and install all required dependencies.
 
-| Sibling folder | Imported as | Required branch |
-|---|---|---|
-| `de-lta-rt/`  | `delta`     | `dev_main` |
-| `asitiger/`   | `asitiger`  | `master`   |
-| `sync_board/` | `syncboard` | `Signals`  |
+### Local development
 
-Expected layout:
+*Follow this workflow if you're developing new features in this or dependency repos (eg, `sync_board`).*
 
+Start by cloning the sibling repos next to `evomachine` in the same parent folder, and check out the correct respective branches (see [Workspace Structure](#workspace-structure)). 
+
+The expected layout is:
 ```
 workspace/
 ├── evomachine/      ← this repo
@@ -34,35 +33,35 @@ workspace/
 └── sync_board/      (Signals)
 ```
 
-The exact branches matter: e.g. `delta`'s real-time modules (`delta.rttypes`,
-`delta.rt`, `delta.imgops`) only exist on `de-lta-rt`'s `dev_main` branch.
+Then, from the `evomachine` repo root:
+```bash
+uv sync
+```
+which will create a new `.venv` virtual environment with the local sibling dependencies installed in [editable mode](https://setuptools.pypa.io/en/latest/userguide/development_mode.html) for easier development, as specified in the `[tool.uv.sources]` section of [pyproject.toml](pyproject.toml), as well as all `dev` dependencies.
 
-### 2. Install the environment
+## Testing
 
-From the `evomachine` repo root:
+Run all tests via `pytest`:
 
 ```bash
-# creates .venv and installs: curated runtime deps, the three editable sibling
-# packages, the evomachine package (editable), and the dev tools
-uv sync
-
-# run anything inside the environment
-uv run python scripts/launch_gui.py
 uv run pytest
 ```
 
-`uv sync` reads `pyproject.toml` and pins everything in `uv.lock`. This
-application targets the Linux + CUDA microscope machine, including the GPU stack.
+## Running scripts
 
-### Dev dependencies
-
-The dev tools (`pytest`, `pytest-cov`, `ruff`, `pre-commit`) live in the `dev`
-dependency group, which `uv sync` installs **by default**. For a runtime-only
-environment (e.g. on the microscope machine), skip them with:
-
+Anything can be run inside the virtual environment via `uv run ...`, such as:
 ```bash
-uv sync --no-dev
+uv run python scripts/launch_gui.py
 ```
+
+## Release workflow
+
+Let's say you want to make a change to the `sync_board` dependency and have it propagated to `evomachine`. The steps are:
+
+1. Make your changes to `sync_board` and eventually get it merged into the `main` branch (perhaps after making a new branch, PR, and some form of PR review process).
+2. Release a new version of `sync_board`: GitHub repo > Releases > Create a new release > Tag `<new_tag>` (eg, `v0.2.0`) > Publish Release.
+3. Update the git tag in `evomachine/pyproject.toml` to the new release tag.
+4. Run `uv sync --no-sources` to resolve the new dependencies.
 
 ### Out-of-band dependencies
 
@@ -77,27 +76,32 @@ provided separately:
 
 ## Workspace Structure
 
-This project expects several sibling repositories to live next to the main
-`evomachine` repository:
+This project depends on several sibling repositories:
 
-- `evomachine/`: main application repository.  
-  URL: `https://github.com/kmpape/evomachine`  
-  Branches: `dev` (in use) and `refactor`
-- `asitiger/`: ASI Tiger controller package used by Tiger hardware bindings.  
-  URL: `https://github.com/kmpape/asitiger` (forked from `https://github.com/herophilus/asitiger`)  
-  Branches: 
-- `sync_board/`: SyncBoard controller package used by SyncBoard bindings.  
-  URL: `https://github.com/kmpape/sync_board`  
-  Branches: `Signals` (in use), `master` (refactor, differences unclear)
-- `de-lta-rt/`: DE-LTA real-time segmentation and tracking package.  
-  URL: `https://gitlab.com/kmpape/de-lta-rt`  
-  Branches: `dev_main`
-- `em_dmd_window/`: DMD display/window helper used by projection bindings.  
-  URL: `https://github.com/kmpape/em_dmd_window`
-  Branches: `master`  
+`evomachine`: 
+- main application repository (this one)
+- URL: `https://github.com/kmpape/evomachine`  
+- Branches: `dev` (in use) and `refactor`
 
-Keeping these repositories as siblings lets scripts, notebooks, and local
-imports resolve the hardware and processing dependencies during development.  
+`asitiger`: 
+- ASI Tiger controller package used by Tiger hardware bindings.  
+- URL: `https://github.com/kmpape/asitiger` (forked from `https://github.com/herophilus/asitiger`)  
+- Branches: 
+
+`sync_board`: 
+- SyncBoard controller package used by SyncBoard bindings.  
+- URL: `https://github.com/kmpape/sync_board`  
+- Branches: `Signals` (in use), `master` (refactor, differences unclear)
+
+`de-lta-rt`:
+- DE-LTA real-time segmentation and tracking package.  
+- URL: `https://gitlab.com/kmpape/de-lta-rt`  
+- Branches: `dev_main`
+
+`em_dmd_window/`: 
+- DMD display/window helper used by projection bindings.  
+- URL: `https://github.com/kmpape/em_dmd_window`
+- Branches: `master`  
 
 Additionally, a Windows PC runs the microfluidics controls independently:  
 - URL: `https://github.com/KSechkar/MM_microfluidics'  

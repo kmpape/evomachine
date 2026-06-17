@@ -28,14 +28,19 @@ dependencies = [
     # CUDA runtime libraries.
     "tensorflow[and-cuda]==2.15.*",
     
-    # Local sibling repos (live next to this one in the workspace). Their paths are
-    # specified in the `[tool.uv.sources]` below.
-    "delta2",
-    "asitiger",
-    "syncboard",
+    # Sibling repos, declared as git dependencies pinned to a release tag or branch.
+    # This is are what a production install (`uv sync --no-sources`)
+    # resolves. During development the `[tool.uv.sources]` section below overrides
+    # them with local editable checkouts. See the README "Installation" 
+    # section for the dev vs. prod workflow.
+    "delta2 @ git+ssh://git@gitlab.com/kmpape/de-lta-rt.git@v2.1.0.dev1",  # tag created of the `dev_main` branch
+    "asitiger @ git+ssh://git@github.com/kmpape/asitiger.git@v0.1.0",
+    "syncboard @ git+ssh://git@github.com/kmpape/sync_board.git@v0.1.1-signals",
 ]
 
 [tool.uv.sources]
+# Development override: editable working trees living next to this repo. These
+# take effect for a plain `uv sync`.
 delta2 = { path = "../de-lta-rt", editable = true }
 asitiger = { path = "../asitiger", editable = true }
 syncboard = { path = "../sync_board", editable = true }
@@ -47,6 +52,12 @@ dev = [
     "ruff>=0.8",
     "pre-commit>=4.0",
 ]
+
+[tool.hatch.metadata]
+# Required because `[project.dependencies]` declares the sibling repos as direct
+# git references (`name @ git+ssh://...`). Hatchling rejects direct references
+# unless explicitly allowed.
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["evomachine"]
