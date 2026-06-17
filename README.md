@@ -76,27 +76,32 @@ provided separately:
 
 ## Workspace Structure
 
-This project expects several sibling repositories to live next to the main
-`evomachine` repository:
+This project depends on several sibling repositories:
 
-- `evomachine/`: main application repository.  
-  URL: `https://github.com/kmpape/evomachine`  
-  Branches: `dev` (in use) and `refactor`
-- `asitiger/`: ASI Tiger controller package used by Tiger hardware bindings.  
-  URL: `https://github.com/kmpape/asitiger` (forked from `https://github.com/herophilus/asitiger`)  
-  Branches: 
-- `sync_board/`: SyncBoard controller package used by SyncBoard bindings.  
-  URL: `https://github.com/kmpape/sync_board`  
-  Branches: `Signals` (in use), `master` (refactor, differences unclear)
-- `de-lta-rt/`: DE-LTA real-time segmentation and tracking package.  
-  URL: `https://gitlab.com/kmpape/de-lta-rt`  
-  Branches: `dev_main`
-- `em_dmd_window/`: DMD display/window helper used by projection bindings.  
-  URL: `https://github.com/kmpape/em_dmd_window`
-  Branches: `master`  
+`evomachine`: 
+- main application repository (this one)
+- URL: `https://github.com/kmpape/evomachine`  
+- Branches: `dev` (in use) and `refactor`
 
-Keeping these repositories as siblings lets scripts, notebooks, and local
-imports resolve the hardware and processing dependencies during development.  
+`asitiger`: 
+- ASI Tiger controller package used by Tiger hardware bindings.  
+- URL: `https://github.com/kmpape/asitiger` (forked from `https://github.com/herophilus/asitiger`)  
+- Branches: 
+
+`sync_board`: 
+- SyncBoard controller package used by SyncBoard bindings.  
+- URL: `https://github.com/kmpape/sync_board`  
+- Branches: `Signals` (in use), `master` (refactor, differences unclear)
+
+`de-lta-rt`:
+- DE-LTA real-time segmentation and tracking package.  
+- URL: `https://gitlab.com/kmpape/de-lta-rt`  
+- Branches: `dev_main`
+
+`em_dmd_window/`: 
+- DMD display/window helper used by projection bindings.  
+- URL: `https://github.com/kmpape/em_dmd_window`
+- Branches: `master`  
 
 Additionally, a Windows PC runs the microfluidics controls independently:  
 - URL: `https://github.com/KSechkar/MM_microfluidics'  
