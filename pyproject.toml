@@ -28,26 +28,19 @@ dependencies = [
     # CUDA runtime libraries.
     "tensorflow[and-cuda]==2.15.*",
     
-    # Sibling repos, declared as canonical git dependencies pinned to release
-    # tags. These specs are what a production install (`uv sync --no-sources`)
-    # resolves. During development the `[tool.uv.sources]` overrides below replace
-    # them with local editable checkouts. See the README "Installation" section
-    # for the dev-vs-prod workflow.
-    #
-    # TODO: replace each `@REPLACE-WITH-TAG` placeholder with a real release tag
-    # once the sibling repo has been committed, pushed, and tagged, then run
-    # `uv lock --no-sources` to pin the resolved commits into uv.lock.
-    "delta2 @ git+ssh://git@gitlab.com/kmpape/de-lta-rt.git@REPLACE-WITH-TAG",
-    "asitiger @ git+ssh://git@github.com/kmpape/asitiger.git@REPLACE-WITH-TAG",
-    "syncboard @ git+ssh://git@github.com/kmpape/sync_board.git@REPLACE-WITH-TAG",
+    # Sibling repos, declared as git dependencies pinned to a release tag or branch.
+    # This is are what a production install (`uv sync --no-sources`)
+    # resolves. During development the `[tool.uv.sources]` section below overrides
+    # them with local editable checkouts. See the README "Installation" 
+    # section for the dev vs. prod workflow.
+    "delta2 @ git+ssh://git@gitlab.com/kmpape/de-lta-rt.git@v0.1.0-dev_main",
+    "asitiger @ git+ssh://git@github.com/kmpape/asitiger.git@v0.1.0",
+    "syncboard @ git+ssh://git@github.com/kmpape/sync_board.git@v0.1.0",
 ]
 
 [tool.uv.sources]
 # Development override: editable working trees living next to this repo. These
-# take effect for a plain `uv sync`. `uv sync --no-sources` ignores this table
-# and installs the pinned git tags declared in `[project.dependencies]` above.
-# Use `--no-sources-package <name>` to pull just one sibling from git while
-# keeping the others editable.
+# take effect for a plain `uv sync`.
 delta2 = { path = "../de-lta-rt", editable = true }
 asitiger = { path = "../asitiger", editable = true }
 syncboard = { path = "../sync_board", editable = true }
@@ -59,6 +52,12 @@ dev = [
     "ruff>=0.8",
     "pre-commit>=4.0",
 ]
+
+[tool.hatch.metadata]
+# Required because `[project.dependencies]` declares the sibling repos as direct
+# git references (`name @ git+ssh://...`). Hatchling rejects direct references
+# unless explicitly allowed.
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["evomachine"]
