@@ -33,9 +33,9 @@ dependencies = [
     # resolves. During development the `[tool.uv.sources]` section below overrides
     # them with local editable checkouts. See the README "Installation" 
     # section for the dev vs. prod workflow.
-    "delta2 @ git+ssh://git@gitlab.com/kmpape/de-lta-rt.git@v0.1.0-dev_main",
+    "delta2 @ git+ssh://git@gitlab.com/kmpape/de-lta-rt.git@v2.1.0.dev1",  # tag created of the `dev_main` branch
     "asitiger @ git+ssh://git@github.com/kmpape/asitiger.git@v0.1.0",
-    "syncboard @ git+ssh://git@github.com/kmpape/sync_board.git@v0.1.0",
+    "syncboard @ git+ssh://git@github.com/kmpape/sync_board.git@v0.1.1-signals",
 ]
 
 [tool.uv.sources]
