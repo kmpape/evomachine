@@ -68,6 +68,18 @@ The main Python package is `evomachine/evomachine`.
   shared data types, metadata, coordinate handling, and file output utilities.
 - `softwarefocus.py` and `trackingrt.py` support software focus and real-time
   tracking workflows.
+- `gui/` contains a Napari-based GUI that can be used to control the evomachine.
+
+Other useful top-level folders in the main repository:
+
+- `strategies/` contains example strategies and can be populated by users. The
+  GUI will scan this folder to list strategy selection options.
+- `tests/`: pytest coverage for the package. Run `pytest tests` to execute test suite.
+- `scripts/`: runnable hardware and workflow scripts.
+- `notebooks/`: interactive notebooks for smoke tests and exploratory work.
+- `calibrations/`, `data/`, `delta_models/`, and `images/`:
+  runtime inputs, outputs, models, calibration data, and strategy files.  
+  Note: some folders are only created when starting the software.
 
 ## GUI Demo
 
@@ -85,12 +97,3 @@ To smoke-test the automaton/socket startup without opening Napari:
 ```bash
 python scripts/launch_gui.py --port 0 --no-napari
 ```
-
-Other useful top-level folders in the main repository:
-
-- `tests/`: pytest coverage for the package.
-- `scripts/`: runnable hardware and workflow scripts.
-- `notebooks/`: interactive notebooks for smoke tests and exploratory work.
-- `calibrations/`, `data/`, `delta_models/`, `images/`, and `strategies/`:
-  runtime inputs, outputs, models, calibration data, and strategy files.  
-  Note: some folders are only created when starting the software.

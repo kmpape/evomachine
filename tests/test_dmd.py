@@ -257,7 +257,7 @@ def test_load_image_and_display_loaded_image_use_shared_state(tmp_path):
     image_file = tmp_path / "image.png"
     import skimage.io
 
-    skimage.io.imsave(image_file, np.ones((10, 10), dtype=np.uint8) * 127)
+    skimage.io.imsave(image_file, np.ones((10, 10), dtype=np.uint8) * 127, check_contrast=False)
 
     loaded = dmd.load_image(str(image_file), display_image=False)
     dmd.display_loaded_image()
@@ -271,7 +271,7 @@ def test_load_constant_non_uint8_image_normalises_without_nan(tmp_path):
     image_file = tmp_path / "image.tif"
     import skimage.io
 
-    skimage.io.imsave(image_file, np.ones((10, 10), dtype=np.uint16) * 5)
+    skimage.io.imsave(image_file, np.ones((10, 10), dtype=np.uint16) * 5, check_contrast=False)
 
     loaded = dmd.load_image(str(image_file), display_image=False)
 

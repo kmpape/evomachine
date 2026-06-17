@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from evomachine.bindings.asitiger.autofocus import TigerAutofocusConfig, TigerAutofocusConfigFactory
 from evomachine.filemanager import FileNameConfig
-from evomachine.frame import Frame, FrameMetaData, FrameMetaDataFactory
-from evomachine.image_processing_config import ImageProcessorConfig, ImageProcessorConfigFactory
 from evomachine.peripherals.camera import (
     CameraConfig,
     CameraReadoutMode,
@@ -25,13 +23,8 @@ __all__ = [
     "DmdCalibrationConfig",
     "DmdCalibrationConfigFactory",
     "FileNameConfig",
-    "Frame",
-    "FrameMetaData",
-    "FrameMetaDataFactory",
     "ImageConfigType",
     "ImageConfigTypeFactory",
-    "ImageProcessorConfig",
-    "ImageProcessorConfigFactory",
     "ObjectiveConfigType",
     "ObjectiveConfigTypeFactory",
     "SoftwareFocusConfig",

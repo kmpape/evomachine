@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from evomachine.commands import AutomatonCommand
-from evomachine.config_types import FrameMetaDataFactory, ImageProcessorConfig
+from evomachine.frame import FrameMetaDataFactory
 from evomachine.strategy import AbstractStrategy
 from evomachine.types import AutomatonCommandType, LEDType
+
+if TYPE_CHECKING:
+    from evomachine.image_processing_config import ImageProcessorConfig
 
 
 class DmdProjectByRoiStrategy(AbstractStrategy):
