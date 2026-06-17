@@ -38,6 +38,13 @@ dependencies = [
     "syncboard @ git+ssh://git@github.com/kmpape/sync_board.git@v0.1.1-signals",
 ]
 
+[tool.uv]
+# Transitive pin: aicsimageio (pulled in via delta2) requires zarr <2.16, and
+# zarr 2.15 imports `cbuffer_sizes` from numcodecs.blosc, which numcodecs 0.16
+# removed. Without this cap the resolver pairs zarr 2.15 with numcodecs 0.16.5,
+# which breaks `import aicsimageio` at module load (and the whole test suite).
+constraint-dependencies = ["numcodecs<0.16"]
+
 [tool.uv.sources]
 # Development override: editable working trees living next to this repo. These
 # take effect for a plain `uv sync`.
