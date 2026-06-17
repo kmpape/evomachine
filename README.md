@@ -18,6 +18,9 @@ uv sync --no-sources --no-dev
 ```
 which will create a new `.venv` virtual environment and install all required dependencies.
 
+Depending on the hardware backends in use, you may also need the extra
+dependencies, see [Extra dependencies](#extra-dependencies).
+
 ### Local development
 
 *Follow this workflow if you're developing new features in this or dependency repos (eg, `sync_board`).*
@@ -53,10 +56,15 @@ uv sync --no-sources --extra pvcam   # production
 
 It builds against the proprietary PVCAM SDK, which must already be installed on the system. See the `pvcam` [repository](https://github.com/Photometrics/PyVCAM) for more information.
 
-#### **`em_dmd_window`** 
+#### **`em_dmd_window`**
 
-This is one of our internal libraries used to control the DMD, via a compiled binary, not a Python package. The `EM_DMD_WINDOW` DMD backend launches `em_dmd_window/Release/evomachine_dmd_window` (expected as a sibling of the repo root) as a subprocess and talks to it over a local socket. Clone it as a sibling (branch `master`) and build it. Only required if you use the `EM_DMD_WINDOW` DMD backend.
+This is one of our internal libraries used to control the DMD, via a compiled binary, not a Python package. The `EM_DMD_WINDOW` DMD backend launches `../em_dmd_window/Release/evomachine_dmd_window` (expected as a sibling of the repo root) as a subprocess and talks to it over a local socket. This is only required if you use the `EM_DMD_WINDOW` DMD backend.
 
+The compiled binary is committed to the [em_dmd_window](https://github.com/kmpape/em_dmd_window) repo. The easiest way to make it accessible to `evomachine` is by cloning the repo as a sibling of this one:
+```bash
+git clone --depth 1 git@github.com:kmpape/em_dmd_window.git ../em_dmd_window
+```
+This places the binary at `<workspace>/em_dmd_window/Release/evomachine_dmd_window`, where the backend eventually looks for it.
 
 ## Testing
 
