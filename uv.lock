@@ -158,10 +158,21 @@ sdist = { url = "https://files.pythonhosted.org/packages/2d/6a/885bc91484e1aa8f6
 [[package]]
 name = "asitiger"
 version = "0.2.1"
-source = { git = "ssh://git@github.com/kmpape/asitiger.git?rev=v0.1.0#daaa65175253b124e0ca81ad81dfe676cbe77df1" }
+source = { editable = "../asitiger" }
 dependencies = [
     { name = "pyserial" },
 ]
+
+[package.metadata]
+requires-dist = [
+    { name = "black", marker = "extra == 'dev'", specifier = "==19.10b0" },
+    { name = "flake8", marker = "extra == 'dev'", specifier = "==3.7.9" },
+    { name = "flake8-bugbear", marker = "extra == 'dev'", specifier = "==19.8.0" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=2.7.1" },
+    { name = "pyserial", specifier = ">=3.0" },
+    { name = "pytest", marker = "extra == 'test'", specifier = "==6.1.2" },
+]
+provides-extras = ["dev", "test"]
 
 [[package]]
 name = "astunparse"
@@ -464,8 +475,7 @@ array = [
 
 [[package]]
 name = "delta2"
-version = "2.1.0.dev1+main0.9722ce8e.dirty"
-source = { git = "ssh://git@gitlab.com/kmpape/de-lta-rt.git?rev=v2.1.0.dev1#9722ce8e44383555b23b46543ed2a68dbd9f2c09" }
+source = { editable = "../de-lta-rt" }
 dependencies = [
     { name = "aicsimageio", extra = ["all"] },
     { name = "ffmpeg-python" },
@@ -482,6 +492,28 @@ dependencies = [
     { name = "tqdm" },
     { name = "xarray" },
 ]
+
+[package.metadata]
+requires-dist = [
+    { name = "aicsimageio", extras = ["all"], specifier = ">=4.10" },
+    { name = "elasticdeform", marker = "extra == 'train'", specifier = ">=0.5" },
+    { name = "ffmpeg-python", specifier = ">=0.2" },
+    { name = "netcdf4", specifier = ">=1.6" },
+    { name = "numpy", specifier = ">=1.23,<2.0" },
+    { name = "opencv-python-headless", specifier = ">=4.6" },
+    { name = "pip", specifier = ">=22.1" },
+    { name = "pooch", specifier = ">=1.7" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=7.2" },
+    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=4.1" },
+    { name = "scikit-image", specifier = ">=0.20" },
+    { name = "scipy", specifier = ">=1.9" },
+    { name = "tensorflow", specifier = ">=2.12" },
+    { name = "termcolor", specifier = ">=2.4" },
+    { name = "tqdm", specifier = ">=4.64" },
+    { name = "xarray", specifier = ">=2023.1" },
+]
+provides-extras = ["test", "train", "dev"]
 
 [[package]]
 name = "deprecated"
@@ -558,8 +590,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "asitiger", git = "ssh://git@github.com/kmpape/asitiger.git?rev=v0.1.0" },
-    { name = "delta2", git = "ssh://git@gitlab.com/kmpape/de-lta-rt.git?rev=v2.1.0.dev1" },
+    { name = "asitiger", editable = "../asitiger" },
+    { name = "delta2", editable = "../de-lta-rt" },
     { name = "matplotlib", specifier = ">=3.10" },
     { name = "numba", specifier = ">=0.60" },
     { name = "numpy", specifier = ">=1.26,<2.0" },
@@ -571,7 +603,7 @@ requires-dist = [
     { name = "pyqt5", specifier = ">=5.15" },
     { name = "pyserial", specifier = ">=3.5" },
     { name = "scikit-image", specifier = ">=0.20,<0.21" },
-    { name = "syncboard", git = "ssh://git@github.com/kmpape/sync_board.git?rev=v0.1.1-signals" },
+    { name = "syncboard", editable = "../sync_board" },
     { name = "tensorflow", extras = ["and-cuda"], specifier = "==2.15.*" },
     { name = "tifffile", specifier = ">=2022.4.8" },
 ]
@@ -2122,10 +2154,13 @@ wheels = [
 [[package]]
 name = "syncboard"
 version = "0.1.0"
-source = { git = "ssh://git@github.com/kmpape/sync_board.git?rev=v0.1.1-signals#c8d4f6ea7837e2b8f3e2e9364bf586388f712132" }
+source = { editable = "../sync_board" }
 dependencies = [
     { name = "pyserial" },
 ]
+
+[package.metadata]
+requires-dist = [{ name = "pyserial", specifier = ">=3.5" }]
 
 [[package]]
 name = "tensorboard"
