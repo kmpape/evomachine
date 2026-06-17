@@ -580,6 +580,11 @@ dependencies = [
     { name = "tifffile" },
 ]
 
+[package.optional-dependencies]
+pvcam = [
+    { name = "pyvcam" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "pre-commit" },
@@ -602,11 +607,13 @@ requires-dist = [
     { name = "pygame", specifier = ">=2.6" },
     { name = "pyqt5", specifier = ">=5.15" },
     { name = "pyserial", specifier = ">=3.5" },
+    { name = "pyvcam", marker = "extra == 'pvcam'", specifier = ">=2.2.4" },
     { name = "scikit-image", specifier = ">=0.20,<0.21" },
     { name = "syncboard", editable = "../sync_board" },
     { name = "tensorflow", extras = ["and-cuda"], specifier = "==2.15.*" },
     { name = "tifffile", specifier = ">=2022.4.8" },
 ]
+provides-extras = ["pvcam"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1925,6 +1932,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/0b/1a/cbbaf13b730abb0a16b964d984e19f2fe520c21a4dc664051359a3f5a9e7/python_discovery-1.4.2.tar.gz", hash = "sha256:8f3746c4b4968d22afbb97d36e1a0e5b66e6c0f297290f2e95f05b9b8bf18690", size = 70277, upload-time = "2026-06-11T16:10:42.383Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/1a/82/a70006589557f267f15bd384c0642ad49f0d97b690c3a05b166b9dcbad3b/python_discovery-1.4.2-py3-none-any.whl", hash = "sha256:475803f53b7b2ed6e490e27373f9d8340f7d2eebf9acdaf645d7d714c97bb500", size = 33886, upload-time = "2026-06-11T16:10:41.192Z" },
+]
+
+[[package]]
+name = "pyvcam"
+version = "2.3.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7b/c9/777f702636241177ef89af5f8c60990533f8cd62304519b3642e442b779e/pyvcam-2.3.2.tar.gz", hash = "sha256:9be199526db5984430e4aff48e98c642df8b2d61818f921f04aac518c933f9f0", size = 39146, upload-time = "2026-03-03T09:39:53.199Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/72/38/135263bcddbb7f6142fe42b8bcc1cc5723447051cf560ceac78308a64d8a/pyvcam-2.3.2-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:97ccdee93ca077d43413157a2cb356bcb236dd92b2f78f9681696c085d2b835a", size = 347617, upload-time = "2026-03-03T09:39:41.511Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/a3/c16f2c8aa3d6df79b843c5a46a86f4b1123f130eaa3cfdcf65ecfc0a5996/pyvcam-2.3.2-cp311-cp311-win_amd64.whl", hash = "sha256:7c45594971792a9bd001701b564e3da1e163fa6f5668cdacc7bc34c389f5f521", size = 63293, upload-time = "2026-03-03T09:39:42.648Z" },
 ]
 
 [[package]]

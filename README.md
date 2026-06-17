@@ -39,6 +39,25 @@ uv sync
 ```
 which will create a new `.venv` virtual environment with the local sibling dependencies installed in [editable mode](https://setuptools.pypa.io/en/latest/userguide/development_mode.html) for easier development, as specified in the `[tool.uv.sources]` section of [pyproject.toml](pyproject.toml), as well as all `dev` dependencies.
 
+## Extra dependencies
+
+A couple of runtime dependencies are **not** installed by the plain `uv sync` from the above sections because they're only needed for specific hardware backends:
+
+#### **`pyvcam`**
+
+This is a Photometrics PVCAM Python wrapper, and is only needed for the PVCAM camera backend. It's declared under the optional `pvcam` extra and installed on demand:
+```bash
+uv sync --extra pvcam   # add to a dev environment
+uv sync --no-sources --extra pvcam   # production
+```
+
+It builds against the proprietary PVCAM SDK, which must already be installed on the system. See the `pvcam` [repository](https://github.com/Photometrics/PyVCAM) for more information.
+
+#### **`em_dmd_window`** 
+
+This is one of our internal libraries used to control the DMD, via a compiled binary, not a Python package. The `EM_DMD_WINDOW` DMD backend launches `em_dmd_window/Release/evomachine_dmd_window` (expected as a sibling of the repo root) as a subprocess and talks to it over a local socket. Clone it as a sibling (branch `master`) and build it. Only required if you use the `EM_DMD_WINDOW` DMD backend.
+
+
 ## Testing
 
 Run all tests via `pytest`:
@@ -62,17 +81,6 @@ Let's say you want to make a change to the `sync_board` dependency and have it p
 2. Release a new version of `sync_board`: GitHub repo > Releases > Create a new release > Tag `<new_tag>` (eg, `v0.2.0`) > Publish Release.
 3. Update the git tag in `evomachine/pyproject.toml` to the new release tag.
 4. Run `uv sync --no-sources` to resolve the new dependencies.
-
-### Out-of-band dependencies
-
-A couple of runtime dependencies are **not** installed by `uv sync` and must be
-provided separately:
-
-- **`em_dmd_window/`** — used by the DMD projection bindings via a compiled
-  binary (referenced by path, not pip-installed). Clone it as a sibling
-  (branch `master`) and build it.
-- **`pyvcam`** (Photometrics PVCAM Python wrapper) — only needed for the PVCAM
-  camera backend. Installed from the vendor, not on PyPI.
 
 ## Workspace Structure
 
@@ -102,6 +110,7 @@ This project depends on several sibling repositories:
 - DMD display/window helper used by projection bindings.  
 - URL: `https://github.com/kmpape/em_dmd_window`
 - Branches: `master`  
+
 
 Additionally, a Windows PC runs the microfluidics controls independently:  
 - URL: `https://github.com/KSechkar/MM_microfluidics'  
