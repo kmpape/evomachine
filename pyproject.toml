@@ -20,6 +20,7 @@ dependencies = [
     "pyserial>=3.5",
     "pygame>=2.6",
     "PyQt5>=5.15",
+    "napari>=0.5.5",
     
     # GPU stack for the Linux + CUDA microscope. TensorFlow is pulled in by the
     # `delta` sibling repo (it only requires `tensorflow >= 2.12`); we pin it here
