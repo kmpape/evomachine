@@ -133,3 +133,6 @@ images/
 
 # Logs
 logs/
+
+# Editor / IDE
+.vscode/

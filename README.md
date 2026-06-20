@@ -6,46 +6,119 @@ projection, strategies, and real-time processing workflows.
 
 ## Installation
 
-Use `mamba` to create the conda environment from the pinned environment file:
+Dependencies are managed with [uv](https://docs.astral.sh/uv/) and specified in the [pyproject.toml](pyproject.toml) file.
 
+### Production / deployment
+
+*Follow this workflow if you're installing `evomachine` on a microscope (see next section for local development).*
+
+From the `evomachine` repo root:
 ```bash
-cd /home/lady5906/workspace_python/evomachine/evomachine
-mamba env create -f environment.yml
-mamba activate delta_evomachine
+uv sync --no-sources --no-dev
+```
+which will create a new `.venv` virtual environment and install all required dependencies.
+
+Depending on the hardware backends in use, you may also need the extra
+dependencies, see [Extra dependencies](#extra-dependencies).
+
+### Local development
+
+*Follow this workflow if you're developing new features in this or dependency repos (eg, `sync_board`).*
+
+Start by cloning the sibling repos next to `evomachine` in the same parent folder, and check out the correct respective branches (see [Workspace Structure](#workspace-structure)). 
+
+The expected layout is:
+```
+workspace/
+├── evomachine/      ← this repo
+├── de-lta-rt/       (dev_main)
+├── asitiger/        (master)
+└── sync_board/      (Signals)
 ```
 
-To update an existing environment after `environment.yml` changes:
-
+Then, from the `evomachine` repo root:
 ```bash
-cd /home/lady5906/workspace_python/evomachine/evomachine
-mamba env update -f environment.yml --prune
+uv sync
+```
+which will create a new `.venv` virtual environment with the local sibling dependencies installed in [editable mode](https://setuptools.pypa.io/en/latest/userguide/development_mode.html) for easier development, as specified in the `[tool.uv.sources]` section of [pyproject.toml](pyproject.toml), as well as all `dev` dependencies.
+
+## Extra dependencies
+
+A couple of runtime dependencies are **not** installed by the plain `uv sync` from the above sections because they're only needed for specific hardware backends:
+
+#### **`pyvcam`**
+
+This is a Photometrics PVCAM Python wrapper, and is only needed for the PVCAM camera backend. It's declared under the optional `pvcam` extra and installed on demand:
+```bash
+uv sync --extra pvcam   # add to a dev environment
+uv sync --no-sources --extra pvcam   # production
 ```
 
-The environment name is defined in `environment.yml` as `delta_evomachine`.
+It builds against the proprietary PVCAM SDK, which must already be installed on the system. See the `pvcam` [repository](https://github.com/Photometrics/PyVCAM) for more information.
+
+#### **`em_dmd_window`**
+
+This is one of our internal libraries used to control the DMD, via a compiled binary, not a Python package. The `EM_DMD_WINDOW` DMD backend launches `../em_dmd_window/Release/evomachine_dmd_window` (expected as a sibling of the repo root) as a subprocess and talks to it over a local socket. This is only required if you use the `EM_DMD_WINDOW` DMD backend.
+
+The compiled binary is committed to the [em_dmd_window](https://github.com/kmpape/em_dmd_window) repo. The easiest way to make it accessible to `evomachine` is by cloning the repo as a sibling of this one:
+```bash
+git clone --depth 1 git@github.com:kmpape/em_dmd_window.git ../em_dmd_window
+```
+This places the binary at `<workspace>/em_dmd_window/Release/evomachine_dmd_window`, where the backend eventually looks for it.
+
+## Testing
+
+Run all tests via `pytest`:
+
+```bash
+uv run pytest
+```
+
+## Running scripts
+
+Anything can be run inside the virtual environment via `uv run ...`, such as:
+```bash
+uv run python scripts/launch_gui.py
+```
+
+## Release workflow
+
+Let's say you want to make a change to the `sync_board` dependency and have it propagated to `evomachine`. The steps are:
+
+1. Make your changes to `sync_board` and eventually get it merged into the `main` branch (perhaps after making a new branch, PR, and some form of PR review process).
+2. Release a new version of `sync_board`: GitHub repo > Releases > Create a new release > Tag `<new_tag>` (eg, `v0.2.0`) > Publish Release.
+3. Update the git tag in `evomachine/pyproject.toml` to the new release tag.
+4. Run `uv sync --no-sources` to resolve the new dependencies.
 
 ## Workspace Structure
 
-This project expects several sibling repositories to live next to the main
-`evomachine` repository:
+This project depends on several sibling repositories:
 
-- `evomachine/`: main application repository.  
-  URL: `https://github.com/kmpape/evomachine`  
-  Branches: `dev` (in use) and `refactor`
-- `asitiger/`: ASI Tiger controller package used by Tiger hardware bindings.  
-  URL: `https://github.com/kmpape/asitiger` (forked from `https://github.com/herophilus/asitiger`)  
-  Branches: 
-- `sync_board/`: SyncBoard controller package used by SyncBoard bindings.  
-  URL: `https://github.com/kmpape/sync_board`  
-  Branches: `Signals` (in use), `master` (refactor, differences unclear)
-- `de-lta-rt/`: DE-LTA real-time segmentation and tracking package.  
-  URL: `https://gitlab.com/kmpape/de-lta-rt`  
-  Branches: `dev_main`
-- `em_dmd_window/`: DMD display/window helper used by projection bindings.  
-  URL: `https://github.com/kmpape/em_dmd_window`
-  Branches: `master`  
+`evomachine`: 
+- main application repository (this one)
+- URL: `https://github.com/kmpape/evomachine`  
+- Branches: `dev` (in use) and `refactor`
 
-Keeping these repositories as siblings lets scripts, notebooks, and local
-imports resolve the hardware and processing dependencies during development.  
+`asitiger`: 
+- ASI Tiger controller package used by Tiger hardware bindings.  
+- URL: `https://github.com/kmpape/asitiger` (forked from `https://github.com/herophilus/asitiger`)  
+- Branches: 
+
+`sync_board`: 
+- SyncBoard controller package used by SyncBoard bindings.  
+- URL: `https://github.com/kmpape/sync_board`  
+- Branches: `Signals` (in use), `master` (refactor, differences unclear)
+
+`de-lta-rt`:
+- DE-LTA real-time segmentation and tracking package.  
+- URL: `https://gitlab.com/kmpape/de-lta-rt`  
+- Branches: `dev_main`
+
+`em_dmd_window/`: 
+- DMD display/window helper used by projection bindings.  
+- URL: `https://github.com/kmpape/em_dmd_window`
+- Branches: `master`  
+
 
 Additionally, a Windows PC runs the microfluidics controls independently:  
 - URL: `https://github.com/KSechkar/MM_microfluidics'  

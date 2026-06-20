@@ -1,0 +1,88 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "evomachine"
+version = "0.1.0"
+description = "Microscope automation application (DE-LTA real-time evolution machine)."
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "numpy>=1.26,<2.0",
+    "pandas>=2.2",
+    "matplotlib>=3.10",
+    "scikit-image>=0.20,<0.21",
+    "opencv-python-headless>=4.10",
+    "pillow>=10.3",
+    "tifffile>=2022.4.8",
+    "numba>=0.60",
+    "pyserial>=3.5",
+    "pygame>=2.6",
+    "PyQt5>=5.15",
+    "napari>=0.5.5",
+    
+    # GPU stack for the Linux + CUDA microscope. TensorFlow is pulled in by the
+    # `delta` sibling repo (it only requires `tensorflow >= 2.12`); we pin it here
+    # to 2.15 with the `[and-cuda]` extra to control the version and bundle the
+    # CUDA runtime libraries.
+    "tensorflow[and-cuda]==2.15.*",
+    
+    # Sibling repos, declared as git dependencies pinned to a release tag or branch.
+    # This is are what a production install (`uv sync --no-sources`)
+    # resolves. During development the `[tool.uv.sources]` section below overrides
+    # them with local editable checkouts. See the README "Installation" 
+    # section for the dev vs. prod workflow.
+    "delta2 @ git+ssh://git@gitlab.com/kmpape/de-lta-rt.git@v2.1.0.dev1",  # tag created of the `dev_main` branch
+    "asitiger @ git+ssh://git@github.com/kmpape/asitiger.git@v0.1.0",
+    "syncboard @ git+ssh://git@github.com/kmpape/sync_board.git@v0.1.1-signals",
+]
+
+[project.optional-dependencies]
+# Hardware-backend extras. These are only needed on a machine that actually
+# drives the corresponding hardware, and they are NOT installed by a plain
+# `uv sync`. Install with e.g. `uv sync --extra pvcam`.
+#
+# `pyvcam` is the Photometrics PVCAM Python wrapper. It builds against the
+# proprietary PVCAM SDK, which must already be installed on the system — hence
+# this is an opt-in extra rather than a core dependency, so the default install
+# does not break on machines without the SDK.
+pvcam = ["pyvcam>=2.2.4"]
+
+[tool.uv]
+# Transitive pin: aicsimageio (pulled in via delta2) requires zarr <2.16, and
+# zarr 2.15 imports `cbuffer_sizes` from numcodecs.blosc, which numcodecs 0.16
+# removed. Without this cap the resolver pairs zarr 2.15 with numcodecs 0.16.5,
+# which breaks `import aicsimageio` at module load (and the whole test suite).
+constraint-dependencies = ["numcodecs<0.16"]
+
+[tool.uv.sources]
+# Development override: editable working trees living next to this repo. These
+# take effect for a plain `uv sync`.
+delta2 = { path = "../de-lta-rt", editable = true }
+asitiger = { path = "../asitiger", editable = true }
+syncboard = { path = "../sync_board", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "pre-commit>=4.0",
+]
+
+[tool.hatch.metadata]
+# Required because `[project.dependencies]` declares the sibling repos as direct
+# git references (`name @ git+ssh://...`). Hatchling rejects direct references
+# unless explicitly allowed.
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["evomachine"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
