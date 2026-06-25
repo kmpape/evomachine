@@ -24,9 +24,16 @@ dependencies = [
     
     # GPU stack for the Linux + CUDA microscope. TensorFlow is pulled in by the
     # `delta` sibling repo (it only requires `tensorflow >= 2.12`); we pin it here
-    # to 2.15 with the `[and-cuda]` extra to control the version and bundle the
-    # CUDA runtime libraries.
-    "tensorflow[and-cuda]==2.15.*",
+    # to 2.15 to control the version.
+    #
+    # The `[and-cuda]` extra bundles the `nvidia-*` CUDA runtime wheels, which are
+    # only published for Linux x86_64 / Windows. uv resolves universally (one lock
+    # for all platforms), so requesting that extra unconditionally breaks installs
+    # on macOS. We gate it behind a platform marker: the CUDA libs are pulled in
+    # only on the Linux x86_64 microscope, while macOS (and other platforms) get
+    # the plain `tensorflow` wheel, which ships a native macosx arm64 build.
+    "tensorflow[and-cuda]==2.15.*; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "tensorflow==2.15.*; sys_platform != 'linux' or platform_machine != 'x86_64'",
     
     # Sibling repos, declared as git dependencies pinned to a release tag or branch.
     # This is are what a production install (`uv sync --no-sources`)
