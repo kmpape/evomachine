@@ -1,12 +1,10 @@
 from pathlib import Path
-import pickle
 
 import numpy as np
 
-from evomachine.peripherals.dmd import DmdCalibrationConfig
+from evomachine.peripherals.dmd import DmdCalibrationConfig, DmdCalibrationResult, DmdCalibrationScan
 from evomachine.projection import ProjectionManager
 from evomachine.types import FilterWheelType, LEDType
-
 
 class FakeCamera:
     """Camera fake that turns the currently displayed DMD point into an image peak."""
@@ -118,6 +116,7 @@ class FakeDmd:
         self.display_none_count = 0
         self.calibration_file: Path | None = None
         self.calibration_data: list | None = None
+        self.calibration_result: DmdCalibrationResult | None = None
 
     def is_initialised(self) -> bool:
         """
@@ -205,37 +204,28 @@ class FakeDmd:
         self.current_point = None
         self.display_none_count += 1
 
-    def calibrate(self, filepath: Path | None = None) -> None:
+    def calibrate(self, scan: DmdCalibrationScan) -> DmdCalibrationResult:
         """
-        Load saved calibration data from a pickle file.
+        Store calibration scan data and return identity homographies.
 
         Parameters
         ----------
-        filepath
-            Path to the calibration pickle file.
+        scan
+            Calibration scan produced by ProjectionManager.
 
         Returns
         -------
-        None
+        DmdCalibrationResult
+            Fake calibration result containing identity homographies.
         """
-        self.calibration_file = Path(filepath)
-        with open(self.calibration_file, "rb") as file:
-            self.calibration_data = pickle.load(file)
-
-    def get_calibration_data(self) -> tuple[list, np.ndarray, np.ndarray, Path]:
-        """
-        Return loaded fake calibration data and identity homographies.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        tuple[list, np.ndarray, np.ndarray, Path]
-            Calibration data, two identity matrices, and calibration path.
-        """
-        return self.calibration_data, np.eye(3), np.eye(3), self.calibration_file
+        self.calibration_data = scan.calib_data
+        self.calibration_file = scan.calib_file
+        self.calibration_result = DmdCalibrationResult(
+            scan=scan,
+            homography_mat=np.eye(3),
+            homography_mat_inv=np.eye(3),
+        )
+        return self.calibration_result
 
 
 class FakeLedManager:
@@ -429,10 +419,7 @@ def test_projection_manager_calibrates_dmd_and_restores_peripherals(tmp_path: Pa
     )
     filename = tmp_path / "dmd_calibration.pkl"
 
-    calibration_data, homography, homography_inv, calibration_file = manager.dmd_calibrate(
-        cfg=make_config(),
-        filename=filename,
-    )
+    result = manager.dmd_calibrate(cfg=make_config(), filename=filename)
 
     assert camera.exposures == [12]
     assert camera.live_mode_disabled
@@ -441,11 +428,12 @@ def test_projection_manager_calibrates_dmd_and_restores_peripherals(tmp_path: Pa
     assert filter_wheel.set_calls == [FilterWheelType.FILTER_527nm, FilterWheelType.FILTER]
     assert dmd.display_none_count >= 1
     assert manager.photodiode is photodiode
-    assert calibration_file == filename
-    assert len(calibration_data) == 4
-    assert calibration_data[0] == ((5, 5), (5, 5), (100.0, 100.0))
-    assert np.array_equal(homography, np.eye(3))
-    assert np.array_equal(homography_inv, np.eye(3))
+    assert result is not None
+    assert result.scan.calib_file == filename
+    assert len(result.scan.calib_data) == 4
+    assert result.scan.calib_data[0] == ((5, 5), (5, 5), (100.0, 100.0))
+    np.testing.assert_array_equal(result.homography_mat, np.eye(3))
+    np.testing.assert_array_equal(result.homography_mat_inv, np.eye(3))
     assert filename.exists()
 
 
@@ -478,7 +466,7 @@ def test_projection_manager_stops_calibration_and_cleans_up(tmp_path: Path) -> N
 
     result = manager.dmd_calibrate(cfg=make_config(), filename=filename)
 
-    assert result == (None, None, None, None)
+    assert result is None
     assert not filename.exists()
     assert led_manager.disable_count == 1
     assert filter_wheel.set_calls == [FilterWheelType.FILTER_527nm, FilterWheelType.FILTER]

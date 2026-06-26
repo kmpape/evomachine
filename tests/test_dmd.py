@@ -10,7 +10,7 @@ from evomachine.bindings.em_dmd_window.peripheralcontroller import EmDmdWindowPe
 from evomachine.bindings.pygame.dmd import PygameDmd
 from evomachine.bindings.pygame.peripheralcontroller import PygameDmdPeripheralController
 from evomachine.bindings.virtual.dmd import VirtualDmd, VirtualDmdPeripheralController
-from evomachine.peripherals.dmd import Dmd, DmdConfig, DmdFactory
+from evomachine.peripherals.dmd import Dmd, DmdConfig, DmdFactory, DmdCalibrationScan
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, SocketPeripheralController
 from evomachine.bindings.binding_types import BindingType
 
@@ -469,3 +469,32 @@ def test_virtual_binding_stores_displayed_images(tmp_path):
 
     assert np.array_equal(controller.dmd_control._image, img)
     assert dmd.is_full_display()
+
+
+def test_dmd_calibrate_computes_identity_homographies(tmp_path):
+    controller = VirtualDmdPeripheralController()
+    controller.initialise()
+
+    dmd = RecordingDmd(
+        peripheral_ctrl=controller,
+        name="Dmd",
+        check_initialised=True,
+        check_alive=True,
+        width_height_DMD=(10, 10),
+        width_height_CAM=(10, 10),
+        calibration_file=tmp_path / "missing.pkl",
+    )
+    calib_data = [
+        ((0, 0), (0, 0), (0, 0)),
+        ((0, 9), (0, 9), (0, 0)),
+        ((9, 0), (9, 0), (0, 0)),
+        ((9, 9), (9, 9), (0, 0)),
+    ]
+    scan = DmdCalibrationScan(
+        calib_data=calib_data,
+        calib_file=tmp_path / "identity_calibration.pkl",
+    )
+    result = dmd.calibrate(scan)
+    assert result.scan is scan
+    np.testing.assert_allclose(result.homography_mat, np.eye(3), atol=1e-8)
+    np.testing.assert_allclose(result.homography_mat_inv, np.eye(3), atol=1e-8)

@@ -18,7 +18,7 @@ from evomachine.image_processing_config import ImageProcessorConfig
 from evomachine.navigation import FocusNavigator
 from evomachine.peripherals.autofocus import Autofocus
 from evomachine.peripherals.camera import Camera
-from evomachine.peripherals.dmd import Dmd, DmdCalibrationConfig
+from evomachine.peripherals.dmd import Dmd, DmdCalibrationConfig, DmdCalibrationResult
 from evomachine.peripherals.filterwheel import FilterWheel
 from evomachine.peripherals.leds import LedManager
 from evomachine.peripherals.photodiode import Photodiode
@@ -978,7 +978,7 @@ class Automaton:
             self,
             cfg: DmdCalibrationConfig,
             filename: str | None = None,
-    ) -> tuple[list, np.ndarray, np.ndarray, Any] | tuple[None, None, None, None]:
+    ) -> DmdCalibrationResult | None:
         """
         Calibrate DMD projection through ProjectionManager.
 
@@ -991,8 +991,8 @@ class Automaton:
 
         Returns
         -------
-        tuple[list, np.ndarray, np.ndarray, Any] | tuple[None, None, None, None]
-            ProjectionManager calibration result.
+        DmdCalibrationResult | None
+            ProjectionManager calibration result, or None if calibration fails.
         """
         if self.proj_mngr is None:
             raise RuntimeError("Automaton.dmd_calibrate: proj_mngr is required.")

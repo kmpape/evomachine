@@ -16,7 +16,7 @@ import skimage.io
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
 from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
 from evomachine.bindings.binding_types import BindingType
-from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT, get_logger
+from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT, EVOMACHINE_DIR, get_logger
 from evomachine.types import LEDType
 
 logger = get_logger(name=__name__, is_peripheral=True)
@@ -201,6 +201,26 @@ class DmdConfig(PeripheralConfig):
         return value
 
 
+DmdCalibrationPoint = tuple[tuple[int, int], tuple[int, int], tuple[float, float]]
+
+
+@dataclass
+class DmdCalibrationScan:
+    """Raw DMD/image point mappings and the file they were saved to."""
+
+    calib_data: list[DmdCalibrationPoint]
+    calib_file: Path
+
+
+@dataclass
+class DmdCalibrationResult:
+    """Computed DMD calibration transform derived from a calibration scan."""
+
+    scan: DmdCalibrationScan
+    homography_mat: np.ndarray
+    homography_mat_inv: np.ndarray
+
+
 class Dmd(Peripheral):
     """  TODO(CODEX): Modify doc if needed with implemented changes.
     Class for communicating with the DMD. After calling initialise(), communicate with the DMD using following
@@ -274,30 +294,81 @@ class Dmd(Peripheral):
         self.default_line_width: int = self.DEFAULT_LINE_WIDTH
         self._is_full_display: bool = False
         self._loaded_img: np.ndarray | None = None
-        self._calib_file: Path = calibration_file or Path(__file__).resolve().parent / "dmd_calibration_data_2025-08-14_v2.pkl"
+        default_calibration_file = EVOMACHINE_DIR / "calibration_data" / "dmd" / "dmd_calibration_data_2025-08-14_v2.pkl"
+        self._calib_file: Path = calibration_file or default_calibration_file
         self._calib_data: list | None = None
         self._homography_mat: np.ndarray | None = None
         self._homography_mat_inv: np.ndarray | None = None
         self.config: DmdConfig | None = None
-        self.calibrate(filepath=self._calib_file)
+        scan = self.load_calibration_data(self._calib_file)
+        if scan is not None:
+            _ = self.calibrate(scan)
 
     @staticmethod
     def load_calibration_data(
             filepath: Path,
-    ) -> tuple[list, np.ndarray, np.ndarray] | tuple[None, None, None]:
-        """Load calibration data and compute image-to-DMD and DMD-to-image homographies."""
+    ) -> DmdCalibrationScan | None:
+        """
+        Load raw calibration point correspondences from a pickle file.
+
+        Parameters
+        ----------
+        filepath
+            Pickle file containing the raw calibration point list.
+
+        Returns
+        -------
+        DmdCalibrationScan | None
+            Loaded calibration scan, or None when the file is missing.
+        """
         if not filepath.exists():
             logger.error(f"Dmd.load_calibration_data: file {filepath} not found.")
-            return None, None, None
+            return None
+
         logger.info(f"Dmd.load_calibration_data: loading calibration data from {filepath}.")
         with open(str(filepath), "rb") as file:
             calib_data = pkl.load(file)
+        return DmdCalibrationScan(
+            calib_data=calib_data,
+            calib_file=filepath,
+        )
 
-        dmd_points = np.array([(c_dmd, r_dmd) for ((r_dmd, c_dmd), _, _) in calib_data])
-        cam_points = np.array([(c_cam, r_cam) for (_, (r_cam, c_cam), _) in calib_data])
+    def calibrate(
+            self,
+            scan: DmdCalibrationScan,
+    ) -> DmdCalibrationResult:
+        """
+        Compute homography matrices from a calibration scan and store them.
+
+        Parameters
+        ----------
+        scan
+            Raw DMD-to-camera point correspondences. Stored points are in
+            row/column order and converted to OpenCV's x/y order before
+            homography calculation.
+
+        Returns
+        -------
+        DmdCalibrationResult
+            Calibration scan plus the image-to-DMD and DMD-to-image homography
+            matrices computed from its point correspondences.
+        """
+        dmd_points = np.array([(c_dmd, r_dmd) for ((r_dmd, c_dmd), _, _) in scan.calib_data])
+        cam_points = np.array([(c_cam, r_cam) for (_, (r_cam, c_cam), _) in scan.calib_data])
+
         homography_mat, _ = cv2.findHomography(srcPoints=cam_points, dstPoints=dmd_points)
         homography_mat_inv, _ = cv2.findHomography(srcPoints=dmd_points, dstPoints=cam_points)
-        return calib_data, homography_mat, homography_mat_inv
+        result = DmdCalibrationResult(
+            scan=scan,
+            homography_mat=homography_mat,
+            homography_mat_inv=homography_mat_inv,
+        )
+
+        self._calib_data = scan.calib_data
+        self._homography_mat = result.homography_mat
+        self._homography_mat_inv = result.homography_mat_inv
+        self._calib_file = scan.calib_file
+        return result
 
     def initialise(self, force: bool = False) -> None:
         """Initialise the underlying DMD peripheral controller."""
@@ -330,15 +401,8 @@ class Dmd(Peripheral):
         """Return whether the most recent display state was full white."""
         return self._is_full_display
 
-    def calibrate(self, filepath: Path | None = None) -> None:
-        """Load calibration data from filepath or the configured calibration file."""
-        filepath = self._calib_file if filepath is None else Path(filepath)
-        logger.debug("Dmd.calibrate: loading calibration for %s from %s.", self.name, filepath)
-        self._calib_data, self._homography_mat, self._homography_mat_inv = self.load_calibration_data(filepath=filepath)
-        self._calib_file = filepath
-
     def get_calibration_data(self) -> tuple[list, np.ndarray, np.ndarray, Path] | tuple[None, None, None, Path]:
-        """Return loaded calibration data, homographies, and the calibration filename."""
+        """Return loaded calibration data, homographies, and filename in the legacy tuple format."""
         return self._calib_data, self._homography_mat, self._homography_mat_inv, self._calib_file
 
     def get_calibration_filename(self) -> Path:
