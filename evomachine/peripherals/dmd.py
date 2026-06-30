@@ -201,24 +201,47 @@ class DmdConfig(PeripheralConfig):
         return value
 
 
-DmdCalibrationPoint = tuple[tuple[int, int], tuple[int, int], tuple[float, float]]
-
-
 @dataclass
-class DmdCalibrationScan:
-    """Raw DMD/image point mappings and the file they were saved to."""
+class DmdCalibrationData:
+    """
+    DMD calibration point correspondences used to compute homography transforms.
 
-    calib_data: list[DmdCalibrationPoint]
-    calib_file: Path
+    ProjectionManager produces the stored point records. Dmd loads those records
+    into this dataclass and uses them to compute the homography matrices.
+    """
 
+    dmd_points: list[tuple[int, int]]
+    """DMD calibration points as (row, column) pixel coordinates."""
 
-@dataclass
-class DmdCalibrationResult:
-    """Computed DMD calibration transform derived from a calibration scan."""
+    cam_points: list[tuple[int, int]]
+    """Camera-detected calibration points as (row, column) pixel coordinates."""
 
-    scan: DmdCalibrationScan
-    homography_mat: np.ndarray
-    homography_mat_inv: np.ndarray
+    cfg: DmdCalibrationConfig | None = None
+    """Configuration used to produce the calibration data, if available."""
+
+    path: Path | None = None
+    """File path this calibration data was loaded from or saved to, if available."""
+
+    @classmethod
+    def from_stored_data(
+            cls,
+            stored_data: list[tuple[tuple[int, int], tuple[int, int], tuple[float, float]]],
+            cfg: DmdCalibrationConfig | None = None,
+            path: Path | None = None,
+    ) -> "DmdCalibrationData":
+        """
+        Convert stored calibration point records to DmdCalibrationData.
+
+        Pickle file entries are stored as:
+        ((dmd_row, dmd_col), (cam_row, cam_col), (row_intensity, col_intensity)).
+        The intensity values are not required for homography calculation.
+        """
+        return cls(
+            dmd_points=[dmd_point for dmd_point, _, _ in stored_data],
+            cam_points=[cam_point for _, cam_point, _ in stored_data],
+            cfg=cfg,
+            path=path,
+        )
 
 
 class Dmd(Peripheral):
@@ -296,79 +319,84 @@ class Dmd(Peripheral):
         self._loaded_img: np.ndarray | None = None
         default_calibration_file = EVOMACHINE_DIR / "calibration_data" / "dmd" / "dmd_calibration_data_2025-08-14_v2.pkl"
         self._calib_file: Path = calibration_file or default_calibration_file
-        self._calib_data: list | None = None
+        self._calib_data: DmdCalibrationData | None = None
         self._homography_mat: np.ndarray | None = None
         self._homography_mat_inv: np.ndarray | None = None
         self.config: DmdConfig | None = None
-        scan = self.load_calibration_data(self._calib_file)
-        if scan is not None:
-            _ = self.calibrate(scan)
+
+        self._calib_data = self.load_calibration_data(self._calib_file)
+        if self._calib_data is not None:
+            self.calibrate()
 
     @staticmethod
     def load_calibration_data(
-            filepath: Path,
-    ) -> DmdCalibrationScan | None:
+            path: Path,
+    ) -> DmdCalibrationData | None:
         """
         Load raw calibration point correspondences from a pickle file.
 
         Parameters
         ----------
-        filepath
+        path
             Pickle file containing the raw calibration point list.
 
         Returns
         -------
-        DmdCalibrationScan | None
-            Loaded calibration scan, or None when the file is missing.
+        DmdCalibrationData | None
+            Loaded calibration data, or None when the file is missing.
         """
-        if not filepath.exists():
-            logger.error(f"Dmd.load_calibration_data: file {filepath} not found.")
+        if not path.exists():
+            logger.error(f"Dmd.load_calibration_data: file {path} not found.")
             return None
 
-        logger.info(f"Dmd.load_calibration_data: loading calibration data from {filepath}.")
-        with open(str(filepath), "rb") as file:
-            calib_data = pkl.load(file)
-        return DmdCalibrationScan(
-            calib_data=calib_data,
-            calib_file=filepath,
+        logger.info(f"Dmd.load_calibration_data: loading calibration data from {path}.")
+        with open(str(path), "rb") as file:
+            loaded_data = pkl.load(file)
+        return DmdCalibrationData.from_stored_data(
+            stored_data=loaded_data,
+            path=path,
         )
 
-    def calibrate(
-            self,
-            scan: DmdCalibrationScan,
-    ) -> DmdCalibrationResult:
+    def calibrate(self) -> None:
         """
-        Compute homography matrices from a calibration scan and store them.
-
-        Parameters
-        ----------
-        scan
-            Raw DMD-to-camera point correspondences. Stored points are in
-            row/column order and converted to OpenCV's x/y order before
-            homography calculation.
+        Compute homography matrices from the loaded calibration data.
 
         Returns
         -------
-        DmdCalibrationResult
-            Calibration scan plus the image-to-DMD and DMD-to-image homography
-            matrices computed from its point correspondences.
+        None
         """
-        dmd_points = np.array([(c_dmd, r_dmd) for ((r_dmd, c_dmd), _, _) in scan.calib_data])
-        cam_points = np.array([(c_cam, r_cam) for (_, (r_cam, c_cam), _) in scan.calib_data])
 
+        if self._calib_data is None or not self._calib_data.dmd_points or not self._calib_data.cam_points:
+            raise ValueError("Dmd.calibrate: no calibration data found.")
+        if len(self._calib_data.dmd_points) != len(self._calib_data.cam_points):
+            raise ValueError(
+                "Dmd.calibrate: dmd_points and cam_points must contain the same number of points."
+            )
+        if len(self._calib_data.dmd_points) < 4:
+            raise ValueError("Dmd.calibrate: at least four point correspondences are required.")
+
+        dmd_points = np.array([(col, row) for row, col in self._calib_data.dmd_points])
+        cam_points = np.array([(col, row) for row, col in self._calib_data.cam_points])
         homography_mat, _ = cv2.findHomography(srcPoints=cam_points, dstPoints=dmd_points)
         homography_mat_inv, _ = cv2.findHomography(srcPoints=dmd_points, dstPoints=cam_points)
-        result = DmdCalibrationResult(
-            scan=scan,
-            homography_mat=homography_mat,
-            homography_mat_inv=homography_mat_inv,
-        )
+        if homography_mat is None or homography_mat_inv is None:
+            raise ValueError("Dmd.calibrate: could not compute homography matrices from calibration data.")
 
-        self._calib_data = scan.calib_data
-        self._homography_mat = result.homography_mat
-        self._homography_mat_inv = result.homography_mat_inv
-        self._calib_file = scan.calib_file
-        return result
+        self._homography_mat = homography_mat
+        self._homography_mat_inv = homography_mat_inv
+        if self._calib_data.path is not None:
+            self._calib_file = self._calib_data.path
+
+    def calibrate_from_path(self, path: Path | None) -> None:
+        """Load calibration data from a file and compute homography matrices."""
+        if path is None:
+            raise ValueError("Dmd.calibrate_from_path: path must not be None.")
+        calibration_data = self.load_calibration_data(path)
+        if calibration_data is None:
+            raise FileNotFoundError(f"Dmd.calibrate_from_path: no calibration data found at {path}.")
+        self._calib_file = path
+        self._calib_data = calibration_data
+        self.calibrate()
 
     def initialise(self, force: bool = False) -> None:
         """Initialise the underlying DMD peripheral controller."""
@@ -400,10 +428,6 @@ class Dmd(Peripheral):
     def is_full_display(self) -> bool:
         """Return whether the most recent display state was full white."""
         return self._is_full_display
-
-    def get_calibration_data(self) -> tuple[list, np.ndarray, np.ndarray, Path] | tuple[None, None, None, Path]:
-        """Return loaded calibration data, homographies, and filename in the legacy tuple format."""
-        return self._calib_data, self._homography_mat, self._homography_mat_inv, self._calib_file
 
     def get_calibration_filename(self) -> Path:
         """Return the configured calibration filename."""

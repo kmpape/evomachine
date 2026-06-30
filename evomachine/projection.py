@@ -13,9 +13,6 @@ from evomachine.peripherals.camera import Camera
 from evomachine.peripherals.dmd import (
     Dmd,
     DmdCalibrationConfig,
-    DmdCalibrationPoint,
-    DmdCalibrationResult,
-    DmdCalibrationScan,
 )
 from evomachine.peripherals.filterwheel import FilterWheel
 from evomachine.peripherals.leds import LedManager
@@ -81,13 +78,12 @@ class ProjectionManager:
         self.sleep_func: Callable[[float], None] = sleep_func
         self.stop_requested: Callable[[], bool] | None = stop_requested
         self.calibration_directory: Path = calibration_directory or EVOMACHINE_DIR / "calibration_data" / "dmd"
-        self.dmd_calibration_data: list[DmdCalibrationPoint] | None = None
 
     def dmd_calibrate(
             self,
             cfg: DmdCalibrationConfig,
             filename: str | Path | None = None,
-    ) -> DmdCalibrationResult | None:
+    ) -> None:
         """
         Calibrate DMD-to-camera projection by scanning DMD points and imaging them.
 
@@ -102,15 +98,15 @@ class ProjectionManager:
 
         Returns
         -------
-        DmdCalibrationResult | None
-            Computed calibration result, or None when calibration aborts.
+        None
+            Calibration data is saved to disk and loaded into the DMD. The DMD
+            stores the computed homography matrices internally.
         """
-        error_return_value = None
         if not isinstance(cfg, DmdCalibrationConfig):
             raise TypeError(f"ProjectionManager.dmd_calibrate: cfg must be DmdCalibrationConfig, received {type(cfg)}.")
         if not self.devices_are_initialised():
             logger.error("ProjectionManager.dmd_calibrate: devices are not initialised. Returning.")
-            return error_return_value
+            return
         filename = self._normalise_calibration_filename(filename=filename)
         logger.info(f"ProjectionManager.dmd_calibrate: starting with config {cfg} and filename {filename}.")
         rows, cols = self._build_calibration_grid(cfg=cfg)
@@ -120,27 +116,25 @@ class ProjectionManager:
             self._configure_calibration_peripherals(cfg=cfg)
             max_intensity = self._measure_on_screen_intensity(cfg=cfg)
             if max_intensity is None:
-                return error_return_value
+                return
             min_intensity = self._measure_minimum_required_intensity(
                 cfg=cfg,
                 max_intensity=max_intensity,
             )
             if min_intensity is None:
-                return error_return_value
-            results = self._scan_calibration_grid(
+                return
+            calib_data_raw = self._scan_calibration_grid(
                 cfg=cfg,
                 rows=rows,
                 cols=cols,
                 min_intensity=min_intensity,
             )
-            if results is None:
-                return error_return_value
-            self.dmd_calibration_data = results
+            if calib_data_raw is None:
+                return
+            self._save_calibration_results(filename=filename, results=calib_data_raw)
+            self.dmd.calibrate_from_path(path=filename)
 
-            scan = self._save_calibration_results(filename=filename, results=results)
-            result = self.dmd.calibrate(scan)
             logger.info(f"ProjectionManager.dmd_calibrate: saved calibration data under {filename}.")
-            return result
 
         finally:
             self._restore_calibration_peripherals(last_filter_type=last_filter_type)
@@ -364,7 +358,7 @@ class ProjectionManager:
             rows: np.ndarray,
             cols: np.ndarray,
             min_intensity: float,
-    ) -> list[DmdCalibrationPoint] | None:
+    ) -> list[tuple[tuple[int, int], tuple[int, int], tuple[float, float]]] | None:
         """
         Scan DMD calibration points and return accepted DMD-to-camera mappings.
 
@@ -381,10 +375,10 @@ class ProjectionManager:
 
         Returns
         -------
-        list[DmdCalibrationPoint] | None
+        list[tuple[tuple[int, int], tuple[int, int], tuple[float, float]]] | None
             Accepted calibration point mappings, or None when calibration aborts.
         """
-        results: list[DmdCalibrationPoint] = []
+        results: list[tuple[tuple[int, int], tuple[int, int], tuple[float, float]]] = []
         for index, (col, row) in enumerate(zip(cols.flatten(), rows.flatten())):
             if index % 50 == 0:
                 logger.info(f"ProjectionManager.dmd_calibrate: at {index + 1} of {len(cols.flatten())}.")
@@ -411,9 +405,13 @@ class ProjectionManager:
                 )
         return results
 
-    def _save_calibration_results(self, filename: Path, results: list[DmdCalibrationPoint]) -> DmdCalibrationScan:
+    def _save_calibration_results(
+            self,
+            filename: Path,
+            results: list[tuple[tuple[int, int], tuple[int, int], tuple[float, float]]],
+    ) -> None:
         """
-        Save calibration point mappings to a pickle file and return a scan object.
+        Save calibration point mappings to a pickle file.
 
         Parameters
         ----------
@@ -424,17 +422,11 @@ class ProjectionManager:
 
         Returns
         -------
-        DmdCalibrationScan
-            Calibration scan containing the point mappings and output file.
+        None
         """
         filename.parent.mkdir(parents=True, exist_ok=True)
         with open(filename, "wb") as file:
             pickle.dump(results, file)
-
-        return DmdCalibrationScan(
-            calib_data=results,
-            calib_file=filename,
-        )
 
     def _restore_calibration_peripherals(self, last_filter_type: FilterWheelType | None) -> None:
         """

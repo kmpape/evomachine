@@ -17,8 +17,6 @@ from evomachine.navigation import FocusNavigator, FovConfig
 from evomachine.peripherals.dmd import (
     Dmd,
     DmdCalibrationConfig,
-    DmdCalibrationResult,
-    DmdCalibrationScan,
 )
 from evomachine.projection import ProjectionManager
 from evomachine.strategy import AbstractStrategy, BasicStrategy
@@ -337,16 +335,7 @@ class FakeProjectionManager(ProjectionManager):
     def dmd_calibrate(self, cfg: DmdCalibrationConfig, filename: str | Path | None = None):
         """Record one calibration request."""
         self.calls.append((cfg, filename))
-        scan = DmdCalibrationScan(
-            calib_data=[],
-            calib_file=Path(filename or "calibration.pkl"),
-        )
-        results = DmdCalibrationResult(
-            scan=scan,
-            homography_mat=np.eye(3),
-            homography_mat_inv=np.eye(3),
-        )
-        return results
+        return None
 
 
 class FakeSoftwareFocus:
@@ -1401,8 +1390,8 @@ def test_automaton_dmd_calibrate_delegates_to_projection_manager() -> None:
     result = automaton.dmd_calibrate(cfg=cfg, filename="calibration.pkl")
 
     assert projection_manager.calls == [(cfg, "calibration.pkl")]
-    assert result is not None
-    assert result.scan.calib_file == Path("calibration.pkl")
+    assert result is None
+
 
 
 def test_automaton_initialises_unique_manager_devices_once() -> None:

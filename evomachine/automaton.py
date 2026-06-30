@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 import copy
 from multiprocessing import Event
+from pathlib import Path
 import time
 from typing import Any, ClassVar
 
@@ -18,7 +19,7 @@ from evomachine.image_processing_config import ImageProcessorConfig
 from evomachine.navigation import FocusNavigator
 from evomachine.peripherals.autofocus import Autofocus
 from evomachine.peripherals.camera import Camera
-from evomachine.peripherals.dmd import Dmd, DmdCalibrationConfig, DmdCalibrationResult
+from evomachine.peripherals.dmd import Dmd, DmdCalibrationConfig
 from evomachine.peripherals.filterwheel import FilterWheel
 from evomachine.peripherals.leds import LedManager
 from evomachine.peripherals.photodiode import Photodiode
@@ -977,8 +978,8 @@ class Automaton:
     def dmd_calibrate(
             self,
             cfg: DmdCalibrationConfig,
-            filename: str | None = None,
-    ) -> DmdCalibrationResult | None:
+            filename: str | Path | None = None,
+    ) -> None:
         """
         Calibrate DMD projection through ProjectionManager.
 
@@ -991,12 +992,13 @@ class Automaton:
 
         Returns
         -------
-        DmdCalibrationResult | None
-            ProjectionManager calibration result, or None if calibration fails.
+        None
+            ProjectionManager saves calibration data and updates the DMD
+            calibration state.
         """
         if self.proj_mngr is None:
             raise RuntimeError("Automaton.dmd_calibrate: proj_mngr is required.")
-        return self.proj_mngr.dmd_calibrate(cfg=cfg, filename=filename)
+        self.proj_mngr.dmd_calibrate(cfg=cfg, filename=filename)
 
     def sleep(
             self,
