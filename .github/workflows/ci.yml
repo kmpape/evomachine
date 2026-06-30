@@ -56,4 +56,8 @@ jobs:
         run: uv sync --no-sources --group dev
 
       - name: Run pytest
-        run: uv run pytest -v --cov=evomachine --cov-report=term-missing
+        # `--no-sync` reuses the environment built by the previous step. Without it,
+        # `uv run` re-resolves the project with `[tool.uv.sources]` active, which
+        # points the siblings at local paths (e.g. ../de-lta-rt) that don't exist
+        # on the runner.
+        run: uv run --no-sync pytest -v --cov=evomachine --cov-report=term-missing
