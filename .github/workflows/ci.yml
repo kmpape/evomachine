@@ -1,0 +1,63 @@
+name: CI
+
+# Run the test suite on every pull request (opened, updated, or reopened).
+on:
+  pull_request:
+  # Allow manual runs from the Actions tab as well.
+  workflow_dispatch:
+
+# Cancel an in-progress run for a PR when new commits are pushed to it.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # Free GitHub-hosted CPU runner. TensorFlow falls back to CPU automatically.
+    runs-on: ubuntu-latest
+
+    env:
+      # The GUI tests use Qt's headless platform plugin.
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install system libraries for headless Qt / OpenCV
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon0 libdbus-1-3
+
+      - name: Configure SSH deploy keys for the private deps
+        # The private siblings sync_board (GitHub) and de-lta-rt (GitLab) are
+        # pinned as git+ssh in pyproject.toml.
+        # Each secret is the private half of a keypair whose public half is added
+        # as a read-only deploy key on the corresponding repo.
+        env:
+          SYNCBOARD_DEPLOY_KEY: ${{ secrets.SYNCBOARD_DEPLOY_KEY }}
+          DELTA2_DEPLOY_KEY: ${{ secrets.DELTA2_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SYNCBOARD_DEPLOY_KEY" > ~/.ssh/syncboard
+          printf '%s\n' "$DELTA2_DEPLOY_KEY"    > ~/.ssh/delta2
+          chmod 600 ~/.ssh/syncboard ~/.ssh/delta2
+          printf 'Host github.com\n  IdentityFile ~/.ssh/syncboard\n  IdentitiesOnly yes\n  StrictHostKeyChecking accept-new\n' >> ~/.ssh/config
+          printf 'Host gitlab.com\n  IdentityFile ~/.ssh/delta2\n  IdentitiesOnly yes\n  StrictHostKeyChecking accept-new\n'    >> ~/.ssh/config
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Sync environment as in production (git-tag deps + dev tools)
+        run: uv sync --no-sources --group dev
+
+      - name: Run pytest
+        # `--no-sync` reuses the environment built by the previous step. Without it,
+        # `uv run` re-resolves the project with `[tool.uv.sources]` active, which
+        # points the siblings at local paths (e.g. ../de-lta-rt) that don't exist
+        # on the runner.
+        run: uv run --no-sync pytest -v --cov=evomachine --cov-report=term-missing
