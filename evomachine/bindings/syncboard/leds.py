@@ -5,7 +5,7 @@ from typing import Any
 from evomachine.bindings.syncboard.peripheralcontroller import SyncBoardPeripheralController
 from evomachine.peripherals.leds import LedSource
 from evomachine.types import BrightnessType, LEDType
-
+from syncboard.syncboardcontroller import LED_ID
 
 class FakeSyncBoardController:
     """Deterministic SyncBoard-like controller for LED and peripheral tests."""
@@ -65,11 +65,11 @@ class SyncBoardLedSource(LedSource):
     """LED source controlled through a SyncBoard."""
 
     DEFAULT_LED_TO_INTERNAL = {
-        LEDType.LED_385_NM: 7,
-        LEDType.LED_450_NM: 1,
-        LEDType.LED_515_NM: 2,
-        LEDType.LED_565_NM: 3,
-        LEDType.LED_645_NM: 4,
+        LEDType.LED_385_NM: LED_ID.LED_385_NM,
+        LEDType.LED_450_NM: LED_ID.LED_450_NM,
+        LEDType.LED_515_NM: LED_ID.LED_515_NM,
+        LEDType.LED_565_NM: LED_ID.LED_565_NM,
+        LEDType.LED_645_NM: LED_ID.LED_645_NM,
     }
 
     def __init__(
