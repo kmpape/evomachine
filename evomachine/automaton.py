@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 import copy
 from multiprocessing import Event
+from pathlib import Path
 import time
 from typing import Any, ClassVar
 
@@ -977,8 +978,8 @@ class Automaton:
     def dmd_calibrate(
             self,
             cfg: DmdCalibrationConfig,
-            filename: str | None = None,
-    ) -> tuple[list, np.ndarray, np.ndarray, Any] | tuple[None, None, None, None]:
+            filename: str | Path | None = None,
+    ) -> None:
         """
         Calibrate DMD projection through ProjectionManager.
 
@@ -991,12 +992,13 @@ class Automaton:
 
         Returns
         -------
-        tuple[list, np.ndarray, np.ndarray, Any] | tuple[None, None, None, None]
-            ProjectionManager calibration result.
+        None
+            ProjectionManager saves calibration data and updates the DMD
+            calibration state.
         """
         if self.proj_mngr is None:
             raise RuntimeError("Automaton.dmd_calibrate: proj_mngr is required.")
-        return self.proj_mngr.dmd_calibrate(cfg=cfg, filename=filename)
+        self.proj_mngr.dmd_calibrate(cfg=cfg, filename=filename)
 
     def sleep(
             self,

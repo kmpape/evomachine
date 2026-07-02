@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import pickle
 from types import SimpleNamespace
 
 import numpy as np
@@ -469,3 +470,32 @@ def test_virtual_binding_stores_displayed_images(tmp_path):
 
     assert np.array_equal(controller.dmd_control._image, img)
     assert dmd.is_full_display()
+
+
+def test_dmd_calibrate_computes_identity_homographies(tmp_path):
+    controller = VirtualDmdPeripheralController()
+    controller.initialise()
+
+    dmd = RecordingDmd(
+        peripheral_ctrl=controller,
+        name="Dmd",
+        check_initialised=True,
+        check_alive=True,
+        width_height_DMD=(10, 10),
+        width_height_CAM=(10, 10),
+        calibration_file=tmp_path / "missing.pkl",
+    )
+    calib_data_raw = [
+        ((0, 0), (0, 0), (0, 0)),
+        ((0, 9), (0, 9), (0, 0)),
+        ((9, 0), (9, 0), (0, 0)),
+        ((9, 9), (9, 9), (0, 0)),
+    ]
+    calibration_file = tmp_path / "identity_calibration.pkl"
+    with open(calibration_file, "wb") as file:
+        pickle.dump(calib_data_raw, file)
+    dmd.calibrate_from_path(path=calibration_file)
+
+    assert dmd.is_calibrated()
+    np.testing.assert_allclose(dmd._homography_mat, np.eye(3), atol=1e-8)
+    np.testing.assert_allclose(dmd._homography_mat_inv, np.eye(3), atol=1e-8)

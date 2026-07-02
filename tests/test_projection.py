@@ -3,10 +3,9 @@ import pickle
 
 import numpy as np
 
-from evomachine.peripherals.dmd import DmdCalibrationConfig
+from evomachine.peripherals.dmd import DmdCalibrationConfig, DmdCalibrationData
 from evomachine.projection import ProjectionManager
 from evomachine.types import FilterWheelType, LEDType
-
 
 class FakeCamera:
     """Camera fake that turns the currently displayed DMD point into an image peak."""
@@ -116,8 +115,11 @@ class FakeDmd:
         self.current_point: tuple[int, int] | str | None = None
         self.displayed_points: list[tuple[int, int]] = []
         self.display_none_count = 0
-        self.calibration_file: Path | None = None
-        self.calibration_data: list | None = None
+        self._calib_data: DmdCalibrationData | None = None
+        self._homography_mat: np.ndarray | None = None
+        self._homography_mat_inv: np.ndarray | None = None
+        self._calib_file: Path | None = None
+
 
     def is_initialised(self) -> bool:
         """
@@ -205,37 +207,28 @@ class FakeDmd:
         self.current_point = None
         self.display_none_count += 1
 
-    def calibrate(self, filepath: Path | None = None) -> None:
+    def calibrate_from_path(self, path: Path) -> None:
         """
-        Load saved calibration data from a pickle file.
+        Load calibration data from a file and store identity homographies.
 
         Parameters
         ----------
-        filepath
-            Path to the calibration pickle file.
+        path
+            Pickle file written by ProjectionManager.
 
         Returns
         -------
         None
         """
-        self.calibration_file = Path(filepath)
-        with open(self.calibration_file, "rb") as file:
-            self.calibration_data = pickle.load(file)
-
-    def get_calibration_data(self) -> tuple[list, np.ndarray, np.ndarray, Path]:
-        """
-        Return loaded fake calibration data and identity homographies.
-
-        Parameters
-        ----------
-        None
-
-        Returns
-        -------
-        tuple[list, np.ndarray, np.ndarray, Path]
-            Calibration data, two identity matrices, and calibration path.
-        """
-        return self.calibration_data, np.eye(3), np.eye(3), self.calibration_file
+        with open(path, "rb") as file:
+            stored_data = pickle.load(file)
+        self._calib_data = DmdCalibrationData.from_stored_data(
+            stored_data=stored_data,
+            path=path,
+        )
+        self._homography_mat = np.eye(3)
+        self._homography_mat_inv = np.eye(3)
+        self._calib_file = path
 
 
 class FakeLedManager:
@@ -429,10 +422,7 @@ def test_projection_manager_calibrates_dmd_and_restores_peripherals(tmp_path: Pa
     )
     filename = tmp_path / "dmd_calibration.pkl"
 
-    calibration_data, homography, homography_inv, calibration_file = manager.dmd_calibrate(
-        cfg=make_config(),
-        filename=filename,
-    )
+    result = manager.dmd_calibrate(cfg=make_config(), filename=filename)
 
     assert camera.exposures == [12]
     assert camera.live_mode_disabled
@@ -441,12 +431,16 @@ def test_projection_manager_calibrates_dmd_and_restores_peripherals(tmp_path: Pa
     assert filter_wheel.set_calls == [FilterWheelType.FILTER_527nm, FilterWheelType.FILTER]
     assert dmd.display_none_count >= 1
     assert manager.photodiode is photodiode
-    assert calibration_file == filename
-    assert len(calibration_data) == 4
-    assert calibration_data[0] == ((5, 5), (5, 5), (100.0, 100.0))
-    assert np.array_equal(homography, np.eye(3))
-    assert np.array_equal(homography_inv, np.eye(3))
+    assert result is None
     assert filename.exists()
+    with open(filename, "rb") as file:
+        stored_data = pickle.load(file)
+    assert len(stored_data) == 4
+    assert stored_data[0] == ((5, 5), (5, 5), (100.0, 100.0))
+    assert dmd._calib_data is not None
+    assert dmd._calib_data.path == filename
+    np.testing.assert_array_equal(dmd._homography_mat, np.eye(3))
+    np.testing.assert_array_equal(dmd._homography_mat_inv, np.eye(3))
 
 
 def test_projection_manager_stops_calibration_and_cleans_up(tmp_path: Path) -> None:
@@ -478,7 +472,7 @@ def test_projection_manager_stops_calibration_and_cleans_up(tmp_path: Path) -> N
 
     result = manager.dmd_calibrate(cfg=make_config(), filename=filename)
 
-    assert result == (None, None, None, None)
+    assert result is None
     assert not filename.exists()
     assert led_manager.disable_count == 1
     assert filter_wheel.set_calls == [FilterWheelType.FILTER_527nm, FilterWheelType.FILTER]

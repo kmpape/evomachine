@@ -12,10 +12,12 @@ from evomachine.commands import AutomatonCommand, CommandFactory
 from evomachine.config import DMD_WIDTH_HEIGHT
 from evomachine.frame import Frame, FrameMetaData
 from evomachine.image_processing_config import ImageProcessorConfigFactory
-from evomachine.peripherals.dmd import DmdCalibrationConfig
 from evomachine.coordinates import Coordinate
 from evomachine.navigation import FocusNavigator, FovConfig
-from evomachine.peripherals.dmd import Dmd
+from evomachine.peripherals.dmd import (
+    Dmd,
+    DmdCalibrationConfig,
+)
 from evomachine.projection import ProjectionManager
 from evomachine.strategy import AbstractStrategy, BasicStrategy
 from evomachine.types import AutomatonCommandType, LEDType, UNKNOWN_FOV_ID
@@ -328,12 +330,12 @@ class FakeProjectionManager(ProjectionManager):
         self.led_manager = led_manager
         self.filter_wheel = filter_wheel
         self.photodiode = photodiode
-        self.calls: list[tuple[DmdCalibrationConfig, str | None]] = []
+        self.calls: list[tuple[DmdCalibrationConfig, str | Path | None]] = []
 
     def dmd_calibrate(self, cfg: DmdCalibrationConfig, filename: str | Path | None = None):
         """Record one calibration request."""
         self.calls.append((cfg, filename))
-        return [], np.eye(3), np.eye(3), Path("calibration.pkl")
+        return None
 
 
 class FakeSoftwareFocus:
@@ -1388,7 +1390,8 @@ def test_automaton_dmd_calibrate_delegates_to_projection_manager() -> None:
     result = automaton.dmd_calibrate(cfg=cfg, filename="calibration.pkl")
 
     assert projection_manager.calls == [(cfg, "calibration.pkl")]
-    assert result[3] == Path("calibration.pkl")
+    assert result is None
+
 
 
 def test_automaton_initialises_unique_manager_devices_once() -> None:
