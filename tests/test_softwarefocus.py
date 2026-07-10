@@ -7,6 +7,7 @@ from delta.utils import CroppingBox
 from evomachine import software_focus_bkp
 from evomachine.acquisition import FrameAcquisitionManager, FrameAcquisitionSettings
 from evomachine.bindings.software_focus.software_focus_algorithms import (
+    BandpassFFTFocusAlgorithm,
     LaplacianVarianceFocusAlgorithm,
     SoftwareFocusAlgorithm,
     SquaredGradientAverageFocusAlgorithm,
@@ -551,8 +552,46 @@ def test_algorithm_factory_selects_algorithms() -> None:
     assert isinstance(steel, SteelFocusAlgorithm)
     assert steel.rowshift == 1
     assert steel.colshift == 2
+
+    fft = create_software_focus_algorithm(
+        FocusAlgorithmType.BANDPASS_FFT, cell_radius=15, saturation=4095
+    )
+    assert isinstance(fft, BandpassFFTFocusAlgorithm)
+    assert fft.cell_radius == 15
+    assert fft.saturation == 4095
+
     with pytest.raises(TypeError):
         create_software_focus_algorithm("STEEL")
+
+
+def test_bandpass_fft_algorithm_scores_sharp_above_blurred() -> None:
+    """
+    Check that the bandpass-FFT algorithm ranks a sharp image above a blurred copy.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    from scipy.ndimage import gaussian_filter
+
+    rng = np.random.default_rng(0)
+    sharp = np.zeros((128, 128), dtype=np.float64)
+    ys = rng.integers(5, 123, size=40)
+    xs = rng.integers(5, 123, size=40)
+    sharp[ys, xs] = 255.0
+    sharp = gaussian_filter(sharp, sigma=1.5)  # give the "cells" a small finite size
+    blurred = gaussian_filter(sharp, sigma=4.0)  # simulate defocus
+
+    algo = BandpassFFTFocusAlgorithm(cell_radius=4, downsample=1)
+    assert isinstance(algo.score_image(sharp), float)
+    assert algo.score_image(sharp) > algo.score_image(blurred)
+
+    with pytest.raises(TypeError):
+        BandpassFFTFocusAlgorithm(cell_radius=-1)
 
 
 def test_software_focus_config_validation_and_factory() -> None:
