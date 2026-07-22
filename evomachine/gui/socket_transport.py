@@ -198,8 +198,12 @@ class GuiSocketClient:
     def request_object(self, request: GuiRequest) -> GuiResponse:
         self.connect()
         assert self._socket is not None
-        send_packet(self._socket, request.to_dict())
-        response = GuiResponse.from_dict(receive_packet(self._socket))
+        try:
+            send_packet(self._socket, request.to_dict())
+            response = GuiResponse.from_dict(receive_packet(self._socket))
+        except Exception:
+            self.close()
+            raise
         if response.request_id != request.request_id:
             raise RuntimeError(
                 f"GuiSocketClient: response ID {response.request_id} does not match request ID {request.request_id}."
@@ -212,4 +216,3 @@ class GuiSocketClient:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
-
