@@ -1,10 +1,14 @@
 name: evomachine.gui
 contributions:
   commands:
-    - id: evomachine.gui.evomachine_widget
-      title: EvoMachine GUI
-      python_name: evomachine.gui.plugin:EvoMachineNapariWidget
+    - id: evomachine.gui.evomachine_controls_dock
+      title: EvoMachine Controls
+      python_name: evomachine.gui.plugin:EvoMachineControlsDock
+    - id: evomachine.gui.peripheral_controller_status_dock
+      title: Peripheral Controller Status
+      python_name: evomachine.gui.plugin:PeripheralControllerStatusDock
   widgets:
-    - command: evomachine.gui.evomachine_widget
-      display_name: EvoMachine GUI
-
+    - command: evomachine.gui.evomachine_controls_dock
+      display_name: EvoMachine Controls
+    - command: evomachine.gui.peripheral_controller_status_dock
+      display_name: Peripheral Controller Status

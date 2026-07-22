@@ -38,10 +38,20 @@ class EvoMachineGuiController(QObject):
 
     request_ready = pyqtSignal(object)
     response_error = pyqtSignal(str)
+    controller_status_received = pyqtSignal(dict)
+    fovs_received = pyqtSignal(list)
     stage_status_received = pyqtSignal(dict)
     stage_coordinates_received = pyqtSignal(dict)
+    camera_status_received = pyqtSignal(dict)
+    frame_received = pyqtSignal(dict)
+    filter_wheel_status_received = pyqtSignal(dict)
     led_list_received = pyqtSignal(list)
     led_state_received = pyqtSignal(dict)
+    dmd_status_received = pyqtSignal(dict)
+    autofocus_status_received = pyqtSignal(dict)
+    software_focus_status_received = pyqtSignal(dict)
+    strategies_received = pyqtSignal(list)
+    strategy_status_received = pyqtSignal(dict)
     lifecycle_status_received = pyqtSignal(dict)
 
     def __init__(
@@ -87,6 +97,12 @@ class EvoMachineGuiController(QObject):
     def shutdown_automaton(self) -> None:
         self._send(GuiCommandType.SHUTDOWN)
 
+    def refresh_controller_status(self) -> None:
+        self._send(GuiCommandType.CONTROLLER_STATUS)
+
+    def initialise_fovs(self, fovs: list[dict[str, Any]], use_autofocus: bool = False) -> None:
+        self._send(GuiCommandType.FOV_INITIALISE, {"fovs": fovs, "use_autofocus": use_autofocus})
+
     def refresh_stage(self) -> None:
         self._send(GuiCommandType.STAGE_GET_COORDINATES)
 
@@ -99,6 +115,24 @@ class EvoMachineGuiController(QObject):
     def stop_stage(self) -> None:
         self._send(GuiCommandType.STAGE_STOP)
 
+    def refresh_camera(self) -> None:
+        self._send(GuiCommandType.CAMERA_STATUS)
+
+    def set_camera_exposure(self, exposure: float) -> None:
+        self._send(GuiCommandType.CAMERA_SET_EXPOSURE, {"exposure": exposure})
+
+    def acquire_frame(self, payload: dict[str, Any] | None = None) -> None:
+        self._send(GuiCommandType.ACQUISITION_TAKE_FRAME, payload)
+
+    def acquire_z_stack(self, payload: dict[str, Any] | None = None) -> None:
+        self._send(GuiCommandType.ACQUISITION_TAKE_Z_STACK, payload)
+
+    def refresh_filter_wheel(self) -> None:
+        self._send(GuiCommandType.FILTER_WHEEL_STATUS)
+
+    def set_filter_wheel(self, filter_wheel: str) -> None:
+        self._send(GuiCommandType.FILTER_WHEEL_SET, {"filter_wheel": filter_wheel})
+
     def refresh_leds(self) -> None:
         self._send(GuiCommandType.LED_LIST)
 
@@ -110,6 +144,65 @@ class EvoMachineGuiController(QObject):
 
     def disable_all_leds(self) -> None:
         self._send(GuiCommandType.LED_DISABLE_ALL)
+
+    def refresh_dmd(self) -> None:
+        self._send(GuiCommandType.DMD_STATUS)
+
+    def display_dmd_pattern(self, pattern: str) -> None:
+        self._send(GuiCommandType.DMD_DISPLAY_PATTERN, {"pattern": pattern})
+
+    def calibrate_dmd(self) -> None:
+        self._send(GuiCommandType.DMD_CALIBRATE)
+
+    def refresh_autofocus(self) -> None:
+        self._send(GuiCommandType.AUTOFOCUS_STATUS)
+
+    def configure_autofocus(self, config: dict[str, Any] | None = None) -> None:
+        payload = {} if config is None else {"config": config}
+        self._send(GuiCommandType.AUTOFOCUS_CONFIGURE, payload)
+
+    def initialise_autofocus(
+            self,
+            lock_after_initialise: bool = False,
+            config: dict[str, Any] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {"lock_after_initialise": lock_after_initialise}
+        if config is not None:
+            payload["config"] = config
+        self._send(GuiCommandType.AUTOFOCUS_INITIALISE, payload)
+
+    def lock_autofocus(self) -> None:
+        self._send(GuiCommandType.AUTOFOCUS_LOCK)
+
+    def unlock_autofocus(self) -> None:
+        self._send(GuiCommandType.AUTOFOCUS_UNLOCK)
+
+    def disable_autofocus(self) -> None:
+        self._send(GuiCommandType.AUTOFOCUS_DISABLE)
+
+    def refresh_software_focus(self) -> None:
+        self._send(GuiCommandType.SOFTWARE_FOCUS_STATUS)
+
+    def run_software_focus(self) -> None:
+        self._send(GuiCommandType.SOFTWARE_FOCUS_RUN)
+
+    def refresh_strategy_status(self) -> None:
+        self._send(GuiCommandType.STRATEGY_STATUS)
+
+    def refresh_strategies(self) -> None:
+        self._send(GuiCommandType.STRATEGY_LIST)
+
+    def set_strategy(self, name: str, file_path: str | None = None) -> None:
+        payload: dict[str, Any] = {"name": name}
+        if file_path is not None:
+            payload["file_path"] = file_path
+        self._send(GuiCommandType.STRATEGY_SET, payload)
+
+    def start_strategy(self) -> None:
+        self._send(GuiCommandType.STRATEGY_START)
+
+    def stop_strategy(self) -> None:
+        self._send(GuiCommandType.STRATEGY_STOP)
 
     def _send(self, command: GuiCommandType, payload: dict[str, Any] | None = None) -> None:
         request = GuiRequest(command=command, payload={} if payload is None else payload)
@@ -126,11 +219,31 @@ class EvoMachineGuiController(QObject):
         payload = response.payload
         if "coordinate" in payload:
             self.stage_coordinates_received.emit(payload)
+        if "controllers" in payload:
+            self.controller_status_received.emit(payload)
+        if "fovs" in payload:
+            self.fovs_received.emit(payload["fovs"])
         if "stage" in payload and "coordinate" not in payload:
             self.stage_status_received.emit(payload["stage"])
+        if "camera" in payload:
+            self.camera_status_received.emit(payload["camera"])
+        if "frame" in payload:
+            self.frame_received.emit(payload["frame"])
+        if "filter_wheel" in payload:
+            self.filter_wheel_status_received.emit(payload["filter_wheel"])
         if "leds" in payload:
             self.led_list_received.emit(payload["leds"])
         if "state" in payload:
             self.led_state_received.emit(payload["state"])
+        if "dmd" in payload:
+            self.dmd_status_received.emit(payload["dmd"])
+        if "autofocus" in payload:
+            self.autofocus_status_received.emit(payload["autofocus"])
+        if "software_focus" in payload:
+            self.software_focus_status_received.emit(payload["software_focus"])
+        if "strategies" in payload:
+            self.strategies_received.emit(payload["strategies"])
+        if "strategy" in payload:
+            self.strategy_status_received.emit(payload["strategy"])
         if "devices_initialised" in payload or "shutdown" in payload or "strategy_active" in payload:
             self.lifecycle_status_received.emit(payload)

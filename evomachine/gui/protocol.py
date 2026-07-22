@@ -20,27 +20,67 @@ class GuiCommandType(str, Enum):
     INITIALISE_DEVICES = "initialise_devices"
     STOP = "stop"
     SHUTDOWN = "shutdown"
+    CONTROLLER_STATUS = "controllers.status"
+    FOV_INITIALISE = "fov.initialise"
     STAGE_STATUS = "stage.status"
     STAGE_GET_COORDINATES = "stage.get_coordinates"
     STAGE_MOVE_ABSOLUTE = "stage.move_absolute"
     STAGE_MOVE_RELATIVE = "stage.move_relative"
     STAGE_STOP = "stage.stop"
+    CAMERA_STATUS = "camera.status"
+    CAMERA_SET_EXPOSURE = "camera.set_exposure"
+    ACQUISITION_TAKE_FRAME = "acquisition.take_frame"
+    ACQUISITION_TAKE_Z_STACK = "acquisition.take_z_stack"
+    FILTER_WHEEL_STATUS = "filter_wheel.status"
+    FILTER_WHEEL_SET = "filter_wheel.set"
     LED_LIST = "led.list"
     LED_SET = "led.set"
     LED_DISABLE = "led.disable"
     LED_DISABLE_ALL = "led.disable_all"
     LED_GET_STATE = "led.get_state"
+    DMD_STATUS = "dmd.status"
+    DMD_DISPLAY_PATTERN = "dmd.display_pattern"
+    DMD_CALIBRATE = "dmd.calibrate"
+    AUTOFOCUS_STATUS = "autofocus.status"
+    AUTOFOCUS_CONFIGURE = "autofocus.configure"
+    AUTOFOCUS_INITIALISE = "autofocus.initialise_autofocus"
+    AUTOFOCUS_LOCK = "autofocus.lock"
+    AUTOFOCUS_UNLOCK = "autofocus.unlock"
+    AUTOFOCUS_DISABLE = "autofocus.disable"
+    SOFTWARE_FOCUS_STATUS = "software_focus.status"
+    SOFTWARE_FOCUS_RUN = "software_focus.run"
+    STRATEGY_STATUS = "strategy.status"
+    STRATEGY_LIST = "strategy.list"
+    STRATEGY_SET = "strategy.set"
+    STRATEGY_START = "strategy.start"
+    STRATEGY_STOP = "strategy.stop"
 
 
 MUTATING_COMMANDS = frozenset(
     {
         GuiCommandType.INITIALISE_DEVICES,
+        GuiCommandType.FOV_INITIALISE,
         GuiCommandType.STAGE_MOVE_ABSOLUTE,
         GuiCommandType.STAGE_MOVE_RELATIVE,
         GuiCommandType.STAGE_STOP,
+        GuiCommandType.CAMERA_SET_EXPOSURE,
+        GuiCommandType.ACQUISITION_TAKE_FRAME,
+        GuiCommandType.ACQUISITION_TAKE_Z_STACK,
+        GuiCommandType.FILTER_WHEEL_SET,
         GuiCommandType.LED_SET,
         GuiCommandType.LED_DISABLE,
         GuiCommandType.LED_DISABLE_ALL,
+        GuiCommandType.DMD_DISPLAY_PATTERN,
+        GuiCommandType.DMD_CALIBRATE,
+        GuiCommandType.AUTOFOCUS_CONFIGURE,
+        GuiCommandType.AUTOFOCUS_INITIALISE,
+        GuiCommandType.AUTOFOCUS_LOCK,
+        GuiCommandType.AUTOFOCUS_UNLOCK,
+        GuiCommandType.AUTOFOCUS_DISABLE,
+        GuiCommandType.SOFTWARE_FOCUS_RUN,
+        GuiCommandType.STRATEGY_SET,
+        GuiCommandType.STRATEGY_START,
+        GuiCommandType.STRATEGY_STOP,
     }
 )
 
@@ -50,6 +90,7 @@ ALWAYS_ALLOWED_MUTATING_COMMANDS = frozenset(
         GuiCommandType.SHUTDOWN,
         GuiCommandType.STAGE_STOP,
         GuiCommandType.LED_DISABLE_ALL,
+        GuiCommandType.STRATEGY_STOP,
     }
 )
 
