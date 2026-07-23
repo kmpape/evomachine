@@ -245,13 +245,19 @@ def test_syncboard_led_source_uses_native_duration_and_intensity(monkeypatch):
     peripheral_ctrl.initialise()
     source = SyncBoardLedSource(
         peripheral_ctrl=peripheral_ctrl,
-        available_leds=[LEDType.LED_450_NM],
+        available_leds=[LEDType.LED_450_NM, LEDType.LED_515_NM],
     )
     source.initialise()
 
     source.set_led(LEDType.LED_450_NM, brightness=29, duration=120000)
 
-    assert syncboard.enabled_leds == [(1, 0.29, 120000)]
+    assert syncboard.enabled_leds == [(SyncBoardLedSource.DEFAULT_LED_TO_INTERNAL[LEDType.LED_450_NM], 0.29, 120000)]
+
+    source.set_led(LEDType.LED_515_NM, brightness=1, duration=60)
+    
+    assert syncboard.enabled_leds == [(SyncBoardLedSource.DEFAULT_LED_TO_INTERNAL[LEDType.LED_450_NM], 0.29, 120000),
+                                      (SyncBoardLedSource.DEFAULT_LED_TO_INTERNAL[LEDType.LED_515_NM], 0.01, 60)]
+    
     assert FakeTimer.instances == []
 
 
