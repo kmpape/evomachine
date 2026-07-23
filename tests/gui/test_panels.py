@@ -56,6 +56,9 @@ class FakeController(QObject):
     def move_stage_absolute(self, x, y, z):
         self.calls.append(("move_stage_absolute", x, y, z))
 
+    def move_stage_fov(self, direction, multiplier=1.0):
+        self.calls.append(("move_stage_fov", direction, multiplier))
+
     def stop_stage(self):
         self.calls.append(("stop_stage",))
 
@@ -154,6 +157,17 @@ def test_stage_panel_sends_move_request() -> None:
     panel._move_absolute()
 
     assert controller.calls == [("move_stage_absolute", 1.0, 2.0, 3.0)]
+
+
+def test_stage_panel_sends_camera_fov_move_request() -> None:
+    _app()
+    controller = FakeController()
+    panel = StagePanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+
+    panel._move_camera_fov("RIGHT")
+
+    assert controller.calls == [("move_stage_fov", "RIGHT", 1.0)]
 
 
 def test_camera_panel_sends_set_exposure_request() -> None:

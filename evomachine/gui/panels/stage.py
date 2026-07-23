@@ -15,12 +15,21 @@ from PyQt5.QtWidgets import (
 class StagePanel(QGroupBox):
     """Simple Stage control panel."""
 
+    FOV_DIRECTIONS = (
+        ("Up", "UP", 0, 1),
+        ("Left", "LEFT", 1, 0),
+        ("Right", "RIGHT", 1, 2),
+        ("Down", "DOWN", 2, 1),
+    )
+
     def __init__(self, controller, parent: QWidget | None = None):
         super().__init__("Stage", parent)
         self.controller = controller
         self.coordinate_label = QLabel("x: -, y: -, z: -")
+        self.fov_step_label = QLabel("camera FoV step: -")
         self.status_label = QLabel("Run Initialise Devices before using stage controls.")
         self.devices_initialised = False
+        self.fov_buttons: list[QPushButton] = []
         self.x_input = self._axis_input()
         self.y_input = self._axis_input()
         self.z_input = self._axis_input()
@@ -39,11 +48,22 @@ class StagePanel(QGroupBox):
         buttons.addWidget(self.move_button, 0, 1)
         buttons.addWidget(self.stop_button, 0, 2)
 
+        fov_buttons = QGridLayout()
+        for label, direction, row, column in self.FOV_DIRECTIONS:
+            button = QPushButton(label)
+            button.setEnabled(False)
+            button.clicked.connect(lambda _checked=False, selected=direction: self._move_camera_fov(selected))
+            self.fov_buttons.append(button)
+            fov_buttons.addWidget(button, row, column)
+
         layout = QVBoxLayout()
         layout.addWidget(self.coordinate_label)
+        layout.addWidget(self.fov_step_label)
         layout.addWidget(self.status_label)
         layout.addLayout(form)
         layout.addLayout(buttons)
+        layout.addWidget(QLabel("Move by one camera FoV"))
+        layout.addLayout(fov_buttons)
         self.setLayout(layout)
 
         self.refresh_button.clicked.connect(self.controller.refresh_stage)
@@ -72,6 +92,13 @@ class StagePanel(QGroupBox):
             z=self.z_input.value(),
         )
 
+    def _move_camera_fov(self, direction: str) -> None:
+        if not self.devices_initialised:
+            self.status_label.setText("Run Initialise Devices before using stage controls.")
+            return
+        self.status_label.setText(f"Moving one camera FoV {direction.lower()}.")
+        self.controller.move_stage_fov(direction=direction, multiplier=1.0)
+
     def update_coordinates(self, payload: dict) -> None:
         coordinate = payload.get("coordinate", {})
         self.coordinate_label.setText(
@@ -85,6 +112,12 @@ class StagePanel(QGroupBox):
             f"initialised: {payload.get('is_initialised')}, alive: {payload.get('is_alive')}, "
             f"fov: {payload.get('fov_id')}"
         )
+        fov_step_size = payload.get("camera_fov_step_size", payload.get("fov_step_size"))
+        if isinstance(fov_step_size, int | float):
+            fov_step_text = f"{float(fov_step_size):.3g} um"
+        else:
+            fov_step_text = "-"
+        self.fov_step_label.setText(f"camera FoV step: {fov_step_text}")
 
     def update_lifecycle_status(self, payload: dict) -> None:
         self.devices_initialised = bool(payload.get("devices_initialised"))
@@ -104,5 +137,6 @@ class StagePanel(QGroupBox):
             self.refresh_button,
             self.move_button,
             self.stop_button,
+            *self.fov_buttons,
         ):
             widget.setEnabled(self.devices_initialised)

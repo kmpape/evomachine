@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from evomachine.config import get_logger
+from evomachine.coordinates import Coordinate
 from evomachine.gui.protocol import (
     ALWAYS_ALLOWED_MUTATING_COMMANDS,
     MUTATING_COMMANDS,
@@ -12,6 +13,8 @@ from evomachine.gui.protocol import (
     GuiResponse,
 )
 from evomachine.gui.request_map import GUI_REQUEST_HANDLERS, gui_coordinate_to_payload
+from evomachine.peripherals.camera import CameraConfig, ObjectiveConfigType, calculate_fov_size
+from evomachine.types import FovDirectionType
 
 
 logger = get_logger(name=__name__)
@@ -19,6 +22,13 @@ logger = get_logger(name=__name__)
 
 class AutomatonGuiFacade:
     """Allowlisted GUI command facade around one Automaton instance."""
+
+    _GUI_CAMERA_FOV_DIRECTION_DELTAS = {
+        FovDirectionType.UP: (0.0, -1.0),
+        FovDirectionType.DOWN: (0.0, 1.0),
+        FovDirectionType.LEFT: (-1.0, 0.0),
+        FovDirectionType.RIGHT: (1.0, 0.0),
+    }
 
     def __init__(self, automaton: Any):
         self.automaton = automaton
@@ -210,11 +220,14 @@ class AutomatonGuiFacade:
 
     def gui_stage_status_payload(self) -> dict[str, Any]:
         stage = self.gui_stage()
+        camera_fov_step_size, camera_fov_step_source = self.gui_camera_fov_step_size()
         return {
             "is_initialised": bool(stage.is_initialised()),
             "is_alive": bool(stage.is_alive()),
             "fov_id": stage.get_fov_id(),
             "fov_step_size": stage.get_fov_step_size(),
+            "camera_fov_step_size": camera_fov_step_size,
+            "camera_fov_step_source": camera_fov_step_source,
         }
 
     def gui_stage_coordinates_payload(self, query_hardware: bool) -> dict[str, Any]:
@@ -223,6 +236,37 @@ class AutomatonGuiFacade:
             "coordinate": gui_coordinate_to_payload(coordinate),
             "stage": self.gui_stage_status_payload(),
         }
+
+    def gui_camera_fov_step_size(self) -> tuple[float, str]:
+        stage_step_size = float(self.gui_stage().get_fov_step_size())
+        try:
+            camera = self.gui_camera()
+        except RuntimeError:
+            return stage_step_size, "stage_config"
+        camera_config = getattr(camera, "config", None)
+        objective_config = getattr(camera, "objective_config", None)
+        if objective_config is None and isinstance(camera_config, CameraConfig):
+            objective_config = camera_config.objective_config
+        if isinstance(camera_config, CameraConfig) and isinstance(objective_config, ObjectiveConfigType):
+            return float(calculate_fov_size(camera_config=camera_config, objective_config=objective_config)), "camera_config"
+        return stage_step_size, "stage_config"
+
+    def gui_camera_fov_move_coordinate(self, direction: FovDirectionType, multiplier: float) -> Coordinate:
+        if direction not in self._GUI_CAMERA_FOV_DIRECTION_DELTAS:
+            raise ValueError("Camera FoV movement only supports UP, DOWN, LEFT, and RIGHT.")
+        if multiplier <= 0:
+            raise ValueError(f"Camera FoV movement multiplier must be positive, received {multiplier}.")
+        current = self.gui_stage().get_coordinates(query_hardware=True)
+        if current.x is None or current.y is None:
+            raise RuntimeError("Camera FoV movement requires current X/Y stage coordinates.")
+        step_size, _source = self.gui_camera_fov_step_size()
+        x_delta, y_delta = self._GUI_CAMERA_FOV_DIRECTION_DELTAS[direction]
+        return Coordinate(
+            x=current.x + x_delta * step_size * multiplier,
+            y=current.y + y_delta * step_size * multiplier,
+            z=None,
+            channel_id=current.get_channel_id(),
+        )
 
     def gui_camera_status_payload(self) -> dict[str, Any]:
         camera = self.gui_camera()

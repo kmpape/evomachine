@@ -5,11 +5,14 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
+from evomachine.bindings.binding_types import BindingType
 from evomachine.coordinates import Coordinate
 from evomachine.frame import Frame
 from evomachine.image_processing_config import ImageProcessorConfigFactory
-from evomachine.types import AutoFocusStatusType, FilterWheelType, FocusCurveType, FocusStatusType, LEDType
+from evomachine.peripherals.camera import CameraConfig, ImageConfigType, ObjectiveConfigType
+from evomachine.types import AutoFocusStatusType, FilterWheelType, FocusCurveType, FocusStatusType, FovDirectionType, LEDType
 from evomachine.gui.facade import AutomatonGuiFacade
 from evomachine.gui.protocol import GuiCommandType, GuiRequest
 
@@ -68,6 +71,18 @@ class FakeStage:
         return self.coordinate.copy()
 
     def move(self, target, block=True):
+        if isinstance(target, tuple):
+            direction, multiplier = target
+            step = self.get_fov_step_size() * float(multiplier)
+            deltas = {
+                FovDirectionType.UP: (0.0, -step),
+                FovDirectionType.DOWN: (0.0, step),
+                FovDirectionType.LEFT: (-step, 0.0),
+                FovDirectionType.RIGHT: (step, 0.0),
+            }
+            dx, dy = deltas[direction]
+            self.coordinate = Coordinate(self.coordinate.x + dx, self.coordinate.y + dy, self.coordinate.z)
+            return
         self.coordinate = self.coordinate.merge(target)
 
     def stop(self):
@@ -101,6 +116,11 @@ class FakeCamera:
     def __init__(self):
         self.name = "Fake Camera"
         self.image = SimpleNamespace(shape=(48, 64), pxl_dtype="uint16")
+        self.config = CameraConfig(
+            binding=BindingType.VIRTUAL,
+            image=ImageConfigType(pxl_horiz=64, pxl_vert=48, pxl_dtype=np.dtype("uint16")),
+            objective_config=ObjectiveConfigType(na=0.95, mag=40),
+        )
         self.default_exposure_time = 200
         self.readout_mode = None
         self.exposure = 200
@@ -422,6 +442,13 @@ def test_facade_handles_stage_and_led_requests() -> None:
     response = facade.handle(GuiRequest(command=GuiCommandType.STAGE_MOVE_ABSOLUTE, payload={"x": 5, "y": 6, "z": 7}))
     assert response.ok
     assert response.payload["coordinate"] == {"x": 5, "y": 6, "z": 7, "channel_id": 0}
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.STAGE_MOVE_FOV, payload={"direction": "RIGHT"}))
+    assert response.ok
+    assert response.payload["coordinate"] == {"x": 12.8, "y": 6.0, "z": 7, "channel_id": 0}
+    assert response.payload["stage"]["fov_step_size"] == 100.0
+    assert response.payload["stage"]["camera_fov_step_size"] == pytest.approx(7.8)
+    assert response.payload["stage"]["camera_fov_step_source"] == "camera_config"
 
     response = facade.handle(GuiRequest(command=GuiCommandType.LED_SET, payload={"led": "LED_450_NM", "brightness": 22}))
     assert response.ok

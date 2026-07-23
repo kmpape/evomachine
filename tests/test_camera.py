@@ -10,7 +10,7 @@ import pytest
 from evomachine.bindings.binding_types import BindingType
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
 from evomachine.peripherals import camera as camera_module
-from evomachine.peripherals.camera import CameraConfig, CameraFactory, CameraReadoutMode
+from evomachine.peripherals.camera import CameraConfig, CameraFactory, CameraReadoutMode, ObjectiveConfigType
 from evomachine.peripherals.camera import ImageConfigType
 
 
@@ -64,6 +64,11 @@ def test_camera_config_validation() -> None:
     config = CameraConfig(binding=BindingType.VIRTUAL, image=image)
     assert config.binding == BindingType.VIRTUAL
     assert config.image == image
+    assert config.objective_config is None
+
+    objective_config = ObjectiveConfigType(na=0.95, mag=40)
+    config = CameraConfig(binding=BindingType.VIRTUAL, image=image, objective_config=objective_config)
+    assert config.objective_config == objective_config
 
     with pytest.raises(TypeError):
         CameraConfig(binding="virtual", image=image)
@@ -81,6 +86,8 @@ def test_camera_config_validation() -> None:
         CameraConfig(binding=BindingType.VIRTUAL, image=image, check_alive="yes")
     with pytest.raises(TypeError):
         CameraConfig(binding=BindingType.VIRTUAL, image=image, readout_mode=1)
+    with pytest.raises(TypeError):
+        CameraConfig(binding=BindingType.VIRTUAL, image=image, objective_config="objective")
 
 
 def test_virtual_camera_lifecycle_exposure_and_frame() -> None:

@@ -14,6 +14,7 @@ from evomachine.peripherals.dmd import DmdCalibrationConfigFactory
 from evomachine.strategy import NoStrategy, create_strategy_from_definition, list_strategy_definitions
 from evomachine.types import UNKNOWN_FOV_ID
 from evomachine.types import FilterWheelType, LEDType
+from evomachine.types import FovDirectionType
 from evomachine.gui.protocol import GuiCommandType
 
 
@@ -67,6 +68,18 @@ def gui_filter_wheel_type_from_payload(value: Any) -> FilterWheelType:
         except KeyError:
             return FilterWheelType(value)
     return FilterWheelType(value)
+
+
+def gui_fov_direction_from_payload(value: Any) -> FovDirectionType:
+    """Convert a JSON FoV movement direction to FovDirectionType."""
+    if isinstance(value, FovDirectionType):
+        return value
+    if isinstance(value, str):
+        try:
+            return FovDirectionType[value.upper()]
+        except KeyError:
+            return FovDirectionType(value)
+    return FovDirectionType(value)
 
 
 def gui_autofocus_config_from_payload(payload: dict[str, Any]) -> Any | None:
@@ -294,6 +307,18 @@ def gui_stage_move_relative(facade: Any, payload: dict[str, Any]) -> dict[str, A
         z=None if payload.get("dz") is None else current.z + payload.get("dz"),
     )
     facade.gui_stage().move(target=target, block=bool(payload.get("block", True)))
+    return facade.gui_stage_coordinates_payload(query_hardware=False)
+
+
+def gui_stage_move_fov(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    gui_require_devices_initialised(facade, "stage")
+    direction = gui_fov_direction_from_payload(payload["direction"])
+    multiplier = float(payload.get("multiplier", 1.0))
+    target = facade.gui_camera_fov_move_coordinate(direction=direction, multiplier=multiplier)
+    facade.gui_stage().move(
+        target=target,
+        block=bool(payload.get("block", True)),
+    )
     return facade.gui_stage_coordinates_payload(query_hardware=False)
 
 
@@ -595,6 +620,7 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.STAGE_GET_COORDINATES: gui_stage_get_coordinates,
     GuiCommandType.STAGE_MOVE_ABSOLUTE: gui_stage_move_absolute,
     GuiCommandType.STAGE_MOVE_RELATIVE: gui_stage_move_relative,
+    GuiCommandType.STAGE_MOVE_FOV: gui_stage_move_fov,
     GuiCommandType.STAGE_STOP: gui_stage_stop,
     GuiCommandType.CAMERA_STATUS: gui_camera_status,
     GuiCommandType.CAMERA_SET_EXPOSURE: gui_camera_set_exposure,

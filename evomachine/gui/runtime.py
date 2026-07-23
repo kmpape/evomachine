@@ -18,7 +18,7 @@ def build_virtual_automaton():
     from evomachine.image_processing_config import ImageProcessorConfigFactory
     from evomachine.navigation import FocusNavigator
     from evomachine.peripherals.autofocus import AutofocusConfig, AutofocusFactory
-    from evomachine.peripherals.camera import CameraConfig, CameraFactory, ImageConfigType
+    from evomachine.peripherals.camera import CameraConfig, CameraFactory, ImageConfigType, ObjectiveConfigTypeFactory
     from evomachine.peripherals.dmd import DmdConfig, DmdFactory
     from evomachine.peripherals.filterwheel import FilterWheelConfig, FilterWheelFactory
     from evomachine.peripherals.leds import LedConfig, LedFactory, LedManager
@@ -43,6 +43,7 @@ def build_virtual_automaton():
         CameraConfig(
             binding=BindingType.VIRTUAL,
             image=ImageConfigType(pxl_horiz=64, pxl_vert=48, pxl_dtype=np.dtype("uint16")),
+            objective_config=ObjectiveConfigTypeFactory.default_air(),
             check_alive=False,
         ),
         peripheral_controllers=controller,

@@ -128,6 +128,7 @@ class CameraConfig(PeripheralConfig):
     default_exposure_time: float | int = 200
     sensor_pixel_size_um: float = 6.5
     readout_mode: CameraReadoutMode | None = None
+    objective_config: ObjectiveConfigType | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -154,6 +155,11 @@ class CameraConfig(PeripheralConfig):
             raise TypeError(
                 f"CameraConfig: readout_mode must be CameraReadoutMode or None, "
                 f"received {type(self.readout_mode)}."
+            )
+        if self.objective_config is not None and not isinstance(self.objective_config, ObjectiveConfigType):
+            raise TypeError(
+                f"CameraConfig: objective_config must be ObjectiveConfigType or None, "
+                f"received {type(self.objective_config)}."
             )
 
 
