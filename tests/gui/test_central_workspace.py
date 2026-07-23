@@ -5,6 +5,9 @@ import numpy as np
 from evomachine.config import DMD_WIDTH_HEIGHT
 from evomachine.gui.central_workspace import (
     DMD_DISPLAY_SHAPE,
+    DMD_RECT,
+    MAIN_RECT,
+    SPECTRUM_RECT,
     WORKSPACE_SHAPE,
     dmd_array_to_display,
     make_brightness_histogram,
@@ -51,6 +54,14 @@ def test_visual_workspace_is_one_rgb_dashboard_image() -> None:
 
     assert workspace.shape == (*WORKSPACE_SHAPE, 3)
     assert workspace.dtype == np.uint8
+
+
+def test_visual_workspace_panels_are_vertically_stacked() -> None:
+    assert MAIN_RECT[0] == SPECTRUM_RECT[0] == DMD_RECT[0]
+    assert MAIN_RECT[1] + MAIN_RECT[3] < SPECTRUM_RECT[1]
+    assert SPECTRUM_RECT[1] + SPECTRUM_RECT[3] < DMD_RECT[1]
+    assert WORKSPACE_SHAPE[1] == MAIN_RECT[0] + MAIN_RECT[2] + MAIN_RECT[0]
+    assert WORKSPACE_SHAPE[0] == DMD_RECT[1] + DMD_RECT[3] + MAIN_RECT[1]
 
 
 def test_visual_workspace_stack_has_one_dashboard_per_plane() -> None:
