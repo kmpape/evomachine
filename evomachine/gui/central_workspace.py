@@ -14,7 +14,6 @@ LAST_IMAGE_LAYER = "Last acquired image"
 BRIGHTNESS_LAYER = "Brightness spectrum"
 DMD_LAYER = "DMD pattern"
 
-WORKSPACE_SHAPE = (900, 1400)
 DEFAULT_CAMERA_DISPLAY_SHAPE = (512, 512)
 DMD_DISPLAY_SHAPE = (DMD_WIDTH_HEIGHT[1], DMD_WIDTH_HEIGHT[0])
 HISTOGRAM_BINS = 64
@@ -26,11 +25,22 @@ BORDER = (78, 85, 96)
 TEXT = (230, 234, 241)
 MUTED_TEXT = (150, 158, 170)
 
-MAIN_RECT = (36, 52, 780, 820)
-SPECTRUM_RECT = (860, 52, 504, 210)
-DMD_CONTENT_WIDTH = 468
+PANEL_X = 28
+PANEL_Y = 36
+PANEL_GAP = 34
+PANEL_WIDTH = 764
+PANEL_PAD = 18
+MAIN_RECT = (PANEL_X, PANEL_Y, PANEL_WIDTH, 650)
+SPECTRUM_RECT = (PANEL_X, MAIN_RECT[1] + MAIN_RECT[3] + PANEL_GAP, PANEL_WIDTH, 210)
+DMD_CONTENT_WIDTH = PANEL_WIDTH - 2 * PANEL_PAD
 DMD_CONTENT_HEIGHT = round(DMD_CONTENT_WIDTH * DMD_DISPLAY_SHAPE[0] / DMD_DISPLAY_SHAPE[1])
-DMD_RECT = (860, 332, 504, 48 + DMD_CONTENT_HEIGHT + 18)
+DMD_RECT = (
+    PANEL_X,
+    SPECTRUM_RECT[1] + SPECTRUM_RECT[3] + PANEL_GAP,
+    PANEL_WIDTH,
+    48 + DMD_CONTENT_HEIGHT + PANEL_PAD,
+)
+WORKSPACE_SHAPE = (DMD_RECT[1] + DMD_RECT[3] + PANEL_Y, PANEL_X + PANEL_WIDTH + PANEL_X)
 
 
 def dmd_array_to_display(array: np.ndarray) -> np.ndarray:
@@ -128,8 +138,12 @@ def make_visual_workspace(
     _paste_into_rect(pil_canvas, main_source, _content_rect(MAIN_RECT, top=58, pad=18))
 
     _draw_panel(draw, SPECTRUM_RECT, "Brightness histogram")
-    histogram = make_brightness_histogram(last_image)
-    _paste_into_rect(pil_canvas, histogram, _content_rect(SPECTRUM_RECT, top=42, pad=18))
+    spectrum_content_rect = _content_rect(SPECTRUM_RECT, top=42, pad=18)
+    histogram = make_brightness_histogram(
+        last_image,
+        size=(spectrum_content_rect[3], spectrum_content_rect[2]),
+    )
+    _paste_into_rect(pil_canvas, histogram, spectrum_content_rect)
 
     _draw_panel(draw, DMD_RECT, "DMD window")
     dmd_source = make_dmd_placeholder() if dmd_pattern is None else dmd_array_to_display(dmd_pattern)
