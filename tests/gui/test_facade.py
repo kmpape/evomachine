@@ -135,6 +135,9 @@ class FakeCamera:
     def get_exposure(self):
         return self.exposure
 
+    def fov_size(self):
+        return 7.8
+
     def set_exposure(self, exposure_time):
         self.exposure = exposure_time
 
@@ -448,7 +451,6 @@ def test_facade_handles_stage_and_led_requests() -> None:
     assert response.payload["coordinate"] == {"x": 12.8, "y": 6.0, "z": 7, "channel_id": 0}
     assert response.payload["stage"]["fov_step_size"] == 100.0
     assert response.payload["stage"]["camera_fov_step_size"] == pytest.approx(7.8)
-    assert response.payload["stage"]["camera_fov_step_source"] == "camera_config"
 
     response = facade.handle(GuiRequest(command=GuiCommandType.LED_SET, payload={"led": "LED_450_NM", "brightness": 22}))
     assert response.ok

@@ -436,6 +436,25 @@ class Camera(Peripheral):
         """
         return self._current_exposure
 
+    def fov_size(self) -> float:
+        """
+        Return the vertical camera field-of-view size in micrometres.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        float
+            Vertical field-of-view size in micrometres.
+        """
+        if self.config is None:
+            raise RuntimeError("Camera.fov_size: camera config is not available.")
+        if self.config.objective_config is None:
+            raise RuntimeError("Camera.fov_size: objective config is not available.")
+        return calculate_fov_size(camera_config=self.config, objective_config=self.config.objective_config)
+
     def set_readout_mode(self, readout_mode: CameraReadoutMode) -> None:
         """
         Set the camera readout mode.
