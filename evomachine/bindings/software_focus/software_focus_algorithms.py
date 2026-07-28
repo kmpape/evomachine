@@ -215,88 +215,6 @@ class SteelFocusAlgorithm(SoftwareFocusAlgorithm):
         return score
 
 
-def bandpass_fft_focus_score(
-        image: np.ndarray,
-        cell_radius: float = 20.0,
-        downsample: int = 4,
-        order: int = 4,
-        saturation: float | None = None,
-        normalize_brightness: bool = True,
-) -> float:
-    """Return a focus score for a single greyscale image; higher is sharper.
-
-    Band-pass the image to the cell spatial scale (features roughly 0.5x-2x
-    ``cell_radius``) and measure the variance of that band. Sharp cells put
-    energy in the passband; defocus, illumination gradients, and large bright
-    blobs are low-frequency and fall outside it, while noise is high-frequency
-    and also excluded. The radial passband and the sign-agnostic variance make
-    the score rotation- and inversion-invariant. Pure NumPy.
-
-    Parameters
-    ----------
-    image
-        2D greyscale array (any numeric dtype).
-    cell_radius
-        Approximate in-focus cell radius in full-resolution pixels. The broad
-        passband tolerates ~50% error.
-    downsample
-        Integer stride applied before the FFT (speed knob); 1 disables it.
-    order
-        Butterworth filter order controlling passband roll-off steepness.
-    saturation
-        Upper intensity clip applied before filtering (camera full scale, e.g.
-        4095 for a 12-bit sensor). ``None`` disables clipping. This is the key
-        resilience knob against over-bright blobs/artifacts.
-    normalize_brightness
-        If True, divide the score by mean intensity squared so the ranking is
-        invariant to global brightness/exposure.
-
-    Returns
-    -------
-    float
-        Variance of the cell-scale bandpass of the image.
-    """
-    img = np.asarray(image, dtype=np.float64)
-    if img.ndim != 2:
-        raise ValueError(f"expected a 2D greyscale image, got shape {img.shape}")
-
-    if downsample > 1:
-        img = img[::downsample, ::downsample]
-
-    # Clamp over-bright artifacts to the sensor ceiling so they cannot inject an
-    # unphysically tall edge or inflate the brightness scale.
-    if saturation is not None:
-        img = np.minimum(img, saturation)
-
-    # Brightness scale for exposure invariance, taken after clipping.
-    scale = img.mean()
-
-    # Work in the downsampled coordinate system.
-    radius_ds = cell_radius / max(downsample, 1)
-    # Cutoffs in cycles/pixel: pass features between ~0.5x and ~2x cell size.
-    f_hi = 1.0 / radius_ds  # reject features SMALLER than ~0.5x cell (noise)
-    f_lo = 1.0 / (4.0 * radius_ds)  # reject features LARGER than ~2x cell (blobs)
-
-    # Radial frequency magnitude for the (possibly rectangular) image.
-    fy = np.fft.fftfreq(img.shape[0])[:, None]
-    fx = np.fft.fftfreq(img.shape[1])[None, :]
-    f = np.sqrt(fx * fx + fy * fy)
-    f[0, 0] = 1e-12  # avoid divide-by-zero at DC for the highpass term
-
-    # Butterworth bandpass = lowpass(f_hi) * highpass(f_lo).
-    lowpass = 1.0 / (1.0 + (f / f_hi) ** (2 * order))
-    highpass = 1.0 / (1.0 + (f_lo / f) ** (2 * order))
-    bandpass = lowpass * highpass
-
-    filtered = np.fft.ifft2(np.fft.fft2(img) * bandpass).real
-    score = float(filtered.var())
-
-    if normalize_brightness and scale > 0:
-        score /= scale * scale
-
-    return score
-
-
 class BandpassFFTFocusAlgorithm(SoftwareFocusAlgorithm):
     """Focus algorithm based on the variance of a cell-scale FFT bandpass."""
 
@@ -391,39 +309,69 @@ class BandpassFFTFocusAlgorithm(SoftwareFocusAlgorithm):
 
     def score_image(self, img: np.ndarray) -> float:
         """
-        Return a bandpass-FFT focus score for one image.
+        Return a bandpass-FFT focus score for one image; higher is sharper.
+
+        Band-pass the image to the cell spatial scale (features roughly 0.5x-2x
+        ``cell_radius``) and measure the variance of that band. Sharp cells put
+        energy in the passband; defocus, illumination gradients, and large bright
+        blobs are low-frequency and fall outside it, while noise is high-frequency
+        and also excluded. The radial passband and the sign-agnostic variance make
+        the score rotation- and inversion-invariant.
 
         Parameters
         ----------
         img
-            Image array to score.
+            2D greyscale image array (any numeric dtype).
 
         Returns
         -------
         float
             Variance of the cell-scale bandpass of the image.
         """
-        return bandpass_fft_focus_score(
-            img,
-            cell_radius=self.cell_radius,
-            downsample=self.downsample,
-            order=self.order,
-            saturation=self.saturation,
-            normalize_brightness=self.normalize_brightness,
-        )
+        image = np.asarray(img, dtype=np.float64)
+        if image.ndim != 2:
+            raise ValueError(f"expected a 2D greyscale image, got shape {image.shape}")
+
+        if self.downsample > 1:
+            image = image[:: self.downsample, :: self.downsample]
+
+        # Clamp over-bright artifacts to the sensor ceiling so they cannot inject
+        # an unphysically tall edge or inflate the brightness scale.
+        if self.saturation is not None:
+            image = np.minimum(image, self.saturation)
+
+        # Brightness scale for exposure invariance, taken after clipping.
+        scale = image.mean()
+
+        # Work in the downsampled coordinate system.
+        radius_ds = self.cell_radius / max(self.downsample, 1)
+        # Cutoffs in cycles/pixel: pass features between ~0.5x and ~2x cell size.
+        f_hi = 1.0 / radius_ds  # reject features SMALLER than ~0.5x cell (noise)
+        f_lo = 1.0 / (4.0 * radius_ds)  # reject features LARGER than ~2x cell (blobs)
+
+        # Radial frequency magnitude for the (possibly rectangular) image.
+        fy = np.fft.fftfreq(image.shape[0])[:, None]
+        fx = np.fft.fftfreq(image.shape[1])[None, :]
+        f = np.sqrt(fx * fx + fy * fy)
+        f[0, 0] = 1e-12  # avoid divide-by-zero at DC for the highpass term
+
+        # Butterworth bandpass = lowpass(f_hi) * highpass(f_lo).
+        lowpass = 1.0 / (1.0 + (f / f_hi) ** (2 * self.order))
+        highpass = 1.0 / (1.0 + (f_lo / f) ** (2 * self.order))
+        bandpass = lowpass * highpass
+
+        filtered = np.fft.ifft2(np.fft.fft2(image) * bandpass).real
+        score = float(filtered.var())
+
+        if self.normalize_brightness and scale > 0:
+            score /= scale * scale
+
+        return score
 
 
 def create_software_focus_algorithm(
         algorithm: FocusAlgorithmType,
-        threshold: float | None = None,
-        rowshift: int = 25,
-        colshift: int = 50,
-        normalise: bool = False,
-        cell_radius: float = 20.0,
-        downsample: int = 4,
-        order: int = 4,
-        saturation: float | None = None,
-        normalize_brightness: bool = True,
+        **kwargs,
 ) -> SoftwareFocusAlgorithm:
     """
     Create a focus scoring algorithm for a FocusAlgorithmType.
@@ -432,25 +380,13 @@ def create_software_focus_algorithm(
     ----------
     algorithm
         FocusAlgorithmType selecting the scoring implementation.
-    threshold
-        Optional squared-gradient threshold.
-    rowshift
-        Row shift for the Steel algorithm.
-    colshift
-        Column shift for the Steel algorithm.
-    normalise
-        If True, normalise the Steel score by image area.
-    cell_radius
-        In-focus cell radius (full-res px) for the bandpass-FFT algorithm.
-    downsample
-        Integer stride before the FFT for the bandpass-FFT algorithm.
-    order
-        Butterworth filter order for the bandpass-FFT algorithm.
-    saturation
-        Upper intensity clip for the bandpass-FFT algorithm (camera full scale,
-        e.g. 4095 for a 12-bit sensor). None disables clipping.
-    normalize_brightness
-        If True, normalise the bandpass-FFT score for exposure invariance.
+    **kwargs
+        Algorithm-specific keyword arguments forwarded to the selected
+        algorithm's constructor (e.g. ``rowshift``/``colshift``/``normalise``
+        for STEEL, ``threshold`` for SQUARED_GRAD_AVG, or ``cell_radius``/
+        ``downsample``/``order``/``saturation``/``normalize_brightness`` for
+        BANDPASS_FFT). Passing a keyword the selected algorithm does not accept
+        raises TypeError from its constructor.
 
     Returns
     -------
@@ -462,17 +398,11 @@ def create_software_focus_algorithm(
             f"create_software_focus_algorithm: algorithm must be FocusAlgorithmType, received {type(algorithm)}."
         )
     if algorithm == FocusAlgorithmType.LAPLACIAN_VAR:
-        return LaplacianVarianceFocusAlgorithm()
+        return LaplacianVarianceFocusAlgorithm(**kwargs)
     if algorithm == FocusAlgorithmType.SQUARED_GRAD_AVG:
-        return SquaredGradientAverageFocusAlgorithm(threshold=threshold)
+        return SquaredGradientAverageFocusAlgorithm(**kwargs)
     if algorithm == FocusAlgorithmType.STEEL:
-        return SteelFocusAlgorithm(rowshift=rowshift, colshift=colshift, normalise=normalise)
+        return SteelFocusAlgorithm(**kwargs)
     if algorithm == FocusAlgorithmType.BANDPASS_FFT:
-        return BandpassFFTFocusAlgorithm(
-            cell_radius=cell_radius,
-            downsample=downsample,
-            order=order,
-            saturation=saturation,
-            normalize_brightness=normalize_brightness,
-        )
+        return BandpassFFTFocusAlgorithm(**kwargs)
     raise ValueError(f"create_software_focus_algorithm: unsupported focus algorithm {algorithm}.")

@@ -553,12 +553,12 @@ def test_algorithm_factory_selects_algorithms() -> None:
     assert steel.rowshift == 1
     assert steel.colshift == 2
 
-    fft = create_software_focus_algorithm(
+    fft_algo = create_software_focus_algorithm(
         FocusAlgorithmType.BANDPASS_FFT, cell_radius=15, saturation=4095
     )
-    assert isinstance(fft, BandpassFFTFocusAlgorithm)
-    assert fft.cell_radius == 15
-    assert fft.saturation == 4095
+    assert isinstance(fft_algo, BandpassFFTFocusAlgorithm)
+    assert fft_algo.cell_radius == 15
+    assert fft_algo.saturation == 4095
 
     with pytest.raises(TypeError):
         create_software_focus_algorithm("STEEL")
