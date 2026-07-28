@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass
 from typing import Any
+
+from pydantic import field_validator
 
 from evomachine.bindings.binding_types import BindingType
 from evomachine.config import get_logger
@@ -13,13 +14,19 @@ from evomachine.types import FilterWheelType
 logger = get_logger(name=__name__, is_peripheral=True)
 
 
-@dataclass(kw_only=True)
 class FilterWheelConfig(PeripheralConfig):
     """Configuration object used by FilterWheelFactory to create filter wheels."""
 
     available_filters: list[FilterWheelType]
 
-    def __post_init__(self) -> None:
+    @field_validator("available_filters", mode="before")
+    @classmethod
+    def _validate_available_filters_type(cls, value: object) -> object:
+        if not isinstance(value, list):
+            raise TypeError(f"FilterWheelConfig: available_filters must be list, received {type(value)}.")
+        return value
+
+    def model_post_init(self, __context) -> None:
         """
         Validate filter wheel factory configuration.
 
@@ -31,7 +38,7 @@ class FilterWheelConfig(PeripheralConfig):
         -------
         None
         """
-        super().__post_init__()
+        super().model_post_init(__context)
         self.available_filters = FilterWheel._validate_available_filters(
             available_filters=self.available_filters,
         )

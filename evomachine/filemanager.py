@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import json
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+from pydantic import Field, field_validator
 import skimage.io
 import tifffile
 
+from evomachine.config_models import EvoConfig
 from evomachine.config import (
     TimeConfig,
     ensure_timezone_aware,
@@ -20,16 +21,36 @@ from evomachine.frame import FrameMetaData
 from evomachine.types import FilterWheelType, LEDType
 
 
-@dataclass
-class FileNameConfig:
+class FileNameConfig(EvoConfig):
     """Configuration object for FileManager output paths and filename patterns."""
 
     directory: Path
     filename_pattern: str = "{channel}_FOV{fov_id}_X{x}_Y{y}_Z{z}_F{filter_wheel}_{timestamp}"
     create_directory: bool = True
-    time_config: TimeConfig = field(default_factory=TimeConfig)
+    time_config: TimeConfig = Field(default_factory=TimeConfig)
 
-    def __post_init__(self) -> None:
+    @field_validator("directory", mode="before")
+    @classmethod
+    def _validate_directory_type(cls, value: object) -> object:
+        if not isinstance(value, Path | str):
+            raise TypeError(f"FileNameConfig: directory must be Path or str, received {type(value)}.")
+        return value
+
+    @field_validator("filename_pattern", mode="before")
+    @classmethod
+    def _validate_filename_pattern_type(cls, value: object) -> object:
+        if not isinstance(value, str):
+            raise TypeError(f"FileNameConfig: filename_pattern must be str, received {type(value)}.")
+        return value
+
+    @field_validator("create_directory", mode="before")
+    @classmethod
+    def _validate_create_directory_type(cls, value: object) -> object:
+        if not isinstance(value, bool):
+            raise TypeError(f"FileNameConfig: create_directory must be bool, received {type(value)}.")
+        return value
+
+    def model_post_init(self, __context) -> None:
         if isinstance(self.directory, str):
             self.directory = Path(self.directory)
         if not isinstance(self.directory, Path):
@@ -42,22 +63,6 @@ class FileNameConfig:
             raise TypeError(f"FileNameConfig: create_directory must be bool, received {type(self.create_directory)}.")
         if not isinstance(self.time_config, TimeConfig):
             raise TypeError(f"FileNameConfig: time_config must be TimeConfig, received {type(self.time_config)}.")
-
-    def copy(self) -> "FileNameConfig":
-        return FileNameConfig(**self.__dict__)
-
-    def updated(self, **kwargs: Any) -> "FileNameConfig":
-        unknown_keys = [key for key in kwargs if key not in self.__dict__]
-        if unknown_keys:
-            raise ValueError(f"FileNameConfig.updated: unknown fields {unknown_keys}.")
-        values = dict(self.__dict__)
-        values.update(kwargs)
-        return FileNameConfig(**values)
-
-    def update_from_mapping(self, updates: dict[str, Any]) -> "FileNameConfig":
-        if not isinstance(updates, dict):
-            raise TypeError(f"FileNameConfig.update_from_mapping: updates must be dict, received {type(updates)}.")
-        return self.updated(**updates)
 
 
 class FileManager:

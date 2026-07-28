@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
 import time
 from typing import Any
 
 import numpy as np
+from pydantic import field_validator
 from asitiger.command import CRISPSetState
 
 from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
@@ -13,7 +13,6 @@ from evomachine.peripherals.autofocus import Autofocus, AutofocusCalibrationConf
 from evomachine.types import AutoFocusStatusType
 
 
-@dataclass
 class TigerAutofocusConfig(AutofocusCalibrationConfig):
     """ASI Tiger CRISP autofocus configuration."""
 
@@ -25,6 +24,25 @@ class TigerAutofocusConfig(AutofocusCalibrationConfig):
     objective_na: float
     min_snr: int | float = 2
     min_error: int | float = 100
+
+    @field_validator(
+        "averaging",
+        "led_intensity",
+        "lock_range",
+        "loop_gain",
+        "update_rate",
+        "objective_na",
+        "min_snr",
+        "min_error",
+        mode="before",
+    )
+    @classmethod
+    def _validate_field(cls, value: object, info) -> object:
+        if not cls.attr_is_valid(info.field_name, value):
+            raise TypeError(
+                f"TigerAutofocusConfig: {info.field_name} has invalid value {value}."
+            )
+        return value
 
     @staticmethod
     def get_attr_from_str(attr_name: str, attr_value_str: str) -> int | float:
@@ -50,7 +68,7 @@ class TigerAutofocusConfig(AutofocusCalibrationConfig):
             return isinstance(attr_value, int | float) and not isinstance(attr_value, bool) and attr_value >= 0
         return False
 
-    def __post_init__(self) -> None:
+    def model_post_init(self, __context) -> None:
         if not isinstance(self.averaging, int) or isinstance(self.averaging, bool) or not 0 <= self.averaging < 100:
             raise TypeError(f"TigerAutofocusConfig: averaging must be int in [0, 100), received {self.averaging}.")
         if (
