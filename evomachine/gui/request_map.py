@@ -14,6 +14,7 @@ from evomachine.peripherals.dmd import DmdCalibrationConfigFactory
 from evomachine.strategy import NoStrategy, create_strategy_from_definition, list_strategy_definitions
 from evomachine.types import UNKNOWN_FOV_ID
 from evomachine.types import FilterWheelType, LEDType
+from evomachine.types import FovDirectionType
 from evomachine.gui.protocol import GuiCommandType
 
 
@@ -23,6 +24,12 @@ DMD_PREVIEW_SHAPE = (220, 360)
 FRAME_PREVIEW_SHAPE = (512, 512)
 STACK_PREVIEW_SHAPE = (256, 256)
 MAX_Z_STACK_PLANES = 10000
+GUI_CAMERA_FOV_DIRECTION_DELTAS = {
+    FovDirectionType.UP: (0.0, -1.0),
+    FovDirectionType.DOWN: (0.0, 1.0),
+    FovDirectionType.LEFT: (-1.0, 0.0),
+    FovDirectionType.RIGHT: (1.0, 0.0),
+}
 
 
 def gui_coordinate_to_payload(coordinate: Coordinate) -> dict[str, Any]:
@@ -67,6 +74,37 @@ def gui_filter_wheel_type_from_payload(value: Any) -> FilterWheelType:
         except KeyError:
             return FilterWheelType(value)
     return FilterWheelType(value)
+
+
+def gui_fov_direction_from_payload(value: Any) -> FovDirectionType:
+    """Convert a JSON FoV movement direction to FovDirectionType."""
+    if isinstance(value, FovDirectionType):
+        return value
+    if isinstance(value, str):
+        try:
+            return FovDirectionType[value.upper()]
+        except KeyError:
+            return FovDirectionType(value)
+    return FovDirectionType(value)
+
+
+def gui_camera_fov_move_coordinate(stage: Any, camera: Any, direction: FovDirectionType, multiplier: float) -> Coordinate:
+    """Build the stage target coordinate for one camera FoV movement."""
+    if direction not in GUI_CAMERA_FOV_DIRECTION_DELTAS:
+        raise ValueError("Camera FoV movement only supports UP, DOWN, LEFT, and RIGHT.")
+    if multiplier <= 0:
+        raise ValueError(f"Camera FoV movement multiplier must be positive, received {multiplier}.")
+    current = stage.get_coordinates(query_hardware=True)
+    if current.x is None or current.y is None:
+        raise RuntimeError("Camera FoV movement requires current X/Y stage coordinates.")
+    step_size = float(camera.fov_size())
+    x_delta, y_delta = GUI_CAMERA_FOV_DIRECTION_DELTAS[direction]
+    return Coordinate(
+        x=current.x + x_delta * step_size * multiplier,
+        y=current.y + y_delta * step_size * multiplier,
+        z=None,
+        channel_id=current.get_channel_id(),
+    )
 
 
 def gui_autofocus_config_from_payload(payload: dict[str, Any]) -> Any | None:
@@ -294,6 +332,20 @@ def gui_stage_move_relative(facade: Any, payload: dict[str, Any]) -> dict[str, A
         z=None if payload.get("dz") is None else current.z + payload.get("dz"),
     )
     facade.gui_stage().move(target=target, block=bool(payload.get("block", True)))
+    return facade.gui_stage_coordinates_payload(query_hardware=False)
+
+
+def gui_stage_move_fov(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    gui_require_devices_initialised(facade, "stage")
+    direction = gui_fov_direction_from_payload(payload["direction"])
+    multiplier = float(payload.get("multiplier", 1.0))
+    stage = facade.gui_stage()
+    camera = facade.gui_camera()
+    target = gui_camera_fov_move_coordinate(stage=stage, camera=camera, direction=direction, multiplier=multiplier)
+    stage.move(
+        target=target,
+        block=bool(payload.get("block", True)),
+    )
     return facade.gui_stage_coordinates_payload(query_hardware=False)
 
 
@@ -595,6 +647,7 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.STAGE_GET_COORDINATES: gui_stage_get_coordinates,
     GuiCommandType.STAGE_MOVE_ABSOLUTE: gui_stage_move_absolute,
     GuiCommandType.STAGE_MOVE_RELATIVE: gui_stage_move_relative,
+    GuiCommandType.STAGE_MOVE_FOV: gui_stage_move_fov,
     GuiCommandType.STAGE_STOP: gui_stage_stop,
     GuiCommandType.CAMERA_STATUS: gui_camera_status,
     GuiCommandType.CAMERA_SET_EXPOSURE: gui_camera_set_exposure,

@@ -128,6 +128,7 @@ class CameraConfig(PeripheralConfig):
     default_exposure_time: float | int = 200
     sensor_pixel_size_um: float = 6.5
     readout_mode: CameraReadoutMode | None = None
+    objective_config: ObjectiveConfigType | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -154,6 +155,11 @@ class CameraConfig(PeripheralConfig):
             raise TypeError(
                 f"CameraConfig: readout_mode must be CameraReadoutMode or None, "
                 f"received {type(self.readout_mode)}."
+            )
+        if self.objective_config is not None and not isinstance(self.objective_config, ObjectiveConfigType):
+            raise TypeError(
+                f"CameraConfig: objective_config must be ObjectiveConfigType or None, "
+                f"received {type(self.objective_config)}."
             )
 
 
@@ -429,6 +435,25 @@ class Camera(Peripheral):
             Cached exposure time in milliseconds, or None before it is set.
         """
         return self._current_exposure
+
+    def fov_size(self) -> float:
+        """
+        Return the vertical camera field-of-view size in micrometres.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        float
+            Vertical field-of-view size in micrometres.
+        """
+        if self.config is None:
+            raise RuntimeError("Camera.fov_size: camera config is not available.")
+        if self.config.objective_config is None:
+            raise RuntimeError("Camera.fov_size: objective config is not available.")
+        return calculate_fov_size(camera_config=self.config, objective_config=self.config.objective_config)
 
     def set_readout_mode(self, readout_mode: CameraReadoutMode) -> None:
         """

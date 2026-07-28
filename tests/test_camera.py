@@ -10,7 +10,7 @@ import pytest
 from evomachine.bindings.binding_types import BindingType
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
 from evomachine.peripherals import camera as camera_module
-from evomachine.peripherals.camera import CameraConfig, CameraFactory, CameraReadoutMode
+from evomachine.peripherals.camera import CameraConfig, CameraFactory, CameraReadoutMode, ObjectiveConfigType
 from evomachine.peripherals.camera import ImageConfigType
 
 
@@ -64,6 +64,11 @@ def test_camera_config_validation() -> None:
     config = CameraConfig(binding=BindingType.VIRTUAL, image=image)
     assert config.binding == BindingType.VIRTUAL
     assert config.image == image
+    assert config.objective_config is None
+
+    objective_config = ObjectiveConfigType(na=0.95, mag=40)
+    config = CameraConfig(binding=BindingType.VIRTUAL, image=image, objective_config=objective_config)
+    assert config.objective_config == objective_config
 
     with pytest.raises(TypeError):
         CameraConfig(binding="virtual", image=image)
@@ -81,6 +86,57 @@ def test_camera_config_validation() -> None:
         CameraConfig(binding=BindingType.VIRTUAL, image=image, check_alive="yes")
     with pytest.raises(TypeError):
         CameraConfig(binding=BindingType.VIRTUAL, image=image, readout_mode=1)
+    with pytest.raises(TypeError):
+        CameraConfig(binding=BindingType.VIRTUAL, image=image, objective_config="objective")
+
+
+def test_camera_fov_size_uses_camera_and_objective_config() -> None:
+    """
+    Check Camera exposes field-of-view size from its own configuration.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    config = CameraConfig(
+        binding=BindingType.VIRTUAL,
+        image=_image_config(),
+        sensor_pixel_size_um=6.5,
+        objective_config=ObjectiveConfigType(na=0.95, mag=40),
+    )
+    camera = CameraFactory.create(
+        config=config,
+        peripheral_controllers=_initialised_virtual_controller(),
+        random_seed=1,
+    )
+
+    assert camera.fov_size() == pytest.approx(0.975)
+
+
+def test_camera_fov_size_requires_objective_config() -> None:
+    """
+    Check field-of-view size reports missing objective configuration clearly.
+
+    Parameters
+    ----------
+    None
+
+    Returns
+    -------
+    None
+    """
+    camera = CameraFactory.create(
+        config=CameraConfig(binding=BindingType.VIRTUAL, image=_image_config()),
+        peripheral_controllers=_initialised_virtual_controller(),
+        random_seed=1,
+    )
+
+    with pytest.raises(RuntimeError, match="objective config is not available"):
+        camera.fov_size()
 
 
 def test_virtual_camera_lifecycle_exposure_and_frame() -> None:

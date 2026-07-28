@@ -210,11 +210,17 @@ class AutomatonGuiFacade:
 
     def gui_stage_status_payload(self) -> dict[str, Any]:
         stage = self.gui_stage()
+        camera_fov_step_size = None
+        try:
+            camera_fov_step_size = float(self.gui_camera().fov_size())
+        except RuntimeError:
+            logger.debug("AutomatonGuiFacade: camera FoV size unavailable for stage status.")
         return {
             "is_initialised": bool(stage.is_initialised()),
             "is_alive": bool(stage.is_alive()),
             "fov_id": stage.get_fov_id(),
             "fov_step_size": stage.get_fov_step_size(),
+            "camera_fov_step_size": camera_fov_step_size,
         }
 
     def gui_stage_coordinates_payload(self, query_hardware: bool) -> dict[str, Any]:
