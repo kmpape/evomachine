@@ -1,24 +1,25 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import threading
 from typing import Any
 
 import numpy as np
 from delta.utils import CroppingBox
+from pydantic import Field, field_validator
 
 from evomachine.acquisition import FrameAcquisitionManager, FrameAcquisitionSettings
 from evomachine.bindings.software_focus.software_focus_algorithms import (
     create_software_focus_algorithm,
 )
+from evomachine.config_models import EvoConfig
 from evomachine.coordinates import Coordinate
 from evomachine.frame import Frame, FrameMetaData
 from evomachine.types import FocusCurveType, FocusStatusType, UNKNOWN_FOV_ID
 from evomachine.types import FocusAlgorithmType, LEDType
 
 
-@dataclass
-class SoftwareFocusConfig:
+class SoftwareFocusConfig(EvoConfig):
     """Configuration object for acquisition-backed software focus."""
 
     focus_frames: list[FrameMetaData]
@@ -26,10 +27,40 @@ class SoftwareFocusConfig:
     rel_range: int
     step_size: int
     algorithm: FocusAlgorithmType
-    algorithm_kwargs: dict[str, Any] = field(default_factory=dict)
+    algorithm_kwargs: dict[str, Any] = Field(default_factory=dict)
     cropping_box: CroppingBox | list[CroppingBox] | None = None
 
-    def __post_init__(self) -> None:
+    @field_validator("focus_frames", mode="before")
+    @classmethod
+    def _validate_focus_frames_type(cls, value: object) -> object:
+        if not isinstance(value, list) or not value:
+            raise TypeError("SoftwareFocusConfig: focus_frames must be a non-empty list[FrameMetaData].")
+        return value
+
+    @field_validator("rel_range", "step_size", mode="before")
+    @classmethod
+    def _validate_scan_int_type(cls, value: object, info) -> object:
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise TypeError(f"SoftwareFocusConfig: {info.field_name} must be int.")
+        return value
+
+    @field_validator("algorithm_kwargs", mode="before")
+    @classmethod
+    def _validate_algorithm_kwargs_type(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            raise TypeError("SoftwareFocusConfig: algorithm_kwargs must be dict[str, Any].")
+        if not all(isinstance(key, str) for key in value):
+            raise TypeError("SoftwareFocusConfig: algorithm_kwargs keys must be str.")
+        return value
+
+    @field_validator("acquisition_settings", mode="before")
+    @classmethod
+    def _validate_acquisition_settings_type(cls, value: object) -> object:
+        if value is not None and not isinstance(value, FrameAcquisitionSettings | dict):
+            raise TypeError("SoftwareFocusConfig: acquisition_settings must be FrameAcquisitionSettings or None.")
+        return value
+
+    def model_post_init(self, __context) -> None:
         if not isinstance(self.focus_frames, list) or not self.focus_frames:
             raise TypeError("SoftwareFocusConfig: focus_frames must be a non-empty list[FrameMetaData].")
         if not all(isinstance(frame, FrameMetaData) for frame in self.focus_frames):
@@ -61,22 +92,6 @@ class SoftwareFocusConfig:
                 raise TypeError("SoftwareFocusConfig: every cropping_box entry must be CroppingBox.")
             return list(cropping_box)
         raise TypeError("SoftwareFocusConfig: cropping_box must be CroppingBox, list[CroppingBox], or None.")
-
-    def copy(self) -> "SoftwareFocusConfig":
-        return SoftwareFocusConfig(**self.__dict__)
-
-    def updated(self, **kwargs: Any) -> "SoftwareFocusConfig":
-        unknown_keys = [key for key in kwargs if key not in self.__dict__]
-        if unknown_keys:
-            raise ValueError(f"SoftwareFocusConfig.updated: unknown fields {unknown_keys}.")
-        values = dict(self.__dict__)
-        values.update(kwargs)
-        return SoftwareFocusConfig(**values)
-
-    def update_from_mapping(self, updates: dict[str, Any]) -> "SoftwareFocusConfig":
-        if not isinstance(updates, dict):
-            raise TypeError("SoftwareFocusConfig.update_from_mapping: updates must be dict.")
-        return self.updated(**updates)
 
 
 class SoftwareFocusConfigFactory:

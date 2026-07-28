@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass
+from pydantic import field_validator
+
 from evomachine.config import get_logger
 from evomachine.coordinates import Coordinate, CoordinateBounds
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
@@ -12,7 +13,6 @@ from evomachine.types import AxisType, FovDirectionType, PositiveScalingType, UN
 logger = get_logger(name=__name__, is_peripheral=True)
 
 
-@dataclass(kw_only=True)
 class StageConfig(PeripheralConfig):
     """
     Configuration object used by StageFactory to create Stage instances.
@@ -44,7 +44,14 @@ class StageConfig(PeripheralConfig):
     initial_coordinate: Coordinate | None = None
     coordinate_bounds: CoordinateBounds | None = None
 
-    def __post_init__(self) -> None:
+    @field_validator("fov_step_size", mode="before")
+    @classmethod
+    def _validate_fov_step_size_type(cls, value: object) -> object:
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            raise TypeError(f"StageConfig: fov_step_size must be numeric, received {type(value)}.")
+        return value
+
+    def model_post_init(self, __context) -> None:
         """
         Validate stage factory configuration after construction.
 
@@ -57,7 +64,7 @@ class StageConfig(PeripheralConfig):
         None
             The dataclass fields are validated in place.
         """
-        super().__post_init__()
+        super().model_post_init(__context)
         if not isinstance(self.fov_step_size, int | float):
             raise TypeError(f"StageConfig: fov_step_size must be numeric, received {type(self.fov_step_size)}.")
         if self.fov_step_size <= 0:

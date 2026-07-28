@@ -10,13 +10,15 @@ from typing import Any
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+from pydantic import field_validator
 import skimage.color
 import skimage.io
 
+from evomachine.bindings.binding_types import BindingType
+from evomachine.config_models import EvoConfig
+from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT, EVOMACHINE_DIR, get_logger
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
 from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
-from evomachine.bindings.binding_types import BindingType
-from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT, EVOMACHINE_DIR, get_logger
 from evomachine.types import LEDType
 
 logger = get_logger(name=__name__, is_peripheral=True)
@@ -34,8 +36,7 @@ DMD_BUILT_IN_PATTERNS = frozenset({
 })
 
 
-@dataclass
-class DmdCalibrationConfig:
+class DmdCalibrationConfig(EvoConfig):
     channel: LEDType | list[LEDType]
     brightness: float | int
     exposure: float | int
@@ -48,33 +49,11 @@ class DmdCalibrationConfig:
     end_col: int
     on_mothermachine: bool
 
-    def __post_init__(self) -> None:
+    def model_post_init(self, __context) -> None:
         if not ((0 <= self.start_row) and (self.start_row < self.end_row) and (self.end_row < 2716)):
             raise ValueError("Indices must be within DMD boundaries.")
         if not ((0 <= self.start_col) and (self.start_col < self.end_col) and (self.end_col < 1600)):
             raise ValueError("Indices must be within DMD boundaries.")
-
-    def copy(self) -> "DmdCalibrationConfig":
-        return DmdCalibrationConfig(**self.__dict__)
-
-    def updated(self, **kwargs: Any) -> "DmdCalibrationConfig":
-        unknown_keys = [key for key in kwargs if key not in self.__dict__]
-        if unknown_keys:
-            raise ValueError(f"DmdCalibrationConfig.updated: unknown fields {unknown_keys}.")
-        values = dict(self.__dict__)
-        values.update(kwargs)
-        return DmdCalibrationConfig(**values)
-
-    def update_from_mapping(self, updates: dict[str, Any]) -> "DmdCalibrationConfig":
-        if not isinstance(updates, dict):
-            raise TypeError("DmdCalibrationConfig.update_from_mapping: updates must be dict.")
-        return self.updated(**updates)
-
-    def __str__(self) -> str:
-        lines = ["DmdCalibrationConfig"]
-        for index, (key, value) in enumerate(self.__dict__.items()):
-            lines.append(f"{' └─ ' if index == len(self.__dict__) - 1 else ' ├─ '}{key}: {value}")
-        return "\n".join(lines)
 
 
 class DmdCalibrationConfigFactory:
@@ -127,7 +106,6 @@ class DmdCalibrationConfigFactory:
         )
 
 
-@dataclass(kw_only=True)
 class DmdConfig(PeripheralConfig):
     """Configuration for creating a DMD wrapper from a peripheral controller."""
 
@@ -137,7 +115,34 @@ class DmdConfig(PeripheralConfig):
     monitor_index: int | None = None
     calibration_file: Path | None = None
 
-    def __post_init__(self) -> None:
+    @field_validator("width_height_DMD", "width_height_CAM", "display_offset", mode="before")
+    @classmethod
+    def _validate_size_field(cls, value: object, info) -> object:
+        return cls._validate_size(
+            value=value,
+            field_name=info.field_name,
+            allow_zero=info.field_name == "display_offset",
+        )
+
+    @field_validator("monitor_index", mode="before")
+    @classmethod
+    def _validate_monitor_index_type(cls, value: object) -> object:
+        if value is None:
+            return value
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise TypeError(f"DmdConfig: monitor_index must be int or None, received {type(value)}.")
+        return value
+
+    @field_validator("calibration_file", mode="before")
+    @classmethod
+    def _validate_calibration_file_type(cls, value: object) -> object:
+        if value is not None and not isinstance(value, Path | str):
+            raise TypeError(
+                f"DmdConfig: calibration_file must be Path, str, or None, received {type(value)}."
+            )
+        return value
+
+    def model_post_init(self, __context) -> None:
         """
         Validate DMD configuration after dataclass construction.
 
@@ -150,7 +155,7 @@ class DmdConfig(PeripheralConfig):
         None
             The dataclass fields are validated in place.
         """
-        super().__post_init__()
+        super().model_post_init(__context)
         self.width_height_DMD = self._validate_size(
             value=self.width_height_DMD,
             field_name="width_height_DMD",
@@ -178,7 +183,7 @@ class DmdConfig(PeripheralConfig):
 
     @staticmethod
     def _validate_size(
-            value: tuple[int, int],
+            value: tuple[int, int] | object,
             field_name: str,
             allow_zero: bool = False,
     ) -> tuple[int, int]:
@@ -211,8 +216,7 @@ class DmdConfig(PeripheralConfig):
         return value
 
 
-@dataclass
-class DmdShapeConfig:
+class DmdShapeConfig(EvoConfig):
     """Configuration for built-in DMD shape patterns."""
 
     rectangle_row: int | None = None
@@ -227,7 +231,36 @@ class DmdShapeConfig:
     circle_col: int | None = None
     circle_radius: int | None = None
 
-    def __post_init__(self) -> None:
+    @field_validator(
+        "rectangle_row",
+        "rectangle_col",
+        "rectangle_height",
+        "rectangle_width",
+        "checkerboard_box_size",
+        "crosshair_row",
+        "crosshair_col",
+        "crosshair_width",
+        "circle_row",
+        "circle_col",
+        "circle_radius",
+        mode="before",
+    )
+    @classmethod
+    def _validate_optional_int_type(cls, value: object, info) -> object:
+        if value is None:
+            return value
+        if isinstance(value, bool):
+            raise TypeError(f"DmdShapeConfig: {info.field_name} must be int or None, received bool.")
+        if not isinstance(value, int):
+            try:
+                return int(value)
+            except (TypeError, ValueError) as exc:
+                raise TypeError(
+                    f"DmdShapeConfig: {info.field_name} must be int or None, received {type(value)}."
+                ) from exc
+        return value
+
+    def model_post_init(self, __context) -> None:
         for field_name in (
                 "rectangle_row",
                 "rectangle_col",
@@ -245,22 +278,6 @@ class DmdShapeConfig:
                 "circle_radius",
         ):
             self._validate_optional_int(field_name=field_name, minimum=1)
-
-    def copy(self) -> "DmdShapeConfig":
-        return DmdShapeConfig(**self.__dict__)
-
-    def updated(self, **kwargs: Any) -> "DmdShapeConfig":
-        unknown_keys = [key for key in kwargs if key not in self.__dict__]
-        if unknown_keys:
-            raise ValueError(f"DmdShapeConfig.updated: unknown fields {unknown_keys}.")
-        values = dict(self.__dict__)
-        values.update(kwargs)
-        return DmdShapeConfig(**values)
-
-    def update_from_mapping(self, updates: dict[str, Any]) -> "DmdShapeConfig":
-        if not isinstance(updates, dict):
-            raise TypeError("DmdShapeConfig.update_from_mapping: updates must be dict.")
-        return self.updated(**updates)
 
     def _validate_optional_int(self, field_name: str, minimum: int) -> None:
         value = getattr(self, field_name)

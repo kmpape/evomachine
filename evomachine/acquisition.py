@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
+from pydantic import field_validator
 
+from evomachine.config_models import EvoConfig
 from evomachine.config import get_logger, now
 from evomachine.peripherals.camera import Camera
 from evomachine.coordinates import Coordinate
@@ -19,8 +21,7 @@ from evomachine.types import LEDType
 logger = get_logger(name=__name__)
 
 
-@dataclass
-class FrameAcquisitionSettings:
+class FrameAcquisitionSettings(EvoConfig):
     """Runtime options controlling how frame acquisition uses peripherals."""
 
     save: bool = False
@@ -36,11 +37,20 @@ class FrameAcquisitionSettings:
     disable_leds_after: bool = False
     "Disable all LEDs after the acquisition call completes."
 
-    def __post_init__(self) -> None:
-        for field_name in ("save", "normalise", "illuminate_dmd", "clear_dmd_after", "restore_leds_after", "disable_leds_after"):
-            value = getattr(self, field_name)
-            if not isinstance(value, bool):
-                raise TypeError(f"FrameAcquisitionSettings: {field_name} must be bool, received {type(value)}.")
+    @field_validator(
+        "save",
+        "normalise",
+        "illuminate_dmd",
+        "clear_dmd_after",
+        "restore_leds_after",
+        "disable_leds_after",
+        mode="before",
+    )
+    @classmethod
+    def _validate_bool_field(cls, value: object, info) -> object:
+        if not isinstance(value, bool):
+            raise TypeError(f"FrameAcquisitionSettings: {info.field_name} must be bool, received {type(value)}.")
+        return value
 
 
 class FrameAcquisitionManager:
@@ -116,7 +126,7 @@ class FrameAcquisitionManager:
             self.default_settings = self._validate_settings(settings=settings)
             return self.default_settings
         try:
-            self.default_settings = replace(self.default_settings, **updates)
+            self.default_settings = self.default_settings.updated(**updates)
         except TypeError as error:
             raise ValueError("FrameAcquisitionManager.update_settings: unknown settings field.") from error
         return self.default_settings

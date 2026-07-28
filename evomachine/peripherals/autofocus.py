@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass
 from typing import Any
 
 from evomachine.bindings.binding_types import BindingType
+from evomachine.config_models import EvoConfig
 from evomachine.config import get_logger
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
 from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
@@ -13,11 +13,10 @@ from evomachine.types import AutoFocusStatusType
 logger = get_logger(name=__name__, is_peripheral=True)
 
 
-@dataclass(kw_only=True)
 class AutofocusConfig(PeripheralConfig):
     """Configuration object used by AutofocusFactory to create autofocus peripherals."""
 
-    def __post_init__(self) -> None:
+    def model_post_init(self, __context) -> None:
         """
         Validate autofocus factory configuration after construction.
 
@@ -30,11 +29,10 @@ class AutofocusConfig(PeripheralConfig):
         None
             The dataclass fields are validated in place.
         """
-        super().__post_init__()
+        super().model_post_init(__context)
 
 
-@dataclass
-class AutofocusCalibrationConfig:
+class AutofocusCalibrationConfig(EvoConfig):
     """Base class for binding-specific autofocus configuration/calibration settings."""
 
 

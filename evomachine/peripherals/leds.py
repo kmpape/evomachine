@@ -6,6 +6,8 @@ import threading
 import time
 from typing import Any
 
+from pydantic import field_validator
+
 from evomachine.bindings.binding_types import BindingType
 from evomachine.config import get_logger
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
@@ -25,14 +27,20 @@ class LedState:
     stop_time: float | None = None
 
 
-@dataclass(kw_only=True)
 class LedConfig(PeripheralConfig):
     """Configuration object used by LedFactory to create LED sources."""
 
     available_leds: list[LEDType]
     led_to_internal: dict[LEDType, Any] | None = None
 
-    def __post_init__(self) -> None:
+    @field_validator("available_leds", mode="before")
+    @classmethod
+    def _validate_available_leds_type(cls, value: object) -> object:
+        if not isinstance(value, list):
+            raise TypeError(f"LedConfig: available_leds must be list, received {type(value)}.")
+        return value
+
+    def model_post_init(self, __context) -> None:
         """
         Validate LED source configuration after dataclass construction.
 
@@ -46,7 +54,7 @@ class LedConfig(PeripheralConfig):
             The dataclass fields are validated in place. available_leds is
             normalised to a copied list.
         """
-        super().__post_init__()
+        super().model_post_init(__context)
         self.available_leds = LedSource.validate_available_leds(self.available_leds)
         if self.led_to_internal is not None:
             if not isinstance(self.led_to_internal, dict):

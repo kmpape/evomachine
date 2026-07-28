@@ -706,6 +706,7 @@ dependencies = [
     { name = "pandas" },
     { name = "pillow" },
     { name = "pygame" },
+    { name = "pydantic" },
     { name = "pyqt5" },
     { name = "pyserial" },
     { name = "scikit-image" },
