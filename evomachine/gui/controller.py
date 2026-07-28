@@ -168,6 +168,9 @@ class EvoMachineGuiController(QObject):
     def refresh_leds(self) -> None:
         self._send(GuiCommandType.LED_LIST)
 
+    def refresh_led_state(self, led: str) -> None:
+        self._send(GuiCommandType.LED_GET_STATE, {"led": led})
+
     def set_led(self, led: str, brightness: float, duration: float | None = None) -> None:
         self._send(GuiCommandType.LED_SET, {"led": led, "brightness": brightness, "duration": duration})
 

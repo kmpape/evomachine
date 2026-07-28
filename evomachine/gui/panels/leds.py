@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import time
+
+from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
@@ -38,8 +41,9 @@ LED_LABELS = {
     LEDType.LED_OVERHEAD: "KWR103 overhead",
 }
 
-MANUAL_BRIGHTNESS_MAX = 29.0
+MANUAL_BRIGHTNESS_MAX = 100.0
 MANUAL_BRIGHTNESS_DEFAULT = 29.0
+TIMED_LED_REFRESH_GRACE_MS = 100
 
 
 class LedManagerPanel(QGroupBox):
@@ -51,6 +55,7 @@ class LedManagerPanel(QGroupBox):
         self.led_buttons: dict[LEDType, QPushButton] = {}
         self.brightness_inputs: dict[LEDType, QDoubleSpinBox] = {}
         self.available_leds: set[LEDType] = set()
+        self._timed_led_stop_times: dict[LEDType, float] = {}
         self.devices_initialised = False
         self.state_label = QLabel("Run Initialise Devices before using LED controls.")
 
@@ -166,11 +171,29 @@ class LedManagerPanel(QGroupBox):
                 self._set_brightness_value(led_type, float(brightness))
             if state.get("is_on") is False:
                 self._set_led_checked(led_type, False)
+                self._timed_led_stop_times.pop(led_type, None)
             elif state.get("is_on") is True:
                 self._set_led_checked(led_type, True)
+                self._schedule_timed_state_refresh(led_type=led_type, stop_time=state.get("stop_time"))
         self.state_label.setText(
             f"{self._format_led(led_type)}: brightness {state.get('brightness')}, on {state.get('is_on')}"
         )
+
+    def _schedule_timed_state_refresh(self, led_type: LEDType, stop_time: object) -> None:
+        if not isinstance(stop_time, int | float):
+            return
+        self._timed_led_stop_times[led_type] = float(stop_time)
+        delay_ms = max(0, int(round((float(stop_time) - time.time()) * 1000))) + TIMED_LED_REFRESH_GRACE_MS
+        QTimer.singleShot(
+            delay_ms,
+            lambda selected=led_type, deadline=float(stop_time): self._refresh_timed_led_state(selected, deadline),
+        )
+
+    def _refresh_timed_led_state(self, led_type: LEDType, stop_time: float) -> None:
+        if self._timed_led_stop_times.get(led_type) != stop_time:
+            return
+        if self.devices_initialised and led_type in self.available_leds:
+            self.controller.refresh_led_state(led=led_type.name)
 
     def _set_led_checked(self, led_type: LEDType, checked: bool) -> None:
         button = self.led_buttons[led_type]

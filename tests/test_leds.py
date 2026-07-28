@@ -261,6 +261,30 @@ def test_syncboard_led_source_uses_native_duration_and_intensity(monkeypatch):
     assert FakeTimer.instances == []
 
 
+def test_syncboard_high_brightness_uses_default_timed_duration(monkeypatch):
+    now = 1000.0
+    monkeypatch.setattr("evomachine.peripherals.leds.time.time", lambda: now)
+    syncboard = FakeSyncBoardController()
+    peripheral_ctrl = SyncBoardPeripheralController(syncboard=syncboard)
+    peripheral_ctrl.initialise()
+    source = SyncBoardLedSource(
+        peripheral_ctrl=peripheral_ctrl,
+        available_leds=[LEDType.LED_450_NM],
+    )
+    source.initialise()
+
+    source.set_led(LEDType.LED_450_NM, brightness=50)
+
+    assert syncboard.enabled_leds == [(SyncBoardLedSource.DEFAULT_LED_TO_INTERNAL[LEDType.LED_450_NM], 0.5, 3000.0)]
+    state = source.get_led_state(LEDType.LED_450_NM)
+    assert state.is_on
+    assert state.stop_time == 1003.0
+
+    now = 1003.1
+
+    assert not source.get_led_state(LEDType.LED_450_NM).is_on
+
+
 def test_kwr103_led_source_initialises_and_maps_brightness_to_voltage():
     kwr103 = FakeKWR103()
     peripheral_ctrl = KWR103PeripheralController(kwr103=kwr103)

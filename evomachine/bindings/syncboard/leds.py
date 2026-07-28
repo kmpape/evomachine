@@ -7,6 +7,10 @@ from evomachine.peripherals.leds import LedSource
 from evomachine.types import BrightnessType, LEDType
 from syncboard.syncboardcontroller import LED_ID
 
+SYNCBOARD_TIMED_BRIGHTNESS_THRESHOLD = 29.0
+SYNCBOARD_DEFAULT_TIMED_DURATION_MS = 3000.0
+
+
 class FakeSyncBoardController:
     """Deterministic SyncBoard-like controller for LED and peripheral tests."""
 
@@ -122,3 +126,13 @@ class SyncBoardLedSource(LedSource):
 
     def _start_timer(self, led_type: LEDType, duration: float | None) -> None:
         return
+
+    def _normalise_duration(
+            self,
+            led_type: LEDType,
+            brightness: BrightnessType,
+            duration: float | None,
+    ) -> float | None:
+        if duration is None and float(brightness) > SYNCBOARD_TIMED_BRIGHTNESS_THRESHOLD:
+            return SYNCBOARD_DEFAULT_TIMED_DURATION_MS
+        return duration

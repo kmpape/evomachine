@@ -304,6 +304,7 @@ class LedSource(Peripheral):
         if led_type not in self.available_leds:
             raise ValueError(f"LedSource.set_led: {led_type} is not available for {self.name}.")
         brightness = self._validate_brightness(brightness=brightness)
+        duration = self._normalise_duration(led_type=led_type, brightness=brightness, duration=duration)
         if duration is not None and duration < 0:
             raise ValueError(f"LedSource: duration must be non-negative, received {duration}.")
 
@@ -360,6 +361,7 @@ class LedSource(Peripheral):
         """
         if led_type not in self.available_leds:
             raise ValueError(f"LedSource.get_led_state: {led_type} is not available for {self.name}.")
+        self._expire_timed_state_if_needed(led_type=led_type)
         state = self._states[led_type]
         return LedState(
             led_type=state.led_type,
@@ -425,6 +427,25 @@ class LedSource(Peripheral):
         if not 0 <= brightness <= 100:
             raise ValueError(f"LedSource: brightness must be in [0, 100], received {brightness}.")
         return brightness
+
+    def _normalise_duration(
+            self,
+            led_type: LEDType,
+            brightness: BrightnessType,
+            duration: float | None,
+    ) -> float | None:
+        """
+        Return the effective duration for one LED set command.
+
+        Bindings can override this when hardware implicitly changes continuous
+        illumination into timed illumination.
+        """
+        return duration
+
+    def _expire_timed_state_if_needed(self, led_type: LEDType) -> None:
+        state = self._states[led_type]
+        if state.stop_time is not None and time.time() >= state.stop_time:
+            self._states[led_type] = LedState(led_type=led_type)
 
     def _update_state(
             self,
