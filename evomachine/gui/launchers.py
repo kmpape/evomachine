@@ -18,6 +18,7 @@ from evomachine.gui.socket_transport import GuiRpcServer, GuiSocketClient
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
+DEFAULT_HARDWARE_RUNTIME = "evomachine.gui.runtime:build_hardware_automaton"
 
 
 def _repo_root() -> Path:
@@ -52,6 +53,25 @@ def _load_runtime_factory(spec: str) -> Callable[[], Any]:
     return factory
 
 
+def _require_hardware_gui_mmc_camera(automaton: Any) -> None:
+    from evomachine.bindings.binding_types import BindingType
+
+    acq_mngr = getattr(automaton, "acq_mngr", None)
+    camera = getattr(acq_mngr, "camera", None) or getattr(automaton, "_camera", None)
+    if camera is None:
+        raise RuntimeError("Hardware GUI runtime must provide an acquisition camera.")
+
+    config = getattr(camera, "config", None)
+    binding = getattr(config, "binding", None)
+    if binding != BindingType.MMC:
+        camera_name = getattr(camera, "name", type(camera).__name__)
+        binding_name = getattr(binding, "name", str(binding))
+        raise RuntimeError(
+            "Hardware GUI camera must use BindingType.MMC (Micro-Manager); "
+            f"{camera_name} is configured with {binding_name}."
+        )
+
+
 def _serve_automaton(automaton, host: str, port: int, ready_queue) -> None:
     facade = AutomatonGuiFacade(automaton=automaton)
     server = GuiRpcServer(handler=facade, host=host, port=port)
@@ -64,16 +84,21 @@ def _serve_automaton(automaton, host: str, port: int, ready_queue) -> None:
         server.stop()
 
 
-def _demo_automaton_process(host: str, port: int, ready_queue) -> None:
+def _virtual_automaton_process(host: str, port: int, ready_queue) -> None:
     from evomachine.gui.runtime import build_virtual_automaton
 
     _serve_automaton(build_virtual_automaton(), host=host, port=port, ready_queue=ready_queue)
 
 
 def _hardware_automaton_process(runtime_spec: str, host: str, port: int, ready_queue) -> None:
-    factory = _load_runtime_factory(runtime_spec)
-    automaton = factory()
-    _serve_automaton(automaton, host=host, port=port, ready_queue=ready_queue)
+    try:
+        factory = _load_runtime_factory(runtime_spec)
+        automaton = factory()
+        _require_hardware_gui_mmc_camera(automaton)
+        _serve_automaton(automaton, host=host, port=port, ready_queue=ready_queue)
+    except Exception as error:
+        ready_queue.put({"error": f"{type(error).__name__}: {error}"})
+        raise
 
 
 def _run_napari(host: str, port: int, napari_args: Sequence[str], *, image_transport: str | None = None) -> int:
@@ -111,7 +136,11 @@ def _launch_with_process(
         image_transport: str | None = None,
 ) -> int:
     process.start()
-    host, port = ready_queue.get(timeout=15.0)
+    ready = ready_queue.get(timeout=15.0)
+    if isinstance(ready, dict) and "error" in ready:
+        process.join(timeout=1.0)
+        raise RuntimeError(f"Automaton process failed to start: {ready['error']}")
+    host, port = ready
     if no_napari:
         _shutdown_child(process=process, host=host, port=port)
         return 0
@@ -121,13 +150,13 @@ def _launch_with_process(
         _shutdown_child(process=process, host=host, port=port)
 
 
-def demo_main(argv: Sequence[str] | None = None) -> int:
+def virtual_main(argv: Sequence[str] | None = None) -> int:
     parser = _build_common_parser("Launch the evomachine GUI with virtual peripherals.")
     args = parser.parse_args(argv)
     ready_queue = mp.Queue()
     process = mp.Process(
-        target=_demo_automaton_process,
-        name="EvoMachineDemoAutomaton",
+        target=_virtual_automaton_process,
+        name="EvoMachineVirtualAutomaton",
         args=(args.host, args.port, ready_queue),
     )
     return _launch_with_process(
@@ -140,8 +169,12 @@ def demo_main(argv: Sequence[str] | None = None) -> int:
 
 
 def hardware_main(argv: Sequence[str] | None = None) -> int:
-    parser = _build_common_parser("Launch the evomachine GUI with a user-provided hardware runtime.")
-    parser.add_argument("--runtime", required=True, help="Callable in 'module:function' format returning an Automaton.")
+    parser = _build_common_parser("Launch the evomachine GUI with hardware peripherals.")
+    parser.add_argument(
+        "--runtime",
+        default=DEFAULT_HARDWARE_RUNTIME,
+        help="Callable in 'module:function' format returning an Automaton.",
+    )
     args = parser.parse_args(argv)
     ready_queue = mp.Queue()
     process = mp.Process(
@@ -159,4 +192,4 @@ def hardware_main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(demo_main(sys.argv[1:]))
+    raise SystemExit(virtual_main(sys.argv[1:]))
