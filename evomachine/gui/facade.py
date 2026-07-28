@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
-from evomachine.config import get_logger
+from evomachine.config import EVOMACHINE_DIR, get_logger
 from evomachine.gui.protocol import (
     ALWAYS_ALLOWED_MUTATING_COMMANDS,
     MUTATING_COMMANDS,
@@ -274,9 +275,43 @@ class AutomatonGuiFacade:
             "is_calibrated": bool(dmd.is_calibrated()),
             "width_height": list(getattr(dmd, "width_height_DMD", ())),
             "calibration_file": None if calibration_filename is None else str(calibration_filename),
+            "calibration_files": self.gui_dmd_calibration_files_payload(current_file=calibration_filename),
             "last_pattern": self._last_dmd_pattern,
             "preview": self._last_dmd_preview,
         }
+
+    @staticmethod
+    def gui_dmd_calibration_files_payload(current_file: Path | str | None = None) -> list[dict[str, Any]]:
+        current_path = Path(current_file) if current_file is not None else None
+        candidates: list[Path] = []
+        calibration_directories = (
+            EVOMACHINE_DIR / "calibration_data" / "dmd",
+            EVOMACHINE_DIR / "evomachine" / "calibration_data" / "dmd",
+        )
+        for calibration_directory in calibration_directories:
+            if calibration_directory.exists():
+                candidates.extend(calibration_directory.glob("*.pkl"))
+        packaged_calibrations = (
+            EVOMACHINE_DIR / "evomachine" / "dmd_calibration_data.pkl",
+            EVOMACHINE_DIR / "dmd_calibration_data.pkl",
+        )
+        candidates.extend(path for path in packaged_calibrations if path.exists())
+        if current_path is not None and current_path.exists():
+            candidates.append(current_path)
+
+        seen: set[str] = set()
+        files: list[dict[str, Any]] = []
+        for path in sorted(candidates, key=lambda item: item.name):
+            key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            files.append({
+                "label": path.name,
+                "path": key,
+                "is_current": current_path is not None and path == current_path,
+            })
+        return files
 
     def gui_autofocus_status_payload(self) -> dict[str, Any]:
         autofocus = self.gui_autofocus()

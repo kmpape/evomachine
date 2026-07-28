@@ -6,14 +6,17 @@ from types import SimpleNamespace
 
 import numpy as np
 import pytest
+import tifffile
 
 from evomachine.bindings.binding_types import BindingType
 from evomachine.coordinates import Coordinate
+from evomachine.filemanager import FileManager, FileNameConfig
 from evomachine.frame import Frame
 from evomachine.image_processing_config import ImageProcessorConfigFactory
 from evomachine.peripherals.camera import CameraConfig, ImageConfigType, ObjectiveConfigType
 from evomachine.types import AutoFocusStatusType, FilterWheelType, FocusCurveType, FocusStatusType, FovDirectionType, LEDType
 from evomachine.gui.facade import AutomatonGuiFacade
+from evomachine.gui.image_payloads import IMAGE_TRANSPORT_DIR_ENV, IMAGE_TRANSPORT_RAW, array_from_preview_payload
 from evomachine.gui.protocol import GuiCommandType, GuiRequest
 
 
@@ -149,9 +152,16 @@ class FakeDmd:
     def __init__(self):
         self.name = "Fake DMD"
         self.width_height_DMD = (20, 10)
+        self.width_height_CAM = (30, 30)
         self.calls = []
         self.full_display = False
         self.calibrated = False
+        self.calibration_filename = Path("loaded_calibration.pkl")
+        self._calib_data = SimpleNamespace(
+            dmd_points=[(1, 2), (3, 4)],
+            cam_points=[(5, 6), (7, 8)],
+            path=self.calibration_filename,
+        )
         self.image = None
 
     def is_initialised(self):
@@ -167,7 +177,11 @@ class FakeDmd:
         return self.calibrated
 
     def get_calibration_filename(self):
-        return Path("loaded_calibration.pkl")
+        return self.calibration_filename
+
+    def calibrate_from_path(self, path):
+        self.calibrated = True
+        self.calibration_filename = path
 
     def get_zero_array(self):
         return np.zeros(self.width_height_DMD, dtype=np.uint8)
@@ -185,6 +199,17 @@ class FakeDmd:
         image = self.get_zero_array()
         image[:, image.shape[1] // 2] = 255
         image[image.shape[0] // 2, :] = 255
+        return image
+
+    def get_pattern(self, pattern, config=None):
+        if pattern in {"empty", "clear"}:
+            return self.get_zero_array()
+        if pattern == "full":
+            return self.get_one_array()
+        if pattern == "checkerboard":
+            return self.get_checkerboard()
+        image = self.get_zero_array()
+        image[image.shape[0] // 2, image.shape[1] // 2] = 255
         return image
 
     def display_image(self, image, _is_full_display=False):
@@ -289,11 +314,12 @@ class FakeSoftwareFocus:
 
 
 class FakeAcquisitionManager:
-    def __init__(self, led_manager, camera, filter_wheel, dmd):
+    def __init__(self, led_manager, camera, filter_wheel, dmd, file_manager=None):
         self.led_manager = led_manager
         self.camera = camera
         self.filter_wheel = filter_wheel
         self.dmd = dmd
+        self.file_manager = file_manager
         self.calls = []
 
     def take_frame(self, frame_metadata, settings=None):
@@ -330,6 +356,7 @@ class FakeAutomaton:
             with_autofocus: bool = True,
             with_software_focus: bool = True,
             devices_initialised: bool = True,
+            file_manager=None,
     ):
         stage = FakeStage()
         led_manager = FakeLedManager()
@@ -365,6 +392,7 @@ class FakeAutomaton:
             camera=acq_mngr_attrs.get("camera"),
             filter_wheel=acq_mngr_attrs.get("filter_wheel"),
             dmd=acq_mngr_attrs.get("dmd"),
+            file_manager=file_manager,
         )
         for name in ("led_manager", "camera", "filter_wheel", "dmd"):
             if name not in acq_mngr_attrs:
@@ -465,6 +493,17 @@ def test_facade_handles_stage_and_led_requests() -> None:
     assert response.payload["filter_wheel"]["current_filter"]["name"] == "FILTER_527nm"
 
 
+def test_facade_handles_image_transport_probe(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv(IMAGE_TRANSPORT_DIR_ENV, str(tmp_path))
+    facade = AutomatonGuiFacade(FakeAutomaton())
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.IMAGE_TRANSPORT_PROBE))
+
+    assert response.ok
+    probe = response.payload["image_transport_probe"]
+    assert Path(probe["path"]).read_text(encoding="ascii") == probe["token"]
+
+
 def test_facade_handles_dmd_requests() -> None:
     automaton = FakeAutomaton()
     facade = AutomatonGuiFacade(automaton)
@@ -485,6 +524,26 @@ def test_facade_handles_dmd_requests() -> None:
     assert response.payload["dmd"]["calibration_file"] == "calibration.pkl"
     assert response.payload["dmd"]["calibration_points"] == 1
 
+    response = facade.handle(
+        GuiRequest(command=GuiCommandType.DMD_LOAD_CALIBRATION, payload={"filename": "selected_calibration.pkl"})
+    )
+    assert response.ok
+    assert automaton.acq_mngr.dmd.is_calibrated()
+    assert response.payload["dmd"]["calibration_file"] == "selected_calibration.pkl"
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.DMD_CALIBRATION_POINTS))
+    assert response.ok
+    assert response.payload["dmd_calibration_points"]["dmd_shape"] == [20, 10]
+    assert response.payload["dmd_calibration_points"]["cam_shape"] == [30, 30]
+    assert response.payload["dmd_calibration_points"]["dmd_points"] == [
+        {"row": 1, "col": 2},
+        {"row": 3, "col": 4},
+    ]
+    assert response.payload["dmd_calibration_points"]["cam_points"] == [
+        {"row": 5, "col": 6},
+        {"row": 7, "col": 8},
+    ]
+
 
 def test_facade_handles_manual_acquisition_request() -> None:
     automaton = FakeAutomaton()
@@ -493,7 +552,7 @@ def test_facade_handles_manual_acquisition_request() -> None:
     response = facade.handle(
         GuiRequest(
             command=GuiCommandType.ACQUISITION_TAKE_FRAME,
-            payload={"settings": {"normalise": True, "save": True}},
+            payload={"settings": {"normalise": True, "save": True}, "image_transport": IMAGE_TRANSPORT_RAW},
         )
     )
 
@@ -510,6 +569,34 @@ def test_facade_handles_manual_acquisition_request() -> None:
     assert automaton.acq_mngr.calls[-1][1].save is True
 
 
+def test_facade_lists_and_loads_saved_acquisition_tiff(tmp_path) -> None:
+    image = np.arange(20, dtype=np.uint16).reshape(4, 5)
+    image_path = tmp_path / "saved_frame.tiff"
+    tifffile.imwrite(image_path, image)
+    file_manager = FileManager(FileNameConfig(directory=tmp_path))
+    facade = AutomatonGuiFacade(FakeAutomaton(file_manager=file_manager))
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.ACQUISITION_LIST_FILES))
+
+    assert response.ok
+    assert response.payload["acquisition_files"][0]["label"] == "saved_frame.tiff"
+    assert response.payload["acquisition_files"][0]["path"] == str(image_path)
+
+    response = facade.handle(
+        GuiRequest(
+            command=GuiCommandType.ACQUISITION_LOAD_FRAME,
+            payload={"filename": str(image_path), "image_transport": IMAGE_TRANSPORT_RAW},
+        )
+    )
+
+    assert response.ok
+    payload = response.payload["frame"]
+    assert payload["kind"] == "loaded_frame"
+    assert payload["source"] == "file"
+    assert payload["image_shape"] == [4, 5]
+    assert np.array_equal(array_from_preview_payload(payload["preview"]), image)
+
+
 def test_facade_handles_z_stack_acquisition_request() -> None:
     automaton = FakeAutomaton()
     facade = AutomatonGuiFacade(automaton)
@@ -522,6 +609,7 @@ def test_facade_handles_z_stack_acquisition_request() -> None:
                 "end_z": 1,
                 "step_z": 1,
                 "settings": {"illuminate_dmd": False},
+                "image_transport": IMAGE_TRANSPORT_RAW,
             },
         )
     )

@@ -1,16 +1,23 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from evomachine.acquisition import FrameAcquisitionSettings
-from evomachine.config import DMD_WIDTH_HEIGHT
+from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT
 from evomachine.coordinates import Coordinate
+from evomachine.filemanager import FileManager
 from evomachine.frame import FrameMetaDataFactory
-from evomachine.gui.image_payloads import array_to_preview_payload, stack_to_preview_payload
-from evomachine.peripherals.dmd import DmdCalibrationConfigFactory
+from evomachine.gui.image_payloads import (
+    IMAGE_TRANSPORT_SOCKET_TIFF,
+    array_to_preview_payload,
+    create_image_transport_probe_payload,
+    stack_to_preview_payload,
+)
+from evomachine.peripherals.dmd import DMD_BUILT_IN_PATTERNS, DmdCalibrationConfigFactory, DmdShapeConfig
 from evomachine.strategy import NoStrategy, create_strategy_from_definition, list_strategy_definitions
 from evomachine.types import UNKNOWN_FOV_ID
 from evomachine.types import FilterWheelType, LEDType
@@ -19,10 +26,7 @@ from evomachine.gui.protocol import GuiCommandType
 
 
 GuiRequestHandler = Callable[[Any, dict[str, Any]], dict[str, Any]]
-DMD_PATTERNS = frozenset({"clear", "full", "checkerboard", "calibration_image", "half", "crosshair"})
-DMD_PREVIEW_SHAPE = (220, 360)
-FRAME_PREVIEW_SHAPE = (512, 512)
-STACK_PREVIEW_SHAPE = (256, 256)
+DMD_PATTERNS = DMD_BUILT_IN_PATTERNS
 MAX_Z_STACK_PLANES = 10000
 GUI_CAMERA_FOV_DIRECTION_DELTAS = {
     FovDirectionType.UP: (0.0, -1.0),
@@ -167,6 +171,16 @@ def gui_frame_acquisition_settings_from_payload(payload: dict[str, Any]) -> Fram
     })
 
 
+def gui_dmd_shape_config_from_payload(payload: dict[str, Any]) -> DmdShapeConfig:
+    """Build DMD built-in shape configuration from GUI payload fields."""
+    config_payload = payload.get("config", {})
+    if config_payload is None:
+        config_payload = {}
+    if not isinstance(config_payload, dict):
+        raise TypeError("DMD pattern config payload must be a dict.")
+    return DmdShapeConfig().update_from_mapping(config_payload)
+
+
 def gui_z_coordinates_from_payload(payload: dict[str, Any]) -> list[Coordinate]:
     """Build an inclusive Z-coordinate list from start/end/step GUI fields."""
     start_z = float(payload["start_z"])
@@ -222,13 +236,18 @@ def gui_strategy_notes(command_names: list[str]) -> list[str]:
     return notes
 
 
-def gui_frame_payload(frame: Any, *, kind: str, z_positions: list[float] | None = None) -> dict[str, Any]:
+def gui_frame_payload(
+        frame: Any,
+        *,
+        kind: str,
+        z_positions: list[float] | None = None,
+        image_transport: str | None = None,
+) -> dict[str, Any]:
     """Serialize an acquired Frame preview for GUI display/status panels."""
     image = frame.array[-1]
     saved_paths = getattr(frame, "saved_paths", None) or []
     payload: dict[str, Any] = {
         "kind": kind,
-        "preview": array_to_preview_payload(image, max_shape=FRAME_PREVIEW_SHAPE),
         "image_shape": list(image.shape),
         "stack_shape": list(frame.array.shape),
         "dtype": str(image.dtype),
@@ -237,10 +256,74 @@ def gui_frame_payload(frame: Any, *, kind: str, z_positions: list[float] | None 
         "saved_paths": [None if path is None else str(path) for path in saved_paths],
     }
     if payload["planes"] > 1:
-        payload["stack_preview"] = stack_to_preview_payload(frame.array, max_shape=STACK_PREVIEW_SHAPE)
+        payload["stack_preview"] = stack_to_preview_payload(frame.array, transport=image_transport)
+    else:
+        payload["preview"] = array_to_preview_payload(image, transport=image_transport)
     if z_positions is not None:
         payload["z_positions"] = list(z_positions)
     return payload
+
+
+def gui_loaded_image_payload(
+        image: np.ndarray,
+        *,
+        filename: Path,
+        image_transport: str | None = None,
+) -> dict[str, Any]:
+    """Serialize an image loaded from disk for GUI display/status panels."""
+    loaded = np.asarray(image)
+    payload: dict[str, Any] = {
+        "source": "file",
+        "loaded_path": str(filename),
+        "dtype": str(loaded.dtype),
+        "saved_paths": [str(filename)],
+    }
+    if loaded.ndim == 2 or (loaded.ndim == 3 and loaded.shape[-1] in {3, 4}):
+        payload.update({
+            "kind": "loaded_frame",
+            "image_shape": list(loaded.shape),
+            "stack_shape": [1, *loaded.shape],
+            "planes": 1,
+            "preview": array_to_preview_payload(loaded, transport=image_transport),
+        })
+        return payload
+    payload.update({
+        "kind": "loaded_z_stack",
+        "image_shape": list(loaded[-1].shape),
+        "stack_shape": list(loaded.shape),
+        "planes": int(loaded.shape[0]),
+        "stack_preview": stack_to_preview_payload(loaded, transport=image_transport),
+    })
+    return payload
+
+
+def gui_acquisition_file_manager(facade: Any) -> FileManager:
+    """Return the file manager used by the GUI acquisition manager."""
+    acq_mngr = facade.gui_acquisition_manager()
+    file_manager = getattr(acq_mngr, "file_manager", None)
+    if file_manager is None:
+        raise RuntimeError("GUI acquisition file request ignored because no file manager is configured.")
+    return file_manager
+
+
+def gui_acquisition_file_path(facade: Any, filename: str) -> Path:
+    """Resolve a GUI-selected acquisition filename."""
+    path = Path(filename)
+    if path.is_absolute():
+        return path
+    file_manager = gui_acquisition_file_manager(facade)
+    return file_manager.config.directory / path
+
+
+def gui_acquisition_file_payload(path: Path) -> dict[str, Any]:
+    """Serialize one loadable acquisition file for a GUI dropdown."""
+    stat = path.stat()
+    return {
+        "label": path.name,
+        "path": str(path),
+        "size_bytes": int(stat.st_size),
+        "modified_time": stat.st_mtime,
+    }
 
 
 def gui_led_state_to_payload(state: Any) -> dict[str, Any]:
@@ -262,6 +345,14 @@ def gui_require_devices_initialised(facade: Any, control_name: str) -> None:
 
 def gui_ping(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     return {"status": "ok", **facade.gui_status_payload(), **facade.gui_controller_status_payload()}
+
+
+def gui_image_transport_probe(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        probe = create_image_transport_probe_payload()
+    except Exception as error:
+        probe = {"mode": IMAGE_TRANSPORT_SOCKET_TIFF, "error": f"{type(error).__name__}: {error}"}
+    return {"image_transport_probe": probe}
 
 
 def gui_initialise_devices(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -366,6 +457,36 @@ def gui_camera_set_exposure(facade: Any, payload: dict[str, Any]) -> dict[str, A
     return {"camera": facade.gui_camera_status_payload()}
 
 
+def gui_acquisition_list_files(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    file_manager = gui_acquisition_file_manager(facade)
+    directory = Path(payload.get("directory") or file_manager.config.directory)
+    paths: dict[Path, None] = {}
+    if directory.exists():
+        for pattern in ("*.tiff", "*.tif"):
+            for path in FileManager.list_filenames(directory=directory, filename_pattern=pattern):
+                paths[path] = None
+    files = sorted(paths, key=lambda item: item.stat().st_mtime, reverse=True)
+    return {
+        "acquisition_directory": str(directory),
+        "acquisition_files": [gui_acquisition_file_payload(path) for path in files],
+    }
+
+
+def gui_acquisition_load_frame(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    filename = payload.get("filename")
+    if not isinstance(filename, str) or not filename:
+        raise ValueError("Acquisition image filename must be a non-empty string.")
+    path = gui_acquisition_file_path(facade, filename=filename)
+    image = FileManager.load_image(path)
+    return {
+        "frame": gui_loaded_image_payload(
+            image=image,
+            filename=path,
+            image_transport=payload.get("image_transport"),
+        ),
+    }
+
+
 def gui_acquisition_take_frame(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "acquisition")
     acq_mngr = facade.gui_acquisition_manager()
@@ -376,7 +497,11 @@ def gui_acquisition_take_frame(facade: Any, payload: dict[str, Any]) -> dict[str
     settings = gui_frame_acquisition_settings_from_payload(payload)
     frame = acq_mngr.take_frame(frame_metadata=metadata, settings=settings)
     return {
-        "frame": gui_frame_payload(frame=frame, kind="frame"),
+        "frame": gui_frame_payload(
+            frame=frame,
+            kind="frame",
+            image_transport=payload.get("image_transport"),
+        ),
     }
 
 
@@ -399,6 +524,7 @@ def gui_acquisition_take_z_stack(facade: Any, payload: dict[str, Any]) -> dict[s
             frame=frame,
             kind="z_stack",
             z_positions=[coordinate.z for coordinate in z_coordinates],
+            image_transport=payload.get("image_transport"),
         ),
     }
 
@@ -465,7 +591,11 @@ def gui_dmd_display_pattern(facade: Any, payload: dict[str, Any]) -> dict[str, A
     if pattern not in DMD_PATTERNS:
         raise ValueError(f"Unsupported DMD pattern {pattern!r}.")
     dmd = facade.gui_dmd()
-    pattern_array = gui_dmd_pattern_array(dmd=dmd, pattern=pattern)
+    pattern_array = gui_dmd_pattern_array(
+        dmd=dmd,
+        pattern=pattern,
+        config=gui_dmd_shape_config_from_payload(payload),
+    )
     dmd.display_image(pattern_array, _is_full_display=pattern == "full")
     facade._last_dmd_pattern = pattern
     facade._last_dmd_preview = gui_dmd_preview_payload(dmd=dmd, pattern_array=pattern_array)
@@ -484,15 +614,63 @@ def gui_dmd_calibrate(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
         else:
             config_updates = {**config_updates, "channel": gui_led_type_from_payload(channel)}
     config = DmdCalibrationConfigFactory.default().update_from_mapping(config_updates)
-    calibration_data, _homography, _homography_inv, calibration_file = facade.automaton.dmd_calibrate(
+    result = facade.automaton.dmd_calibrate(
         cfg=config,
         filename=payload.get("filename"),
     )
+    dmd = facade.gui_dmd()
+    calibration_data = None
+    calibration_file = dmd.get_calibration_filename() if hasattr(dmd, "get_calibration_filename") else payload.get("filename")
+    if isinstance(result, tuple) and len(result) == 4:
+        calibration_data, _homography, _homography_inv, calibration_file = result
+    elif hasattr(dmd, "_calib_data"):
+        calibration_data = getattr(dmd, "_calib_data")
+    if hasattr(calibration_data, "dmd_points"):
+        calibration_points = len(calibration_data.dmd_points)
+    else:
+        calibration_points = len(calibration_data) if calibration_data else 0
     return {
         "dmd": {
             **facade.gui_dmd_status_payload(),
             "calibration_file": None if calibration_file is None else str(calibration_file),
-            "calibration_points": len(calibration_data) if calibration_data else 0,
+            "calibration_points": calibration_points,
+        },
+    }
+
+
+def gui_dmd_load_calibration(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    gui_require_devices_initialised(facade, "DMD")
+    filename = payload.get("filename")
+    if not isinstance(filename, str) or not filename:
+        raise ValueError("DMD calibration filename must be a non-empty string.")
+    dmd = facade.gui_dmd()
+    dmd.calibrate_from_path(Path(filename))
+    return {"dmd": facade.gui_dmd_status_payload()}
+
+
+def gui_dmd_calibration_points(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    gui_require_devices_initialised(facade, "DMD")
+    dmd = facade.gui_dmd()
+    calibration_data = getattr(dmd, "_calib_data", None)
+    if calibration_data is None:
+        raise RuntimeError("No DMD calibration data is loaded.")
+    dmd_points = getattr(calibration_data, "dmd_points", None)
+    cam_points = getattr(calibration_data, "cam_points", None)
+    if not dmd_points or not cam_points:
+        raise RuntimeError("No DMD calibration point correspondences are loaded.")
+    if len(dmd_points) != len(cam_points):
+        raise RuntimeError("DMD and camera calibration point counts do not match.")
+
+    calibration_file = getattr(calibration_data, "path", None)
+    if calibration_file is None and hasattr(dmd, "get_calibration_filename"):
+        calibration_file = dmd.get_calibration_filename()
+    return {
+        "dmd_calibration_points": {
+            "dmd_points": gui_pixel_points_payload(dmd_points),
+            "cam_points": gui_pixel_points_payload(cam_points),
+            "dmd_shape": list(getattr(dmd, "width_height_DMD", DMD_WIDTH_HEIGHT)),
+            "cam_shape": list(getattr(dmd, "width_height_CAM", CAM_WIDTH_HEIGHT)),
+            "calibration_file": None if calibration_file is None else str(calibration_file),
         },
     }
 
@@ -638,6 +816,7 @@ def gui_strategy_stop(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
 GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.PING: gui_ping,
+    GuiCommandType.IMAGE_TRANSPORT_PROBE: gui_image_transport_probe,
     GuiCommandType.INITIALISE_DEVICES: gui_initialise_devices,
     GuiCommandType.STOP: gui_stop,
     GuiCommandType.SHUTDOWN: gui_shutdown,
@@ -651,6 +830,8 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.STAGE_STOP: gui_stage_stop,
     GuiCommandType.CAMERA_STATUS: gui_camera_status,
     GuiCommandType.CAMERA_SET_EXPOSURE: gui_camera_set_exposure,
+    GuiCommandType.ACQUISITION_LIST_FILES: gui_acquisition_list_files,
+    GuiCommandType.ACQUISITION_LOAD_FRAME: gui_acquisition_load_frame,
     GuiCommandType.ACQUISITION_TAKE_FRAME: gui_acquisition_take_frame,
     GuiCommandType.ACQUISITION_TAKE_Z_STACK: gui_acquisition_take_z_stack,
     GuiCommandType.FILTER_WHEEL_STATUS: gui_filter_wheel_status,
@@ -662,6 +843,8 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.LED_GET_STATE: gui_led_get_state,
     GuiCommandType.DMD_STATUS: gui_dmd_status,
     GuiCommandType.DMD_DISPLAY_PATTERN: gui_dmd_display_pattern,
+    GuiCommandType.DMD_LOAD_CALIBRATION: gui_dmd_load_calibration,
+    GuiCommandType.DMD_CALIBRATION_POINTS: gui_dmd_calibration_points,
     GuiCommandType.DMD_CALIBRATE: gui_dmd_calibrate,
     GuiCommandType.AUTOFOCUS_STATUS: gui_autofocus_status,
     GuiCommandType.AUTOFOCUS_CONFIGURE: gui_autofocus_configure,
@@ -679,38 +862,21 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
 }
 
 
-def gui_dmd_pattern_array(dmd: Any, pattern: str) -> np.ndarray:
+def gui_dmd_pattern_array(dmd: Any, pattern: str, config: DmdShapeConfig | None = None) -> np.ndarray:
     """Build the DMD array sent for a built-in GUI pattern."""
-    if pattern == "clear":
-        return dmd.get_zero_array()
-    if pattern == "full":
-        return dmd.get_one_array()
-    if pattern == "checkerboard":
-        return dmd.get_checkerboard()
-    if pattern == "calibration_image":
-        return dmd.get_calibration_image()
-    if pattern == "half":
-        image = dmd.get_zero_array()
-        image[image.shape[0] // 4:image.shape[0] * 3 // 4, :] = 255
-        return image
-    if pattern == "crosshair":
-        image = dmd.get_zero_array()
-        line_width = int(getattr(dmd, "default_line_width", getattr(dmd, "DEFAULT_LINE_WIDTH", 5)))
-        row_start, row_end = _centered_slice(center=image.shape[0] // 2, width=line_width, length=image.shape[0])
-        col_start, col_end = _centered_slice(center=image.shape[1] // 2, width=line_width, length=image.shape[1])
-        image[row_start:row_end, :] = 255
-        image[:, col_start:col_end] = 255
-        return image
-    raise ValueError(f"Unsupported DMD pattern {pattern!r}.")
+    return dmd.get_pattern(pattern=pattern, config=config)
 
 
 def gui_dmd_preview_payload(dmd: Any, pattern_array: np.ndarray) -> dict[str, Any]:
     """Return a display-oriented preview for a DMD array."""
     dmd_shape = tuple(getattr(dmd, "width_height_DMD", DMD_WIDTH_HEIGHT))
     display_array = pattern_array.T if pattern_array.shape == dmd_shape else pattern_array
-    return array_to_preview_payload(display_array, max_shape=DMD_PREVIEW_SHAPE)
+    return array_to_preview_payload(display_array)
 
 
-def _centered_slice(center: int, width: int, length: int) -> tuple[int, int]:
-    half_width = max(1, width) // 2
-    return max(0, center - half_width), min(length, center + half_width + 1)
+def gui_pixel_points_payload(points: list[tuple[int, int]]) -> list[dict[str, int]]:
+    """Serialize row/column pixel point pairs for GUI plotting."""
+    return [
+        {"row": int(row), "col": int(col)}
+        for row, col in points
+    ]

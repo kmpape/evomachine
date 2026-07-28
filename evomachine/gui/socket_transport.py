@@ -12,7 +12,7 @@ from evomachine.gui.protocol import GuiRequest, GuiResponse, response_from_excep
 
 
 HEADER_SIZE = 4
-MAX_PACKET_SIZE = 10 * 1024 * 1024
+MAX_PACKET_SIZE = 512 * 1024 * 1024
 
 
 class GuiRequestHandler(Protocol):

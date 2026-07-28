@@ -30,17 +30,50 @@ PANEL_Y = 36
 PANEL_GAP = 34
 PANEL_WIDTH = 764
 PANEL_PAD = 18
-MAIN_RECT = (PANEL_X, PANEL_Y, PANEL_WIDTH, 650)
-SPECTRUM_RECT = (PANEL_X, MAIN_RECT[1] + MAIN_RECT[3] + PANEL_GAP, PANEL_WIDTH, 210)
-DMD_CONTENT_WIDTH = PANEL_WIDTH - 2 * PANEL_PAD
-DMD_CONTENT_HEIGHT = round(DMD_CONTENT_WIDTH * DMD_DISPLAY_SHAPE[0] / DMD_DISPLAY_SHAPE[1])
-DMD_RECT = (
-    PANEL_X,
-    SPECTRUM_RECT[1] + SPECTRUM_RECT[3] + PANEL_GAP,
-    PANEL_WIDTH,
-    48 + DMD_CONTENT_HEIGHT + PANEL_PAD,
+MAIN_CONTENT_TOP = 58
+SPECTRUM_CONTENT_TOP = 42
+DMD_CONTENT_TOP = 48
+SPECTRUM_HEIGHT = 210
+MIN_CONTENT_WIDTH = PANEL_WIDTH - 2 * PANEL_PAD
+
+
+def _magnified_shape(shape: tuple[int, int], target_width: int) -> tuple[int, int]:
+    height, width = shape
+    if width >= target_width:
+        return height, width
+    scale = target_width / width
+    return max(1, int(round(height * scale))), target_width
+
+
+def _visual_workspace_layout(
+        main_shape: tuple[int, int],
+        dmd_shape: tuple[int, int],
+) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int], tuple[int, int, int, int], tuple[int, int]]:
+    content_width = max(MIN_CONTENT_WIDTH, main_shape[1], dmd_shape[1])
+    main_display_shape = _magnified_shape(main_shape, content_width)
+    dmd_display_shape = _magnified_shape(dmd_shape, content_width)
+    panel_width = content_width + 2 * PANEL_PAD
+    main_rect = (PANEL_X, PANEL_Y, panel_width, MAIN_CONTENT_TOP + main_display_shape[0] + PANEL_PAD)
+    spectrum_rect = (
+        PANEL_X,
+        main_rect[1] + main_rect[3] + PANEL_GAP,
+        panel_width,
+        SPECTRUM_HEIGHT,
+    )
+    dmd_rect = (
+        PANEL_X,
+        spectrum_rect[1] + spectrum_rect[3] + PANEL_GAP,
+        panel_width,
+        DMD_CONTENT_TOP + dmd_display_shape[0] + PANEL_PAD,
+    )
+    workspace_shape = (dmd_rect[1] + dmd_rect[3] + PANEL_Y, PANEL_X + panel_width + PANEL_X)
+    return main_rect, spectrum_rect, dmd_rect, workspace_shape
+
+
+MAIN_RECT, SPECTRUM_RECT, DMD_RECT, WORKSPACE_SHAPE = _visual_workspace_layout(
+    DEFAULT_CAMERA_DISPLAY_SHAPE,
+    DMD_DISPLAY_SHAPE,
 )
-WORKSPACE_SHAPE = (DMD_RECT[1] + DMD_RECT[3] + PANEL_Y, PANEL_X + PANEL_WIDTH + PANEL_X)
 
 
 def dmd_array_to_display(array: np.ndarray) -> np.ndarray:
@@ -128,26 +161,41 @@ def make_visual_workspace(
         dmd_pattern: np.ndarray | None = None,
 ) -> np.ndarray:
     """Compose the central visual dashboard as one Napari RGB image layer."""
-    canvas = np.zeros((*WORKSPACE_SHAPE, 3), dtype=np.uint8)
+    main_source = last_image if last_image is not None else make_main_image_placeholder(camera_shape)
+    dmd_source = make_dmd_placeholder() if dmd_pattern is None else dmd_array_to_display(dmd_pattern)
+    main_rect, spectrum_rect, dmd_rect, workspace_shape = _visual_workspace_layout(
+        main_source.shape[:2],
+        dmd_source.shape[:2],
+    )
+
+    canvas = np.zeros((*workspace_shape, 3), dtype=np.uint8)
     canvas[:, :, :] = BACKGROUND
     pil_canvas = Image.fromarray(canvas)
     draw = ImageDraw.Draw(pil_canvas)
 
-    _draw_panel(draw, MAIN_RECT, "Last acquired image")
-    main_source = last_image if last_image is not None else make_main_image_placeholder(camera_shape)
-    _paste_into_rect(pil_canvas, main_source, _content_rect(MAIN_RECT, top=58, pad=18))
+    _draw_panel(draw, main_rect, "Last acquired image")
+    _paste_into_rect(
+        pil_canvas,
+        main_source,
+        _content_rect(main_rect, top=MAIN_CONTENT_TOP, pad=PANEL_PAD),
+        magnify_to_width=True,
+    )
 
-    _draw_panel(draw, SPECTRUM_RECT, "Brightness histogram")
-    spectrum_content_rect = _content_rect(SPECTRUM_RECT, top=42, pad=18)
+    _draw_panel(draw, spectrum_rect, "Brightness histogram")
+    spectrum_content_rect = _content_rect(spectrum_rect, top=SPECTRUM_CONTENT_TOP, pad=PANEL_PAD)
     histogram = make_brightness_histogram(
         last_image,
         size=(spectrum_content_rect[3], spectrum_content_rect[2]),
     )
     _paste_into_rect(pil_canvas, histogram, spectrum_content_rect)
 
-    _draw_panel(draw, DMD_RECT, "DMD window")
-    dmd_source = make_dmd_placeholder() if dmd_pattern is None else dmd_array_to_display(dmd_pattern)
-    _paste_into_rect(pil_canvas, dmd_source, _content_rect(DMD_RECT, top=48, pad=18), nearest=True)
+    _draw_panel(draw, dmd_rect, "DMD window")
+    _paste_into_rect(
+        pil_canvas,
+        dmd_source,
+        _content_rect(dmd_rect, top=DMD_CONTENT_TOP, pad=PANEL_PAD),
+        magnify_to_width=True,
+    )
 
     return np.asarray(pil_canvas)
 
@@ -301,15 +349,18 @@ def _paste_into_rect(
         source: np.ndarray,
         rect: tuple[int, int, int, int],
         *,
-        nearest: bool = False,
+        magnify_to_width: bool = False,
 ) -> None:
     x, y, width, height = rect
     rgb = _normalise_to_rgb(source)
     image = Image.fromarray(rgb)
-    scale = min(width / image.width, height / image.height)
-    target_size = (max(1, int(round(image.width * scale))), max(1, int(round(image.height * scale))))
-    resampling = Image.Resampling.NEAREST if nearest else Image.Resampling.BILINEAR
-    image = image.resize(target_size, resampling)
+    if magnify_to_width and image.width < width:
+        target_height = max(1, int(round(image.height * width / image.width)))
+        image = image.resize((width, target_height), Image.Resampling.NEAREST)
+    if image.width > width or image.height > height:
+        raise ValueError(
+            f"Source image shape {(image.height, image.width)} exceeds target rect {(height, width)}."
+        )
     backing = Image.new("RGB", (width, height), tuple(PANEL_ALT.tolist()))
     offset = ((width - image.width) // 2, (height - image.height) // 2)
     backing.paste(image, offset)

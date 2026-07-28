@@ -22,6 +22,16 @@ from evomachine.types import LEDType
 logger = get_logger(name=__name__, is_peripheral=True)
 
 ARR_TYPE = np.uint8
+DMD_PATTERN_ALIASES = {"clear": "empty"}
+DMD_BUILT_IN_PATTERNS = frozenset({
+    "empty",
+    "clear",
+    "full",
+    "rectangle",
+    "checkerboard",
+    "crosshair",
+    "circle",
+})
 
 
 @dataclass
@@ -202,6 +212,73 @@ class DmdConfig(PeripheralConfig):
 
 
 @dataclass
+class DmdShapeConfig:
+    """Configuration for built-in DMD shape patterns."""
+
+    rectangle_row: int | None = None
+    rectangle_col: int | None = None
+    rectangle_height: int | None = None
+    rectangle_width: int | None = None
+    checkerboard_box_size: int | None = None
+    crosshair_row: int | None = None
+    crosshair_col: int | None = None
+    crosshair_width: int = 1
+    circle_row: int | None = None
+    circle_col: int | None = None
+    circle_radius: int | None = None
+
+    def __post_init__(self) -> None:
+        for field_name in (
+                "rectangle_row",
+                "rectangle_col",
+                "crosshair_row",
+                "crosshair_col",
+                "circle_row",
+                "circle_col",
+        ):
+            self._validate_optional_int(field_name=field_name, minimum=0)
+        for field_name in (
+                "rectangle_height",
+                "rectangle_width",
+                "checkerboard_box_size",
+                "crosshair_width",
+                "circle_radius",
+        ):
+            self._validate_optional_int(field_name=field_name, minimum=1)
+
+    def copy(self) -> "DmdShapeConfig":
+        return DmdShapeConfig(**self.__dict__)
+
+    def updated(self, **kwargs: Any) -> "DmdShapeConfig":
+        unknown_keys = [key for key in kwargs if key not in self.__dict__]
+        if unknown_keys:
+            raise ValueError(f"DmdShapeConfig.updated: unknown fields {unknown_keys}.")
+        values = dict(self.__dict__)
+        values.update(kwargs)
+        return DmdShapeConfig(**values)
+
+    def update_from_mapping(self, updates: dict[str, Any]) -> "DmdShapeConfig":
+        if not isinstance(updates, dict):
+            raise TypeError("DmdShapeConfig.update_from_mapping: updates must be dict.")
+        return self.updated(**updates)
+
+    def _validate_optional_int(self, field_name: str, minimum: int) -> None:
+        value = getattr(self, field_name)
+        if value is None:
+            return
+        if isinstance(value, bool):
+            raise TypeError(f"DmdShapeConfig: {field_name} must be int or None, received bool.")
+        if not isinstance(value, int):
+            try:
+                value = int(value)
+            except (TypeError, ValueError) as exc:
+                raise TypeError(f"DmdShapeConfig: {field_name} must be int or None, received {type(value)}.") from exc
+            setattr(self, field_name, value)
+        if value < minimum:
+            raise ValueError(f"DmdShapeConfig: {field_name} must be >= {minimum}, received {value}.")
+
+
+@dataclass
 class DmdCalibrationData:
     """
     DMD calibration point correspondences used to compute homography transforms.
@@ -295,7 +372,7 @@ class Dmd(Peripheral):
 
     DEFAULT_NAME: str = "DMD"
     DEFAULT_LINE_WIDTH: int = 5
-    DEFAULT_SQUARE_WIDTH: int = 20
+    DEFAULT_SQUARE_WIDTH: int = 200
     EXTENSIONS = ["png", "tiff", "tif"]
 
     def __init__(
@@ -318,6 +395,9 @@ class Dmd(Peripheral):
         self._is_full_display: bool = False
         self._loaded_img: np.ndarray | None = None
         default_calibration_file = EVOMACHINE_DIR / "calibration_data" / "dmd" / "dmd_calibration_data_2025-08-14_v2.pkl"
+        packaged_calibration_file = EVOMACHINE_DIR / "evomachine" / "dmd_calibration_data.pkl"
+        if not default_calibration_file.exists() and packaged_calibration_file.exists():
+            default_calibration_file = packaged_calibration_file
         self._calib_file: Path = calibration_file or default_calibration_file
         self._calib_data: DmdCalibrationData | None = None
         self._homography_mat: np.ndarray | None = None
@@ -608,6 +688,85 @@ class Dmd(Peripheral):
         """Return a white uint8 image."""
         return np.ones(img_size or self.width_height_DMD, dtype=ARR_TYPE) * 255
 
+    def get_pattern(self, pattern: str, config: DmdShapeConfig | None = None) -> np.ndarray:
+        """Return a built-in DMD pattern image."""
+        pattern = DMD_PATTERN_ALIASES.get(pattern, pattern)
+        if pattern not in DMD_BUILT_IN_PATTERNS:
+            raise ValueError(f"Unsupported DMD pattern {pattern!r}.")
+        config = config or DmdShapeConfig()
+        if pattern == "empty":
+            return self.get_zero_array()
+        if pattern == "full":
+            return self.get_one_array()
+        if pattern == "rectangle":
+            return self.get_rectangle(config=config)
+        if pattern == "checkerboard":
+            return self.get_checkerboard(square_size=config.checkerboard_box_size)
+        if pattern == "crosshair":
+            return self.get_crosshair(
+                at_pos=self._shape_position_or_none(config.crosshair_row, config.crosshair_col),
+                line_width=config.crosshair_width,
+            )
+        if pattern == "circle":
+            return self.get_circle(
+                row=config.circle_row,
+                col=config.circle_col,
+                radius=config.circle_radius,
+            )
+        raise ValueError(f"Unsupported DMD pattern {pattern!r}.")
+
+    @staticmethod
+    def _shape_position_or_none(row: int | None, col: int | None) -> tuple[int, int] | None:
+        if row is None and col is None:
+            return None
+        if row is None or col is None:
+            raise ValueError("DMD shape position requires both row and col.")
+        return row, col
+
+    @staticmethod
+    def _centered_slice(center: int, width: int, length: int) -> tuple[int, int]:
+        width = max(1, min(width, length))
+        start = center - width // 2
+        end = start + width
+        if start < 0:
+            end -= start
+            start = 0
+        if end > length:
+            start = max(0, start - (end - length))
+            end = length
+        return start, end
+
+    @staticmethod
+    def _validate_position(row: int, col: int, img_shape: tuple[int, int], action: str) -> None:
+        if not (0 <= row < img_shape[0]):
+            raise ValueError(f"{action}: row {row} outside DMD bounds 0-{img_shape[0] - 1}.")
+        if not (0 <= col < img_shape[1]):
+            raise ValueError(f"{action}: col {col} outside DMD bounds 0-{img_shape[1] - 1}.")
+
+    @staticmethod
+    def _validate_rectangle(row: int, col: int, height: int, width: int, img_shape: tuple[int, int]) -> None:
+        Dmd._validate_position(row=row, col=col, img_shape=img_shape, action="Dmd.get_rectangle")
+        if row + height > img_shape[0]:
+            raise ValueError(f"Dmd.get_rectangle: row + height {row + height} exceeds DMD rows {img_shape[0]}.")
+        if col + width > img_shape[1]:
+            raise ValueError(f"Dmd.get_rectangle: col + width {col + width} exceeds DMD cols {img_shape[1]}.")
+
+    def get_rectangle(
+            self,
+            config: DmdShapeConfig | None = None,
+            img_size: tuple[int, int] | None = None,
+    ) -> np.ndarray:
+        """Return a filled rectangle pattern."""
+        config = config or DmdShapeConfig()
+        img = self.get_zero_array(img_size=img_size)
+        height = config.rectangle_height or max(1, img.shape[0] // 2)
+        width = config.rectangle_width or max(1, img.shape[1] // 2)
+        row = config.rectangle_row if config.rectangle_row is not None else max(0, (img.shape[0] - height) // 2)
+        col = config.rectangle_col if config.rectangle_col is not None else max(0, (img.shape[1] - width) // 2)
+        self._validate_rectangle(row=row, col=col, height=height, width=width, img_shape=img.shape)
+        img[row:row + height, col:col + width] = 255
+        return img
+
     @staticmethod
     def _make_half_line_width(line_width: int, at_pos: int, length: int) -> tuple[int, int]:
         """Return inclusive/exclusive slice bounds for a centered line width."""
@@ -654,19 +813,46 @@ class Dmd(Peripheral):
         """Return a checkerboard image."""
         if not square_size:
             square_size = self.DEFAULT_SQUARE_WIDTH
+        if square_size <= 0:
+            raise ValueError(f"Dmd.get_checkerboard: square_size must be positive, received {square_size}.")
         img = self.get_zero_array(img_size=img_size)
-        for i in range(0, img.shape[0], square_size * 2):
-            img[i:i + square_size, :] = 255
-        for j in range(square_size, img.shape[1], square_size * 2):
-            img[:, j:j + square_size] = 255
+        row_tiles = np.arange(img.shape[0])[:, None] // square_size
+        col_tiles = np.arange(img.shape[1])[None, :] // square_size
+        img[(row_tiles + col_tiles) % 2 == 0] = 255
         return img
 
-    def get_circles(self, col_range: np.ndarray, row_range: np.ndarray, radius: int) -> np.ndarray:
+    def get_circles(
+            self,
+            col_range: np.ndarray,
+            row_range: np.ndarray,
+            radius: int,
+            img_size: tuple[int, int] | None = None,
+    ) -> np.ndarray:
         """Return a DMD image with filled circles at grid coordinates."""
+        if radius <= 0:
+            raise ValueError(f"Dmd.get_circles: radius must be positive, received {radius}.")
         cols, rows = np.meshgrid(col_range, row_range)
-        img = self.get_zero_array()
+        img = self.get_zero_array(img_size=img_size)
         for col, row in zip(cols.flatten(), rows.flatten()):
             cv2.circle(img, (int(col), int(row)), radius, color=255, thickness=-1)
+        return img
+
+    def get_circle(
+            self,
+            row: int | None = None,
+            col: int | None = None,
+            radius: int | None = None,
+            img_size: tuple[int, int] | None = None,
+    ) -> np.ndarray:
+        """Return a DMD image with one filled circle."""
+        img = self.get_zero_array(img_size=img_size)
+        row = img.shape[0] // 2 if row is None else row
+        col = img.shape[1] // 2 if col is None else col
+        radius = max(1, min(img.shape) // 8) if radius is None else radius
+        if radius <= 0:
+            raise ValueError(f"Dmd.get_circle: radius must be positive, received {radius}.")
+        self._validate_position(row=row, col=col, img_shape=img.shape, action="Dmd.get_circle")
+        cv2.circle(img, (col, row), radius, color=255, thickness=-1)
         return img
 
     def display_circles(
@@ -688,11 +874,13 @@ class Dmd(Peripheral):
         """Display a checkerboard image."""
         self.display_image(self.get_checkerboard(square_size=square_size))
 
+    def display_rectangle(self, config: DmdShapeConfig | None = None) -> None:
+        """Display a filled rectangle."""
+        self.display_image(self.get_rectangle(config=config))
+
     def display_circle(self, row: int, col: int, radius: int = 1) -> None:
         """Display one filled circle."""
-        img = self.get_zero_array()
-        cv2.circle(img, (col, row), radius, color=255, thickness=-1)
-        self.display_image(img)
+        self.display_image(self.get_circle(row=row, col=col, radius=radius))
 
     def display_half(self) -> None:
         """Display a central horizontal white band."""
@@ -726,6 +914,27 @@ class Dmd(Peripheral):
         img[:, col_start:col_end] = 255
         self.display_image(img)
 
+    def get_crosshair(
+            self,
+            at_pos: tuple[int, int] | None = None,
+            line_width: int | None = None,
+            img_size: tuple[int, int] | None = None,
+    ) -> np.ndarray:
+        """Return a DMD crosshair image at a position or at image center."""
+        if img_size is None:
+            img_size = self.width_height_DMD
+        if at_pos is None:
+            at_pos = (img_size[0] // 2, img_size[1] // 2)
+        if line_width is None:
+            line_width = self.DEFAULT_LINE_WIDTH
+        self._validate_position(row=at_pos[0], col=at_pos[1], img_shape=img_size, action="Dmd.get_crosshair")
+        img = self.get_zero_array(img_size=img_size)
+        row_start, row_end = self._centered_slice(center=at_pos[0], width=line_width, length=img_size[0])
+        col_start, col_end = self._centered_slice(center=at_pos[1], width=line_width, length=img_size[1])
+        img[row_start:row_end, :] = 255
+        img[:, col_start:col_end] = 255
+        return img
+
     def display_crosshair(
             self,
             at_pos: tuple[int, int] | None = None,
@@ -733,26 +942,7 @@ class Dmd(Peripheral):
             img_size: tuple[int, int] | None = None,
     ) -> None:
         """Display a crosshair at a DMD position or at image center."""
-        if img_size is None:
-            img_size = self.width_height_DMD
-        if at_pos is None:
-            at_pos = (img_size[0] // 2, img_size[1] // 2)
-        if line_width is None:
-            line_width = self.DEFAULT_LINE_WIDTH
-        img = self.get_zero_array(img_size=img_size)
-        row_start, row_end = self._make_half_line_width(
-            line_width=line_width,
-            at_pos=at_pos[0],
-            length=img_size[0] - 1,
-        )
-        col_start, col_end = self._make_half_line_width(
-            line_width=line_width,
-            at_pos=at_pos[1],
-            length=img_size[1] - 1,
-        )
-        img[row_start:row_end, :] = 255
-        img[:, col_start:col_end] = 255
-        self.display_image(img)
+        self.display_image(self.get_crosshair(at_pos=at_pos, line_width=line_width, img_size=img_size))
 
     @staticmethod
     def _make_text(

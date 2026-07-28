@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
+from evomachine.gui.image_payloads import (
+    IMAGE_TRANSPORT_AUTO,
+    IMAGE_TRANSPORT_ENV,
+    IMAGE_TRANSPORT_SOCKET_TIFF,
+    IMAGE_TRANSPORT_TEMP_TIFF,
+    normalise_image_transport,
+)
 from evomachine.gui.protocol import GUI_HOST_ENV as HOST_ENV
 from evomachine.gui.protocol import GUI_PORT_ENV as PORT_ENV
 from evomachine.gui.protocol import GuiCommandType, GuiRequest, GuiResponse
@@ -43,11 +51,13 @@ class EvoMachineGuiController(QObject):
     stage_status_received = pyqtSignal(dict)
     stage_coordinates_received = pyqtSignal(dict)
     camera_status_received = pyqtSignal(dict)
+    acquisition_files_received = pyqtSignal(list)
     frame_received = pyqtSignal(dict)
     filter_wheel_status_received = pyqtSignal(dict)
     led_list_received = pyqtSignal(list)
     led_state_received = pyqtSignal(dict)
     dmd_status_received = pyqtSignal(dict)
+    dmd_calibration_points_received = pyqtSignal(dict)
     autofocus_status_received = pyqtSignal(dict)
     software_focus_status_received = pyqtSignal(dict)
     strategies_received = pyqtSignal(list)
@@ -65,6 +75,12 @@ class EvoMachineGuiController(QObject):
         resolved_host = host or os.environ.get(HOST_ENV, "127.0.0.1")
         resolved_port = port if port is not None else int(os.environ.get(PORT_ENV, "0"))
         self.client = client if client is not None else GuiSocketClient(host=resolved_host, port=resolved_port)
+        self._requested_image_transport = normalise_image_transport(os.environ.get(IMAGE_TRANSPORT_ENV))
+        self._image_transport = (
+            IMAGE_TRANSPORT_SOCKET_TIFF
+            if self._requested_image_transport == IMAGE_TRANSPORT_AUTO
+            else self._requested_image_transport
+        )
         self._thread: QThread | None = None
         self._worker: RpcClientWorker | None = None
         if start_worker:
@@ -121,14 +137,27 @@ class EvoMachineGuiController(QObject):
     def refresh_camera(self) -> None:
         self._send(GuiCommandType.CAMERA_STATUS)
 
+    def probe_image_transport(self) -> None:
+        if self._requested_image_transport == IMAGE_TRANSPORT_AUTO:
+            self._send(GuiCommandType.IMAGE_TRANSPORT_PROBE)
+
     def set_camera_exposure(self, exposure: float) -> None:
         self._send(GuiCommandType.CAMERA_SET_EXPOSURE, {"exposure": exposure})
 
+    def refresh_acquisition_files(self) -> None:
+        self._send(GuiCommandType.ACQUISITION_LIST_FILES)
+
+    def load_acquisition_frame(self, filename: str, image_transport: str | None = None) -> None:
+        payload: dict[str, Any] = {"filename": filename}
+        if image_transport is not None:
+            payload["image_transport"] = normalise_image_transport(image_transport)
+        self._send(GuiCommandType.ACQUISITION_LOAD_FRAME, self._with_image_transport(payload))
+
     def acquire_frame(self, payload: dict[str, Any] | None = None) -> None:
-        self._send(GuiCommandType.ACQUISITION_TAKE_FRAME, payload)
+        self._send(GuiCommandType.ACQUISITION_TAKE_FRAME, self._with_image_transport(payload))
 
     def acquire_z_stack(self, payload: dict[str, Any] | None = None) -> None:
-        self._send(GuiCommandType.ACQUISITION_TAKE_Z_STACK, payload)
+        self._send(GuiCommandType.ACQUISITION_TAKE_Z_STACK, self._with_image_transport(payload))
 
     def refresh_filter_wheel(self) -> None:
         self._send(GuiCommandType.FILTER_WHEEL_STATUS)
@@ -151,11 +180,20 @@ class EvoMachineGuiController(QObject):
     def refresh_dmd(self) -> None:
         self._send(GuiCommandType.DMD_STATUS)
 
-    def display_dmd_pattern(self, pattern: str) -> None:
-        self._send(GuiCommandType.DMD_DISPLAY_PATTERN, {"pattern": pattern})
+    def display_dmd_pattern(self, pattern: str, config: dict[str, Any] | None = None) -> None:
+        payload: dict[str, Any] = {"pattern": pattern}
+        if config is not None:
+            payload["config"] = config
+        self._send(GuiCommandType.DMD_DISPLAY_PATTERN, payload)
 
     def calibrate_dmd(self) -> None:
         self._send(GuiCommandType.DMD_CALIBRATE)
+
+    def load_dmd_calibration(self, filename: str) -> None:
+        self._send(GuiCommandType.DMD_LOAD_CALIBRATION, {"filename": filename})
+
+    def request_dmd_calibration_points(self) -> None:
+        self._send(GuiCommandType.DMD_CALIBRATION_POINTS)
 
     def refresh_autofocus(self) -> None:
         self._send(GuiCommandType.AUTOFOCUS_STATUS)
@@ -214,12 +252,19 @@ class EvoMachineGuiController(QObject):
             return
         self.request_ready.emit(request)
 
+    def _with_image_transport(self, payload: dict[str, Any] | None) -> dict[str, Any]:
+        updated = {} if payload is None else dict(payload)
+        updated.setdefault("image_transport", self._image_transport)
+        return updated
+
     @pyqtSlot(object)
     def _handle_response(self, response: GuiResponse) -> None:
         if not response.ok:
             self.response_error.emit(response.error or "Unknown automaton RPC error.")
             return
         payload = response.payload
+        if "image_transport_probe" in payload:
+            self._handle_image_transport_probe(payload["image_transport_probe"])
         if "coordinate" in payload:
             self.stage_coordinates_received.emit(payload)
         if "controllers" in payload:
@@ -230,6 +275,8 @@ class EvoMachineGuiController(QObject):
             self.stage_status_received.emit(payload["stage"])
         if "camera" in payload:
             self.camera_status_received.emit(payload["camera"])
+        if "acquisition_files" in payload:
+            self.acquisition_files_received.emit(payload["acquisition_files"])
         if "frame" in payload:
             self.frame_received.emit(payload["frame"])
         if "filter_wheel" in payload:
@@ -240,6 +287,8 @@ class EvoMachineGuiController(QObject):
             self.led_state_received.emit(payload["state"])
         if "dmd" in payload:
             self.dmd_status_received.emit(payload["dmd"])
+        if "dmd_calibration_points" in payload:
+            self.dmd_calibration_points_received.emit(payload["dmd_calibration_points"])
         if "autofocus" in payload:
             self.autofocus_status_received.emit(payload["autofocus"])
         if "software_focus" in payload:
@@ -250,3 +299,19 @@ class EvoMachineGuiController(QObject):
             self.strategy_status_received.emit(payload["strategy"])
         if "devices_initialised" in payload or "shutdown" in payload or "strategy_active" in payload:
             self.lifecycle_status_received.emit(payload)
+
+    def _handle_image_transport_probe(self, payload: dict[str, Any]) -> None:
+        if not isinstance(payload, dict):
+            return
+        path = payload.get("path")
+        token = payload.get("token")
+        if not isinstance(path, str) or not isinstance(token, str):
+            self._image_transport = IMAGE_TRANSPORT_SOCKET_TIFF
+            return
+        try:
+            probe_path = Path(path)
+            can_read = probe_path.read_text(encoding="ascii") == token
+            probe_path.unlink(missing_ok=True)
+        except Exception:
+            can_read = False
+        self._image_transport = IMAGE_TRANSPORT_TEMP_TIFF if can_read else IMAGE_TRANSPORT_SOCKET_TIFF
