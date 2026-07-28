@@ -11,7 +11,7 @@ from evomachine.bindings.em_dmd_window.peripheralcontroller import EmDmdWindowPe
 from evomachine.bindings.pygame.dmd import PygameDmd
 from evomachine.bindings.pygame.peripheralcontroller import PygameDmdPeripheralController
 from evomachine.bindings.virtual.dmd import VirtualDmd, VirtualDmdPeripheralController
-from evomachine.peripherals.dmd import Dmd, DmdConfig, DmdFactory
+from evomachine.peripherals.dmd import Dmd, DmdConfig, DmdFactory, DmdShapeConfig
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, SocketPeripheralController
 from evomachine.bindings.binding_types import BindingType
 
@@ -213,6 +213,40 @@ def test_shared_display_helpers_generate_arrays_and_call_display_image(tmp_path)
     dmd.display_crosshair()
     assert dmd.images[-1][5, :].max() == 255
     assert dmd.images[-1][:, 5].max() == 255
+
+
+def test_dmd_builtin_shape_patterns_generate_expected_arrays(tmp_path):
+    dmd = make_recording_dmd(tmp_path, width_height=(20, 30))
+
+    assert np.all(dmd.get_pattern("empty") == 0)
+    assert np.all(dmd.get_pattern("clear") == 0)
+    assert np.all(dmd.get_pattern("full") == 255)
+
+    rectangle = dmd.get_pattern(
+        "rectangle",
+        DmdShapeConfig(rectangle_row=2, rectangle_col=3, rectangle_height=4, rectangle_width=5),
+    )
+    assert rectangle[2:6, 3:8].min() == 255
+    assert rectangle.sum() == 4 * 5 * 255
+
+    checkerboard = dmd.get_pattern("checkerboard", DmdShapeConfig(checkerboard_box_size=2))
+    assert checkerboard[0, 0] == 255
+    assert checkerboard[0, 2] == 0
+    assert checkerboard[2, 2] == 255
+
+    crosshair = dmd.get_pattern("crosshair", DmdShapeConfig(crosshair_row=5, crosshair_col=6))
+    assert crosshair[5, :].min() == 255
+    assert crosshair[:, 6].min() == 255
+
+    circle = dmd.get_pattern("circle", DmdShapeConfig(circle_row=8, circle_col=9, circle_radius=3))
+    assert circle[8, 9] == 255
+
+
+def test_dmd_shape_config_rejects_unknown_and_invalid_values():
+    with pytest.raises(ValueError, match="unknown fields"):
+        DmdShapeConfig().update_from_mapping({"row": 1})
+    with pytest.raises(ValueError, match="rectangle_width"):
+        DmdShapeConfig(rectangle_width=0)
 
 
 def test_display_calls_reject_when_controller_is_not_ready(tmp_path):

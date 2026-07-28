@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 
 from evomachine.config import DMD_WIDTH_HEIGHT
@@ -14,8 +16,14 @@ from evomachine.gui.central_workspace import (
     make_dmd_placeholder,
     make_visual_workspace_stack,
     make_visual_workspace,
+    _content_rect,
+    _visual_workspace_layout,
 )
 from evomachine.gui.image_payloads import (
+    IMAGE_TRANSPORT_DIR_ENV,
+    IMAGE_TRANSPORT_RAW,
+    IMAGE_TRANSPORT_SOCKET_TIFF,
+    IMAGE_TRANSPORT_TEMP_TIFF,
     array_from_preview_payload,
     array_to_preview_payload,
     stack_from_preview_payload,
@@ -56,6 +64,26 @@ def test_visual_workspace_is_one_rgb_dashboard_image() -> None:
     assert workspace.dtype == np.uint8
 
 
+def test_visual_workspace_magnifies_small_camera_image_to_dmd_width() -> None:
+    image = np.arange(48 * 64, dtype=np.uint16).reshape(48, 64)
+    dmd_pattern = np.zeros(DMD_DISPLAY_SHAPE, dtype=np.uint8)
+
+    workspace = make_visual_workspace(last_image=image, dmd_pattern=dmd_pattern)
+    main_rect, _spectrum_rect, dmd_rect, workspace_shape = _visual_workspace_layout(
+        image.shape,
+        dmd_pattern.shape,
+    )
+    main_content = _content_rect(main_rect, top=58, pad=18)
+    dmd_content = _content_rect(dmd_rect, top=48, pad=18)
+
+    assert workspace.shape == (*workspace_shape, 3)
+    assert main_content[2] == dmd_content[2]
+    assert workspace[
+        main_content[1]:main_content[1] + main_content[3],
+        main_content[0]:main_content[0] + main_content[2],
+    ].sum() > 0
+
+
 def test_visual_workspace_panels_are_vertically_stacked() -> None:
     assert MAIN_RECT[0] == SPECTRUM_RECT[0] == DMD_RECT[0]
     assert MAIN_RECT[1] + MAIN_RECT[3] < SPECTRUM_RECT[1]
@@ -68,30 +96,89 @@ def test_visual_workspace_stack_has_one_dashboard_per_plane() -> None:
     stack = np.arange(3 * 12, dtype=np.uint16).reshape(3, 3, 4)
 
     workspace_stack = make_visual_workspace_stack(image_stack=stack)
+    single_workspace = make_visual_workspace(last_image=stack[0])
 
-    assert workspace_stack.shape == (3, *WORKSPACE_SHAPE, 3)
+    assert workspace_stack.shape == (3, *single_workspace.shape)
     assert workspace_stack.dtype == np.uint8
 
 
-def test_preview_payload_round_trip_downsamples_large_images() -> None:
+def test_preview_payload_round_trip_preserves_full_image_as_raw_bytes() -> None:
     image = np.arange(100 * 200, dtype=np.uint16).reshape(100, 200)
 
-    payload = array_to_preview_payload(image, max_shape=(10, 20))
+    payload = array_to_preview_payload(image, transport=IMAGE_TRANSPORT_RAW)
     preview = array_from_preview_payload(payload)
 
-    assert preview.shape == (10, 20)
+    assert payload["encoding"] == "raw"
+    assert preview.shape == image.shape
     assert preview.dtype == np.dtype("uint16")
+    assert np.array_equal(preview, image)
 
 
-def test_stack_preview_payload_round_trip_downsamples_each_plane() -> None:
+def test_preview_payload_round_trip_preserves_full_image_as_socket_tiff() -> None:
+    image = np.arange(100 * 200, dtype=np.uint16).reshape(100, 200)
+
+    payload = array_to_preview_payload(image, transport=IMAGE_TRANSPORT_SOCKET_TIFF)
+    preview = array_from_preview_payload(payload)
+
+    assert payload["encoding"] == "tiff"
+    assert preview.shape == image.shape
+    assert preview.dtype == np.dtype("uint16")
+    assert np.array_equal(preview, image)
+
+
+def test_preview_payload_round_trip_preserves_full_image_as_temp_tiff(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv(IMAGE_TRANSPORT_DIR_ENV, str(tmp_path))
+    image = np.arange(100 * 200, dtype=np.uint16).reshape(100, 200)
+
+    payload = array_to_preview_payload(image, transport=IMAGE_TRANSPORT_TEMP_TIFF)
+    tiff_path = Path(payload["path"])
+
+    assert payload["encoding"] == "tiff_path"
+    assert tiff_path.exists()
+    preview = array_from_preview_payload(payload)
+    assert not tiff_path.exists()
+    assert preview.shape == image.shape
+    assert preview.dtype == np.dtype("uint16")
+    assert np.array_equal(preview, image)
+
+
+def test_preview_payload_preserves_thin_bright_features() -> None:
+    image = np.zeros((100, 200), dtype=np.uint8)
+    image[:, 97] = 255
+
+    payload = array_to_preview_payload(image)
+    preview = array_from_preview_payload(payload)
+
+    assert payload["encoding"] == "packed_binary"
+    assert preview.shape == image.shape
+    assert preview.max() == 255
+    assert np.array_equal(preview, image)
+
+
+def test_preview_payload_packs_binary_masks_losslessly() -> None:
+    image = np.zeros((7, 11), dtype=np.uint8)
+    image[2:5, 3:8] = 255
+
+    payload = array_to_preview_payload(image)
+    preview = array_from_preview_payload(payload)
+
+    assert payload["encoding"] == "packed_binary"
+    assert isinstance(payload["data"], str)
+    assert preview.dtype == np.dtype("uint8")
+    assert np.array_equal(preview, image)
+
+
+def test_stack_preview_payload_round_trip_preserves_each_plane() -> None:
     stack = np.arange(3 * 100 * 200, dtype=np.uint16).reshape(3, 100, 200)
 
-    payload = stack_to_preview_payload(stack, max_shape=(10, 20))
+    payload = stack_to_preview_payload(stack, transport=IMAGE_TRANSPORT_SOCKET_TIFF)
     preview = stack_from_preview_payload(payload)
 
     assert payload["is_stack"] is True
-    assert preview.shape == (3, 10, 20)
+    assert payload["encoding"] == "tiff"
+    assert preview.shape == stack.shape
     assert preview.dtype == np.dtype("uint16")
+    assert np.array_equal(preview, stack)
 
 
 def test_dmd_array_to_display_accepts_display_oriented_preview() -> None:

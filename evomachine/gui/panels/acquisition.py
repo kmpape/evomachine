@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from PyQt5.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFormLayout,
     QGridLayout,
@@ -13,6 +15,8 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from evomachine.gui.image_payloads import IMAGE_TRANSPORT_SOCKET_TIFF
 
 
 class FrameAcquisitionSettingsPanel(QGroupBox):
@@ -210,6 +214,98 @@ class ZStackSettingsPanel(QGroupBox):
 
     def _show_error(self, error: str) -> None:
         if self.status_label.text().startswith("Acquiring z-stack"):
+            self.status_label.setText(error)
+
+
+class SavedImageLoaderPanel(QGroupBox):
+    """Load previously saved acquisition TIFFs into the central viewer."""
+
+    def __init__(self, controller, parent: QWidget | None = None):
+        super().__init__("Load Saved Image", parent)
+        self.controller = controller
+        self.file_combo = QComboBox()
+        self.force_socket_checkbox = QCheckBox("Force socket transport")
+        self.refresh_button = QPushButton("Refresh Files")
+        self.load_button = QPushButton("Load Selected")
+        self.path_label = QLabel("path: -")
+        self.status_label = QLabel("Refresh files to load a saved TIFF.")
+        self.path_label.setWordWrap(True)
+
+        button_grid = QGridLayout()
+        button_grid.addWidget(self.refresh_button, 0, 0)
+        button_grid.addWidget(self.load_button, 0, 1)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.force_socket_checkbox)
+        layout.addWidget(self.file_combo)
+        layout.addWidget(self.path_label)
+        layout.addLayout(button_grid)
+        layout.addWidget(self.status_label)
+        self.setLayout(layout)
+
+        self.refresh_button.clicked.connect(self._refresh_files)
+        self.load_button.clicked.connect(self._load_selected)
+        self.file_combo.currentIndexChanged.connect(self._update_selected_path_label)
+        self.controller.acquisition_files_received.connect(self.update_file_list)
+        self.controller.frame_received.connect(self.update_frame_status)
+        self.controller.response_error.connect(self._show_error)
+        self._sync_controls_enabled()
+
+    def _refresh_files(self) -> None:
+        self.status_label.setText("Refreshing files.")
+        self.controller.refresh_acquisition_files()
+
+    def _load_selected(self) -> None:
+        filename = self._selected_filename()
+        if filename is None:
+            self.status_label.setText("No saved TIFF selected.")
+            return
+        image_transport = IMAGE_TRANSPORT_SOCKET_TIFF if self.force_socket_checkbox.isChecked() else None
+        self.status_label.setText("Loading through socket." if image_transport else "Loading selected file.")
+        self.controller.load_acquisition_frame(filename, image_transport=image_transport)
+
+    def _selected_filename(self) -> str | None:
+        filename = self.file_combo.currentData()
+        return filename if isinstance(filename, str) and filename else None
+
+    def update_file_list(self, files: list) -> None:
+        selected = self._selected_filename()
+        self.file_combo.clear()
+        for file_payload in files:
+            if isinstance(file_payload, dict):
+                path = file_payload.get("path")
+                label = file_payload.get("label") or (Path(str(path)).name if path else None)
+            else:
+                path = str(file_payload)
+                label = Path(path).name
+            if not path or not label:
+                continue
+            self.file_combo.addItem(str(label), str(path))
+        if selected is not None:
+            index = self.file_combo.findData(selected)
+            if index >= 0:
+                self.file_combo.setCurrentIndex(index)
+        count = self.file_combo.count()
+        self.status_label.setText(f"{count} saved TIFF file(s) available." if count else "No saved TIFF files found.")
+        self._update_selected_path_label()
+        self._sync_controls_enabled()
+
+    def update_frame_status(self, payload: dict) -> None:
+        if payload.get("source") != "file":
+            return
+        path = payload.get("loaded_path") or "-"
+        self.status_label.setText(f"Loaded {Path(str(path)).name}: {payload.get('image_shape')}")
+
+    def _sync_controls_enabled(self) -> None:
+        has_file = self.file_combo.count() > 0
+        self.load_button.setEnabled(has_file)
+
+    def _update_selected_path_label(self, _index: int | None = None) -> None:
+        filename = self._selected_filename()
+        self.path_label.setText(f"path: {filename}" if filename is not None else "path: -")
+
+    def _show_error(self, error: str) -> None:
+        if self.status_label.text().startswith(("Refreshing files", "Loading")):
             self.status_label.setText(error)
 
 

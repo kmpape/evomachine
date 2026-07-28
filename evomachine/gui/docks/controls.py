@@ -8,6 +8,7 @@ from evomachine.gui.panels.acquisition import (
     AcquisitionStatusPanel,
     FrameAcquisitionSettingsPanel,
     ManualAcquisitionPanel,
+    SavedImageLoaderPanel,
     ZStackSettingsPanel,
 )
 from evomachine.gui.panels.autofocus import AutofocusPanel
@@ -33,6 +34,7 @@ class EvoMachineControlsDock(QWidget):
             if self.viewer is not None
             else None
         )
+        self.controller.probe_image_transport()
 
         tabs = QTabWidget()
         tabs.addTab(self._scrollable_tab(self._build_main_controls_tab()), "Main Controls")
@@ -82,6 +84,7 @@ class EvoMachineControlsDock(QWidget):
             controller=self.controller,
             settings_provider=settings_panel.payload,
         ))
+        layout.addWidget(SavedImageLoaderPanel(controller=self.controller))
         layout.addWidget(AcquisitionStatusPanel(controller=self.controller))
         layout.addStretch(1)
         widget.setLayout(layout)

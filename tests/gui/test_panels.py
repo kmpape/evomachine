@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import QApplication
 from evomachine.gui.panels.acquisition import (
     FrameAcquisitionSettingsPanel,
     ManualAcquisitionPanel,
+    SavedImageLoaderPanel,
     ZStackSettingsPanel,
 )
 from evomachine.gui.panels.autofocus import AutofocusPanel
@@ -30,11 +31,13 @@ class FakeController(QObject):
     stage_coordinates_received = pyqtSignal(dict)
     stage_status_received = pyqtSignal(dict)
     camera_status_received = pyqtSignal(dict)
+    acquisition_files_received = pyqtSignal(list)
     frame_received = pyqtSignal(dict)
     filter_wheel_status_received = pyqtSignal(dict)
     led_list_received = pyqtSignal(list)
     led_state_received = pyqtSignal(dict)
     dmd_status_received = pyqtSignal(dict)
+    dmd_calibration_points_received = pyqtSignal(dict)
     autofocus_status_received = pyqtSignal(dict)
     software_focus_status_received = pyqtSignal(dict)
     strategies_received = pyqtSignal(list)
@@ -74,6 +77,12 @@ class FakeController(QObject):
     def acquire_z_stack(self, payload=None):
         self.calls.append(("acquire_z_stack", payload))
 
+    def refresh_acquisition_files(self):
+        self.calls.append(("refresh_acquisition_files",))
+
+    def load_acquisition_frame(self, filename, image_transport=None):
+        self.calls.append(("load_acquisition_frame", filename, image_transport))
+
     def refresh_filter_wheel(self):
         self.calls.append(("refresh_filter_wheel",))
 
@@ -95,11 +104,17 @@ class FakeController(QObject):
     def refresh_dmd(self):
         self.calls.append(("refresh_dmd",))
 
-    def display_dmd_pattern(self, pattern):
-        self.calls.append(("display_dmd_pattern", pattern))
+    def display_dmd_pattern(self, pattern, config=None):
+        self.calls.append(("display_dmd_pattern", pattern, config))
 
     def calibrate_dmd(self):
         self.calls.append(("calibrate_dmd",))
+
+    def load_dmd_calibration(self, filename):
+        self.calls.append(("load_dmd_calibration", filename))
+
+    def request_dmd_calibration_points(self):
+        self.calls.append(("request_dmd_calibration_points",))
 
     def refresh_autofocus(self):
         self.calls.append(("refresh_autofocus",))
@@ -244,6 +259,22 @@ def test_z_stack_panel_sends_request() -> None:
     ]
 
 
+def test_saved_image_loader_panel_sends_load_requests() -> None:
+    _app()
+    controller = FakeController()
+    panel = SavedImageLoaderPanel(controller=controller)
+    panel.update_file_list([{"label": "test.tiff", "path": "/tmp/test.tiff"}])
+
+    panel.load_button.click()
+    panel.force_socket_checkbox.setChecked(True)
+    panel.load_button.click()
+
+    assert controller.calls == [
+        ("load_acquisition_frame", "/tmp/test.tiff", None),
+        ("load_acquisition_frame", "/tmp/test.tiff", "socket_tiff"),
+    ]
+
+
 def test_filter_wheel_panel_sends_set_request() -> None:
     _app()
     controller = FakeController()
@@ -303,7 +334,42 @@ def test_dmd_panel_sends_pattern_request() -> None:
 
     panel.pattern_buttons["checkerboard"].click()
 
-    assert controller.calls == [("display_dmd_pattern", "checkerboard")]
+    assert controller.calls == [("display_dmd_pattern", "checkerboard", panel._shape_config_payload())]
+
+
+def test_dmd_panel_sends_load_calibration_request() -> None:
+    _app()
+    controller = FakeController()
+    panel = DmdPanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+    panel.update_status({
+        "is_initialised": True,
+        "is_alive": True,
+        "is_calibrated": True,
+        "calibration_file": "/tmp/current_calibration.pkl",
+        "calibration_files": [
+            {
+                "label": "current_calibration.pkl",
+                "path": "/tmp/current_calibration.pkl",
+                "is_current": True,
+            }
+        ],
+    })
+
+    panel.load_calibration_button.click()
+
+    assert controller.calls == [("load_dmd_calibration", "/tmp/current_calibration.pkl")]
+
+
+def test_dmd_panel_sends_calibration_plot_request() -> None:
+    _app()
+    controller = FakeController()
+    panel = DmdPanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+
+    panel.show_calibration_plot_button.click()
+
+    assert controller.calls == [("request_dmd_calibration_points",)]
 
 
 def test_autofocus_panel_sends_lock_request() -> None:

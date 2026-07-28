@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from evomachine.gui.facade import AutomatonGuiFacade
+from evomachine.gui.image_payloads import IMAGE_TRANSPORT_CHOICES, IMAGE_TRANSPORT_ENV, normalise_image_transport
 from evomachine.gui.protocol import GUI_HOST_ENV, GUI_PORT_ENV, GuiCommandType
 from evomachine.gui.socket_transport import GuiRpcServer, GuiSocketClient
 
@@ -28,6 +29,13 @@ def _build_common_parser(description: str) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument(
+        "--image-transport",
+        default=None,
+        type=normalise_image_transport,
+        choices=IMAGE_TRANSPORT_CHOICES,
+        help="How acquired image previews are sent to Napari: auto, temp_tiff, socket_tiff, or raw.",
+    )
     parser.add_argument("--no-napari", action="store_true", help="Start and stop the automaton RPC server only.")
     parser.add_argument("napari_args", nargs=argparse.REMAINDER)
     return parser
@@ -68,10 +76,12 @@ def _hardware_automaton_process(runtime_spec: str, host: str, port: int, ready_q
     _serve_automaton(automaton, host=host, port=port, ready_queue=ready_queue)
 
 
-def _run_napari(host: str, port: int, napari_args: Sequence[str]) -> int:
+def _run_napari(host: str, port: int, napari_args: Sequence[str], *, image_transport: str | None = None) -> int:
     env = dict(os.environ)
     env[GUI_HOST_ENV] = host
     env[GUI_PORT_ENV] = str(port)
+    if image_transport is not None:
+        env[IMAGE_TRANSPORT_ENV] = normalise_image_transport(image_transport)
     repo_root = str(_repo_root())
     pythonpath = env.get("PYTHONPATH")
     env["PYTHONPATH"] = repo_root if not pythonpath else os.pathsep.join([repo_root, pythonpath])
@@ -92,14 +102,21 @@ def _shutdown_child(process: mp.Process, host: str, port: int) -> None:
         process.join(timeout=3.0)
 
 
-def _launch_with_process(process: mp.Process, ready_queue, no_napari: bool, napari_args: Sequence[str]) -> int:
+def _launch_with_process(
+        process: mp.Process,
+        ready_queue,
+        no_napari: bool,
+        napari_args: Sequence[str],
+        *,
+        image_transport: str | None = None,
+) -> int:
     process.start()
     host, port = ready_queue.get(timeout=15.0)
     if no_napari:
         _shutdown_child(process=process, host=host, port=port)
         return 0
     try:
-        return _run_napari(host=host, port=port, napari_args=napari_args)
+        return _run_napari(host=host, port=port, napari_args=napari_args, image_transport=image_transport)
     finally:
         _shutdown_child(process=process, host=host, port=port)
 
@@ -113,7 +130,13 @@ def demo_main(argv: Sequence[str] | None = None) -> int:
         name="EvoMachineDemoAutomaton",
         args=(args.host, args.port, ready_queue),
     )
-    return _launch_with_process(process=process, ready_queue=ready_queue, no_napari=args.no_napari, napari_args=args.napari_args)
+    return _launch_with_process(
+        process=process,
+        ready_queue=ready_queue,
+        no_napari=args.no_napari,
+        napari_args=args.napari_args,
+        image_transport=args.image_transport,
+    )
 
 
 def hardware_main(argv: Sequence[str] | None = None) -> int:
@@ -126,7 +149,13 @@ def hardware_main(argv: Sequence[str] | None = None) -> int:
         name="EvoMachineHardwareAutomaton",
         args=(args.runtime, args.host, args.port, ready_queue),
     )
-    return _launch_with_process(process=process, ready_queue=ready_queue, no_napari=args.no_napari, napari_args=args.napari_args)
+    return _launch_with_process(
+        process=process,
+        ready_queue=ready_queue,
+        no_napari=args.no_napari,
+        napari_args=args.napari_args,
+        image_transport=args.image_transport,
+    )
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ class GuiCommandType(str, Enum):
     """Allowlisted commands accepted by the automaton GUI facade."""
 
     PING = "ping"
+    IMAGE_TRANSPORT_PROBE = "image_transport.probe"
     INITIALISE_DEVICES = "initialise_devices"
     STOP = "stop"
     SHUTDOWN = "shutdown"
@@ -30,6 +31,8 @@ class GuiCommandType(str, Enum):
     STAGE_STOP = "stage.stop"
     CAMERA_STATUS = "camera.status"
     CAMERA_SET_EXPOSURE = "camera.set_exposure"
+    ACQUISITION_LIST_FILES = "acquisition.list_files"
+    ACQUISITION_LOAD_FRAME = "acquisition.load_frame"
     ACQUISITION_TAKE_FRAME = "acquisition.take_frame"
     ACQUISITION_TAKE_Z_STACK = "acquisition.take_z_stack"
     FILTER_WHEEL_STATUS = "filter_wheel.status"
@@ -41,6 +44,8 @@ class GuiCommandType(str, Enum):
     LED_GET_STATE = "led.get_state"
     DMD_STATUS = "dmd.status"
     DMD_DISPLAY_PATTERN = "dmd.display_pattern"
+    DMD_LOAD_CALIBRATION = "dmd.load_calibration"
+    DMD_CALIBRATION_POINTS = "dmd.calibration_points"
     DMD_CALIBRATE = "dmd.calibrate"
     AUTOFOCUS_STATUS = "autofocus.status"
     AUTOFOCUS_CONFIGURE = "autofocus.configure"
@@ -73,6 +78,7 @@ MUTATING_COMMANDS = frozenset(
         GuiCommandType.LED_DISABLE,
         GuiCommandType.LED_DISABLE_ALL,
         GuiCommandType.DMD_DISPLAY_PATTERN,
+        GuiCommandType.DMD_LOAD_CALIBRATION,
         GuiCommandType.DMD_CALIBRATE,
         GuiCommandType.AUTOFOCUS_CONFIGURE,
         GuiCommandType.AUTOFOCUS_INITIALISE,
