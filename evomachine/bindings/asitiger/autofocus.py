@@ -8,13 +8,13 @@ from typing import Any
 import numpy as np
 from asitiger.command import CRISPSetState
 
-from evomachine.peripherals.autofocus import Autofocus
 from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
+from evomachine.peripherals.autofocus import Autofocus, AutofocusCalibrationConfig
 from evomachine.types import AutoFocusStatusType
 
 
 @dataclass
-class TigerAutofocusConfig:
+class TigerAutofocusConfig(AutofocusCalibrationConfig):
     """ASI Tiger CRISP autofocus configuration."""
 
     averaging: int
@@ -383,7 +383,7 @@ class TigerAutofocus(Autofocus):
             raise ValueError(f"TigerAutofocus: {name} must be non-negative, received {pause}.")
         return float(pause)
 
-    def _normalise_config(self, config: Any | None = None) -> TigerAutofocusConfig:
+    def _normalise_config(self, config: AutofocusCalibrationConfig | None = None) -> TigerAutofocusConfig:
         """
         Return a validated TigerAutofocusConfig.
 
@@ -471,7 +471,7 @@ class TigerAutofocus(Autofocus):
         """
         return self.peripheral_ctrl.is_alive()
 
-    def _configure(self, config: Any | None = None) -> bool:
+    def _apply_config(self, config: AutofocusCalibrationConfig | None = None) -> bool:
         """
         Send CRISP configuration values to the Tiger controller.
 
@@ -503,10 +503,10 @@ class TigerAutofocus(Autofocus):
         self.tiger_config = tiger_config
         return True
 
-    def _initialise_autofocus(
+    def _run_calibration(
             self,
-            config: Any | None = None,
-            lock_after_initialise: bool = False,
+            config: AutofocusCalibrationConfig | None = None,
+            lock_after_calibration: bool = False,
     ) -> bool:
         """
         Run the ASI Tiger CRISP setup/calibration sequence.
@@ -516,7 +516,7 @@ class TigerAutofocus(Autofocus):
         config
             Optional TigerAutofocusConfig. If None, the current default config is
             used.
-        lock_after_initialise
+        lock_after_calibration
             If True, lock CRISP after a successful setup sequence.
 
         Returns
@@ -525,7 +525,7 @@ class TigerAutofocus(Autofocus):
             True when SNR and error checks pass.
         """
         tiger_config = self._normalise_config(config=config)
-        if not self._configure(config=tiger_config):
+        if not self._apply_config(config=tiger_config):
             return False
 
         is_success = True
@@ -544,7 +544,7 @@ class TigerAutofocus(Autofocus):
         self.sleep(self.pause_short)
         self._unlock()
         self.sleep(self.pause_short)
-        if lock_after_initialise and is_success:
+        if lock_after_calibration and is_success:
             self._lock()
         return is_success
 

@@ -266,16 +266,22 @@ class FakeAutofocus:
     def is_locked(self):
         return self.locked
 
+    def apply_config(self, config=None):
+        self.calls.append(("apply_config", config))
+        return True
+
     def configure(self, config=None):
-        self.calls.append(("configure", config))
+        return self.apply_config(config=config)
+
+    def run_calibration(self, config=None, lock_after_calibration=False):
+        self.calls.append(("run_calibration", config, lock_after_calibration))
+        self.status = AutoFocusStatusType.READY
+        if lock_after_calibration:
+            self.lock()
         return True
 
     def initialise_autofocus(self, config=None, lock_after_initialise=False):
-        self.calls.append(("initialise_autofocus", config, lock_after_initialise))
-        self.status = AutoFocusStatusType.READY
-        if lock_after_initialise:
-            self.lock()
-        return True
+        return self.run_calibration(config=config, lock_after_calibration=lock_after_initialise)
 
     def lock(self):
         self.calls.append("lock")
@@ -699,8 +705,16 @@ def test_facade_handles_autofocus_requests() -> None:
 
     response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_CONFIGURE, payload={"config": {"preset": "oil"}}))
     assert response.ok
-    assert automaton.focus_nav.autofocus.calls[0][0] == "configure"
+    assert automaton.focus_nav.autofocus.calls[0][0] == "apply_config"
     assert response.payload["autofocus"]["configured"] is True
+
+    response = facade.handle(
+        GuiRequest(command=GuiCommandType.AUTOFOCUS_INITIALISE, payload={"lock_after_initialise": True})
+    )
+    assert response.ok
+    assert automaton.focus_nav.autofocus.calls[1][0] == "run_calibration"
+    assert response.payload["autofocus"]["autofocus_initialised"] is True
+    assert response.payload["autofocus"]["status"]["name"] == "IN_FOCUS"
 
     response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_LOCK))
     assert response.ok

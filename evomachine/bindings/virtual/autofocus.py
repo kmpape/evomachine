@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
-
-from evomachine.peripherals.autofocus import Autofocus
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
+from evomachine.peripherals.autofocus import Autofocus, AutofocusCalibrationConfig
 from evomachine.types import AutoFocusStatusType
 
 
@@ -106,7 +104,7 @@ class VirtualAutofocus(Autofocus):
         """
         return self.peripheral_ctrl.is_alive()
 
-    def _configure(self, config: Any | None = None) -> bool:
+    def _apply_config(self, config: AutofocusCalibrationConfig | None = None) -> bool:
         """
         Record a virtual configuration command.
 
@@ -124,10 +122,10 @@ class VirtualAutofocus(Autofocus):
         self.is_configured = True
         return True
 
-    def _initialise_autofocus(
+    def _run_calibration(
             self,
-            config: Any | None = None,
-            lock_after_initialise: bool = False,
+            config: AutofocusCalibrationConfig | None = None,
+            lock_after_calibration: bool = False,
     ) -> bool:
         """
         Record a virtual autofocus setup command.
@@ -136,7 +134,7 @@ class VirtualAutofocus(Autofocus):
         ----------
         config
             Ignored optional configuration object.
-        lock_after_initialise
+        lock_after_calibration
             If True, lock the virtual autofocus after setup.
 
         Returns
@@ -146,7 +144,7 @@ class VirtualAutofocus(Autofocus):
         """
         self.command_history.append("initialise_autofocus")
         self.is_configured = True
-        if lock_after_initialise:
+        if lock_after_calibration:
             self._lock()
         else:
             self._status = AutoFocusStatusType.READY

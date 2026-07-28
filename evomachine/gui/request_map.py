@@ -17,6 +17,7 @@ from evomachine.gui.image_payloads import (
     create_image_transport_probe_payload,
     stack_to_preview_payload,
 )
+from evomachine.peripherals.autofocus import AutofocusCalibrationConfig
 from evomachine.peripherals.dmd import DMD_BUILT_IN_PATTERNS, DmdCalibrationConfigFactory, DmdShapeConfig
 from evomachine.strategy import NoStrategy, create_strategy_from_definition, list_strategy_definitions
 from evomachine.types import UNKNOWN_FOV_ID
@@ -111,7 +112,7 @@ def gui_camera_fov_move_coordinate(stage: Any, camera: Any, direction: FovDirect
     )
 
 
-def gui_autofocus_config_from_payload(payload: dict[str, Any]) -> Any | None:
+def gui_autofocus_config_from_payload(payload: dict[str, Any]) -> AutofocusCalibrationConfig | None:
     """Build an optional Tiger autofocus config from GUI payload fields."""
     config_payload = payload.get("config")
     if config_payload is None:
@@ -682,15 +683,15 @@ def gui_autofocus_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]
 
 def gui_autofocus_configure(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "autofocus")
-    configured = facade.gui_autofocus().configure(config=gui_autofocus_config_from_payload(payload))
+    configured = facade.gui_autofocus().apply_config(config=gui_autofocus_config_from_payload(payload))
     return {"autofocus": {**facade.gui_autofocus_status_payload(), "configured": bool(configured)}}
 
 
 def gui_autofocus_initialise(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "autofocus")
-    initialised = facade.gui_autofocus().initialise_autofocus(
+    initialised = facade.gui_autofocus().run_calibration(
         config=gui_autofocus_config_from_payload(payload),
-        lock_after_initialise=bool(payload.get("lock_after_initialise", False)),
+        lock_after_calibration=bool(payload.get("lock_after_initialise", False)),
     )
     return {"autofocus": {**facade.gui_autofocus_status_payload(), "autofocus_initialised": bool(initialised)}}
 
