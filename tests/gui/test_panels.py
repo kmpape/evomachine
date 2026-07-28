@@ -95,6 +95,9 @@ class FakeController(QObject):
     def refresh_leds(self):
         self.calls.append(("refresh_leds",))
 
+    def refresh_led_state(self, led):
+        self.calls.append(("refresh_led_state", led))
+
     def set_led(self, led, brightness, duration=None):
         self.calls.append(("set_led", led, brightness, duration))
 
@@ -315,6 +318,14 @@ def test_led_panel_sends_set_request() -> None:
     assert controller.calls == [("set_led", "LED_450_NM", 12.0, None)]
 
 
+def test_led_panel_allows_full_backend_brightness_range() -> None:
+    _app()
+    controller = FakeController()
+    panel = LedManagerPanel(controller=controller)
+
+    assert panel.brightness_inputs[LEDType.LED_450_NM].maximum() == 100.0
+
+
 def test_led_panel_toggles_one_led_off() -> None:
     _app()
     controller = FakeController()
@@ -329,6 +340,22 @@ def test_led_panel_toggles_one_led_off() -> None:
         ("set_led", "LED_450_NM", 29.0, None),
         ("disable_led", "LED_450_NM"),
     ]
+
+
+def test_led_panel_refreshes_timed_state_after_stop_time(monkeypatch) -> None:
+    _app()
+    controller = FakeController()
+    panel = LedManagerPanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+    panel.update_leds(["LED_450_NM"])
+    callbacks = []
+    monkeypatch.setattr("evomachine.gui.panels.leds.time.time", lambda: 1000.0)
+    monkeypatch.setattr("evomachine.gui.panels.leds.QTimer.singleShot", lambda _delay, callback: callbacks.append(callback))
+
+    panel.update_state({"led": "LED_450_NM", "brightness": 50, "is_on": True, "stop_time": 1003.0})
+    callbacks[0]()
+
+    assert controller.calls == [("refresh_led_state", "LED_450_NM")]
 
 
 def test_dmd_panel_sends_pattern_request() -> None:
