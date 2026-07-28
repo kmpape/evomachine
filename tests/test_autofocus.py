@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from evomachine.peripherals.autofocus import AutofocusConfig, AutofocusFactory
+from evomachine.peripherals.autofocus import AutofocusCalibrationConfig, AutofocusConfig, AutofocusFactory
 from evomachine.bindings.asitiger.autofocus import (
     CRISPSetState,
     FakeTigerAutofocusController,
@@ -122,7 +122,9 @@ def test_tiger_autofocus_config_validation_and_factory_defaults() -> None:
     -------
     None
     """
-    assert TigerAutofocusConfigFactory.default_config().objective_na == 0.9
+    default_config = TigerAutofocusConfigFactory.default_config()
+    assert isinstance(default_config, AutofocusCalibrationConfig)
+    assert default_config.objective_na == 0.9
     assert TigerAutofocusConfigFactory.default_oil_config().objective_na == 1.4
 
     with pytest.raises(TypeError):
@@ -161,8 +163,8 @@ def test_virtual_autofocus_lifecycle_and_state_transitions() -> None:
         autofocus.get_status()
 
     autofocus.initialise()
-    assert autofocus.configure()
-    assert autofocus.initialise_autofocus()
+    assert autofocus.apply_config()
+    assert autofocus.run_calibration()
     assert autofocus.get_status() == AutoFocusStatusType.READY
     assert not autofocus.is_locked()
 
@@ -223,7 +225,7 @@ def test_tiger_autofocus_configure_sends_expected_commands() -> None:
     )
 
     autofocus.initialise()
-    assert autofocus.configure()
+    assert autofocus.apply_config()
 
     assert controller.tiger.commands == [
         ("state", CRISPSetState.UNLOCK),
@@ -259,7 +261,7 @@ def test_tiger_autofocus_initialise_command_sequence_and_lock() -> None:
     )
 
     autofocus.initialise()
-    assert autofocus.initialise_autofocus(lock_after_initialise=True)
+    assert autofocus.run_calibration(lock_after_calibration=True)
 
     assert controller.tiger.commands == [
         ("state", CRISPSetState.UNLOCK),
@@ -305,7 +307,7 @@ def test_tiger_autofocus_initialise_returns_false_for_low_snr_or_error() -> None
         )
         autofocus.initialise()
 
-        assert not autofocus.initialise_autofocus(lock_after_initialise=True)
+        assert not autofocus.run_calibration(lock_after_calibration=True)
         assert ("state", CRISPSetState.LOCK) not in controller.tiger.commands
 
 

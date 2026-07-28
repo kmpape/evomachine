@@ -33,6 +33,11 @@ class AutofocusConfig(PeripheralConfig):
         super().__post_init__()
 
 
+@dataclass
+class AutofocusCalibrationConfig:
+    """Base class for binding-specific autofocus configuration/calibration settings."""
+
+
 class Autofocus(Peripheral):
     """
     Base class for autofocus peripherals.
@@ -183,9 +188,9 @@ class Autofocus(Peripheral):
         logger.debug("Autofocus.stop: stopping %s.", self.name)
         self.disable()
 
-    def configure(self, config: Any | None = None) -> bool:
+    def apply_config(self, config: AutofocusCalibrationConfig | None = None) -> bool:
         """
-        Configure binding-specific autofocus parameters.
+        Apply binding-specific autofocus parameters without running calibration.
 
         Parameters
         ----------
@@ -198,14 +203,30 @@ class Autofocus(Peripheral):
         bool
             True when configuration was accepted by the binding.
         """
-        self._require_ready(action="configure")
-        logger.debug("Autofocus.configure: configuring %s with %s.", self.name, config)
-        return self._configure(config=config)
+        self._require_ready(action="apply_config")
+        logger.debug("Autofocus.apply_config: applying config to %s with %s.", self.name, config)
+        return self._apply_config(config=config)
 
-    def initialise_autofocus(
+    def configure(self, config: AutofocusCalibrationConfig | None = None) -> bool:
+        """
+        Backwards-compatible alias for apply_config().
+
+        Parameters
+        ----------
+        config
+            Optional binding-specific configuration object.
+
+        Returns
+        -------
+        bool
+            True when configuration was accepted by the binding.
+        """
+        return self.apply_config(config=config)
+
+    def run_calibration(
             self,
-            config: Any | None = None,
-            lock_after_initialise: bool = False,
+            config: AutofocusCalibrationConfig | None = None,
+            lock_after_calibration: bool = False,
     ) -> bool:
         """
         Run the binding-specific autofocus setup/calibration sequence.
@@ -215,6 +236,35 @@ class Autofocus(Peripheral):
         config
             Optional binding-specific configuration object. If None, the
             binding uses its current or default configuration.
+        lock_after_calibration
+            If True, lock autofocus after a successful setup sequence.
+
+        Returns
+        -------
+        bool
+            True when setup succeeded according to the binding's acceptance
+            checks.
+        """
+        self._require_ready(action="run_calibration")
+        logger.debug(
+            "Autofocus.run_calibration: calibrating %s with lock_after_calibration=%s.",
+            self.name,
+            lock_after_calibration,
+        )
+        return self._run_calibration(config=config, lock_after_calibration=lock_after_calibration)
+
+    def initialise_autofocus(
+            self,
+            config: AutofocusCalibrationConfig | None = None,
+            lock_after_initialise: bool = False,
+    ) -> bool:
+        """
+        Backwards-compatible alias for run_calibration().
+
+        Parameters
+        ----------
+        config
+            Optional binding-specific configuration object.
         lock_after_initialise
             If True, lock autofocus after a successful setup sequence.
 
@@ -224,13 +274,7 @@ class Autofocus(Peripheral):
             True when setup succeeded according to the binding's acceptance
             checks.
         """
-        self._require_ready(action="initialise_autofocus")
-        logger.debug(
-            "Autofocus.initialise_autofocus: initialising %s with lock_after_initialise=%s.",
-            self.name,
-            lock_after_initialise,
-        )
-        return self._initialise_autofocus(config=config, lock_after_initialise=lock_after_initialise)
+        return self.run_calibration(config=config, lock_after_calibration=lock_after_initialise)
 
     def lock(self) -> None:
         """
@@ -328,17 +372,17 @@ class Autofocus(Peripheral):
         raise NotImplementedError
 
     @abstractmethod
-    def _configure(self, config: Any | None = None) -> bool:
+    def _apply_config(self, config: AutofocusCalibrationConfig | None = None) -> bool:
         """Configure binding-specific autofocus settings."""
         raise NotImplementedError
 
     @abstractmethod
-    def _initialise_autofocus(
+    def _run_calibration(
             self,
-            config: Any | None = None,
-            lock_after_initialise: bool = False,
+            config: AutofocusCalibrationConfig | None = None,
+            lock_after_calibration: bool = False,
     ) -> bool:
-        """Run binding-specific autofocus setup."""
+        """Run binding-specific autofocus calibration/setup."""
         raise NotImplementedError
 
     @abstractmethod

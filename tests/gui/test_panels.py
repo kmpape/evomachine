@@ -27,6 +27,9 @@ from evomachine.gui.panels.strategy import FovSetupPanel, StrategySetupPanel
 from evomachine.types import LEDType
 
 
+_QT_APP: QApplication | None = None
+
+
 class FakeController(QObject):
     stage_coordinates_received = pyqtSignal(dict)
     stage_status_received = pyqtSignal(dict)
@@ -157,7 +160,9 @@ class FakeController(QObject):
 
 
 def _app():
-    return QApplication.instance() or QApplication([])
+    global _QT_APP
+    _QT_APP = QApplication.instance() or _QT_APP or QApplication([])
+    return _QT_APP
 
 
 def test_stage_panel_sends_move_request() -> None:
@@ -381,6 +386,60 @@ def test_autofocus_panel_sends_lock_request() -> None:
     panel.lock_button.click()
 
     assert controller.calls == [("lock_autofocus",)]
+
+
+def test_autofocus_panel_sends_config_request() -> None:
+    _app()
+    controller = FakeController()
+    panel = AutofocusPanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+    panel.config_inputs["led_intensity"].setValue(80)
+    panel.config_inputs["objective_na"].setValue(1.4)
+
+    panel.apply_config_button.click()
+
+    assert controller.calls == [
+        (
+            "configure_autofocus",
+            {
+                "averaging": 5,
+                "led_intensity": 80,
+                "lock_range": 0.1,
+                "loop_gain": 10,
+                "update_rate": 10,
+                "min_error": 100,
+                "objective_na": 1.4,
+                "min_snr": 2.0,
+            },
+        ),
+    ]
+
+
+def test_autofocus_panel_sends_calibration_request() -> None:
+    _app()
+    controller = FakeController()
+    panel = AutofocusPanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+    panel.lock_after_calibration_checkbox.setChecked(True)
+
+    panel.run_calibration_button.click()
+
+    assert controller.calls == [
+        (
+            "initialise_autofocus",
+            True,
+            {
+                "averaging": 5,
+                "led_intensity": 70,
+                "lock_range": 0.1,
+                "loop_gain": 10,
+                "update_rate": 10,
+                "min_error": 100,
+                "objective_na": 0.9,
+                "min_snr": 2.0,
+            },
+        ),
+    ]
 
 
 def test_software_focus_panel_sends_run_request() -> None:
