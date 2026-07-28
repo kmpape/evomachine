@@ -24,6 +24,8 @@ class FilterWheelConfig(PeripheralConfig):
     def _validate_available_filters_type(cls, value: object) -> object:
         if not isinstance(value, list):
             raise TypeError(f"FilterWheelConfig: available_filters must be list, received {type(value)}.")
+        if not all(isinstance(filter_type, FilterWheelType) for filter_type in value):
+            raise TypeError("FilterWheel._validate_available_filters: all entries must be FilterWheelType.")
         return value
 
     def model_post_init(self, __context) -> None:

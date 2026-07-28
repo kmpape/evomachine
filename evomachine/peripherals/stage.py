@@ -51,6 +51,24 @@ class StageConfig(PeripheralConfig):
             raise TypeError(f"StageConfig: fov_step_size must be numeric, received {type(value)}.")
         return value
 
+    @field_validator("initial_coordinate", mode="before")
+    @classmethod
+    def _validate_initial_coordinate_type(cls, value: object) -> object:
+        if value is not None and not isinstance(value, Coordinate | dict):
+            raise TypeError(
+                f"StageConfig: initial_coordinate must be Coordinate or None, received {type(value)}."
+            )
+        return value
+
+    @field_validator("coordinate_bounds", mode="before")
+    @classmethod
+    def _validate_coordinate_bounds_type(cls, value: object) -> object:
+        if value is not None and not isinstance(value, CoordinateBounds | dict):
+            raise TypeError(
+                f"StageConfig: coordinate_bounds must be CoordinateBounds or None, received {type(value)}."
+            )
+        return value
+
     def model_post_init(self, __context) -> None:
         """
         Validate stage factory configuration after construction.

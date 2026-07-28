@@ -155,6 +155,13 @@ class CameraConfig(PeripheralConfig):
             )
         return value
 
+    @field_validator("readout_mode", mode="before")
+    @classmethod
+    def _validate_readout_mode_type(cls, value: object) -> object:
+        if value is not None and not isinstance(value, CameraReadoutMode | str):
+            raise TypeError(f"CameraConfig: readout_mode must be CameraReadoutMode or None, received {type(value)}.")
+        return value
+
     def model_post_init(self, __context) -> None:
         super().model_post_init(__context)
         if not isinstance(self.image, ImageConfigType):
