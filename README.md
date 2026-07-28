@@ -78,7 +78,7 @@ uv run pytest
 
 Anything can be run inside the virtual environment via `uv run ...`, such as:
 ```bash
-uv run python scripts/launch_gui.py
+uv run python scripts/launch_virtual_gui.py
 ```
 
 ## Release workflow
@@ -162,11 +162,23 @@ with virtual peripherals from the repository root:
 ```bash
 cd /home/idris/workspace_python/conda_evomachine3.9/evomachine_repo
 conda activate delta_evomachine
-python scripts/launch_gui.py --port 0
+python scripts/launch_virtual_gui.py --port 0
 ```
 
 To smoke-test the automaton/socket startup without opening Napari:
 
 ```bash
-python scripts/launch_gui.py --port 0 --no-napari
+python scripts/launch_virtual_gui.py --port 0 --no-napari
 ```
+
+For hardware, start Micro-Manager with the microscope config loaded, then run:
+
+```bash
+python scripts/launch_hardware_gui.py --port 0
+```
+
+The default hardware runtime uses the Micro-Manager camera binding
+(`BindingType.MMC`), SyncBoard LEDs, ASI Tiger stage/filter/autofocus, and the
+EM DMD window. Serial ports are found from the SyncBoard and ASI Tiger hardware
+IDs. If needed, override them with `EVOMACHINE_GUI_SYNCBOARD_PORT` and
+`EVOMACHINE_GUI_TIGER_PORT`.

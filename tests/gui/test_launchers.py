@@ -3,6 +3,9 @@ from __future__ import annotations
 import inspect
 from types import SimpleNamespace
 
+import pytest
+
+from evomachine.bindings.binding_types import BindingType
 from evomachine.gui import launchers
 from evomachine.gui import napari_app
 from evomachine.gui.image_payloads import IMAGE_TRANSPORT_ENV, IMAGE_TRANSPORT_SOCKET_TIFF
@@ -19,6 +22,27 @@ def test_runtime_factory_spec_requires_module_and_function() -> None:
         assert "module:function" in str(error)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_hardware_gui_runtime_accepts_micromanager_camera() -> None:
+    camera = SimpleNamespace(name="camera", config=SimpleNamespace(binding=BindingType.MMC))
+    automaton = SimpleNamespace(acq_mngr=SimpleNamespace(camera=camera))
+
+    launchers._require_hardware_gui_mmc_camera(automaton)
+
+
+def test_hardware_gui_runtime_rejects_pvcam_camera() -> None:
+    camera = SimpleNamespace(name="camera", config=SimpleNamespace(binding=BindingType.PVCAM))
+    automaton = SimpleNamespace(acq_mngr=SimpleNamespace(camera=camera))
+
+    with pytest.raises(RuntimeError, match="BindingType.MMC"):
+        launchers._require_hardware_gui_mmc_camera(automaton)
+
+
+def test_hardware_gui_has_default_runtime_factory() -> None:
+    factory = launchers._load_runtime_factory(launchers.DEFAULT_HARDWARE_RUNTIME)
+
+    assert factory.__name__ == "build_hardware_automaton"
 
 
 def test_run_napari_passes_forced_image_transport_to_child_environment(monkeypatch) -> None:
