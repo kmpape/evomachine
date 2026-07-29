@@ -8,6 +8,7 @@ from evomachine.config import DMD_WIDTH_HEIGHT
 from evomachine.gui.central_workspace import (
     DMD_DISPLAY_SHAPE,
     DMD_RECT,
+    HISTOGRAM_BINS,
     MAIN_RECT,
     SPECTRUM_RECT,
     WORKSPACE_SHAPE,
@@ -56,6 +57,10 @@ def test_brightness_histogram_is_rgb_and_updates_from_image() -> None:
     assert blank.ndim == 3
     assert blank.shape[-1] == 3
     assert active.sum() > blank.sum()
+
+
+def test_brightness_histogram_exposes_all_eight_bit_display_levels() -> None:
+    assert HISTOGRAM_BINS == 256
 
 
 def test_visual_workspace_is_one_rgb_dashboard_image() -> None:
