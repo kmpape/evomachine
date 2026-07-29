@@ -82,7 +82,7 @@ class EvoMachineControlsDock(QWidget):
         ))
         layout.addWidget(ZStackSettingsPanel(
             controller=self.controller,
-            settings_provider=settings_panel.payload,
+            settings_provider=settings_panel.z_stack_payload,
         ))
         layout.addWidget(SavedImageLoaderPanel(controller=self.controller))
         layout.addWidget(AcquisitionStatusPanel(controller=self.controller))

@@ -5,9 +5,19 @@ from pathlib import Path
 import numpy as np
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from PyQt5.QtWidgets import QComboBox, QGridLayout, QGroupBox, QLabel, QPushButton, QSizePolicy, QSpinBox, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import (
+    QComboBox,
+    QGridLayout,
+    QGroupBox,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from evomachine.config import DMD_WIDTH_HEIGHT
+from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
 
 
 PATTERN_ACTIONS = (
@@ -19,9 +29,7 @@ PATTERN_ACTIONS = (
     ("Crosshair", "crosshair"),
 )
 
-UTILITY_ACTIONS = (
-    ("Refresh", "refresh"),
-)
+UTILITY_ACTIONS = (("Refresh", "refresh"),)
 
 DMD_ROWS, DMD_COLS = DMD_WIDTH_HEIGHT
 DEFAULT_RECTANGLE_HEIGHT = DMD_ROWS // 2
@@ -52,8 +60,13 @@ class DmdPanel(QGroupBox):
         self.pattern_buttons: dict[str, QPushButton] = {}
         self.utility_buttons: dict[str, QPushButton] = {}
         self.calibration_buttons: dict[str, QPushButton] = {}
-        self.config_inputs: dict[str, QSpinBox] = {}
+        self.config_values = self._default_shape_config_values()
+        self.config_limits = {
+            field_name: (minimum, maximum)
+            for _label, field_name, _default, minimum, maximum in SHAPE_CONFIG_FIELDS
+        }
         self.calibration_file_combo = QComboBox()
+        self.configure_pattern_button = QPushButton("Configure Pattern")
         self.load_calibration_button = QPushButton("Load Existing")
         self.show_calibration_plot_button = QPushButton("Show Calibration Plot")
         self.calibration_plot_windows: list[DmdCalibrationPlotWindow] = []
@@ -70,14 +83,21 @@ class DmdPanel(QGroupBox):
         self.setLayout(layout)
 
         for pattern, button in self.pattern_buttons.items():
-            button.clicked.connect(lambda _checked=False, selected=pattern: self._display_pattern(selected))
+            button.clicked.connect(
+                lambda _checked=False, selected=pattern: self._display_pattern(selected)
+            )
+        self.configure_pattern_button.clicked.connect(self._open_pattern_config_dialog)
         self.calibration_buttons["calibrate"].clicked.connect(self._calibrate)
         self.load_calibration_button.clicked.connect(self._load_selected_calibration)
         self.show_calibration_plot_button.clicked.connect(self._request_calibration_plot)
         self.utility_buttons["refresh"].clicked.connect(self.controller.refresh_dmd)
-        self.calibration_buttons["calibrate"].setToolTip("Runs the default DMD calibration workflow and saves a new file.")
+        self.calibration_buttons["calibrate"].setToolTip(
+            "Runs the default DMD calibration workflow and saves a new file."
+        )
         self.load_calibration_button.setToolTip("Loads the selected stored DMD calibration file.")
-        self.show_calibration_plot_button.setToolTip("Opens a separate plot of paired DMD and camera calibration points.")
+        self.show_calibration_plot_button.setToolTip(
+            "Opens a separate plot of paired DMD and camera calibration points."
+        )
         self.controller.dmd_status_received.connect(self.update_status)
         self.controller.dmd_calibration_points_received.connect(self._show_calibration_plot)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
@@ -85,11 +105,11 @@ class DmdPanel(QGroupBox):
         self._sync_controls_enabled()
 
     def _add_button_section(
-            self,
-            layout: QVBoxLayout,
-            title: str,
-            actions: tuple[tuple[str, str], ...],
-            buttons: dict[str, QPushButton],
+        self,
+        layout: QVBoxLayout,
+        title: str,
+        actions: tuple[tuple[str, str], ...],
+        buttons: dict[str, QPushButton],
     ) -> None:
         section_label = QLabel(title)
         section_label.setStyleSheet("font-weight: 600;")
@@ -107,18 +127,8 @@ class DmdPanel(QGroupBox):
     def _add_config_section(self, layout: QVBoxLayout) -> None:
         section_label = QLabel("Pattern config")
         section_label.setStyleSheet("font-weight: 600;")
-        grid = QGridLayout()
-        for index, (label, field_name, default, minimum, maximum) in enumerate(SHAPE_CONFIG_FIELDS):
-            spin_box = QSpinBox()
-            spin_box.setRange(minimum, maximum)
-            spin_box.setValue(default)
-            spin_box.setSingleStep(1)
-            self.config_inputs[field_name] = spin_box
-            row, column = divmod(index, 2)
-            grid.addWidget(QLabel(label), row, column * 2)
-            grid.addWidget(spin_box, row, column * 2 + 1)
         layout.addWidget(section_label)
-        layout.addLayout(grid)
+        layout.addWidget(self.configure_pattern_button)
 
     def _add_calibration_section(self, layout: QVBoxLayout) -> None:
         section_label = QLabel("Calibration")
@@ -132,7 +142,11 @@ class DmdPanel(QGroupBox):
         layout.addLayout(file_grid)
 
         self.calibration_buttons["calibrate"] = QPushButton("Run New Calibration")
-        for button in (*self.calibration_buttons.values(), self.load_calibration_button, self.show_calibration_plot_button):
+        for button in (
+            *self.calibration_buttons.values(),
+            self.load_calibration_button,
+            self.show_calibration_plot_button,
+        ):
             button.setEnabled(False)
         grid = QGridLayout()
         grid.addWidget(self.calibration_buttons["calibrate"], 0, 0)
@@ -178,7 +192,9 @@ class DmdPanel(QGroupBox):
             return
         window = DmdCalibrationPlotWindow(payload)
         self.calibration_plot_windows.append(window)
-        window.destroyed.connect(lambda _object=None, closed=window: self._forget_calibration_plot(closed))
+        window.destroyed.connect(
+            lambda _object=None, closed=window: self._forget_calibration_plot(closed)
+        )
         window.show()
         self.status_label.setText("DMD calibration plot opened.")
 
@@ -188,7 +204,9 @@ class DmdPanel(QGroupBox):
 
     def update_status(self, payload: dict) -> None:
         if "is_initialised" in payload:
-            self.devices_initialised = bool(payload.get("is_initialised")) and bool(payload.get("is_alive", True))
+            self.devices_initialised = bool(payload.get("is_initialised")) and bool(
+                payload.get("is_alive", True)
+            )
         self._update_config_limits(payload.get("width_height"))
         self._update_calibration_files(
             calibration_files=payload.get("calibration_files"),
@@ -214,10 +232,10 @@ class DmdPanel(QGroupBox):
 
     def _sync_controls_enabled(self) -> None:
         for button in (
-                *self.pattern_buttons.values(),
-                *self.calibration_buttons.values(),
-                *self.utility_buttons.values(),
-                self.show_calibration_plot_button,
+            *self.pattern_buttons.values(),
+            *self.calibration_buttons.values(),
+            *self.utility_buttons.values(),
+            self.show_calibration_plot_button,
         ):
             button.setEnabled(self.devices_initialised)
         has_calibration_files = self.calibration_file_combo.count() > 0
@@ -230,16 +248,48 @@ class DmdPanel(QGroupBox):
             self.status_label.setText(error)
 
     def _shape_config_payload(self) -> dict[str, int]:
+        return dict(self.config_values)
+
+    @staticmethod
+    def _default_shape_config_values() -> dict[str, int]:
         return {
-            field_name: spin_box.value()
-            for field_name, spin_box in self.config_inputs.items()
+            field_name: default
+            for _label, field_name, default, _minimum, _maximum in SHAPE_CONFIG_FIELDS
         }
+
+    def _open_pattern_config_dialog(self) -> None:
+        dialog = ConfigDialog(
+            title="DMD Pattern Configuration",
+            fields=self._shape_config_fields(),
+            parent=self,
+        )
+        if dialog.exec_() != dialog.Accepted:
+            return
+        self.config_values.update(
+            {key: int(value) for key, value in dialog.values().items() if key in self.config_values}
+        )
+
+    def _shape_config_fields(self) -> list[ConfigFieldSpec]:
+        fields = []
+        for label, field_name, default, _minimum, _maximum in SHAPE_CONFIG_FIELDS:
+            minimum, maximum = self.config_limits[field_name]
+            fields.append(
+                ConfigFieldSpec(
+                    label=label,
+                    key=field_name,
+                    value=self.config_values.get(field_name, default),
+                    kind="int",
+                    minimum=minimum,
+                    maximum=maximum,
+                )
+            )
+        return fields
 
     def _update_config_limits(self, width_height: list[int] | tuple[int, int] | None) -> None:
         if (
-                not isinstance(width_height, list | tuple)
-                or len(width_height) != 2
-                or not all(isinstance(value, int) and value > 0 for value in width_height)
+            not isinstance(width_height, list | tuple)
+            or len(width_height) != 2
+            or not all(isinstance(value, int) and value > 0 for value in width_height)
         ):
             return
         rows, cols = width_height
@@ -254,13 +304,16 @@ class DmdPanel(QGroupBox):
             "circle_col": (0, cols - 1),
         }
         for field_name, (minimum, maximum) in ranges.items():
-            if field_name in self.config_inputs:
-                self.config_inputs[field_name].setRange(minimum, maximum)
+            if field_name in self.config_limits:
+                self.config_limits[field_name] = (minimum, maximum)
+                self.config_values[field_name] = min(
+                    max(self.config_values[field_name], minimum), maximum
+                )
 
     def _update_calibration_files(
-            self,
-            calibration_files: list[dict] | None,
-            current_file: str | None,
+        self,
+        calibration_files: list[dict] | None,
+        current_file: str | None,
     ) -> None:
         if not isinstance(calibration_files, list):
             self._sync_controls_enabled()
@@ -338,7 +391,9 @@ class DmdCalibrationPlotWindow(QWidget):
         self.canvas.draw_idle()
 
     @staticmethod
-    def _draw_points_axis(axis, *, image: np.ndarray, points: list[tuple[int, int]], title: str) -> None:
+    def _draw_points_axis(
+        axis, *, image: np.ndarray, points: list[tuple[int, int]], title: str
+    ) -> None:
         axis.imshow(image, cmap="gray", vmin=0, vmax=255)
         for index, (row, col) in enumerate(points):
             axis.text(col, row, str(index), color="tab:red", fontsize=6, ha="center", va="center")
