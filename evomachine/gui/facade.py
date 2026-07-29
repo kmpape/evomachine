@@ -157,6 +157,7 @@ class AutomatonGuiFacade:
         return {
             "devices_initialised": bool(self.automaton.devices_is_initialised()),
             "strategy_active": self.gui_strategy_active(),
+            "stopped": bool(self.automaton.stopped()),
             "shutdown": bool(self.automaton.has_shutdown()),
         }
 

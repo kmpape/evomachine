@@ -1455,6 +1455,15 @@ def test_automaton_act_on_halt_uses_manager_paths() -> None:
     assert autofocus.unlock_count == 1
 
 
+def test_automaton_stop_sets_event_and_halts_initialised_devices() -> None:
+    automaton, acquisition_manager, *_deps = make_automaton()
+
+    automaton.stop()
+
+    assert automaton.stopped()
+    assert acquisition_manager.stop_count == 1
+
+
 def test_automaton_shutdown_stops_and_finalises_peripherals() -> None:
     """
     Check shutdown uses current peripheral stop/finalise APIs.

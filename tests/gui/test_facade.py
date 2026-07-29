@@ -415,6 +415,7 @@ class FakeAutomaton:
         self.last_commands = []
         self.strategy_started = False
         self.strategy_stopped = False
+        self.automaton_stopped = False
 
     def strategy_has_started(self):
         return self.strategy_started
@@ -429,7 +430,10 @@ class FakeAutomaton:
         self.shutdown_count += 1
 
     def stop(self):
-        return None
+        self.automaton_stopped = True
+
+    def stopped(self):
+        return self.automaton_stopped
 
     def initialise_devices(self):
         self.devices_initialised = True

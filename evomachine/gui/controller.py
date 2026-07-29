@@ -123,13 +123,16 @@ class EvoMachineGuiController(QObject):
         self._send(GuiCommandType.STAGE_GET_COORDINATES)
 
     def move_stage_absolute(self, x: float | None, y: float | None, z: float | None) -> None:
-        self._send(GuiCommandType.STAGE_MOVE_ABSOLUTE, {"x": x, "y": y, "z": z})
+        self._send(GuiCommandType.STAGE_MOVE_ABSOLUTE, {"x": x, "y": y, "z": z, "block": False})
 
     def move_stage_relative(self, dx: float | None, dy: float | None, dz: float | None) -> None:
-        self._send(GuiCommandType.STAGE_MOVE_RELATIVE, {"dx": dx, "dy": dy, "dz": dz})
+        self._send(GuiCommandType.STAGE_MOVE_RELATIVE, {"dx": dx, "dy": dy, "dz": dz, "block": False})
 
     def move_stage_fov(self, direction: str, multiplier: float = 1.0) -> None:
-        self._send(GuiCommandType.STAGE_MOVE_FOV, {"direction": direction, "multiplier": multiplier})
+        self._send(
+            GuiCommandType.STAGE_MOVE_FOV,
+            {"direction": direction, "multiplier": multiplier, "block": False},
+        )
 
     def stop_stage(self) -> None:
         self._send(GuiCommandType.STAGE_STOP)
@@ -303,7 +306,12 @@ class EvoMachineGuiController(QObject):
             self.strategies_received.emit(payload["strategies"])
         if "strategy" in payload:
             self.strategy_status_received.emit(payload["strategy"])
-        if "devices_initialised" in payload or "shutdown" in payload or "strategy_active" in payload:
+        if (
+            "devices_initialised" in payload
+            or "shutdown" in payload
+            or "strategy_active" in payload
+            or "stopped" in payload
+        ):
             self.lifecycle_status_received.emit(payload)
 
     def _handle_image_transport_probe(self, payload: dict[str, Any]) -> None:
