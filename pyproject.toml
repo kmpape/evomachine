@@ -93,3 +93,6 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "hardware: tests requiring explicitly enabled physical microscope hardware",
+]

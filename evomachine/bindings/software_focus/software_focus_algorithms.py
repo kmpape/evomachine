@@ -4,9 +4,9 @@ from abc import ABC, abstractmethod
 
 import cv2
 import numpy as np
-from delta.utils import CroppingBox
 
 from evomachine.types import FocusAlgorithmType
+from evomachine.utils import EvoCroppingBox as CroppingBox
 
 
 DEFAULT_SQUARED_GRAD_THRESHOLD = 0

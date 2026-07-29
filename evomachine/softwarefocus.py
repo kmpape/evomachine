@@ -5,7 +5,6 @@ import threading
 from typing import Any
 
 import numpy as np
-from delta.utils import CroppingBox
 
 from evomachine.acquisition import FrameAcquisitionManager, FrameAcquisitionSettings
 from evomachine.bindings.software_focus.software_focus_algorithms import (
@@ -15,6 +14,7 @@ from evomachine.coordinates import Coordinate
 from evomachine.frame import Frame, FrameMetaData
 from evomachine.types import FocusCurveType, FocusStatusType, UNKNOWN_FOV_ID
 from evomachine.types import FocusAlgorithmType, LEDType
+from evomachine.utils import EvoCroppingBox as CroppingBox
 
 
 @dataclass

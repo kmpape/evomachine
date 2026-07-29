@@ -7,8 +7,6 @@ from typing import Any
 
 import numpy as np
 
-from delta.utils import CroppingBox as DeltaCroppingBox
-
 from evomachine.config import DMD_WIDTH_HEIGHT, EVO_FORMATTER, format_timestamp_for_display, get_logger, get_timezone
 from evomachine.coordinates import Coordinate
 from evomachine.frame import FrameMetaData
@@ -627,7 +625,7 @@ class CommandFactory:
     def command_roi_data(
             fov_id: int,
             rotation: float,
-            roi_boxes: list[DeltaCroppingBox],
+            roi_boxes: list[EvoCroppingBox],
     ) -> AutomatonCommand:
         command_args = {
             'fov_id': fov_id,

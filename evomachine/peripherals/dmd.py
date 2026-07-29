@@ -489,7 +489,7 @@ class Dmd(Peripheral):
             yshift: int = 0,
     ) -> list[Any]:
         """Create black patch boxes between grouped ROI columns and image borders."""
-        from delta.utils import CroppingBox
+        from evomachine.utils import EvoCroppingBox as CroppingBox
 
         black_patches = []
         for i, group_ids in enumerate(roi_boxes_group_ids):

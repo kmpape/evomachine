@@ -7,8 +7,6 @@ import skimage
 import time
 from typing import Any
 
-import delta.utils
-
 pd.set_option('display.max_columns', None)
 pd.set_option('display.expand_frame_repr', False)
 
@@ -305,7 +303,7 @@ def normalise_frame(
 @dataclass
 class EvoCroppingBox:
     """
-    Class describing a box to cut out. Taken and extended from delta.utils.CroppingBox.
+    EvoMachine-owned rectangular image crop with out-of-bounds support.
 
     Attributes
     ----------
@@ -336,6 +334,12 @@ class EvoCroppingBox:
     @property
     def shape(self) -> tuple[int, int]:
         return self.ybr - self.ytl, self.xbr - self.xtl
+
+    @property
+    def size(self) -> int:
+        """Return the area of the cropping box in pixels."""
+        height, width = self.shape
+        return height * width
 
     @staticmethod
     def full(image: np.ndarray | tuple[int, int]) -> 'EvoCroppingBox':
@@ -457,8 +461,24 @@ class EvoCroppingBox:
         ]
         return image
 
-    def to_delta_cropping_box(self) -> delta.utils.CroppingBox:
-        return delta.utils.CroppingBox(xtl=self.xtl, ytl=self.ytl, xbr=self.xbr, ybr=self.ybr)
+    def resize(
+            self,
+            fx: float | None = None,
+            fy: float | None = None,
+    ) -> 'EvoCroppingBox':
+        """Return a resized box copy, leaving axes with a None factor unchanged."""
+        for name, factor in (("fx", fx), ("fy", fy)):
+            if factor is not None and (not isinstance(factor, int | float) or isinstance(factor, bool)):
+                raise TypeError(f"EvoCroppingBox.resize: {name} must be numeric or None, received {type(factor)}.")
+            if factor is not None and factor <= 0:
+                raise ValueError(f"EvoCroppingBox.resize: {name} must be greater than zero.")
+        return EvoCroppingBox(
+            xtl=self.xtl if fx is None else round(self.xtl * fx),
+            ytl=self.ytl if fy is None else round(self.ytl * fy),
+            xbr=self.xbr if fx is None else round(self.xbr * fx),
+            ybr=self.ybr if fy is None else round(self.ybr * fy),
+            is_none=self.is_none,
+        )
 
     @staticmethod
     def none_box() -> 'EvoCroppingBox':

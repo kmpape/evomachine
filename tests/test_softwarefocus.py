@@ -2,7 +2,6 @@ import threading
 
 import numpy as np
 import pytest
-from delta.utils import CroppingBox
 
 from evomachine import software_focus_bkp
 from evomachine.acquisition import FrameAcquisitionManager, FrameAcquisitionSettings
@@ -16,6 +15,7 @@ from evomachine.bindings.software_focus.software_focus_algorithms import (
 from evomachine.coordinates import Coordinate
 from evomachine.frame import FrameMetaData
 from evomachine.peripherals.leds import LedState
+from evomachine.utils import EvoCroppingBox as CroppingBox
 from evomachine.softwarefocus import SoftwareFocus, SoftwareFocusConfig, SoftwareFocusConfigFactory
 from evomachine.types import FilterWheelType, FocusAlgorithmType, FocusCurveType, FocusStatusType, LEDType
 
