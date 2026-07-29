@@ -212,7 +212,16 @@ def test_stage_home_zero_and_halt(make_stage):
     stage.move(Coordinate(10, 20, 30))
     stage.zero_coordinates()
     assert stage.get_coordinates(query_hardware=False) == Coordinate(0, 0, 0)
+    assert stage.get_machine_coordinates(query_hardware=False) == Coordinate(10, 20, 30)
+    assert stage.get_machine_coordinate_offset() == Coordinate(10, 20, 30)
     assert stage.get_fov_id() == stage.UNKNOWN_FOV_ID
+
+    stage.move(Coordinate(5, 6, 7))
+    assert stage.get_machine_coordinates(query_hardware=False) == Coordinate(15, 26, 37)
+
+    stage.zero_coordinates()
+    assert stage.get_coordinates(query_hardware=False) == Coordinate(0, 0, 0)
+    assert stage.get_machine_coordinates(query_hardware=False) == Coordinate(15, 26, 37)
 
     stage.halt()
     if isinstance(stage, VirtualStage):

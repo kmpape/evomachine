@@ -137,6 +137,9 @@ class EvoMachineGuiController(QObject):
     def stop_stage(self) -> None:
         self._send(GuiCommandType.STAGE_STOP)
 
+    def zero_stage(self) -> None:
+        self._send(GuiCommandType.STAGE_ZERO)
+
     def refresh_camera(self) -> None:
         self._send(GuiCommandType.CAMERA_STATUS)
 

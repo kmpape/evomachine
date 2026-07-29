@@ -503,6 +503,12 @@ def gui_stage_stop(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     return {"stage": facade.gui_stage_status_payload()}
 
 
+def gui_stage_zero(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    gui_require_devices_initialised(facade, "stage")
+    facade.gui_stage().zero_coordinates()
+    return facade.gui_stage_coordinates_payload(query_hardware=False)
+
+
 def gui_camera_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "camera")
     return {"camera": facade.gui_camera_status_payload()}
@@ -879,6 +885,7 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.STAGE_MOVE_RELATIVE: gui_stage_move_relative,
     GuiCommandType.STAGE_MOVE_FOV: gui_stage_move_fov,
     GuiCommandType.STAGE_STOP: gui_stage_stop,
+    GuiCommandType.STAGE_ZERO: gui_stage_zero,
     GuiCommandType.CAMERA_STATUS: gui_camera_status,
     GuiCommandType.CAMERA_SET_EXPOSURE: gui_camera_set_exposure,
     GuiCommandType.ACQUISITION_LIST_FILES: gui_acquisition_list_files,

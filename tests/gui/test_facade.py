@@ -56,6 +56,7 @@ class FakePeripheralController:
 class FakeStage:
     def __init__(self):
         self.coordinate = Coordinate(1, 2, 3)
+        self.machine_offset = Coordinate(0, 0, 0)
         self.stop_count = 0
 
     def is_initialised(self):
@@ -72,6 +73,9 @@ class FakeStage:
 
     def get_coordinates(self, query_hardware=True):
         return self.coordinate.copy()
+
+    def get_machine_coordinates(self, query_hardware=True):
+        return self.coordinate + self.machine_offset
 
     def move(self, target, block=True):
         if isinstance(target, tuple):
@@ -90,6 +94,10 @@ class FakeStage:
 
     def stop(self):
         self.stop_count += 1
+
+    def zero_coordinates(self):
+        self.machine_offset = self.get_machine_coordinates(query_hardware=True)
+        self.coordinate = Coordinate(0, 0, 0)
 
 
 class FakeLedManager:
@@ -675,6 +683,17 @@ def test_facade_handles_controller_status_request() -> None:
     assert shared["connected"] is True
     assert "Fake Camera" in shared["owners"]
     assert "Fake Filter Wheel" in shared["owners"]
+
+
+def test_facade_zeroes_stage_and_preserves_machine_coordinate() -> None:
+    automaton = FakeAutomaton()
+    facade = AutomatonGuiFacade(automaton)
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.STAGE_ZERO))
+
+    assert response.ok
+    assert response.payload["coordinate"] == {"x": 0, "y": 0, "z": 0, "channel_id": 0}
+    assert response.payload["machine_coordinate"] == {"x": 1, "y": 2, "z": 3, "channel_id": 0}
 
 
 def test_facade_initialise_devices_initialises_controllers_first() -> None:

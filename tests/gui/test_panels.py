@@ -68,6 +68,9 @@ class FakeController(QObject):
     def stop_stage(self):
         self.calls.append(("stop_stage",))
 
+    def zero_stage(self):
+        self.calls.append(("zero_stage",))
+
     def refresh_camera(self):
         self.calls.append(("refresh_camera",))
 
@@ -180,6 +183,17 @@ def test_stage_panel_sends_move_request() -> None:
     panel._move_absolute()
 
     assert controller.calls == [("move_stage_absolute", 1.0, 2.0, 3.0)]
+
+
+def test_stage_panel_sends_zero_request() -> None:
+    _app()
+    controller = FakeController()
+    panel = StagePanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+
+    panel.zero_button.click()
+
+    assert controller.calls == [("zero_stage",)]
 
 
 def test_stage_panel_sends_camera_fov_move_request() -> None:
