@@ -115,6 +115,27 @@ class FileManager:
         self.update_config(directory=experiment_directory)
         return experiment_directory
 
+    def list_experiments(self) -> list[Path]:
+        """Return experiment directories directly below the configured root."""
+        return sorted(
+            path
+            for path in self.experiment_root.iterdir()
+            if path.is_dir()
+        )
+
+    def select_experiment(self, name: str) -> Path:
+        """Activate an existing experiment directory by name."""
+        if not isinstance(name, str):
+            raise TypeError(f"FileManager.select_experiment: name must be str, received {type(name)}.")
+        experiment_name = name.strip()
+        if not self.EXPERIMENT_NAME_PATTERN.fullmatch(experiment_name):
+            raise ValueError("Invalid experiment name.")
+        experiment_directory = self.experiment_root / experiment_name
+        if not experiment_directory.is_dir():
+            raise FileNotFoundError(f"Experiment directory does not exist: {experiment_directory}.")
+        self.update_config(directory=experiment_directory)
+        return experiment_directory
+
     def update_config(self, config: FileNameConfig | None = None, **updates: Any) -> None:
         """
         Replace or update the active file name configuration.

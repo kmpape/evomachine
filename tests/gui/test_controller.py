@@ -42,3 +42,15 @@ def test_gui_controller_sends_create_experiment_request() -> None:
 
     assert client.requests[-1].command is GuiCommandType.ACQUISITION_CREATE_EXPERIMENT
     assert client.requests[-1].payload == {"name": "experiment-one"}
+
+
+def test_gui_controller_lists_and_selects_experiments() -> None:
+    client = RecordingClient()
+    controller = EvoMachineGuiController(client=client, start_worker=False)
+
+    controller.refresh_acquisition_experiments()
+    controller.select_acquisition_experiment("experiment-one")
+
+    assert client.requests[-2].command is GuiCommandType.ACQUISITION_LIST_EXPERIMENTS
+    assert client.requests[-1].command is GuiCommandType.ACQUISITION_SELECT_EXPERIMENT
+    assert client.requests[-1].payload == {"name": "experiment-one"}

@@ -388,6 +388,30 @@ def test_file_manager_rejects_existing_experiment_directory(tmp_path) -> None:
         manager.create_experiment("existing")
 
 
+def test_file_manager_lists_and_selects_experiments(tmp_path) -> None:
+    root = tmp_path / "images"
+    manager = FileManager(
+        FileNameConfig(directory=root / "_unassigned"),
+        experiment_root=root,
+    )
+    (root / "experiment-b").mkdir()
+    (root / "experiment-a").mkdir()
+
+    assert [path.name for path in manager.list_experiments()] == [
+        "_unassigned",
+        "experiment-a",
+        "experiment-b",
+    ]
+
+    selected = manager.select_experiment("experiment-b")
+
+    assert selected == root / "experiment-b"
+    assert manager.config.directory == selected
+
+    with pytest.raises(FileNotFoundError):
+        manager.select_experiment("missing")
+
+
 def test_frame_metadata_fields_and_factory_counter() -> None:
     """
     Check FrameMetaData fields, validation, and factory counter behavior.

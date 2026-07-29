@@ -526,9 +526,8 @@ def gui_camera_set_exposure(facade: Any, payload: dict[str, Any]) -> dict[str, A
     return {"camera": facade.gui_camera_status_payload()}
 
 
-def gui_acquisition_list_files(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    file_manager = gui_acquisition_file_manager(facade)
-    directory = Path(payload.get("directory") or file_manager.config.directory)
+def gui_acquisition_files_payload(file_manager: FileManager) -> dict[str, Any]:
+    directory = file_manager.config.directory
     paths: dict[Path, None] = {}
     if directory.exists():
         for pattern in ("*.tiff", "*.tif"):
@@ -542,14 +541,41 @@ def gui_acquisition_list_files(facade: Any, payload: dict[str, Any]) -> dict[str
     }
 
 
+def gui_acquisition_list_files(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    return gui_acquisition_files_payload(gui_acquisition_file_manager(facade))
+
+
+def gui_acquisition_experiments_payload(file_manager: FileManager) -> dict[str, Any]:
+    return {
+        "experiment_root": str(file_manager.experiment_root),
+        "active_experiment": file_manager.config.directory.name,
+        "experiments": [
+            {"name": path.name, "directory": str(path)}
+            for path in file_manager.list_experiments()
+        ],
+    }
+
+
+def gui_acquisition_list_experiments(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    file_manager = gui_acquisition_file_manager(facade)
+    return gui_acquisition_experiments_payload(file_manager) | gui_acquisition_files_payload(file_manager)
+
+
 def gui_acquisition_create_experiment(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     file_manager = gui_acquisition_file_manager(facade)
     experiment_directory = file_manager.create_experiment(payload.get("name"))
-    return {
+    return gui_acquisition_files_payload(file_manager) | gui_acquisition_experiments_payload(file_manager) | {
         "acquisition_directory": str(experiment_directory),
-        "experiment_root": str(file_manager.experiment_root),
         "experiment_name": experiment_directory.name,
-        "acquisition_files": [],
+    }
+
+
+def gui_acquisition_select_experiment(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    file_manager = gui_acquisition_file_manager(facade)
+    experiment_directory = file_manager.select_experiment(payload.get("name"))
+    return gui_acquisition_files_payload(file_manager) | gui_acquisition_experiments_payload(file_manager) | {
+        "acquisition_directory": str(experiment_directory),
+        "experiment_name": experiment_directory.name,
     }
 
 
@@ -915,6 +941,8 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.CAMERA_STATUS: gui_camera_status,
     GuiCommandType.CAMERA_SET_EXPOSURE: gui_camera_set_exposure,
     GuiCommandType.ACQUISITION_CREATE_EXPERIMENT: gui_acquisition_create_experiment,
+    GuiCommandType.ACQUISITION_LIST_EXPERIMENTS: gui_acquisition_list_experiments,
+    GuiCommandType.ACQUISITION_SELECT_EXPERIMENT: gui_acquisition_select_experiment,
     GuiCommandType.ACQUISITION_LIST_FILES: gui_acquisition_list_files,
     GuiCommandType.ACQUISITION_LOAD_FRAME: gui_acquisition_load_frame,
     GuiCommandType.ACQUISITION_TAKE_FRAME: gui_acquisition_take_frame,

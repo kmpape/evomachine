@@ -184,15 +184,22 @@ experiment:
 ```text
 images/
 ├── _unassigned/
-├── experiment-one/
-└── 2026-07-29-calibration/
+├── AD_experiment_1/
+└── hardware_z_stack_test/
 ```
 
-In the GUI, open the Acquisition tab, enter a name under **Experiment Files**,
-and select **Create New Experiment**. The new folder becomes the active save
-and file-loading directory for that GUI session. Enable **Save** in Acquisition
-Configuration when TIFF output is required. Acquisitions made before selecting
-an experiment go to `images/_unassigned/`.
+In the GUI, open Acquisition → **Experiment Files**:
+
+1. Select an existing experiment from the **Experiment** dropdown, or enter a
+   name and select **Create New Experiment**.
+2. The selected experiment becomes the active TIFF save directory.
+3. Select one of that experiment's TIFFs from the **Image** dropdown and choose
+   **Load Selected** to display it.
+
+Enable **Save** in Acquisition Configuration when TIFF output is required.
+Acquisitions made before selecting an experiment go to `images/_unassigned/`.
+Folder paths are managed by the experiment selector rather than entered
+manually.
 
 The `images/` directory is intentionally excluded from Git because microscope
 images are generally too large for source control. Notebook `.pkl` image

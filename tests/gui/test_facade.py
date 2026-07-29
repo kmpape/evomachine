@@ -669,6 +669,44 @@ def test_facade_creates_and_activates_experiment_directory(tmp_path) -> None:
     assert file_manager.config.directory == experiment
 
 
+def test_facade_lists_and_selects_experiment_with_its_images(tmp_path) -> None:
+    root = tmp_path / "images"
+    first = root / "experiment-one"
+    second = root / "experiment-two"
+    first.mkdir(parents=True)
+    second.mkdir()
+    tifffile.imwrite(second / "stack.tiff", np.zeros((2, 3), dtype=np.uint16))
+    file_manager = FileManager(
+        FileNameConfig(directory=first),
+        experiment_root=root,
+    )
+    facade = AutomatonGuiFacade(FakeAutomaton(file_manager=file_manager))
+
+    response = facade.handle(
+        GuiRequest(command=GuiCommandType.ACQUISITION_LIST_EXPERIMENTS)
+    )
+
+    assert response.ok
+    assert [item["name"] for item in response.payload["experiments"]] == [
+        "experiment-one",
+        "experiment-two",
+    ]
+    assert response.payload["active_experiment"] == "experiment-one"
+
+    response = facade.handle(
+        GuiRequest(
+            command=GuiCommandType.ACQUISITION_SELECT_EXPERIMENT,
+            payload={"name": "experiment-two"},
+        )
+    )
+
+    assert response.ok
+    assert response.payload["active_experiment"] == "experiment-two"
+    assert response.payload["experiment_name"] == "experiment-two"
+    assert response.payload["acquisition_files"][0]["label"] == "stack.tiff"
+    assert file_manager.config.directory == second
+
+
 def test_facade_handles_z_stack_acquisition_request() -> None:
     automaton = FakeAutomaton()
     facade = AutomatonGuiFacade(automaton)

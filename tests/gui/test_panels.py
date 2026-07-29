@@ -36,6 +36,7 @@ class FakeController(QObject):
     camera_status_received = pyqtSignal(dict)
     acquisition_files_received = pyqtSignal(list)
     acquisition_directory_received = pyqtSignal(dict)
+    acquisition_experiments_received = pyqtSignal(dict)
     frame_received = pyqtSignal(dict)
     filter_wheel_status_received = pyqtSignal(dict)
     led_list_received = pyqtSignal(list)
@@ -90,11 +91,17 @@ class FakeController(QObject):
     def acquire_z_stack(self, payload=None):
         self.calls.append(("acquire_z_stack", payload))
 
-    def refresh_acquisition_files(self, directory=None):
-        self.calls.append(("refresh_acquisition_files", directory))
+    def refresh_acquisition_files(self):
+        self.calls.append(("refresh_acquisition_files",))
+
+    def refresh_acquisition_experiments(self):
+        self.calls.append(("refresh_acquisition_experiments",))
 
     def create_acquisition_experiment(self, name):
         self.calls.append(("create_acquisition_experiment", name))
+
+    def select_acquisition_experiment(self, name):
+        self.calls.append(("select_acquisition_experiment", name))
 
     def load_acquisition_frame(self, filename, image_transport=None):
         self.calls.append(("load_acquisition_frame", filename, image_transport))
@@ -336,6 +343,7 @@ def test_saved_image_loader_panel_sends_load_requests() -> None:
     _app()
     controller = FakeController()
     panel = SavedImageLoaderPanel(controller=controller)
+    controller.calls.clear()
     panel.update_file_list([{"label": "test.tiff", "path": "/tmp/test.tiff"}])
 
     panel.load_button.click()
@@ -352,17 +360,18 @@ def test_saved_image_loader_panel_refreshes_configured_directory() -> None:
     _app()
     controller = FakeController()
     panel = SavedImageLoaderPanel(controller=controller)
-    panel.directory = "/tmp/example_output"
+    controller.calls.clear()
 
     panel.refresh_button.click()
 
-    assert controller.calls == [("refresh_acquisition_files", "/tmp/example_output")]
+    assert controller.calls == [("refresh_acquisition_files",)]
 
 
 def test_saved_image_loader_panel_creates_and_displays_experiment() -> None:
     _app()
     controller = FakeController()
     panel = SavedImageLoaderPanel(controller=controller)
+    controller.calls.clear()
     panel.experiment_name_input.setText("2026-07-29 calibration")
 
     panel.create_experiment_button.click()
@@ -379,6 +388,27 @@ def test_saved_image_loader_panel_creates_and_displays_experiment() -> None:
 
     assert panel.directory == "/tmp/images/2026-07-29 calibration"
     assert panel.experiment_label.text() == "active experiment: 2026-07-29 calibration"
+
+
+def test_saved_image_loader_panel_selects_experiment_from_dropdown() -> None:
+    _app()
+    controller = FakeController()
+    panel = SavedImageLoaderPanel(controller=controller)
+    controller.calls.clear()
+
+    panel.update_experiment_list({
+        "experiments": [
+            {"name": "AD_experiment_1", "directory": "/tmp/images/AD_experiment_1"},
+            {"name": "hardware_z_stack_test", "directory": "/tmp/images/hardware_z_stack_test"},
+        ],
+        "active_experiment": "AD_experiment_1",
+        "experiment_root": "/tmp/images",
+    })
+    panel.experiment_combo.setCurrentIndex(1)
+
+    assert controller.calls == [
+        ("select_acquisition_experiment", "hardware_z_stack_test")
+    ]
 
 
 def test_filter_wheel_panel_sends_set_request() -> None:
