@@ -156,6 +156,38 @@ Other useful top-level folders in the main repository:
 
 ## GUI Demo
 
+### Hardware GUI on `hslab-microscope`
+
+The current paths for this computer are:
+
+```text
+Project / working directory:
+/home/hslab/workspace_python/evomachine_refactor/evomachine
+
+Python interpreter:
+/home/hslab/workspace_python/evomachine_refactor/evomachine/.venv/bin/python
+
+Script:
+/home/hslab/workspace_python/evomachine_refactor/evomachine/scripts/launch_hardware_gui.py
+```
+
+Start Micro-Manager with the microscope configuration loaded, then launch the
+hardware GUI from a terminal with:
+
+```bash
+cd /home/hslab/workspace_python/evomachine_refactor/evomachine
+/home/hslab/workspace_python/evomachine_refactor/evomachine/.venv/bin/python \
+    scripts/launch_hardware_gui.py
+```
+
+For an IDE Run button, use the same interpreter, script, and working directory
+shown above. Run the script as a Python file, not as a module. In particular,
+do not select the old
+`/home/hslab/workspace_python/evomachine_refactor/venv/bin/python`
+environment: this project currently uses `.venv`.
+
+### Virtual GUI
+
 After activating the `delta_evomachine` environment, launch the Napari GUI demo
 with virtual peripherals from the repository root:
 
