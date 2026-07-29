@@ -10,8 +10,8 @@ CENTRAL_VIEWER_FIT_TOLERANCE = 8
 STARTUP_CONTROLS_DOCK_MIN_WIDTH = 480
 
 
-def _hide_default_napari_left_docks(viewer) -> None:
-    """Hide Napari layer controls/list so EvoMachine owns the left dock area."""
+def _show_default_napari_left_docks(viewer) -> None:
+    """Expose Napari layer controls so camera contrast and gamma remain adjustable."""
     qt_viewer = getattr(viewer.window, "_qt_viewer", None)
     if qt_viewer is None:
         return
@@ -19,7 +19,7 @@ def _hide_default_napari_left_docks(viewer) -> None:
     for attr_name in ("dockLayerControls", "dockLayerList"):
         dock = getattr(qt_viewer, attr_name, None)
         if dock is not None:
-            dock.hide()
+            dock.show()
 
 
 def _schedule_startup_central_viewer_fit(viewer, *, controls_dock_widget) -> None:
@@ -98,7 +98,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     from evomachine.gui.plugin import EvoMachineControlsDock, PeripheralControllerStatusDock
 
     viewer = napari.Viewer()
-    _hide_default_napari_left_docks(viewer)
+    _show_default_napari_left_docks(viewer)
     controls_dock = EvoMachineControlsDock(napari_viewer=viewer)
     controls_dock_widget = viewer.window.add_dock_widget(controls_dock, name="EvoMachine Controls", area="right")
     status_dock = PeripheralControllerStatusDock(controller=controls_dock.controller)
