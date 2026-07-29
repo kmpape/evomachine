@@ -22,36 +22,6 @@ def _show_default_napari_left_docks(viewer) -> None:
             dock.show()
 
 
-def _stack_status_above_layer_controls(viewer, *, status_dock_widget) -> None:
-    """Place controller status above Napari's image/contrast controls."""
-    qt_window = getattr(viewer.window, "_qt_window", None)
-    qt_viewer = getattr(viewer.window, "_qt_viewer", None)
-    split_dock_widget = getattr(qt_window, "splitDockWidget", None)
-    layer_controls = getattr(qt_viewer, "dockLayerControls", None)
-    if not callable(split_dock_widget) or layer_controls is None:
-        return
-
-    from PyQt5.QtCore import Qt
-
-    split_dock_widget(status_dock_widget, layer_controls, Qt.Vertical)
-
-
-def _schedule_left_dock_layout(viewer, *, status_dock_widget) -> None:
-    """Apply left-dock ordering after Qt has completed Napari's dock layout."""
-    from PyQt5.QtCore import QTimer
-
-    for delay_ms in (0, 150):
-        QTimer.singleShot(
-            delay_ms,
-            lambda viewer=viewer, status_dock_widget=status_dock_widget: (
-                _stack_status_above_layer_controls(
-                    viewer,
-                    status_dock_widget=status_dock_widget,
-                )
-            ),
-        )
-
-
 def _schedule_startup_central_viewer_fit(viewer, *, controls_dock_widget) -> None:
     """Fit the central viewer to the workspace aspect ratio once Qt has laid out the docks."""
     from PyQt5.QtCore import QTimer
@@ -132,11 +102,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     controls_dock = EvoMachineControlsDock(napari_viewer=viewer)
     controls_dock_widget = viewer.window.add_dock_widget(controls_dock, name="EvoMachine Controls", area="right")
     status_dock = PeripheralControllerStatusDock(controller=controls_dock.controller)
-    status_dock_widget = viewer.window.add_dock_widget(status_dock, name="Controller Status", area="left")
-    _schedule_left_dock_layout(
-        viewer,
-        status_dock_widget=status_dock_widget,
-    )
+    viewer.window.add_dock_widget(status_dock, name="Controller Status", area="left")
     _schedule_startup_central_viewer_fit(
         viewer,
         controls_dock_widget=controls_dock_widget,

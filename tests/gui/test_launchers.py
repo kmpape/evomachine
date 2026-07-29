@@ -134,29 +134,3 @@ def test_napari_app_shows_native_layer_controls() -> None:
 
     assert controls.shown
     assert layers.shown
-
-
-def test_napari_app_stacks_status_above_layer_controls() -> None:
-    calls = []
-    status_dock = object()
-    layer_controls = object()
-    qt_window = SimpleNamespace(
-        splitDockWidget=lambda first, second, orientation: calls.append(
-            (first, second, orientation)
-        )
-    )
-    viewer = SimpleNamespace(
-        window=SimpleNamespace(
-            _qt_window=qt_window,
-            _qt_viewer=SimpleNamespace(dockLayerControls=layer_controls),
-        )
-    )
-
-    napari_app._stack_status_above_layer_controls(
-        viewer,
-        status_dock_widget=status_dock,
-    )
-
-    first, second, _orientation = calls[0]
-    assert first is status_dock
-    assert second is layer_controls
