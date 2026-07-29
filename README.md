@@ -154,65 +154,38 @@ Other useful top-level folders in the main repository:
   runtime inputs, outputs, models, calibration data, and strategy files.  
   Note: some folders are only created when starting the software.
 
-## GUI Demo
+## Running the GUI
 
-### Hardware GUI on `hslab-microscope`
+### Hardware GUI on this microscope computer
 
-The current paths for this computer are:
-
-```text
-Project / working directory:
-/home/hslab/workspace_python/evomachine_refactor/evomachine
-
-Python interpreter:
-/home/hslab/workspace_python/evomachine_refactor/evomachine/.venv/bin/python
-
-Script:
-/home/hslab/workspace_python/evomachine_refactor/evomachine/scripts/launch_hardware_gui.py
-```
-
-Start Micro-Manager with the microscope configuration loaded, then launch the
-hardware GUI from a terminal with:
+Start Micro-Manager with the microscope configuration loaded. Then run:
 
 ```bash
 cd /home/hslab/workspace_python/evomachine_refactor/evomachine
-/home/hslab/workspace_python/evomachine_refactor/evomachine/.venv/bin/python \
-    scripts/launch_hardware_gui.py
+.venv/bin/python scripts/launch_hardware_gui.py
 ```
 
-For an IDE Run button, use the same interpreter, script, and working directory
-shown above. Run the script as a Python file, not as a module. In particular,
-do not select the old
-`/home/hslab/workspace_python/evomachine_refactor/venv/bin/python`
-environment: this project currently uses `.venv`.
+For an IDE Run button:
+
+- Working directory: `/home/hslab/workspace_python/evomachine_refactor/evomachine`
+- Interpreter: `.venv/bin/python`
+- Script: `scripts/launch_hardware_gui.py`
+- Run it as a Python file, not as a module.
+
+The hardware runtime uses the Micro-Manager camera, SyncBoard LEDs, ASI Tiger
+stage/filter/autofocus and overhead LED, KWR103 overhead light, and EM DMD
+window. Serial ports are detected from their USB hardware IDs.
 
 ### Virtual GUI
 
-After activating the `delta_evomachine` environment, launch the Napari GUI demo
-with virtual peripherals from the repository root:
+From the `evomachine` repository root, launch the GUI with virtual peripherals:
 
 ```bash
-cd /home/idris/workspace_python/conda_evomachine3.9/evomachine_repo
-conda activate delta_evomachine
-python scripts/launch_virtual_gui.py --port 0
+uv run python scripts/launch_virtual_gui.py --port 0
 ```
 
 To smoke-test the automaton/socket startup without opening Napari:
 
 ```bash
-python scripts/launch_virtual_gui.py --port 0 --no-napari
+uv run python scripts/launch_virtual_gui.py --port 0 --no-napari
 ```
-
-For hardware, start Micro-Manager with the microscope config loaded, then run:
-
-```bash
-python scripts/launch_hardware_gui.py --port 0
-```
-
-The default hardware runtime uses the Micro-Manager camera binding
-(`BindingType.MMC`), SyncBoard LEDs, ASI Tiger stage/filter/autofocus and
-overhead LED, the KWR103 overhead light, and the EM DMD window. Serial ports
-are found from their USB hardware IDs. If needed, override them with
-`EVOMACHINE_GUI_SYNCBOARD_PORT`, `EVOMACHINE_GUI_TIGER_PORT`, and
-`EVOMACHINE_GUI_KWR103_PORT`. Set `EVOMACHINE_GUI_USE_KWR103=false` to run
-without the KWR103 power supply.
