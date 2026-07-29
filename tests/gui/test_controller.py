@@ -32,3 +32,13 @@ def test_gui_stage_moves_are_non_blocking_so_stop_can_be_processed() -> None:
         GuiCommandType.STAGE_RETURN_ORIGIN,
     ]
     assert all(request.payload["block"] is False for request in client.requests[:3])
+
+
+def test_gui_controller_sends_create_experiment_request() -> None:
+    client = RecordingClient()
+    controller = EvoMachineGuiController(client=client, start_worker=False)
+
+    controller.create_acquisition_experiment("experiment-one")
+
+    assert client.requests[-1].command is GuiCommandType.ACQUISITION_CREATE_EXPERIMENT
+    assert client.requests[-1].payload == {"name": "experiment-one"}

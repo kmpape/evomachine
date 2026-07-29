@@ -30,7 +30,7 @@ class HardwareGuiRuntimeSettings:
     dmd_width: int = DMD_WIDTH_HEIGHT[0]
     dmd_height: int = DMD_WIDTH_HEIGHT[1]
     dmd_calibration_file: Path = EVOMACHINE_DIR / "evomachine" / "dmd_calibration_data.pkl"
-    output_directory: Path = DATA_DIR / "gui_hardware_acquisitions"
+    output_directory: Path = DATA_DIR
     use_dmd: bool = True
     use_kwr103: bool = True
 
@@ -426,7 +426,10 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
         filter_wheel=filter_wheel,
         dmd=dmd,
         stage=stage,
-        file_manager=FileManager(FileNameConfig(directory=settings.output_directory)),
+        file_manager=FileManager(
+            FileNameConfig(directory=settings.output_directory / "_unassigned"),
+            experiment_root=settings.output_directory,
+        ),
         default_settings=FrameAcquisitionSettings(
             save=False,
             normalise=False,

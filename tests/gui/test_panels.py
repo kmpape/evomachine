@@ -35,6 +35,7 @@ class FakeController(QObject):
     stage_status_received = pyqtSignal(dict)
     camera_status_received = pyqtSignal(dict)
     acquisition_files_received = pyqtSignal(list)
+    acquisition_directory_received = pyqtSignal(dict)
     frame_received = pyqtSignal(dict)
     filter_wheel_status_received = pyqtSignal(dict)
     led_list_received = pyqtSignal(list)
@@ -91,6 +92,9 @@ class FakeController(QObject):
 
     def refresh_acquisition_files(self, directory=None):
         self.calls.append(("refresh_acquisition_files", directory))
+
+    def create_acquisition_experiment(self, name):
+        self.calls.append(("create_acquisition_experiment", name))
 
     def load_acquisition_frame(self, filename, image_transport=None):
         self.calls.append(("load_acquisition_frame", filename, image_transport))
@@ -353,6 +357,28 @@ def test_saved_image_loader_panel_refreshes_configured_directory() -> None:
     panel.refresh_button.click()
 
     assert controller.calls == [("refresh_acquisition_files", "/tmp/example_output")]
+
+
+def test_saved_image_loader_panel_creates_and_displays_experiment() -> None:
+    _app()
+    controller = FakeController()
+    panel = SavedImageLoaderPanel(controller=controller)
+    panel.experiment_name_input.setText("2026-07-29 calibration")
+
+    panel.create_experiment_button.click()
+
+    assert controller.calls == [
+        ("create_acquisition_experiment", "2026-07-29 calibration")
+    ]
+
+    panel.update_acquisition_directory({
+        "directory": "/tmp/images/2026-07-29 calibration",
+        "experiment_root": "/tmp/images",
+        "experiment_name": "2026-07-29 calibration",
+    })
+
+    assert panel.directory == "/tmp/images/2026-07-29 calibration"
+    assert panel.experiment_label.text() == "active experiment: 2026-07-29 calibration"
 
 
 def test_filter_wheel_panel_sends_set_request() -> None:

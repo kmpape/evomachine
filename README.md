@@ -156,7 +156,7 @@ Other useful top-level folders in the main repository:
 
 ## Running the GUI
 
-### Hardware GUI on this microscope computer
+### Hardware GUI on the microscope computer
 
 Start Micro-Manager with the microscope configuration loaded. Then run:
 
@@ -175,6 +175,30 @@ For an IDE Run button:
 The hardware runtime uses the Micro-Manager camera, SyncBoard LEDs, ASI Tiger
 stage/filter/autofocus and overhead LED, KWR103 overhead light, and EM DMD
 window. Serial ports are detected from their USB hardware IDs.
+
+#### Experiment image folders
+
+Hardware acquisitions are organised under `images/`, with one folder per
+experiment:
+
+```text
+images/
+├── _unassigned/
+├── experiment-one/
+└── 2026-07-29-calibration/
+```
+
+In the GUI, open the Acquisition tab, enter a name under **Experiment Files**,
+and select **Create New Experiment**. The new folder becomes the active save
+and file-loading directory for that GUI session. Enable **Save** in Acquisition
+Configuration when TIFF output is required. Acquisitions made before selecting
+an experiment go to `images/_unassigned/`.
+
+The `images/` directory is intentionally excluded from Git because microscope
+images are generally too large for source control. Notebook `.pkl` image
+stacks may be moved into their corresponding experiment folders for local
+organisation, but should remain uncommitted; the current example stacks are
+approximately 801 MiB each.
 
 ### Virtual GUI
 

@@ -357,6 +357,37 @@ def test_file_manager_creates_directory_and_updates_config(tmp_path) -> None:
         FileManager(FileNameConfig(directory=tmp_path / "missing", create_directory=False))
 
 
+def test_file_manager_creates_and_activates_experiment_directory(tmp_path) -> None:
+    root = tmp_path / "images"
+    manager = FileManager(
+        FileNameConfig(directory=root / "_unassigned"),
+        experiment_root=root,
+    )
+
+    experiment = manager.create_experiment("2026-07-29 calibration")
+
+    assert experiment == root / "2026-07-29 calibration"
+    assert experiment.is_dir()
+    assert manager.config.directory == experiment
+    assert manager.experiment_root == root
+
+
+@pytest.mark.parametrize("name", ["", "../escape", "/absolute", "bad/name"])
+def test_file_manager_rejects_unsafe_experiment_names(tmp_path, name) -> None:
+    manager = FileManager(FileNameConfig(directory=tmp_path))
+
+    with pytest.raises(ValueError):
+        manager.create_experiment(name)
+
+
+def test_file_manager_rejects_existing_experiment_directory(tmp_path) -> None:
+    manager = FileManager(FileNameConfig(directory=tmp_path))
+    manager.create_experiment("existing")
+
+    with pytest.raises(FileExistsError):
+        manager.create_experiment("existing")
+
+
 def test_frame_metadata_fields_and_factory_counter() -> None:
     """
     Check FrameMetaData fields, validation, and factory counter behavior.

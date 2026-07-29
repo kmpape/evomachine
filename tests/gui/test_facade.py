@@ -645,6 +645,30 @@ def test_facade_lists_and_loads_saved_acquisition_tiff(tmp_path) -> None:
     assert np.array_equal(array_from_preview_payload(payload["preview"]), image)
 
 
+def test_facade_creates_and_activates_experiment_directory(tmp_path) -> None:
+    root = tmp_path / "images"
+    file_manager = FileManager(
+        FileNameConfig(directory=root / "_unassigned"),
+        experiment_root=root,
+    )
+    facade = AutomatonGuiFacade(FakeAutomaton(file_manager=file_manager))
+
+    response = facade.handle(
+        GuiRequest(
+            command=GuiCommandType.ACQUISITION_CREATE_EXPERIMENT,
+            payload={"name": "experiment-one"},
+        )
+    )
+
+    experiment = root / "experiment-one"
+    assert response.ok
+    assert response.payload["acquisition_directory"] == str(experiment)
+    assert response.payload["experiment_root"] == str(root)
+    assert response.payload["experiment_name"] == "experiment-one"
+    assert response.payload["acquisition_files"] == []
+    assert file_manager.config.directory == experiment
+
+
 def test_facade_handles_z_stack_acquisition_request() -> None:
     automaton = FakeAutomaton()
     facade = AutomatonGuiFacade(automaton)

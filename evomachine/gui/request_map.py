@@ -537,7 +537,19 @@ def gui_acquisition_list_files(facade: Any, payload: dict[str, Any]) -> dict[str
     files = sorted(paths, key=lambda item: item.stat().st_mtime, reverse=True)
     return {
         "acquisition_directory": str(directory),
+        "experiment_root": str(file_manager.experiment_root),
         "acquisition_files": [gui_acquisition_file_payload(path) for path in files],
+    }
+
+
+def gui_acquisition_create_experiment(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    file_manager = gui_acquisition_file_manager(facade)
+    experiment_directory = file_manager.create_experiment(payload.get("name"))
+    return {
+        "acquisition_directory": str(experiment_directory),
+        "experiment_root": str(file_manager.experiment_root),
+        "experiment_name": experiment_directory.name,
+        "acquisition_files": [],
     }
 
 
@@ -902,6 +914,7 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.STAGE_RETURN_ORIGIN: gui_stage_return_origin,
     GuiCommandType.CAMERA_STATUS: gui_camera_status,
     GuiCommandType.CAMERA_SET_EXPOSURE: gui_camera_set_exposure,
+    GuiCommandType.ACQUISITION_CREATE_EXPERIMENT: gui_acquisition_create_experiment,
     GuiCommandType.ACQUISITION_LIST_FILES: gui_acquisition_list_files,
     GuiCommandType.ACQUISITION_LOAD_FRAME: gui_acquisition_load_frame,
     GuiCommandType.ACQUISITION_TAKE_FRAME: gui_acquisition_take_frame,

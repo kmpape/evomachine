@@ -52,6 +52,7 @@ class EvoMachineGuiController(QObject):
     stage_coordinates_received = pyqtSignal(dict)
     camera_status_received = pyqtSignal(dict)
     acquisition_files_received = pyqtSignal(list)
+    acquisition_directory_received = pyqtSignal(dict)
     frame_received = pyqtSignal(dict)
     filter_wheel_status_received = pyqtSignal(dict)
     led_list_received = pyqtSignal(list)
@@ -158,6 +159,9 @@ class EvoMachineGuiController(QObject):
         if directory is not None:
             payload["directory"] = directory
         self._send(GuiCommandType.ACQUISITION_LIST_FILES, payload)
+
+    def create_acquisition_experiment(self, name: str) -> None:
+        self._send(GuiCommandType.ACQUISITION_CREATE_EXPERIMENT, {"name": name})
 
     def load_acquisition_frame(self, filename: str, image_transport: str | None = None) -> None:
         payload: dict[str, Any] = {"filename": filename}
@@ -292,6 +296,12 @@ class EvoMachineGuiController(QObject):
             self.camera_status_received.emit(payload["camera"])
         if "acquisition_files" in payload:
             self.acquisition_files_received.emit(payload["acquisition_files"])
+        if "acquisition_directory" in payload:
+            self.acquisition_directory_received.emit({
+                "directory": payload["acquisition_directory"],
+                "experiment_root": payload.get("experiment_root"),
+                "experiment_name": payload.get("experiment_name"),
+            })
         if "frame" in payload:
             self.frame_received.emit(payload["frame"])
         if "filter_wheel" in payload:
