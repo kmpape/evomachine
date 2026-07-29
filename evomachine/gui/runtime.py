@@ -18,6 +18,8 @@ class HardwareGuiRuntimeSettings:
     syncboard_hwid: str = "16C0:0483"
     tiger_port: str | None = None
     tiger_hwid: str = "10C4:EA60"
+    kwr103_port: str | None = None
+    kwr103_hwid: str = "0416:5011"
     camera_device: str = "Camera-1"
     readout_mode_property: str = "Port"
     camera_width: int = CAM_WIDTH_HEIGHT[0]
@@ -30,6 +32,7 @@ class HardwareGuiRuntimeSettings:
     dmd_calibration_file: Path = EVOMACHINE_DIR / "evomachine" / "dmd_calibration_data.pkl"
     output_directory: Path = DATA_DIR / "gui_hardware_acquisitions"
     use_dmd: bool = True
+    use_kwr103: bool = True
 
     @classmethod
     def from_env(cls) -> "HardwareGuiRuntimeSettings":
@@ -39,6 +42,8 @@ class HardwareGuiRuntimeSettings:
             syncboard_hwid=os.getenv("EVOMACHINE_GUI_SYNCBOARD_HWID", defaults.syncboard_hwid),
             tiger_port=os.getenv("EVOMACHINE_GUI_TIGER_PORT") or defaults.tiger_port,
             tiger_hwid=os.getenv("EVOMACHINE_GUI_TIGER_HWID", defaults.tiger_hwid),
+            kwr103_port=os.getenv("EVOMACHINE_GUI_KWR103_PORT") or defaults.kwr103_port,
+            kwr103_hwid=os.getenv("EVOMACHINE_GUI_KWR103_HWID", defaults.kwr103_hwid),
             camera_device=os.getenv("EVOMACHINE_GUI_MICROMANAGER_CAMERA_DEVICE", defaults.camera_device),
             readout_mode_property=os.getenv(
                 "EVOMACHINE_GUI_MICROMANAGER_READOUT_PROPERTY",
@@ -57,6 +62,7 @@ class HardwareGuiRuntimeSettings:
             ),
             output_directory=_env_path("EVOMACHINE_GUI_OUTPUT_DIR", defaults.output_directory),
             use_dmd=_env_bool("EVOMACHINE_GUI_USE_DMD", defaults.use_dmd),
+            use_kwr103=_env_bool("EVOMACHINE_GUI_USE_KWR103", defaults.use_kwr103),
         )
 
     @property
@@ -301,6 +307,11 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
     settings = settings or HardwareGuiRuntimeSettings.from_env()
     syncboard_port = _resolve_serial_port(settings.syncboard_port, settings.syncboard_hwid, "SyncBoard")
     tiger_port = _resolve_serial_port(settings.tiger_port, settings.tiger_hwid, "ASI Tiger")
+    kwr103_port = (
+        _resolve_serial_port(settings.kwr103_port, settings.kwr103_hwid, "KWR103")
+        if settings.use_kwr103
+        else None
+    )
 
     syncboard_controller = PeripheralControllerFactory.create(
         SerialPeripheralControllerConfig(
@@ -317,6 +328,15 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
         ),
         card_address_filter_wheel=settings.filter_card_address,
     )
+    kwr103_controller = None
+    if kwr103_port is not None:
+        kwr103_controller = PeripheralControllerFactory.create(
+            SerialPeripheralControllerConfig(
+                binding=BindingType.KWR103,
+                port=kwr103_port,
+                initialise=False,
+            ),
+        )
 
     camera = CameraFactory.create(
         CameraConfig(
@@ -352,7 +372,17 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
         ),
         peripheral_controllers=tiger_controller,
     )
-    led_manager = LedManager([syncboard_led_source, tiger_led_source])
+    led_sources = [syncboard_led_source, tiger_led_source]
+    if kwr103_controller is not None:
+        kwr103_led_source = LedFactory.create(
+            LedConfig(
+                binding=BindingType.KWR103,
+                available_leds=[LEDType.LED_OVERHEAD],
+            ),
+            peripheral_controllers=kwr103_controller,
+        )
+        led_sources.append(kwr103_led_source)
+    led_manager = LedManager(led_sources)
     filter_wheel = FilterWheelFactory.create(
         FilterWheelConfig(
             binding=BindingType.ASI_TIGER,

@@ -11,13 +11,17 @@ def test_hardware_gui_settings_can_be_overridden_from_env(monkeypatch) -> None:
     monkeypatch.setenv("EVOMACHINE_GUI_CAMERA_WIDTH", "123")
     monkeypatch.setenv("EVOMACHINE_GUI_CAMERA_HEIGHT", "456")
     monkeypatch.setenv("EVOMACHINE_GUI_USE_DMD", "false")
+    monkeypatch.setenv("EVOMACHINE_GUI_USE_KWR103", "false")
     monkeypatch.setenv("EVOMACHINE_GUI_TIGER_PORT", "/dev/ttyTiger")
+    monkeypatch.setenv("EVOMACHINE_GUI_KWR103_PORT", "/dev/ttyKWR103")
 
     settings = HardwareGuiRuntimeSettings.from_env()
 
     assert settings.camera_size == (123, 456)
     assert settings.use_dmd is False
+    assert settings.use_kwr103 is False
     assert settings.tiger_port == "/dev/ttyTiger"
+    assert settings.kwr103_port == "/dev/ttyKWR103"
 
 
 def test_serial_port_lookup_uses_hwid_fragment() -> None:

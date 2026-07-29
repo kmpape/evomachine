@@ -178,7 +178,9 @@ python scripts/launch_hardware_gui.py --port 0
 ```
 
 The default hardware runtime uses the Micro-Manager camera binding
-(`BindingType.MMC`), SyncBoard LEDs, ASI Tiger stage/filter/autofocus, and the
-EM DMD window. Serial ports are found from the SyncBoard and ASI Tiger hardware
-IDs. If needed, override them with `EVOMACHINE_GUI_SYNCBOARD_PORT` and
-`EVOMACHINE_GUI_TIGER_PORT`.
+(`BindingType.MMC`), SyncBoard LEDs, ASI Tiger stage/filter/autofocus and
+overhead LED, the KWR103 overhead light, and the EM DMD window. Serial ports
+are found from their USB hardware IDs. If needed, override them with
+`EVOMACHINE_GUI_SYNCBOARD_PORT`, `EVOMACHINE_GUI_TIGER_PORT`, and
+`EVOMACHINE_GUI_KWR103_PORT`. Set `EVOMACHINE_GUI_USE_KWR103=false` to run
+without the KWR103 power supply.
