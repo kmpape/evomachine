@@ -31,8 +31,8 @@ MAX_Z_STACK_PLANES = 10000
 GUI_CAMERA_FOV_DIRECTION_DELTAS = {
     FovDirectionType.UP: (0.0, -1.0),
     FovDirectionType.DOWN: (0.0, 1.0),
-    FovDirectionType.LEFT: (-1.0, 0.0),
-    FovDirectionType.RIGHT: (1.0, 0.0),
+    FovDirectionType.LEFT: (1.0, 0.0),
+    FovDirectionType.RIGHT: (-1.0, 0.0),
 }
 
 

@@ -494,9 +494,13 @@ def test_facade_handles_stage_and_led_requests() -> None:
 
     response = facade.handle(GuiRequest(command=GuiCommandType.STAGE_MOVE_FOV, payload={"direction": "RIGHT"}))
     assert response.ok
-    assert response.payload["coordinate"] == {"x": 12.8, "y": 6.0, "z": 7, "channel_id": 0}
+    assert response.payload["coordinate"] == {"x": -2.8, "y": 6.0, "z": 7, "channel_id": 0}
     assert response.payload["stage"]["fov_step_size"] == 100.0
     assert response.payload["stage"]["camera_fov_step_size"] == pytest.approx(7.8)
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.STAGE_MOVE_FOV, payload={"direction": "LEFT"}))
+    assert response.ok
+    assert response.payload["coordinate"] == {"x": 5.0, "y": 6.0, "z": 7, "channel_id": 0}
 
     response = facade.handle(GuiRequest(command=GuiCommandType.LED_SET, payload={"led": "LED_450_NM", "brightness": 22}))
     assert response.ok
