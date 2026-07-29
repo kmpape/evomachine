@@ -332,7 +332,7 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
         camera_device=settings.camera_device,
         readout_mode_property=settings.readout_mode_property,
     )
-    led_source = LedFactory.create(
+    syncboard_led_source = LedFactory.create(
         LedConfig(
             binding=BindingType.SYNCBOARD,
             available_leds=[
@@ -345,7 +345,14 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
         ),
         peripheral_controllers=syncboard_controller,
     )
-    led_manager = LedManager([led_source])
+    tiger_led_source = LedFactory.create(
+        LedConfig(
+            binding=BindingType.ASI_TIGER,
+            available_leds=[LEDType.LED_OVERHEAD_TIGER],
+        ),
+        peripheral_controllers=tiger_controller,
+    )
+    led_manager = LedManager([syncboard_led_source, tiger_led_source])
     filter_wheel = FilterWheelFactory.create(
         FilterWheelConfig(
             binding=BindingType.ASI_TIGER,
@@ -359,7 +366,6 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
             ],
         ),
         peripheral_controllers=tiger_controller,
-        current_filter_type=FilterWheelType.NO_FILTER,
     )
     stage = StageFactory.create(
         StageConfig(

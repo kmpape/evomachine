@@ -102,6 +102,12 @@ ALWAYS_ALLOWED_MUTATING_COMMANDS = frozenset(
     }
 )
 
+NO_RESPONSE_TIMEOUT_COMMANDS = frozenset(
+    {
+        GuiCommandType.ACQUISITION_TAKE_Z_STACK,
+    }
+)
+
 
 @dataclass(kw_only=True)
 class GuiRequest:

@@ -63,3 +63,30 @@ def test_client_rejects_response_request_id_mismatch() -> None:
         thread.join(timeout=2)
     server.stop()
 
+
+def test_z_stack_request_has_no_response_timeout() -> None:
+    class SlowZStackHandler:
+        def handle(self, request: GuiRequest) -> GuiResponse:
+            time.sleep(0.05)
+            return GuiResponse(request_id=request.request_id, ok=True)
+
+    server = GuiRpcServer(handler=SlowZStackHandler(), port=0, response_timeout=0.01)
+    host, port = server.start()
+    processed = []
+
+    def process() -> None:
+        deadline = time.time() + 1
+        while time.time() < deadline and not processed:
+            if server.process_pending(max_jobs=1):
+                processed.append(True)
+            time.sleep(0.001)
+
+    thread = threading.Thread(target=process)
+    thread.start()
+    with GuiSocketClient(host=host, port=port, timeout=0.01) as client:
+        response = client.request(GuiCommandType.ACQUISITION_TAKE_Z_STACK)
+    thread.join(timeout=1)
+    server.stop()
+
+    assert processed == [True]
+    assert response.ok
