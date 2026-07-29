@@ -47,6 +47,8 @@ class StagePanel(QGroupBox):
         self.zero_button.setToolTip(
             "Set the current position to user XYZ = 0 while retaining the original machine coordinates."
         )
+        self.origin_button = QPushButton("Return to Calibration Origin")
+        self.origin_button.setToolTip("Move the stage to user/calibration coordinates XYZ = 0.")
         self.configure_button = QPushButton("Configure")
 
         form = QFormLayout()
@@ -59,7 +61,8 @@ class StagePanel(QGroupBox):
         buttons.addWidget(self.move_button, 0, 1)
         buttons.addWidget(self.stop_button, 0, 2)
         buttons.addWidget(self.zero_button, 1, 0, 1, 3)
-        buttons.addWidget(self.configure_button, 2, 0, 1, 3)
+        buttons.addWidget(self.origin_button, 2, 0, 1, 3)
+        buttons.addWidget(self.configure_button, 3, 0, 1, 3)
 
         fov_buttons = QGridLayout()
         for label, direction, row, column in self.FOV_DIRECTIONS:
@@ -86,6 +89,7 @@ class StagePanel(QGroupBox):
         self.move_button.clicked.connect(self._move_delta)
         self.stop_button.clicked.connect(self.controller.stop_stage)
         self.zero_button.clicked.connect(self._zero_stage)
+        self.origin_button.clicked.connect(self._return_to_origin)
         self.configure_button.clicked.connect(self._open_config_dialog)
         self.controller.stage_coordinates_received.connect(self.update_coordinates)
         self.controller.stage_status_received.connect(self.update_status)
@@ -124,6 +128,13 @@ class StagePanel(QGroupBox):
             return
         self.status_label.setText("Setting current XYZ as the calibration zero.")
         self.controller.zero_stage()
+
+    def _return_to_origin(self) -> None:
+        if not self.devices_initialised:
+            self.status_label.setText("Run Initialise Devices before returning to the origin.")
+            return
+        self.status_label.setText("Returning stage to calibration origin XYZ = 0.")
+        self.controller.return_stage_to_origin()
 
     def _open_config_dialog(self) -> None:
         if not self.devices_initialised:
@@ -182,6 +193,7 @@ class StagePanel(QGroupBox):
             self.move_button,
             self.stop_button,
             self.zero_button,
+            self.origin_button,
             self.configure_button,
             *self.fov_buttons,
         ):

@@ -239,7 +239,7 @@ def gui_dmd_shape_config_from_payload(payload: dict[str, Any]) -> DmdShapeConfig
 
 
 def gui_z_coordinates_from_payload(payload: dict[str, Any]) -> list[Coordinate]:
-    """Build an inclusive Z-coordinate list from start/end/step GUI fields."""
+    """Build an inclusive list of relative Z deltas from the GUI fields."""
     start_z = float(payload["start_z"])
     end_z = float(payload["end_z"])
     step_z = abs(float(payload["step_z"]))
@@ -509,6 +509,12 @@ def gui_stage_zero(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     return facade.gui_stage_coordinates_payload(query_hardware=False)
 
 
+def gui_stage_return_origin(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    gui_require_devices_initialised(facade, "stage")
+    facade.gui_stage().move(target=Coordinate(0, 0, 0), block=False)
+    return facade.gui_stage_coordinates_payload(query_hardware=False)
+
+
 def gui_camera_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "camera")
     return {"camera": facade.gui_camera_status_payload()}
@@ -568,7 +574,14 @@ def gui_acquisition_take_frame(facade: Any, payload: dict[str, Any]) -> dict[str
 def gui_acquisition_take_z_stack(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "acquisition")
     acq_mngr = facade.gui_acquisition_manager()
-    z_coordinates = gui_z_coordinates_from_payload(payload)
+    z_deltas = gui_z_coordinates_from_payload(payload)
+    current_coordinate = facade.gui_stage().get_coordinates(query_hardware=True)
+    if current_coordinate.z is None:
+        raise RuntimeError("Relative Z-stack acquisition requires a current stage Z coordinate.")
+    z_coordinates = [
+        Coordinate(None, None, current_coordinate.z + delta.z)
+        for delta in z_deltas
+    ]
     metadata = gui_frame_metadata_from_payload(facade=facade, payload=payload)
     settings = gui_frame_acquisition_settings_from_payload(payload)
     frame = acq_mngr.take_z_stack(
@@ -580,7 +593,7 @@ def gui_acquisition_take_z_stack(facade: Any, payload: dict[str, Any]) -> dict[s
         "frame": gui_frame_payload(
             frame=frame,
             kind="z_stack",
-            z_positions=[coordinate.z for coordinate in z_coordinates],
+            z_positions=[coordinate.z for coordinate in z_deltas],
             image_transport=payload.get("image_transport"),
         ),
     }
@@ -886,6 +899,7 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.STAGE_MOVE_FOV: gui_stage_move_fov,
     GuiCommandType.STAGE_STOP: gui_stage_stop,
     GuiCommandType.STAGE_ZERO: gui_stage_zero,
+    GuiCommandType.STAGE_RETURN_ORIGIN: gui_stage_return_origin,
     GuiCommandType.CAMERA_STATUS: gui_camera_status,
     GuiCommandType.CAMERA_SET_EXPOSURE: gui_camera_set_exposure,
     GuiCommandType.ACQUISITION_LIST_FILES: gui_acquisition_list_files,

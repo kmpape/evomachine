@@ -671,7 +671,7 @@ def test_facade_handles_z_stack_acquisition_request() -> None:
     assert response.payload["frame"]["stack_preview"]["shape"] == [3, 3, 4]
     assert response.payload["frame"]["z_positions"] == [-1.0, 0.0, 1.0]
     _metadata, z_coordinates, settings = automaton.acq_mngr.calls[-1]
-    assert [coordinate.z for coordinate in z_coordinates] == [-1.0, 0.0, 1.0]
+    assert [coordinate.z for coordinate in z_coordinates] == [2.0, 3.0, 4.0]
     assert settings.illuminate_dmd is False
 
 
@@ -694,6 +694,19 @@ def test_facade_zeroes_stage_and_preserves_machine_coordinate() -> None:
     facade = AutomatonGuiFacade(automaton)
 
     response = facade.handle(GuiRequest(command=GuiCommandType.STAGE_ZERO))
+
+    assert response.ok
+    assert response.payload["coordinate"] == {"x": 0, "y": 0, "z": 0, "channel_id": 0}
+    assert response.payload["machine_coordinate"] == {"x": 1, "y": 2, "z": 3, "channel_id": 0}
+
+
+def test_facade_returns_stage_to_calibration_origin() -> None:
+    automaton = FakeAutomaton()
+    facade = AutomatonGuiFacade(automaton)
+    facade.handle(GuiRequest(command=GuiCommandType.STAGE_ZERO))
+    automaton.focus_nav.stage.coordinate = Coordinate(4, 5, 6)
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.STAGE_RETURN_ORIGIN))
 
     assert response.ok
     assert response.payload["coordinate"] == {"x": 0, "y": 0, "z": 0, "channel_id": 0}

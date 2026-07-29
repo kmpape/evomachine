@@ -30,6 +30,7 @@ class GuiCommandType(str, Enum):
     STAGE_MOVE_FOV = "stage.move_fov"
     STAGE_STOP = "stage.stop"
     STAGE_ZERO = "stage.zero"
+    STAGE_RETURN_ORIGIN = "stage.return_origin"
     CAMERA_STATUS = "camera.status"
     CAMERA_SET_EXPOSURE = "camera.set_exposure"
     ACQUISITION_LIST_FILES = "acquisition.list_files"
@@ -72,6 +73,7 @@ MUTATING_COMMANDS = frozenset(
         GuiCommandType.STAGE_MOVE_FOV,
         GuiCommandType.STAGE_STOP,
         GuiCommandType.STAGE_ZERO,
+        GuiCommandType.STAGE_RETURN_ORIGIN,
         GuiCommandType.CAMERA_SET_EXPOSURE,
         GuiCommandType.ACQUISITION_TAKE_FRAME,
         GuiCommandType.ACQUISITION_TAKE_Z_STACK,

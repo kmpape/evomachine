@@ -127,7 +127,7 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
                 enabled_when_value=False,
             ),
             ConfigFieldSpec(
-                "Start Z",
+                "Start ΔZ (µm)",
                 "start_z",
                 self.config_values["start_z"],
                 kind="float",
@@ -137,7 +137,7 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
                 single_step=1.0,
             ),
             ConfigFieldSpec(
-                "End Z",
+                "End ΔZ (µm)",
                 "end_z",
                 self.config_values["end_z"],
                 kind="float",
@@ -147,7 +147,7 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
                 single_step=1.0,
             ),
             ConfigFieldSpec(
-                "Z step",
+                "ΔZ step (µm)",
                 "step_z",
                 self.config_values["step_z"],
                 kind="float",
@@ -217,8 +217,8 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
         values: dict[str, Any] = {
             USE_CURRENT_MAIN_CONTROLS_KEY: True,
             "exposure": 200.0,
-            "start_z": 0.0,
-            "end_z": 0.0,
+            "start_z": -10.0,
+            "end_z": 10.0,
             "step_z": 1.0,
             "filter_wheel": FilterWheelType.NO_FILTER.name,
             "dmd_pattern": "full",
@@ -264,7 +264,7 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
         self.summary_label.setText(
             f"mode: {mode}; exposure: {exposure}; "
             f"DMD: {dmd_pattern}; "
-            f"z: {float(self.config_values['start_z']):.3f} -> "
+            f"Δz: {float(self.config_values['start_z']):.3f} -> "
             f"{float(self.config_values['end_z']):.3f} by "
             f"{float(self.config_values['step_z']):.3f}; "
             f"settings: {settings or '-'}"

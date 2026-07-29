@@ -74,6 +74,9 @@ class FakeController(QObject):
     def zero_stage(self):
         self.calls.append(("zero_stage",))
 
+    def return_stage_to_origin(self):
+        self.calls.append(("return_stage_to_origin",))
+
     def refresh_camera(self):
         self.calls.append(("refresh_camera",))
 
@@ -199,6 +202,17 @@ def test_stage_panel_sends_zero_request() -> None:
     assert controller.calls == [("zero_stage",)]
 
 
+def test_stage_panel_sends_return_to_origin_request() -> None:
+    _app()
+    controller = FakeController()
+    panel = StagePanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+
+    panel.origin_button.click()
+
+    assert controller.calls == [("return_stage_to_origin",)]
+
+
 def test_stage_panel_sends_camera_fov_move_request() -> None:
     _app()
     controller = FakeController()
@@ -301,6 +315,17 @@ def test_z_stack_panel_sends_request() -> None:
             },
         )
     ]
+
+
+def test_z_stack_defaults_are_relative_ten_micrometres_around_origin() -> None:
+    _app()
+    settings_panel = FrameAcquisitionSettingsPanel()
+
+    payload = settings_panel.z_stack_payload()
+
+    assert payload["start_z"] == -10.0
+    assert payload["end_z"] == 10.0
+    assert payload["step_z"] == 1.0
 
 
 def test_saved_image_loader_panel_sends_load_requests() -> None:
