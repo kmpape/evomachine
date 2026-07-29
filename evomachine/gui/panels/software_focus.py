@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from PyQt5.QtWidgets import QGridLayout, QGroupBox, QLabel, QPushButton, QVBoxLayout, QWidget
 
+from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
+
 
 class SoftwareFocusPanel(QGroupBox):
     """Software focus controls."""
@@ -10,17 +12,20 @@ class SoftwareFocusPanel(QGroupBox):
         super().__init__("Software Focus", parent)
         self.controller = controller
         self.devices_initialised = False
+        self._latest_config: dict = {}
         self.status_label = QLabel("Run Initialise Devices before using software focus controls.")
         self.status_label.setWordWrap(True)
         self.config_label = QLabel("config: -")
         self.result_label = QLabel("result: -")
 
         self.refresh_button = QPushButton("Refresh")
+        self.configure_button = QPushButton("Configure")
         self.run_button = QPushButton("Run Software Focus")
 
         buttons = QGridLayout()
         buttons.addWidget(self.refresh_button, 0, 0)
-        buttons.addWidget(self.run_button, 0, 1)
+        buttons.addWidget(self.configure_button, 0, 1)
+        buttons.addWidget(self.run_button, 1, 0, 1, 2)
 
         layout = QVBoxLayout()
         layout.addWidget(self.status_label)
@@ -30,6 +35,7 @@ class SoftwareFocusPanel(QGroupBox):
         self.setLayout(layout)
 
         self.refresh_button.clicked.connect(self.controller.refresh_software_focus)
+        self.configure_button.clicked.connect(self._open_config_dialog)
         self.run_button.clicked.connect(self._run_software_focus)
         self.controller.software_focus_status_received.connect(self.update_status)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
@@ -42,9 +48,20 @@ class SoftwareFocusPanel(QGroupBox):
         self.status_label.setText("Running software focus.")
         self.controller.run_software_focus()
 
+    def _open_config_dialog(self) -> None:
+        if not self._ensure_devices_initialised():
+            return
+        dialog = ConfigDialog(
+            title="Software Focus Configuration",
+            fields=self._config_fields(),
+            parent=self,
+        )
+        dialog.exec_()
+
     def update_status(self, payload: dict) -> None:
         self.status_label.setText(f"available: {payload.get('available')}")
         config = payload.get("config") or {}
+        self._latest_config = dict(config)
         self.config_label.setText(
             f"config: range {config.get('rel_range', '-')}, step {config.get('step_size', '-')}, "
             f"{self._format_enum_name(config.get('algorithm'))}"
@@ -62,7 +79,9 @@ class SoftwareFocusPanel(QGroupBox):
             self.devices_initialised = False
         self._sync_controls_enabled()
         if not self.devices_initialised:
-            self.status_label.setText("Run Initialise Devices before using software focus controls.")
+            self.status_label.setText(
+                "Run Initialise Devices before using software focus controls."
+            )
         elif self.status_label.text().startswith("Run Initialise Devices"):
             self.status_label.setText("Refresh software focus to read status.")
 
@@ -74,10 +93,13 @@ class SoftwareFocusPanel(QGroupBox):
 
     def _sync_controls_enabled(self) -> None:
         self.refresh_button.setEnabled(self.devices_initialised)
+        self.configure_button.setEnabled(self.devices_initialised)
         self.run_button.setEnabled(self.devices_initialised)
 
     def _show_error(self, error: str) -> None:
-        if "software focus" in error.lower() or self.status_label.text().startswith("Running software focus"):
+        if "software focus" in error.lower() or self.status_label.text().startswith(
+            "Running software focus"
+        ):
             self.status_label.setText(error)
 
     def _result_text(self, result: dict) -> str:
@@ -98,3 +120,19 @@ class SoftwareFocusPanel(QGroupBox):
         if not value:
             return "-"
         return str(value).replace("_", " ").lower()
+
+    def _config_fields(self) -> list[ConfigFieldSpec]:
+        return [
+            ConfigFieldSpec(
+                "Relative range", "rel_range", self._latest_config.get("rel_range"), editable=False
+            ),
+            ConfigFieldSpec(
+                "Step size", "step_size", self._latest_config.get("step_size"), editable=False
+            ),
+            ConfigFieldSpec(
+                "Algorithm",
+                "algorithm",
+                self._format_enum_name(self._latest_config.get("algorithm")),
+                editable=False,
+            ),
+        ]

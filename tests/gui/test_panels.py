@@ -24,7 +24,7 @@ from evomachine.gui.panels.leds import LedManagerPanel
 from evomachine.gui.panels.software_focus import SoftwareFocusPanel
 from evomachine.gui.panels.stage import StagePanel
 from evomachine.gui.panels.strategy import FovSetupPanel, StrategySetupPanel
-from evomachine.types import LEDType
+from evomachine.types import FilterWheelType, LEDType
 
 
 _QT_APP: QApplication | None = None
@@ -80,8 +80,8 @@ class FakeController(QObject):
     def acquire_z_stack(self, payload=None):
         self.calls.append(("acquire_z_stack", payload))
 
-    def refresh_acquisition_files(self):
-        self.calls.append(("refresh_acquisition_files",))
+    def refresh_acquisition_files(self, directory=None):
+        self.calls.append(("refresh_acquisition_files", directory))
 
     def load_acquisition_frame(self, filename, image_transport=None):
         self.calls.append(("load_acquisition_frame", filename, image_transport))
@@ -220,50 +220,69 @@ def test_manual_acquisition_panel_sends_settings_payload() -> None:
     _app()
     controller = FakeController()
     settings_panel = FrameAcquisitionSettingsPanel()
-    settings_panel.checkboxes["normalise"].setChecked(True)
+    settings_panel.config_values["normalise"] = True
     panel = ManualAcquisitionPanel(controller=controller, settings_provider=settings_panel.payload)
     panel.update_lifecycle_status({"devices_initialised": True})
 
     panel.acquire_button.click()
 
     assert controller.calls == [
-        ("acquire_frame", {"settings": {
-            "save": False,
-            "normalise": True,
-            "illuminate_dmd": True,
-            "clear_dmd_after": False,
-            "restore_leds_after": True,
-            "disable_leds_after": False,
-        }})
+        (
+            "acquire_frame",
+            {
+                "settings": {
+                    "save": False,
+                    "normalise": True,
+                    "illuminate_dmd": False,
+                    "clear_dmd_after": False,
+                    "restore_leds_after": True,
+                    "disable_leds_after": False,
+                },
+                "use_current_main_controls": True,
+            },
+        )
     ]
+
+
+def test_acquisition_config_does_not_offer_unknown_filter_wheel() -> None:
+    _app()
+    panel = FrameAcquisitionSettingsPanel()
+
+    filter_field = next(field for field in panel._config_fields() if field.key == "filter_wheel")
+
+    assert FilterWheelType.UNKNOWN.name not in filter_field.choices
 
 
 def test_z_stack_panel_sends_request() -> None:
     _app()
     controller = FakeController()
     settings_panel = FrameAcquisitionSettingsPanel()
-    panel = ZStackSettingsPanel(controller=controller, settings_provider=settings_panel.payload)
+    settings_panel.config_values["start_z"] = -1.0
+    settings_panel.config_values["end_z"] = 1.0
+    settings_panel.config_values["step_z"] = 0.5
+    panel = ZStackSettingsPanel(controller=controller, settings_provider=settings_panel.z_stack_payload)
     panel.update_lifecycle_status({"devices_initialised": True})
-    panel.start_input.setValue(-1)
-    panel.end_input.setValue(1)
-    panel.step_input.setValue(0.5)
 
     panel.acquire_button.click()
 
     assert controller.calls == [
-        ("acquire_z_stack", {
-            "settings": {
-                "save": False,
-                "normalise": False,
-                "illuminate_dmd": True,
-                "clear_dmd_after": False,
-                "restore_leds_after": True,
-                "disable_leds_after": False,
+        (
+            "acquire_z_stack",
+            {
+                "settings": {
+                    "save": False,
+                    "normalise": False,
+                    "illuminate_dmd": False,
+                    "clear_dmd_after": False,
+                    "restore_leds_after": True,
+                    "disable_leds_after": False,
+                },
+                "use_current_main_controls": True,
+                "start_z": -1.0,
+                "end_z": 1.0,
+                "step_z": 0.5,
             },
-            "start_z": -1.0,
-            "end_z": 1.0,
-            "step_z": 0.5,
-        })
+        )
     ]
 
 
@@ -274,13 +293,24 @@ def test_saved_image_loader_panel_sends_load_requests() -> None:
     panel.update_file_list([{"label": "test.tiff", "path": "/tmp/test.tiff"}])
 
     panel.load_button.click()
-    panel.force_socket_checkbox.setChecked(True)
+    panel.force_socket_transport = True
     panel.load_button.click()
 
     assert controller.calls == [
         ("load_acquisition_frame", "/tmp/test.tiff", None),
         ("load_acquisition_frame", "/tmp/test.tiff", "socket_tiff"),
     ]
+
+
+def test_saved_image_loader_panel_refreshes_configured_directory() -> None:
+    _app()
+    controller = FakeController()
+    panel = SavedImageLoaderPanel(controller=controller)
+    panel.directory = "/tmp/example_output"
+
+    panel.refresh_button.click()
+
+    assert controller.calls == [("refresh_acquisition_files", "/tmp/example_output")]
 
 
 def test_filter_wheel_panel_sends_set_request() -> None:
@@ -350,7 +380,10 @@ def test_led_panel_refreshes_timed_state_after_stop_time(monkeypatch) -> None:
     panel.update_leds(["LED_450_NM"])
     callbacks = []
     monkeypatch.setattr("evomachine.gui.panels.leds.time.time", lambda: 1000.0)
-    monkeypatch.setattr("evomachine.gui.panels.leds.QTimer.singleShot", lambda _delay, callback: callbacks.append(callback))
+    monkeypatch.setattr(
+        "evomachine.gui.panels.leds.QTimer.singleShot",
+        lambda _delay, callback: callbacks.append(callback),
+    )
 
     panel.update_state({"led": "LED_450_NM", "brightness": 50, "is_on": True, "stop_time": 1003.0})
     callbacks[0]()
@@ -366,7 +399,9 @@ def test_dmd_panel_sends_pattern_request() -> None:
 
     panel.pattern_buttons["checkerboard"].click()
 
-    assert controller.calls == [("display_dmd_pattern", "checkerboard", panel._shape_config_payload())]
+    assert controller.calls == [
+        ("display_dmd_pattern", "checkerboard", panel._shape_config_payload())
+    ]
 
 
 def test_dmd_panel_sends_load_calibration_request() -> None:
@@ -374,19 +409,21 @@ def test_dmd_panel_sends_load_calibration_request() -> None:
     controller = FakeController()
     panel = DmdPanel(controller=controller)
     panel.update_lifecycle_status({"devices_initialised": True})
-    panel.update_status({
-        "is_initialised": True,
-        "is_alive": True,
-        "is_calibrated": True,
-        "calibration_file": "/tmp/current_calibration.pkl",
-        "calibration_files": [
-            {
-                "label": "current_calibration.pkl",
-                "path": "/tmp/current_calibration.pkl",
-                "is_current": True,
-            }
-        ],
-    })
+    panel.update_status(
+        {
+            "is_initialised": True,
+            "is_alive": True,
+            "is_calibrated": True,
+            "calibration_file": "/tmp/current_calibration.pkl",
+            "calibration_files": [
+                {
+                    "label": "current_calibration.pkl",
+                    "path": "/tmp/current_calibration.pkl",
+                    "is_current": True,
+                }
+            ],
+        }
+    )
 
     panel.load_calibration_button.click()
 
@@ -420,10 +457,10 @@ def test_autofocus_panel_sends_config_request() -> None:
     controller = FakeController()
     panel = AutofocusPanel(controller=controller)
     panel.update_lifecycle_status({"devices_initialised": True})
-    panel.config_inputs["led_intensity"].setValue(80)
-    panel.config_inputs["objective_na"].setValue(1.4)
+    panel.config_values["led_intensity"] = 80
+    panel.config_values["objective_na"] = 1.4
 
-    panel.apply_config_button.click()
+    panel._apply_config()
 
     assert controller.calls == [
         (
@@ -435,7 +472,6 @@ def test_autofocus_panel_sends_config_request() -> None:
                 "loop_gain": 10,
                 "update_rate": 10,
                 "min_error": 100,
-                "objective_na": 1.4,
                 "min_snr": 2.0,
             },
         ),
@@ -485,26 +521,42 @@ def test_strategy_panel_sends_lifecycle_requests() -> None:
     controller = FakeController()
     panel = StrategySetupPanel(controller=controller)
     controller.calls.clear()
-    panel.update_strategies([
-        {
-            "name": "NoStrategy",
-            "file_path": None,
-            "commands": [],
-            "built_in": True,
-        },
-        {
-            "name": "SimpleImagingStrategy",
-            "file_path": "/tmp/strategy_simple_imaging.py",
-            "commands": ["IMAGE", "MOVE", "WAIT"],
-            "built_in": False,
-        },
-    ])
+    panel.update_strategies(
+        [
+            {
+                "name": "NoStrategy",
+                "file_path": None,
+                "commands": [],
+                "built_in": True,
+            },
+            {
+                "name": "SimpleImagingStrategy",
+                "file_path": "/tmp/strategy_simple_imaging.py",
+                "commands": ["IMAGE", "MOVE", "WAIT"],
+                "built_in": False,
+            },
+        ]
+    )
     panel.strategy_combo.setCurrentIndex(1)
 
     panel.set_button.click()
-    panel.update_status({"name": "SimpleImagingStrategy", "is_initialised": True, "running": False, "fovs_initialised": True})
+    panel.update_status(
+        {
+            "name": "SimpleImagingStrategy",
+            "is_initialised": True,
+            "running": False,
+            "fovs_initialised": True,
+        }
+    )
     panel.start_button.click()
-    panel.update_status({"name": "SimpleImagingStrategy", "is_initialised": True, "running": True, "fovs_initialised": True})
+    panel.update_status(
+        {
+            "name": "SimpleImagingStrategy",
+            "is_initialised": True,
+            "running": True,
+            "fovs_initialised": True,
+        }
+    )
     panel.stop_button.click()
 
     assert controller.calls == [
@@ -527,5 +579,9 @@ def test_fov_setup_panel_sends_initialise_request() -> None:
     panel.initialise_button.click()
 
     assert controller.calls == [
-        ("initialise_fovs", [{"fov_id": 2, "x": 10.0, "y": 20.0, "z": 30.0, "channel_id": 0}], False)
+        (
+            "initialise_fovs",
+            [{"fov_id": 2, "x": 10.0, "y": 20.0, "z": 30.0, "channel_id": 0}],
+            False,
+        )
     ]

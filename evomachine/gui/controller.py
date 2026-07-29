@@ -144,8 +144,11 @@ class EvoMachineGuiController(QObject):
     def set_camera_exposure(self, exposure: float) -> None:
         self._send(GuiCommandType.CAMERA_SET_EXPOSURE, {"exposure": exposure})
 
-    def refresh_acquisition_files(self) -> None:
-        self._send(GuiCommandType.ACQUISITION_LIST_FILES)
+    def refresh_acquisition_files(self, directory: str | None = None) -> None:
+        payload: dict[str, Any] = {}
+        if directory is not None:
+            payload["directory"] = directory
+        self._send(GuiCommandType.ACQUISITION_LIST_FILES, payload)
 
     def load_acquisition_frame(self, filename: str, image_transport: str | None = None) -> None:
         payload: dict[str, Any] = {"filename": filename}

@@ -38,7 +38,9 @@ class AutomatonGuiFacade:
             payload = self.gui_handle_payload(request.command, request.payload)
             return GuiResponse(request_id=request.request_id, ok=True, payload=payload)
         except Exception as error:
-            return GuiResponse(request_id=request.request_id, ok=False, error=f"{type(error).__name__}: {error}")
+            return GuiResponse(
+                request_id=request.request_id, ok=False, error=f"{type(error).__name__}: {error}"
+            )
 
     def gui_strategy_active(self) -> bool:
         started = bool(self.automaton.strategy_has_started())
@@ -49,7 +51,9 @@ class AutomatonGuiFacade:
     def gui_is_rejected_during_strategy(command: GuiCommandType) -> bool:
         return command in MUTATING_COMMANDS and command not in ALWAYS_ALLOWED_MUTATING_COMMANDS
 
-    def gui_handle_payload(self, command: GuiCommandType, payload: dict[str, Any]) -> dict[str, Any]:
+    def gui_handle_payload(
+        self, command: GuiCommandType, payload: dict[str, Any]
+    ) -> dict[str, Any]:
         try:
             handler = GUI_REQUEST_HANDLERS[command]
         except KeyError as error:
@@ -60,22 +64,30 @@ class AutomatonGuiFacade:
         focus_nav = getattr(self.automaton, "focus_nav", None)
         stage = getattr(focus_nav, "stage", None)
         if stage is None:
-            logger.warning("AutomatonGuiFacade: GUI stage request ignored because no stage is configured.")
+            logger.warning(
+                "AutomatonGuiFacade: GUI stage request ignored because no stage is configured."
+            )
             raise RuntimeError("GUI stage request ignored because no stage is configured.")
         return stage
 
     def gui_acquisition_manager(self) -> Any:
         acq_mngr = getattr(self.automaton, "acq_mngr", None)
         if acq_mngr is None:
-            logger.warning("AutomatonGuiFacade: GUI acquisition request ignored because no acquisition manager is configured.")
-            raise RuntimeError("GUI acquisition request ignored because no acquisition manager is configured.")
+            logger.warning(
+                "AutomatonGuiFacade: GUI acquisition request ignored because no acquisition manager is configured."
+            )
+            raise RuntimeError(
+                "GUI acquisition request ignored because no acquisition manager is configured."
+            )
         return acq_mngr
 
     def gui_led_manager(self) -> Any:
         acq_mngr = self.gui_acquisition_manager()
         led_manager = getattr(acq_mngr, "led_manager", None)
         if led_manager is None:
-            logger.warning("AutomatonGuiFacade: GUI LED request ignored because no LED manager is configured.")
+            logger.warning(
+                "AutomatonGuiFacade: GUI LED request ignored because no LED manager is configured."
+            )
             raise RuntimeError("GUI LED request ignored because no LED manager is configured.")
         return led_manager
 
@@ -83,7 +95,9 @@ class AutomatonGuiFacade:
         acq_mngr = self.gui_acquisition_manager()
         camera = getattr(acq_mngr, "camera", None)
         if camera is None:
-            logger.warning("AutomatonGuiFacade: GUI camera request ignored because no camera is configured.")
+            logger.warning(
+                "AutomatonGuiFacade: GUI camera request ignored because no camera is configured."
+            )
             raise RuntimeError("GUI camera request ignored because no camera is configured.")
         return camera
 
@@ -93,8 +107,12 @@ class AutomatonGuiFacade:
         if filter_wheel is None:
             filter_wheel = getattr(self.automaton, "_filt_wheel", None)
         if filter_wheel is None:
-            logger.warning("AutomatonGuiFacade: GUI filter wheel request ignored because no filter wheel is configured.")
-            raise RuntimeError("GUI filter wheel request ignored because no filter wheel is configured.")
+            logger.warning(
+                "AutomatonGuiFacade: GUI filter wheel request ignored because no filter wheel is configured."
+            )
+            raise RuntimeError(
+                "GUI filter wheel request ignored because no filter wheel is configured."
+            )
         return filter_wheel
 
     def gui_dmd(self) -> Any:
@@ -103,7 +121,9 @@ class AutomatonGuiFacade:
         if dmd is None:
             dmd = getattr(self.automaton, "_dmd", None)
         if dmd is None:
-            logger.warning("AutomatonGuiFacade: GUI DMD request ignored because no DMD is configured.")
+            logger.warning(
+                "AutomatonGuiFacade: GUI DMD request ignored because no DMD is configured."
+            )
             raise RuntimeError("GUI DMD request ignored because no DMD is configured.")
         return dmd
 
@@ -113,7 +133,9 @@ class AutomatonGuiFacade:
         if autofocus is None:
             autofocus = getattr(self.automaton, "_autofocus", None)
         if autofocus is None:
-            logger.warning("AutomatonGuiFacade: GUI autofocus request ignored because no autofocus is configured.")
+            logger.warning(
+                "AutomatonGuiFacade: GUI autofocus request ignored because no autofocus is configured."
+            )
             raise RuntimeError("GUI autofocus request ignored because no autofocus is configured.")
         return autofocus
 
@@ -123,8 +145,12 @@ class AutomatonGuiFacade:
         if software_focus is None:
             software_focus = getattr(self.automaton, "_swfocus", None)
         if software_focus is None:
-            logger.warning("AutomatonGuiFacade: GUI software focus request ignored because no software focus is configured.")
-            raise RuntimeError("GUI software focus request ignored because no software focus is configured.")
+            logger.warning(
+                "AutomatonGuiFacade: GUI software focus request ignored because no software focus is configured."
+            )
+            raise RuntimeError(
+                "GUI software focus request ignored because no software focus is configured."
+            )
         return software_focus
 
     def gui_status_payload(self) -> dict[str, Any]:
@@ -137,7 +163,9 @@ class AutomatonGuiFacade:
     def gui_strategy_config(self) -> Any:
         cfg = getattr(self.automaton, "_cfg", None)
         if cfg is None:
-            raise RuntimeError("GUI strategy request ignored because no image processor config is configured.")
+            raise RuntimeError(
+                "GUI strategy request ignored because no image processor config is configured."
+            )
         return cfg
 
     def gui_strategy_status_payload(self) -> dict[str, Any]:
@@ -146,7 +174,9 @@ class AutomatonGuiFacade:
         command_error = None
         if strategy is not None:
             try:
-                command_names = sorted(command_type.name for command_type in strategy.register_automaton_commands())
+                command_names = sorted(
+                    command_type.name for command_type in strategy.register_automaton_commands()
+                )
             except Exception as error:
                 command_error = f"{type(error).__name__}: {error}"
         payload = {
@@ -177,7 +207,9 @@ class AutomatonGuiFacade:
     def gui_controller_status_payload(self) -> dict[str, Any]:
         return {
             "controllers": [
-                self._gui_controller_entry_payload(controller=entry["controller"], owners=entry["owners"])
+                self._gui_controller_entry_payload(
+                    controller=entry["controller"], owners=entry["owners"]
+                )
                 for entry in self._gui_controller_entries()
             ],
             "checked_at": datetime.now(timezone.utc).isoformat(),
@@ -203,7 +235,12 @@ class AutomatonGuiFacade:
 
     def gui_mark_automaton_shutdown(self) -> None:
         """Set automaton shutdown events when normal shutdown cannot run safely."""
-        for attr_name in ("_stop_strategy_event", "_start_strategy_event", "_stop_event", "_shutdown_event"):
+        for attr_name in (
+            "_stop_strategy_event",
+            "_start_strategy_event",
+            "_stop_event",
+            "_shutdown_event",
+        ):
             event = getattr(self.automaton, attr_name, None)
             set_event = getattr(event, "set", None)
             if callable(set_event):
@@ -233,6 +270,8 @@ class AutomatonGuiFacade:
 
     def gui_camera_status_payload(self) -> dict[str, Any]:
         camera = self.gui_camera()
+        config = getattr(camera, "config", None)
+        objective_config = getattr(config, "objective_config", None)
         readout_mode = getattr(camera, "readout_mode", None)
         return {
             "name": getattr(camera, "name", "Camera"),
@@ -243,6 +282,14 @@ class AutomatonGuiFacade:
             "readout_mode": getattr(readout_mode, "value", readout_mode),
             "image_shape": list(camera.image.shape),
             "dtype": str(camera.image.pxl_dtype),
+            "sensor_pixel_size_um": getattr(config, "sensor_pixel_size_um", None),
+            "objective": None
+            if objective_config is None
+            else {
+                "na": getattr(objective_config, "na", None),
+                "mag": getattr(objective_config, "mag", None),
+                "descr": getattr(objective_config, "descr", None),
+            },
         }
 
     def gui_filter_wheel_status_payload(self) -> dict[str, Any]:
@@ -275,13 +322,17 @@ class AutomatonGuiFacade:
             "is_calibrated": bool(dmd.is_calibrated()),
             "width_height": list(getattr(dmd, "width_height_DMD", ())),
             "calibration_file": None if calibration_filename is None else str(calibration_filename),
-            "calibration_files": self.gui_dmd_calibration_files_payload(current_file=calibration_filename),
+            "calibration_files": self.gui_dmd_calibration_files_payload(
+                current_file=calibration_filename
+            ),
             "last_pattern": self._last_dmd_pattern,
             "preview": self._last_dmd_preview,
         }
 
     @staticmethod
-    def gui_dmd_calibration_files_payload(current_file: Path | str | None = None) -> list[dict[str, Any]]:
+    def gui_dmd_calibration_files_payload(
+        current_file: Path | str | None = None,
+    ) -> list[dict[str, Any]]:
         current_path = Path(current_file) if current_file is not None else None
         candidates: list[Path] = []
         calibration_directories = (
@@ -306,11 +357,13 @@ class AutomatonGuiFacade:
             if key in seen:
                 continue
             seen.add(key)
-            files.append({
-                "label": path.name,
-                "path": key,
-                "is_current": current_path is not None and path == current_path,
-            })
+            files.append(
+                {
+                    "label": path.name,
+                    "path": key,
+                    "is_current": current_path is not None and path == current_path,
+                }
+            )
         return files
 
     def gui_autofocus_status_payload(self) -> dict[str, Any]:
@@ -354,7 +407,9 @@ class AutomatonGuiFacade:
         algorithm = getattr(config, "algorithm", None)
         return {
             "available": True,
-            "config": None if config is None else {
+            "config": None
+            if config is None
+            else {
                 "rel_range": getattr(config, "rel_range", None),
                 "step_size": getattr(config, "step_size", None),
                 "algorithm": getattr(algorithm, "name", str(algorithm)),
@@ -377,9 +432,15 @@ class AutomatonGuiFacade:
                 "name": getattr(curve_status, "name", str(curve_status)),
                 "value": getattr(curve_status, "value", None),
             },
-            "best_coordinate": None if best_coordinate is None else gui_coordinate_to_payload(best_coordinate),
-            "previous_coordinate": None if previous_coordinate is None else gui_coordinate_to_payload(previous_coordinate),
-            "z_points": None if z_coordinates is None else int(getattr(z_coordinates, "size", len(z_coordinates))),
+            "best_coordinate": None
+            if best_coordinate is None
+            else gui_coordinate_to_payload(best_coordinate),
+            "previous_coordinate": None
+            if previous_coordinate is None
+            else gui_coordinate_to_payload(previous_coordinate),
+            "z_points": None
+            if z_coordinates is None
+            else int(getattr(z_coordinates, "size", len(z_coordinates))),
         }
         self._last_software_focus_result = payload
         return payload
@@ -403,15 +464,28 @@ class AutomatonGuiFacade:
             try:
                 roots.extend(iter_peripherals())
             except Exception:
-                logger.exception("AutomatonGuiFacade: failed to iterate automaton peripherals for controller status.")
+                logger.exception(
+                    "AutomatonGuiFacade: failed to iterate automaton peripherals for controller status."
+                )
         acq_mngr = getattr(self.automaton, "acq_mngr", None)
         focus_nav = getattr(self.automaton, "focus_nav", None)
         proj_mngr = getattr(self.automaton, "proj_mngr", None)
         for container, attr_names in (
-                (acq_mngr, ("camera", "stage", "led_manager", "filter_wheel", "dmd")),
-                (focus_nav, ("stage", "autofocus")),
-                (proj_mngr, ("camera", "dmd", "led_manager", "filter_wheel", "photodiode")),
-                (self.automaton, ("_camera", "_stage", "_led_mngr", "_filt_wheel", "_dmd", "_autofocus", "_photodiode")),
+            (acq_mngr, ("camera", "stage", "led_manager", "filter_wheel", "dmd")),
+            (focus_nav, ("stage", "autofocus")),
+            (proj_mngr, ("camera", "dmd", "led_manager", "filter_wheel", "photodiode")),
+            (
+                self.automaton,
+                (
+                    "_camera",
+                    "_stage",
+                    "_led_mngr",
+                    "_filt_wheel",
+                    "_dmd",
+                    "_autofocus",
+                    "_photodiode",
+                ),
+            ),
         ):
             if container is None:
                 continue

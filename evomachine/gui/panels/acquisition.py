@@ -2,12 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from PyQt5.QtWidgets import (
-    QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
-    QFormLayout,
     QGridLayout,
     QGroupBox,
     QLabel,
@@ -17,49 +15,278 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.gui.image_payloads import IMAGE_TRANSPORT_SOCKET_TIFF
+from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
+from evomachine.gui.panels.leds import LED_GROUPS, LED_LABELS
+from evomachine.types import FilterWheelType, LEDType
+
+
+USE_CURRENT_MAIN_CONTROLS_KEY = "use_current_main_controls"
+DMD_PATTERN_CHOICES = (
+    "full",
+    "empty",
+    "rectangle",
+    "circle",
+    "checkerboard",
+    "crosshair",
+)
+FILTER_WHEEL_CHOICES = tuple(
+    filter_type.name
+    for filter_type in FilterWheelType
+    if filter_type is not FilterWheelType.UNKNOWN
+)
+ACQUISITION_LED_TYPES = tuple(
+    led_type
+    for _group_name, led_types in LED_GROUPS
+    for led_type in led_types
+)
 
 
 class FrameAcquisitionSettingsPanel(QGroupBox):
-    """Frame acquisition settings currently represented in the backend dataclass."""
+    """Config values used by manual frame and z-stack acquisition panels."""
 
     SETTINGS = (
         ("save", "Save", False),
         ("normalise", "Normalise", False),
-        ("illuminate_dmd", "Illuminate DMD", True),
+        ("illuminate_dmd", "Illuminate DMD", False),
         ("clear_dmd_after", "Clear DMD After", False),
         ("restore_leds_after", "Restore LEDs After", True),
         ("disable_leds_after", "Disable LEDs After", False),
     )
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("Frame Acquisition Settings", parent)
-        self.checkboxes: dict[str, QCheckBox] = {}
+        super().__init__("Acquisition Configuration", parent)
+        self.config_values = self._default_config_values()
+        self.configure_button = QPushButton("Configure")
+        self.summary_label = QLabel()
+        self.summary_label.setWordWrap(True)
 
         layout = QVBoxLayout()
-        for key, label, default in self.SETTINGS:
-            checkbox = QCheckBox(label)
-            checkbox.setChecked(default)
-            self.checkboxes[key] = checkbox
-            layout.addWidget(checkbox)
+        layout.addWidget(self.summary_label)
+        layout.addWidget(self.configure_button)
         self.setLayout(layout)
 
+        self.configure_button.clicked.connect(self._open_config_dialog)
+        self._update_summary()
+
     def payload(self) -> dict:
-        return {
-            "settings": {
-                key: checkbox.isChecked()
-                for key, checkbox in self.checkboxes.items()
-            }
+        settings = {
+            key: bool(self.config_values[key])
+            for key, _label, _default in self.SETTINGS
         }
+        use_current_main_controls = bool(self.config_values[USE_CURRENT_MAIN_CONTROLS_KEY])
+        if use_current_main_controls:
+            settings["illuminate_dmd"] = False
+
+        payload: dict[str, Any] = {
+            "settings": settings,
+            USE_CURRENT_MAIN_CONTROLS_KEY: use_current_main_controls,
+        }
+        if not use_current_main_controls:
+            payload["exposure"] = float(self.config_values["exposure"])
+            payload.update(self._explicit_peripheral_payload())
+        return payload
+
+    def z_stack_payload(self) -> dict:
+        payload = self.payload()
+        payload.update({
+            "start_z": float(self.config_values["start_z"]),
+            "end_z": float(self.config_values["end_z"]),
+            "step_z": float(self.config_values["step_z"]),
+        })
+        return payload
+
+    def _open_config_dialog(self) -> None:
+        dialog = ConfigDialog(
+            title="Acquisition Configuration",
+            fields=self._config_fields(),
+            parent=self,
+        )
+        if dialog.exec_() != dialog.Accepted:
+            return
+        self.config_values.update(dialog.values())
+        self._update_summary()
+
+    def _config_fields(self) -> list[ConfigFieldSpec]:
+        fields = [
+            ConfigFieldSpec(
+                "Use current main controls",
+                USE_CURRENT_MAIN_CONTROLS_KEY,
+                self.config_values[USE_CURRENT_MAIN_CONTROLS_KEY],
+                kind="bool",
+            ),
+            ConfigFieldSpec(
+                "Exposure ms",
+                "exposure",
+                self.config_values["exposure"],
+                kind="float",
+                minimum=1.0,
+                maximum=1000.0,
+                decimals=1,
+                single_step=10.0,
+                enabled_when_key=USE_CURRENT_MAIN_CONTROLS_KEY,
+                enabled_when_value=False,
+            ),
+            ConfigFieldSpec(
+                "Start Z",
+                "start_z",
+                self.config_values["start_z"],
+                kind="float",
+                minimum=-1e7,
+                maximum=1e7,
+                decimals=3,
+                single_step=1.0,
+            ),
+            ConfigFieldSpec(
+                "End Z",
+                "end_z",
+                self.config_values["end_z"],
+                kind="float",
+                minimum=-1e7,
+                maximum=1e7,
+                decimals=3,
+                single_step=1.0,
+            ),
+            ConfigFieldSpec(
+                "Z step",
+                "step_z",
+                self.config_values["step_z"],
+                kind="float",
+                minimum=0.001,
+                maximum=1e7,
+                decimals=3,
+                single_step=1.0,
+            ),
+        ]
+        for key, label, _default in self.SETTINGS:
+            kwargs = (
+                {
+                    "enabled_when_key": USE_CURRENT_MAIN_CONTROLS_KEY,
+                    "enabled_when_value": False,
+                }
+                if key == "illuminate_dmd"
+                else {}
+            )
+            fields.append(ConfigFieldSpec(label, key, self.config_values[key], kind="bool", **kwargs))
+        fields.extend([
+            ConfigFieldSpec(
+                "Filter wheel",
+                "filter_wheel",
+                self.config_values["filter_wheel"],
+                kind="choice",
+                choices=FILTER_WHEEL_CHOICES,
+                enabled_when_key=USE_CURRENT_MAIN_CONTROLS_KEY,
+                enabled_when_value=False,
+            ),
+            ConfigFieldSpec(
+                "DMD pattern",
+                "dmd_pattern",
+                self.config_values["dmd_pattern"],
+                kind="choice",
+                choices=DMD_PATTERN_CHOICES,
+                enabled_when_key=USE_CURRENT_MAIN_CONTROLS_KEY,
+                enabled_when_value=False,
+            ),
+        ])
+        for led_type in ACQUISITION_LED_TYPES:
+            fields.extend([
+                ConfigFieldSpec(
+                    f"Use {LED_LABELS.get(led_type, led_type.name)}",
+                    self._led_enabled_key(led_type),
+                    self.config_values[self._led_enabled_key(led_type)],
+                    kind="bool",
+                    enabled_when_key=USE_CURRENT_MAIN_CONTROLS_KEY,
+                    enabled_when_value=False,
+                ),
+                ConfigFieldSpec(
+                    f"{LED_LABELS.get(led_type, led_type.name)} brightness",
+                    self._led_brightness_key(led_type),
+                    self.config_values[self._led_brightness_key(led_type)],
+                    kind="float",
+                    minimum=0.0,
+                    maximum=100.0,
+                    decimals=0,
+                    single_step=1.0,
+                    enabled_when_key=USE_CURRENT_MAIN_CONTROLS_KEY,
+                    enabled_when_value=False,
+                ),
+            ])
+        return fields
+
+    @classmethod
+    def _default_config_values(cls) -> dict[str, Any]:
+        values: dict[str, Any] = {
+            USE_CURRENT_MAIN_CONTROLS_KEY: True,
+            "exposure": 200.0,
+            "start_z": 0.0,
+            "end_z": 0.0,
+            "step_z": 1.0,
+            "filter_wheel": FilterWheelType.NO_FILTER.name,
+            "dmd_pattern": "full",
+        }
+        values.update({key: default for key, _label, default in cls.SETTINGS})
+        for led_type in ACQUISITION_LED_TYPES:
+            values[cls._led_enabled_key(led_type)] = False
+            values[cls._led_brightness_key(led_type)] = 29.0
+        return values
+
+    def _explicit_peripheral_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        leds = {
+            led_type.name: float(self.config_values[self._led_brightness_key(led_type)])
+            for led_type in ACQUISITION_LED_TYPES
+            if bool(self.config_values[self._led_enabled_key(led_type)])
+        }
+        if leds:
+            payload["leds"] = leds
+        filter_wheel = str(self.config_values["filter_wheel"])
+        payload["filter_wheel"] = filter_wheel
+        dmd_pattern = str(self.config_values["dmd_pattern"])
+        if bool(self.config_values["illuminate_dmd"]):
+            payload["dmd_pattern"] = dmd_pattern
+        return payload
+
+    def _update_summary(self) -> None:
+        use_current_main_controls = bool(self.config_values[USE_CURRENT_MAIN_CONTROLS_KEY])
+        exposure = "main controls" if use_current_main_controls else f"{float(self.config_values['exposure']):.1f} ms"
+        dmd_pattern = (
+            "main controls"
+            if use_current_main_controls
+            else str(self.config_values["dmd_pattern"])
+            if bool(self.config_values["illuminate_dmd"])
+            else "off"
+        )
+        mode = "current main controls" if use_current_main_controls else "explicit acquisition config"
+        settings = ", ".join(
+            label
+            for key, label, _default in self.SETTINGS
+            if bool(self.config_values[key])
+        )
+        self.summary_label.setText(
+            f"mode: {mode}; exposure: {exposure}; "
+            f"DMD: {dmd_pattern}; "
+            f"z: {float(self.config_values['start_z']):.3f} -> "
+            f"{float(self.config_values['end_z']):.3f} by "
+            f"{float(self.config_values['step_z']):.3f}; "
+            f"settings: {settings or '-'}"
+        )
+
+    @staticmethod
+    def _led_enabled_key(led_type: LEDType) -> str:
+        return f"led_{led_type.name}_enabled"
+
+    @staticmethod
+    def _led_brightness_key(led_type: LEDType) -> str:
+        return f"led_{led_type.name}_brightness"
 
 
 class ManualAcquisitionPanel(QGroupBox):
     """Manual single-frame acquisition controls."""
 
     def __init__(
-            self,
-            controller,
-            settings_provider: Callable[[], dict] | None = None,
-            parent: QWidget | None = None,
+        self,
+        controller,
+        settings_provider: Callable[[], dict] | None = None,
+        parent: QWidget | None = None,
     ):
         super().__init__("Manual Acquisition", parent)
         self.controller = controller
@@ -67,15 +294,8 @@ class ManualAcquisitionPanel(QGroupBox):
         self.devices_initialised = False
         self.acquire_button = QPushButton("Acquire Frame")
         self.status_label = QLabel("Run Initialise Devices before manual acquisition.")
-        self.exposure_checkbox = QCheckBox("Override exposure")
-        self.exposure_input = self._exposure_input()
-
-        form = QFormLayout()
-        form.addRow("Exposure ms", self.exposure_input)
 
         layout = QVBoxLayout()
-        layout.addWidget(self.exposure_checkbox)
-        layout.addLayout(form)
         layout.addWidget(self.acquire_button)
         layout.addWidget(self.status_label)
         self.setLayout(layout)
@@ -86,23 +306,12 @@ class ManualAcquisitionPanel(QGroupBox):
         self.controller.response_error.connect(self._show_error)
         self._sync_controls_enabled()
 
-    @staticmethod
-    def _exposure_input() -> QDoubleSpinBox:
-        box = QDoubleSpinBox()
-        box.setRange(1.0, 1000.0)
-        box.setDecimals(1)
-        box.setSingleStep(10.0)
-        box.setValue(200.0)
-        return box
-
     def _acquire_frame(self) -> None:
         if not self.devices_initialised:
             self.status_label.setText("Run Initialise Devices before manual acquisition.")
             return
         self.status_label.setText("Acquiring frame.")
         payload = self.settings_provider()
-        if self.exposure_checkbox.isChecked():
-            payload = {**payload, "exposure": self.exposure_input.value()}
         self.controller.acquire_frame(payload)
 
     def update_frame_status(self, payload: dict) -> None:
@@ -124,8 +333,6 @@ class ManualAcquisitionPanel(QGroupBox):
 
     def _sync_controls_enabled(self) -> None:
         self.acquire_button.setEnabled(self.devices_initialised)
-        self.exposure_checkbox.setEnabled(self.devices_initialised)
-        self.exposure_input.setEnabled(self.devices_initialised)
 
     def _show_error(self, error: str) -> None:
         if self.status_label.text().startswith("Acquiring frame"):
@@ -136,30 +343,19 @@ class ZStackSettingsPanel(QGroupBox):
     """Minimum useful z-stack acquisition controls."""
 
     def __init__(
-            self,
-            controller,
-            settings_provider: Callable[[], dict] | None = None,
-            parent: QWidget | None = None,
+        self,
+        controller,
+        settings_provider: Callable[[], dict] | None = None,
+        parent: QWidget | None = None,
     ):
         super().__init__("Z Stack Acquisition", parent)
         self.controller = controller
         self.settings_provider = settings_provider or (lambda: {})
         self.devices_initialised = False
-        self.start_input = self._float_input()
-        self.end_input = self._float_input()
-        self.step_input = self._float_input()
-        self.step_input.setRange(0.001, 1e7)
-        self.step_input.setValue(1.0)
         self.acquire_button = QPushButton("Acquire Z Stack")
         self.status_label = QLabel("Run Initialise Devices before z-stack acquisition.")
 
-        form = QFormLayout()
-        form.addRow("Start Z", self.start_input)
-        form.addRow("End Z", self.end_input)
-        form.addRow("Step", self.step_input)
-
         layout = QVBoxLayout()
-        layout.addLayout(form)
         layout.addWidget(self.acquire_button)
         layout.addWidget(self.status_label)
         self.setLayout(layout)
@@ -170,24 +366,11 @@ class ZStackSettingsPanel(QGroupBox):
         self.controller.response_error.connect(self._show_error)
         self._sync_controls_enabled()
 
-    @staticmethod
-    def _float_input() -> QDoubleSpinBox:
-        box = QDoubleSpinBox()
-        box.setRange(-1e7, 1e7)
-        box.setDecimals(3)
-        box.setSingleStep(1.0)
-        return box
-
     def _acquire_z_stack(self) -> None:
         if not self.devices_initialised:
             self.status_label.setText("Run Initialise Devices before z-stack acquisition.")
             return
-        payload = {
-            **self.settings_provider(),
-            "start_z": self.start_input.value(),
-            "end_z": self.end_input.value(),
-            "step_z": self.step_input.value(),
-        }
+        payload = self.settings_provider()
         self.status_label.setText("Acquiring z-stack.")
         self.controller.acquire_z_stack(payload)
 
@@ -209,8 +392,7 @@ class ZStackSettingsPanel(QGroupBox):
             self.status_label.setText("Ready to acquire a z-stack.")
 
     def _sync_controls_enabled(self) -> None:
-        for widget in (self.start_input, self.end_input, self.step_input, self.acquire_button):
-            widget.setEnabled(self.devices_initialised)
+        self.acquire_button.setEnabled(self.devices_initialised)
 
     def _show_error(self, error: str) -> None:
         if self.status_label.text().startswith("Acquiring z-stack"):
@@ -224,45 +406,80 @@ class SavedImageLoaderPanel(QGroupBox):
         super().__init__("Load Saved Image", parent)
         self.controller = controller
         self.file_combo = QComboBox()
-        self.force_socket_checkbox = QCheckBox("Force socket transport")
+        self.directory = ""
+        self.force_socket_transport = False
         self.refresh_button = QPushButton("Refresh Files")
+        self.configure_button = QPushButton("Configure")
         self.load_button = QPushButton("Load Selected")
         self.path_label = QLabel("path: -")
         self.status_label = QLabel("Refresh files to load a saved TIFF.")
+        self.transport_label = QLabel()
         self.path_label.setWordWrap(True)
 
         button_grid = QGridLayout()
         button_grid.addWidget(self.refresh_button, 0, 0)
-        button_grid.addWidget(self.load_button, 0, 1)
+        button_grid.addWidget(self.configure_button, 0, 1)
+        button_grid.addWidget(self.load_button, 1, 0, 1, 2)
 
         layout = QVBoxLayout()
-        layout.addWidget(self.force_socket_checkbox)
         layout.addWidget(self.file_combo)
         layout.addWidget(self.path_label)
+        layout.addWidget(self.transport_label)
         layout.addLayout(button_grid)
         layout.addWidget(self.status_label)
         self.setLayout(layout)
 
         self.refresh_button.clicked.connect(self._refresh_files)
+        self.configure_button.clicked.connect(self._open_config_dialog)
         self.load_button.clicked.connect(self._load_selected)
         self.file_combo.currentIndexChanged.connect(self._update_selected_path_label)
         self.controller.acquisition_files_received.connect(self.update_file_list)
         self.controller.frame_received.connect(self.update_frame_status)
         self.controller.response_error.connect(self._show_error)
+        self._update_transport_label()
         self._sync_controls_enabled()
 
     def _refresh_files(self) -> None:
         self.status_label.setText("Refreshing files.")
-        self.controller.refresh_acquisition_files()
+        directory = self.directory.strip() or None
+        self.controller.refresh_acquisition_files(directory=directory)
 
     def _load_selected(self) -> None:
         filename = self._selected_filename()
         if filename is None:
             self.status_label.setText("No saved TIFF selected.")
             return
-        image_transport = IMAGE_TRANSPORT_SOCKET_TIFF if self.force_socket_checkbox.isChecked() else None
-        self.status_label.setText("Loading through socket." if image_transport else "Loading selected file.")
+        image_transport = IMAGE_TRANSPORT_SOCKET_TIFF if self.force_socket_transport else None
+        self.status_label.setText(
+            "Loading through socket." if image_transport else "Loading selected file."
+        )
         self.controller.load_acquisition_frame(filename, image_transport=image_transport)
+
+    def _open_config_dialog(self) -> None:
+        dialog = ConfigDialog(
+            title="Saved Image Loader Configuration",
+            fields=[
+                ConfigFieldSpec(
+                    "Folder",
+                    "directory",
+                    self.directory,
+                ),
+                ConfigFieldSpec(
+                    "Force socket transport",
+                    "force_socket_transport",
+                    self.force_socket_transport,
+                    kind="bool",
+                )
+            ],
+            parent=self,
+        )
+        if dialog.exec_() != dialog.Accepted:
+            return
+        values = dialog.values()
+        self.directory = str(values["directory"]).strip()
+        self.force_socket_transport = bool(values["force_socket_transport"])
+        self._update_transport_label()
+        self._update_selected_path_label()
 
     def _selected_filename(self) -> str | None:
         filename = self.file_combo.currentData()
@@ -286,7 +503,9 @@ class SavedImageLoaderPanel(QGroupBox):
             if index >= 0:
                 self.file_combo.setCurrentIndex(index)
         count = self.file_combo.count()
-        self.status_label.setText(f"{count} saved TIFF file(s) available." if count else "No saved TIFF files found.")
+        self.status_label.setText(
+            f"{count} saved TIFF file(s) available." if count else "No saved TIFF files found."
+        )
         self._update_selected_path_label()
         self._sync_controls_enabled()
 
@@ -299,10 +518,21 @@ class SavedImageLoaderPanel(QGroupBox):
     def _sync_controls_enabled(self) -> None:
         has_file = self.file_combo.count() > 0
         self.load_button.setEnabled(has_file)
+        self.configure_button.setEnabled(True)
 
     def _update_selected_path_label(self, _index: int | None = None) -> None:
         filename = self._selected_filename()
-        self.path_label.setText(f"path: {filename}" if filename is not None else "path: -")
+        directory = self.directory.strip()
+        if filename is not None:
+            self.path_label.setText(f"path: {filename}")
+        elif directory:
+            self.path_label.setText(f"folder: {directory}")
+        else:
+            self.path_label.setText("path: -")
+
+    def _update_transport_label(self) -> None:
+        transport = "socket" if self.force_socket_transport else "auto"
+        self.transport_label.setText(f"transport: {transport}")
 
     def _show_error(self, error: str) -> None:
         if self.status_label.text().startswith(("Refreshing files", "Loading")):

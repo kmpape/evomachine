@@ -11,6 +11,8 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
+
 
 class StagePanel(QGroupBox):
     """Simple Stage control panel."""
@@ -25,6 +27,8 @@ class StagePanel(QGroupBox):
     def __init__(self, controller, parent: QWidget | None = None):
         super().__init__("Stage", parent)
         self.controller = controller
+        self._latest_coordinate: dict = {}
+        self._latest_status: dict = {}
         self.coordinate_label = QLabel("x: -, y: -, z: -")
         self.fov_step_label = QLabel("camera FoV step: -")
         self.status_label = QLabel("Run Initialise Devices before using stage controls.")
@@ -37,6 +41,7 @@ class StagePanel(QGroupBox):
         self.refresh_button = QPushButton("Refresh")
         self.move_button = QPushButton("Move")
         self.stop_button = QPushButton("Stop")
+        self.configure_button = QPushButton("Configure")
 
         form = QFormLayout()
         form.addRow("X", self.x_input)
@@ -47,12 +52,15 @@ class StagePanel(QGroupBox):
         buttons.addWidget(self.refresh_button, 0, 0)
         buttons.addWidget(self.move_button, 0, 1)
         buttons.addWidget(self.stop_button, 0, 2)
+        buttons.addWidget(self.configure_button, 1, 0, 1, 3)
 
         fov_buttons = QGridLayout()
         for label, direction, row, column in self.FOV_DIRECTIONS:
             button = QPushButton(label)
             button.setEnabled(False)
-            button.clicked.connect(lambda _checked=False, selected=direction: self._move_camera_fov(selected))
+            button.clicked.connect(
+                lambda _checked=False, selected=direction: self._move_camera_fov(selected)
+            )
             self.fov_buttons.append(button)
             fov_buttons.addWidget(button, row, column)
 
@@ -69,6 +77,7 @@ class StagePanel(QGroupBox):
         self.refresh_button.clicked.connect(self.controller.refresh_stage)
         self.move_button.clicked.connect(self._move_absolute)
         self.stop_button.clicked.connect(self.controller.stop_stage)
+        self.configure_button.clicked.connect(self._open_config_dialog)
         self.controller.stage_coordinates_received.connect(self.update_coordinates)
         self.controller.stage_status_received.connect(self.update_status)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
@@ -99,8 +108,20 @@ class StagePanel(QGroupBox):
         self.status_label.setText(f"Moving one camera FoV {direction.lower()}.")
         self.controller.move_stage_fov(direction=direction, multiplier=1.0)
 
+    def _open_config_dialog(self) -> None:
+        if not self.devices_initialised:
+            self.status_label.setText("Run Initialise Devices before using stage controls.")
+            return
+        dialog = ConfigDialog(
+            title="Stage Configuration",
+            fields=self._config_fields(),
+            parent=self,
+        )
+        dialog.exec_()
+
     def update_coordinates(self, payload: dict) -> None:
         coordinate = payload.get("coordinate", {})
+        self._latest_coordinate = dict(coordinate)
         self.coordinate_label.setText(
             f"x: {coordinate.get('x')}, y: {coordinate.get('y')}, z: {coordinate.get('z')}"
         )
@@ -108,13 +129,14 @@ class StagePanel(QGroupBox):
             self.update_status(payload["stage"])
 
     def update_status(self, payload: dict) -> None:
+        self._latest_status = dict(payload)
         self.status_label.setText(
             f"initialised: {payload.get('is_initialised')}, alive: {payload.get('is_alive')}, "
             f"fov: {payload.get('fov_id')}"
         )
         fov_step_size = payload.get("camera_fov_step_size", payload.get("fov_step_size"))
         if isinstance(fov_step_size, int | float):
-            fov_step_text = f"{float(fov_step_size):.3g} um"
+            fov_step_text = f"{float(fov_step_size):.3f} um"
         else:
             fov_step_text = "-"
         self.fov_step_label.setText(f"camera FoV step: {fov_step_text}")
@@ -137,6 +159,27 @@ class StagePanel(QGroupBox):
             self.refresh_button,
             self.move_button,
             self.stop_button,
+            self.configure_button,
             *self.fov_buttons,
         ):
             widget.setEnabled(self.devices_initialised)
+
+    def _config_fields(self) -> list[ConfigFieldSpec]:
+        return [
+            ConfigFieldSpec("X", "x", self._latest_coordinate.get("x"), editable=False),
+            ConfigFieldSpec("Y", "y", self._latest_coordinate.get("y"), editable=False),
+            ConfigFieldSpec("Z", "z", self._latest_coordinate.get("z"), editable=False),
+            ConfigFieldSpec("FoV ID", "fov_id", self._latest_status.get("fov_id"), editable=False),
+            ConfigFieldSpec(
+                "Stage FoV step",
+                "fov_step_size",
+                self._latest_status.get("fov_step_size"),
+                editable=False,
+            ),
+            ConfigFieldSpec(
+                "Camera FoV step",
+                "camera_fov_step_size",
+                self._latest_status.get("camera_fov_step_size"),
+                editable=False,
+            ),
+        ]

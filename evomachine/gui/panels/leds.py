@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
 from evomachine.types import LEDType
 
 
@@ -62,6 +63,8 @@ class LedManagerPanel(QGroupBox):
         refresh_button = QPushButton("Refresh")
         refresh_button.setEnabled(False)
         self.refresh_button = refresh_button
+        self.configure_button = QPushButton("Configure")
+        self.configure_button.setEnabled(False)
 
         led_layout = QVBoxLayout()
         for group_name, led_types in LED_GROUPS:
@@ -72,6 +75,7 @@ class LedManagerPanel(QGroupBox):
 
         buttons = QGridLayout()
         buttons.addWidget(refresh_button, 0, 0)
+        buttons.addWidget(self.configure_button, 0, 1)
 
         layout = QVBoxLayout()
         layout.addLayout(led_layout)
@@ -80,6 +84,7 @@ class LedManagerPanel(QGroupBox):
         self.setLayout(layout)
 
         refresh_button.clicked.connect(self.controller.refresh_leds)
+        self.configure_button.clicked.connect(self._open_config_dialog)
         self.controller.led_list_received.connect(self.update_leds)
         self.controller.led_state_received.connect(self.update_state)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
@@ -93,11 +98,15 @@ class LedManagerPanel(QGroupBox):
             button.setCheckable(True)
             button.setEnabled(False)
             button.setToolTip(led_type.name)
-            button.toggled.connect(lambda checked, selected=led_type: self._toggle_led(selected, checked))
+            button.toggled.connect(
+                lambda checked, selected=led_type: self._toggle_led(selected, checked)
+            )
 
             brightness_input = self._brightness_input()
             brightness_input.setEnabled(False)
-            brightness_input.valueChanged.connect(lambda _value, selected=led_type: self._update_active_led(selected))
+            brightness_input.valueChanged.connect(
+                lambda _value, selected=led_type: self._update_active_led(selected)
+            )
 
             self.led_buttons[led_type] = button
             self.brightness_inputs[led_type] = brightness_input
@@ -142,6 +151,17 @@ class LedManagerPanel(QGroupBox):
         if self.devices_initialised and button.isEnabled() and button.isChecked():
             self._set_led(led_type)
 
+    def _open_config_dialog(self) -> None:
+        if not self.devices_initialised:
+            self.state_label.setText("Run Initialise Devices before using LED controls.")
+            return
+        dialog = ConfigDialog(
+            title="LED Manager Configuration",
+            fields=self._config_fields(),
+            parent=self,
+        )
+        dialog.exec_()
+
     def update_leds(self, leds: list[str]) -> None:
         self.available_leds = {self._led_type_from_name(led) for led in leds}
         self._sync_controls_enabled()
@@ -156,6 +176,7 @@ class LedManagerPanel(QGroupBox):
 
     def _sync_controls_enabled(self) -> None:
         self.refresh_button.setEnabled(self.devices_initialised)
+        self.configure_button.setEnabled(self.devices_initialised)
         for led_type, button in self.led_buttons.items():
             is_enabled = self.devices_initialised and led_type in self.available_leds
             button.setEnabled(is_enabled)
@@ -174,7 +195,9 @@ class LedManagerPanel(QGroupBox):
                 self._timed_led_stop_times.pop(led_type, None)
             elif state.get("is_on") is True:
                 self._set_led_checked(led_type, True)
-                self._schedule_timed_state_refresh(led_type=led_type, stop_time=state.get("stop_time"))
+                self._schedule_timed_state_refresh(
+                    led_type=led_type, stop_time=state.get("stop_time")
+                )
         self.state_label.setText(
             f"{self._format_led(led_type)}: brightness {state.get('brightness')}, on {state.get('is_on')}"
         )
@@ -183,10 +206,14 @@ class LedManagerPanel(QGroupBox):
         if not isinstance(stop_time, int | float):
             return
         self._timed_led_stop_times[led_type] = float(stop_time)
-        delay_ms = max(0, int(round((float(stop_time) - time.time()) * 1000))) + TIMED_LED_REFRESH_GRACE_MS
+        delay_ms = (
+            max(0, int(round((float(stop_time) - time.time()) * 1000))) + TIMED_LED_REFRESH_GRACE_MS
+        )
         QTimer.singleShot(
             delay_ms,
-            lambda selected=led_type, deadline=float(stop_time): self._refresh_timed_led_state(selected, deadline),
+            lambda selected=led_type, deadline=float(stop_time): self._refresh_timed_led_state(
+                selected, deadline
+            ),
         )
 
     def _refresh_timed_led_state(self, led_type: LEDType, stop_time: float) -> None:
@@ -215,6 +242,29 @@ class LedManagerPanel(QGroupBox):
             self.state_label.setText("Press an LED button to enable or disable it")
         else:
             self.state_label.setText("Refresh LEDs to enable available channels")
+
+    def _config_fields(self) -> list[ConfigFieldSpec]:
+        return [
+            ConfigFieldSpec(
+                "Available LEDs", "available_leds", self._available_led_labels(), editable=False
+            ),
+            ConfigFieldSpec(
+                "Brightness max", "brightness_max", MANUAL_BRIGHTNESS_MAX, editable=False
+            ),
+            ConfigFieldSpec(
+                "Brightness default",
+                "brightness_default",
+                MANUAL_BRIGHTNESS_DEFAULT,
+                editable=False,
+            ),
+            ConfigFieldSpec("Timed threshold", "timed_threshold", "> 29", editable=False),
+        ]
+
+    def _available_led_labels(self) -> list[str]:
+        return [
+            self._format_led(led_type)
+            for led_type in sorted(self.available_leds, key=lambda led_type: led_type.name)
+        ]
 
     @staticmethod
     def _led_type_from_name(led: str | LEDType | None) -> LEDType:

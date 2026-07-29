@@ -20,7 +20,6 @@ from evomachine.gui.image_payloads import (
 from evomachine.peripherals.autofocus import AutofocusCalibrationConfig
 from evomachine.peripherals.dmd import DMD_BUILT_IN_PATTERNS, DmdCalibrationConfigFactory, DmdShapeConfig
 from evomachine.strategy import NoStrategy, create_strategy_from_definition, list_strategy_definitions
-from evomachine.types import UNKNOWN_FOV_ID
 from evomachine.types import FilterWheelType, LEDType
 from evomachine.types import FovDirectionType
 from evomachine.gui.protocol import GuiCommandType
@@ -105,8 +104,8 @@ def gui_camera_fov_move_coordinate(stage: Any, camera: Any, direction: FovDirect
     step_size = float(camera.fov_size())
     x_delta, y_delta = GUI_CAMERA_FOV_DIRECTION_DELTAS[direction]
     return Coordinate(
-        x=current.x + x_delta * step_size * multiplier,
-        y=current.y + y_delta * step_size * multiplier,
+        x=round(current.x + x_delta * step_size * multiplier, 3),
+        y=round(current.y + y_delta * step_size * multiplier, 3),
         z=None,
         channel_id=current.get_channel_id(),
     )
@@ -170,6 +169,63 @@ def gui_frame_acquisition_settings_from_payload(payload: dict[str, Any]) -> Fram
         for field_name in allowed_fields
         if field_name in settings_payload
     })
+
+
+def gui_acquisition_uses_current_main_controls(payload: dict[str, Any]) -> bool:
+    """Return whether acquisition should leave main-control peripheral state alone."""
+    return bool(payload.get("use_current_main_controls", False))
+
+
+def gui_acquisition_leds_from_payload(payload: dict[str, Any]) -> dict[LEDType, float] | None:
+    """Build optional explicit acquisition LED settings from a GUI payload."""
+    if gui_acquisition_uses_current_main_controls(payload):
+        return None
+    led_payload = payload.get("leds")
+    if led_payload is None:
+        return None
+    if not isinstance(led_payload, dict):
+        raise TypeError("Acquisition LEDs payload must be a dict.")
+    return {
+        gui_led_type_from_payload(led): float(brightness)
+        for led, brightness in led_payload.items()
+    }
+
+
+def gui_acquisition_filter_wheel_from_payload(payload: dict[str, Any]) -> FilterWheelType | None:
+    """Build an optional explicit acquisition filter-wheel setting."""
+    if gui_acquisition_uses_current_main_controls(payload):
+        return None
+    filter_wheel = payload.get("filter_wheel")
+    if filter_wheel is None:
+        return None
+    return gui_filter_wheel_type_from_payload(filter_wheel)
+
+
+def gui_acquisition_dmd_pattern_from_payload(facade: Any, payload: dict[str, Any]) -> np.ndarray | None:
+    """Build an optional explicit acquisition DMD pattern array."""
+    if gui_acquisition_uses_current_main_controls(payload):
+        return None
+    pattern = payload.get("dmd_pattern")
+    if pattern in (None, "full"):
+        return None
+    if pattern not in DMD_PATTERNS:
+        raise ValueError(f"Unsupported acquisition DMD pattern {pattern!r}.")
+    config_payload = {"config": payload.get("dmd_config", {})}
+    return gui_dmd_pattern_array(
+        dmd=facade.gui_dmd(),
+        pattern=pattern,
+        config=gui_dmd_shape_config_from_payload(config_payload),
+    )
+
+
+def gui_frame_metadata_from_payload(facade: Any, payload: dict[str, Any]) -> Any:
+    """Build frame metadata from optional GUI acquisition config fields."""
+    return FrameMetaDataFactory.default(
+        leds=gui_acquisition_leds_from_payload(payload),
+        filter_wheel=gui_acquisition_filter_wheel_from_payload(payload),
+        exposure=payload.get("exposure"),
+        dmd_pattern=gui_acquisition_dmd_pattern_from_payload(facade, payload),
+    )
 
 
 def gui_dmd_shape_config_from_payload(payload: dict[str, Any]) -> DmdShapeConfig:
@@ -491,10 +547,7 @@ def gui_acquisition_load_frame(facade: Any, payload: dict[str, Any]) -> dict[str
 def gui_acquisition_take_frame(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "acquisition")
     acq_mngr = facade.gui_acquisition_manager()
-    metadata = FrameMetaDataFactory.default(
-        exposure=payload.get("exposure"),
-        fov_id=int(payload.get("fov_id", UNKNOWN_FOV_ID)),
-    )
+    metadata = gui_frame_metadata_from_payload(facade=facade, payload=payload)
     settings = gui_frame_acquisition_settings_from_payload(payload)
     frame = acq_mngr.take_frame(frame_metadata=metadata, settings=settings)
     return {
@@ -510,10 +563,7 @@ def gui_acquisition_take_z_stack(facade: Any, payload: dict[str, Any]) -> dict[s
     gui_require_devices_initialised(facade, "acquisition")
     acq_mngr = facade.gui_acquisition_manager()
     z_coordinates = gui_z_coordinates_from_payload(payload)
-    metadata = FrameMetaDataFactory.default(
-        exposure=payload.get("exposure"),
-        fov_id=int(payload.get("fov_id", UNKNOWN_FOV_ID)),
-    )
+    metadata = gui_frame_metadata_from_payload(facade=facade, payload=payload)
     settings = gui_frame_acquisition_settings_from_payload(payload)
     frame = acq_mngr.take_z_stack(
         frame_metadata=metadata,

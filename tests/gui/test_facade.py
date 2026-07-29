@@ -575,6 +575,32 @@ def test_facade_handles_manual_acquisition_request() -> None:
     assert automaton.acq_mngr.calls[-1][1].save is True
 
 
+def test_facade_handles_explicit_manual_acquisition_peripherals() -> None:
+    automaton = FakeAutomaton()
+    facade = AutomatonGuiFacade(automaton)
+
+    response = facade.handle(
+        GuiRequest(
+            command=GuiCommandType.ACQUISITION_TAKE_FRAME,
+            payload={
+                "use_current_main_controls": False,
+                "leds": {"LED_450_NM": 33},
+                "filter_wheel": "BLOCKING",
+                "dmd_pattern": "checkerboard",
+                "settings": {"illuminate_dmd": True},
+                "image_transport": IMAGE_TRANSPORT_RAW,
+            },
+        )
+    )
+
+    assert response.ok
+    metadata, settings = automaton.acq_mngr.calls[-1]
+    assert metadata.leds == {LEDType.LED_450_NM: 33.0}
+    assert metadata.filter_wheel is FilterWheelType.BLOCKING
+    assert metadata.dmd_pattern is not None
+    assert settings.illuminate_dmd is True
+
+
 def test_facade_lists_and_loads_saved_acquisition_tiff(tmp_path) -> None:
     image = np.arange(20, dtype=np.uint16).reshape(4, 5)
     image_path = tmp_path / "saved_frame.tiff"
