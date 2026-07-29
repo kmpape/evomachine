@@ -62,6 +62,9 @@ class FakeController(QObject):
     def move_stage_absolute(self, x, y, z):
         self.calls.append(("move_stage_absolute", x, y, z))
 
+    def move_stage_relative(self, dx, dy, dz):
+        self.calls.append(("move_stage_relative", dx, dy, dz))
+
     def move_stage_fov(self, direction, multiplier=1.0):
         self.calls.append(("move_stage_fov", direction, multiplier))
 
@@ -171,7 +174,7 @@ def _app():
     return _QT_APP
 
 
-def test_stage_panel_sends_move_request() -> None:
+def test_stage_panel_sends_relative_delta_move_request() -> None:
     _app()
     controller = FakeController()
     panel = StagePanel(controller=controller)
@@ -180,9 +183,9 @@ def test_stage_panel_sends_move_request() -> None:
     panel.y_input.setValue(2)
     panel.z_input.setValue(3)
 
-    panel._move_absolute()
+    panel._move_delta()
 
-    assert controller.calls == [("move_stage_absolute", 1.0, 2.0, 3.0)]
+    assert controller.calls == [("move_stage_relative", 1.0, 2.0, 3.0)]
 
 
 def test_stage_panel_sends_zero_request() -> None:

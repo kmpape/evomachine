@@ -40,7 +40,8 @@ class StagePanel(QGroupBox):
         self.z_input = self._axis_input()
 
         self.refresh_button = QPushButton("Refresh")
-        self.move_button = QPushButton("Move")
+        self.move_button = QPushButton("Move by ΔXYZ")
+        self.move_button.setToolTip("Move relative to the current calibration coordinates.")
         self.stop_button = QPushButton("Stop")
         self.zero_button = QPushButton("Set Current XYZ as Zero")
         self.zero_button.setToolTip(
@@ -49,9 +50,9 @@ class StagePanel(QGroupBox):
         self.configure_button = QPushButton("Configure")
 
         form = QFormLayout()
-        form.addRow("X", self.x_input)
-        form.addRow("Y", self.y_input)
-        form.addRow("Z", self.z_input)
+        form.addRow("ΔX (µm)", self.x_input)
+        form.addRow("ΔY (µm)", self.y_input)
+        form.addRow("ΔZ (µm)", self.z_input)
 
         buttons = QGridLayout()
         buttons.addWidget(self.refresh_button, 0, 0)
@@ -82,7 +83,7 @@ class StagePanel(QGroupBox):
         self.setLayout(layout)
 
         self.refresh_button.clicked.connect(self.controller.refresh_stage)
-        self.move_button.clicked.connect(self._move_absolute)
+        self.move_button.clicked.connect(self._move_delta)
         self.stop_button.clicked.connect(self.controller.stop_stage)
         self.zero_button.clicked.connect(self._zero_stage)
         self.configure_button.clicked.connect(self._open_config_dialog)
@@ -99,14 +100,15 @@ class StagePanel(QGroupBox):
         box.setSingleStep(1.0)
         return box
 
-    def _move_absolute(self) -> None:
+    def _move_delta(self) -> None:
         if not self.devices_initialised:
             self.status_label.setText("Run Initialise Devices before using stage controls.")
             return
-        self.controller.move_stage_absolute(
-            x=self.x_input.value(),
-            y=self.y_input.value(),
-            z=self.z_input.value(),
+        self.status_label.setText("Moving stage by relative ΔXYZ.")
+        self.controller.move_stage_relative(
+            dx=self.x_input.value(),
+            dy=self.y_input.value(),
+            dz=self.z_input.value(),
         )
 
     def _move_camera_fov(self, direction: str) -> None:

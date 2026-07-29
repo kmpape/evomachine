@@ -40,6 +40,23 @@ def test_stage_initialises_and_reports_coordinates(make_stage):
     assert stage.get_coordinates(query_hardware=False) == Coordinate(0, 0, 0)
 
 
+def test_tiger_stage_converts_between_micrometres_and_tiger_units():
+    stage = make_tiger_stage()
+
+    stage.move(Coordinate(346.7, -12.5, 3.2))
+
+    assert stage.peripheral_ctrl.tiger.move_calls[-1] == {
+        "X": pytest.approx(3467),
+        "Y": pytest.approx(-125),
+        "Z": pytest.approx(32),
+    }
+    assert stage.get_coordinates(query_hardware=True) == Coordinate(
+        pytest.approx(346.7),
+        pytest.approx(-12.5),
+        pytest.approx(3.2),
+    )
+
+
 @pytest.mark.parametrize("make_stage", STAGE_FACTORIES)
 def test_stage_old_registered_position_api_is_removed(make_stage):
     """
