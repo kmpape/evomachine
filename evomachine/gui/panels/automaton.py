@@ -50,7 +50,8 @@ class AutomatonPanel(QGroupBox):
     def _show_status(self, payload: dict) -> None:
         self.status_label.setText(
             f"devices: {payload.get('devices_initialised')}, "
-            f"strategy: {payload.get('strategy_active')}, shutdown: {payload.get('shutdown')}"
+            f"strategy: {payload.get('strategy_active')}, stopped: {payload.get('stopped')}, "
+            f"shutdown: {payload.get('shutdown')}"
         )
         if payload.get("shutdown"):
             self.initialisation_label.setText("Automaton has shut down. Restart the GUI to reconnect.")

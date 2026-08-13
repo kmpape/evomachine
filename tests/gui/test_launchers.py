@@ -109,3 +109,28 @@ def test_napari_app_fits_central_viewer_to_workspace_aspect() -> None:
     assert docks == [controls_dock]
     assert sizes == [expected_controls_width]
     assert viewer.reset_count == 1
+
+
+def test_napari_app_shows_native_layer_controls() -> None:
+    class FakeDock:
+        def __init__(self):
+            self.shown = False
+
+        def show(self):
+            self.shown = True
+
+    controls = FakeDock()
+    layers = FakeDock()
+    viewer = SimpleNamespace(
+        window=SimpleNamespace(
+            _qt_viewer=SimpleNamespace(
+                dockLayerControls=controls,
+                dockLayerList=layers,
+            )
+        )
+    )
+
+    napari_app._show_default_napari_left_docks(viewer)
+
+    assert controls.shown
+    assert layers.shown

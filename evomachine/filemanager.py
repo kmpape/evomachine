@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 import numpy as np
@@ -70,8 +71,9 @@ class FileManager:
 
     TIFF_EXTENSION = "tiff"
     NON_TIFF_IMAGE_SUFFIXES = {".tif", ".png", ".jpg", ".jpeg", ".bmp"}
+    EXPERIMENT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]*$")
 
-    def __init__(self, config: FileNameConfig):
+    def __init__(self, config: FileNameConfig, experiment_root: Path | str | None = None):
         """
         Initialise a file manager from a file name configuration.
 
@@ -88,6 +90,51 @@ class FileManager:
             raise TypeError(f"FileManager.__init__: config must be FileNameConfig, received {type(config)}.")
         self.config: FileNameConfig = config
         self._ensure_directory()
+        self.experiment_root = Path(experiment_root or config.directory)
+        if config.create_directory:
+            self.experiment_root.mkdir(parents=True, exist_ok=True)
+        elif not self.experiment_root.is_dir():
+            raise FileNotFoundError(
+                f"FileManager: experiment root does not exist: {self.experiment_root}."
+            )
+
+    def create_experiment(self, name: str) -> Path:
+        """Create and activate one named experiment directory."""
+        if not isinstance(name, str):
+            raise TypeError(f"FileManager.create_experiment: name must be str, received {type(name)}.")
+        experiment_name = name.strip()
+        if not self.EXPERIMENT_NAME_PATTERN.fullmatch(experiment_name):
+            raise ValueError(
+                "Experiment name must start with a letter or number and contain only "
+                "letters, numbers, spaces, dots, hyphens, or underscores."
+            )
+        experiment_directory = self.experiment_root / experiment_name
+        if experiment_directory.exists():
+            raise FileExistsError(f"Experiment directory already exists: {experiment_directory}.")
+        experiment_directory.mkdir(parents=False)
+        self.update_config(directory=experiment_directory)
+        return experiment_directory
+
+    def list_experiments(self) -> list[Path]:
+        """Return experiment directories directly below the configured root."""
+        return sorted(
+            path
+            for path in self.experiment_root.iterdir()
+            if path.is_dir()
+        )
+
+    def select_experiment(self, name: str) -> Path:
+        """Activate an existing experiment directory by name."""
+        if not isinstance(name, str):
+            raise TypeError(f"FileManager.select_experiment: name must be str, received {type(name)}.")
+        experiment_name = name.strip()
+        if not self.EXPERIMENT_NAME_PATTERN.fullmatch(experiment_name):
+            raise ValueError("Invalid experiment name.")
+        experiment_directory = self.experiment_root / experiment_name
+        if not experiment_directory.is_dir():
+            raise FileNotFoundError(f"Experiment directory does not exist: {experiment_directory}.")
+        self.update_config(directory=experiment_directory)
+        return experiment_directory
 
     def update_config(self, config: FileNameConfig | None = None, **updates: Any) -> None:
         """

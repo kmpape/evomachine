@@ -8,6 +8,7 @@ from evomachine.config import DMD_WIDTH_HEIGHT
 from evomachine.gui.central_workspace import (
     DMD_DISPLAY_SHAPE,
     DMD_RECT,
+    HISTOGRAM_BINS,
     MAIN_RECT,
     SPECTRUM_RECT,
     WORKSPACE_SHAPE,
@@ -16,6 +17,7 @@ from evomachine.gui.central_workspace import (
     make_dmd_placeholder,
     make_visual_workspace_stack,
     make_visual_workspace,
+    percentile_contrast_limits,
     _content_rect,
     _visual_workspace_layout,
 )
@@ -55,6 +57,10 @@ def test_brightness_histogram_is_rgb_and_updates_from_image() -> None:
     assert blank.ndim == 3
     assert blank.shape[-1] == 3
     assert active.sum() > blank.sum()
+
+
+def test_brightness_histogram_exposes_all_eight_bit_display_levels() -> None:
+    assert HISTOGRAM_BINS == 256
 
 
 def test_visual_workspace_is_one_rgb_dashboard_image() -> None:
@@ -100,6 +106,21 @@ def test_visual_workspace_stack_has_one_dashboard_per_plane() -> None:
 
     assert workspace_stack.shape == (3, *single_workspace.shape)
     assert workspace_stack.dtype == np.uint8
+
+
+def test_percentile_contrast_limits_ignore_sparse_outliers() -> None:
+    image = np.full((100, 100), 100, dtype=np.uint16)
+    image[:100, :10] = np.arange(1000, dtype=np.uint16).reshape(100, 10)
+    image[0, 0] = np.iinfo(np.uint16).max
+
+    low, high = percentile_contrast_limits(image)
+
+    assert low >= 50
+    assert high < np.iinfo(np.uint16).max
+
+
+def test_percentile_contrast_limits_expand_constant_images() -> None:
+    assert percentile_contrast_limits(np.full((3, 4), 7, dtype=np.uint16)) == (7.0, 8.0)
 
 
 def test_preview_payload_round_trip_preserves_full_image_as_raw_bytes() -> None:

@@ -154,31 +154,69 @@ Other useful top-level folders in the main repository:
   runtime inputs, outputs, models, calibration data, and strategy files.  
   Note: some folders are only created when starting the software.
 
-## GUI Demo
+## Running the GUI
 
-After activating the `delta_evomachine` environment, launch the Napari GUI demo
-with virtual peripherals from the repository root:
+### Hardware GUI on the microscope computer
+
+Start Micro-Manager with the microscope configuration loaded. Then run:
 
 ```bash
-cd /home/idris/workspace_python/conda_evomachine3.9/evomachine_repo
-conda activate delta_evomachine
-python scripts/launch_virtual_gui.py --port 0
+cd /home/hslab/workspace_python/evomachine_refactor/evomachine
+.venv/bin/python scripts/launch_hardware_gui.py
+```
+
+For an IDE Run button:
+
+- Working directory: `/home/hslab/workspace_python/evomachine_refactor/evomachine`
+- Interpreter: `.venv/bin/python`
+- Script: `scripts/launch_hardware_gui.py`
+- Run it as a Python file, not as a module.
+
+The hardware runtime uses the Micro-Manager camera, SyncBoard LEDs, ASI Tiger
+stage/filter/autofocus and overhead LED, KWR103 overhead light, and EM DMD
+window. Serial ports are detected from their USB hardware IDs.
+
+#### Experiment image folders
+
+Hardware acquisitions are organised under `images/`, with one folder per
+experiment:
+
+```text
+images/
+├── _unassigned/
+├── AD_experiment_1/
+└── hardware_z_stack_test/
+```
+
+In the GUI, open Acquisition → **Experiment Files**:
+
+1. Select an existing experiment from the **Experiment** dropdown, or enter a
+   name and select **Create New Experiment**.
+2. The selected experiment becomes the active TIFF save directory.
+3. Select one of that experiment's TIFFs from the **Image** dropdown and choose
+   **Load Selected** to display it.
+
+Enable **Save** in Acquisition Configuration when TIFF output is required.
+Acquisitions made before selecting an experiment go to `images/_unassigned/`.
+Folder paths are managed by the experiment selector rather than entered
+manually.
+
+The `images/` directory is intentionally excluded from Git because microscope
+images are generally too large for source control. Notebook `.pkl` image
+stacks may be moved into their corresponding experiment folders for local
+organisation, but should remain uncommitted; the current example stacks are
+approximately 801 MiB each.
+
+### Virtual GUI
+
+From the `evomachine` repository root, launch the GUI with virtual peripherals:
+
+```bash
+uv run python scripts/launch_virtual_gui.py --port 0
 ```
 
 To smoke-test the automaton/socket startup without opening Napari:
 
 ```bash
-python scripts/launch_virtual_gui.py --port 0 --no-napari
+uv run python scripts/launch_virtual_gui.py --port 0 --no-napari
 ```
-
-For hardware, start Micro-Manager with the microscope config loaded, then run:
-
-```bash
-python scripts/launch_hardware_gui.py --port 0
-```
-
-The default hardware runtime uses the Micro-Manager camera binding
-(`BindingType.MMC`), SyncBoard LEDs, ASI Tiger stage/filter/autofocus, and the
-EM DMD window. Serial ports are found from the SyncBoard and ASI Tiger hardware
-IDs. If needed, override them with `EVOMACHINE_GUI_SYNCBOARD_PORT` and
-`EVOMACHINE_GUI_TIGER_PORT`.

@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QLabel,
+    QLineEdit,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -127,7 +128,7 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
                 enabled_when_value=False,
             ),
             ConfigFieldSpec(
-                "Start Z",
+                "Start ΔZ (µm)",
                 "start_z",
                 self.config_values["start_z"],
                 kind="float",
@@ -137,7 +138,7 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
                 single_step=1.0,
             ),
             ConfigFieldSpec(
-                "End Z",
+                "End ΔZ (µm)",
                 "end_z",
                 self.config_values["end_z"],
                 kind="float",
@@ -147,7 +148,7 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
                 single_step=1.0,
             ),
             ConfigFieldSpec(
-                "Z step",
+                "ΔZ step (µm)",
                 "step_z",
                 self.config_values["step_z"],
                 kind="float",
@@ -217,8 +218,8 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
         values: dict[str, Any] = {
             USE_CURRENT_MAIN_CONTROLS_KEY: True,
             "exposure": 200.0,
-            "start_z": 0.0,
-            "end_z": 0.0,
+            "start_z": -10.0,
+            "end_z": 10.0,
             "step_z": 1.0,
             "filter_wheel": FilterWheelType.NO_FILTER.name,
             "dmd_pattern": "full",
@@ -264,7 +265,7 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
         self.summary_label.setText(
             f"mode: {mode}; exposure: {exposure}; "
             f"DMD: {dmd_pattern}; "
-            f"z: {float(self.config_values['start_z']):.3f} -> "
+            f"Δz: {float(self.config_values['start_z']):.3f} -> "
             f"{float(self.config_values['end_z']):.3f} by "
             f"{float(self.config_values['step_z']):.3f}; "
             f"settings: {settings or '-'}"
@@ -400,28 +401,41 @@ class ZStackSettingsPanel(QGroupBox):
 
 
 class SavedImageLoaderPanel(QGroupBox):
-    """Load previously saved acquisition TIFFs into the central viewer."""
+    """Select experiment folders and load their acquisition TIFFs."""
 
     def __init__(self, controller, parent: QWidget | None = None):
-        super().__init__("Load Saved Image", parent)
+        super().__init__("Experiment Files", parent)
         self.controller = controller
+        self.experiment_combo = QComboBox()
         self.file_combo = QComboBox()
+        self.experiment_name_input = QLineEdit()
+        self.experiment_name_input.setPlaceholderText("Experiment name")
         self.directory = ""
         self.force_socket_transport = False
-        self.refresh_button = QPushButton("Refresh Files")
+        self.refresh_experiments_button = QPushButton("Refresh Experiments")
+        self.refresh_button = QPushButton("Refresh Images")
+        self.create_experiment_button = QPushButton("Create New Experiment")
         self.configure_button = QPushButton("Configure")
         self.load_button = QPushButton("Load Selected")
         self.path_label = QLabel("path: -")
+        self.experiment_label = QLabel("active experiment: -")
         self.status_label = QLabel("Refresh files to load a saved TIFF.")
         self.transport_label = QLabel()
         self.path_label.setWordWrap(True)
 
         button_grid = QGridLayout()
-        button_grid.addWidget(self.refresh_button, 0, 0)
-        button_grid.addWidget(self.configure_button, 0, 1)
-        button_grid.addWidget(self.load_button, 1, 0, 1, 2)
+        button_grid.addWidget(self.refresh_experiments_button, 0, 0)
+        button_grid.addWidget(self.refresh_button, 0, 1)
+        button_grid.addWidget(self.configure_button, 1, 0)
+        button_grid.addWidget(self.create_experiment_button, 1, 1)
+        button_grid.addWidget(self.load_button, 2, 0, 1, 2)
 
         layout = QVBoxLayout()
+        layout.addWidget(QLabel("Experiment"))
+        layout.addWidget(self.experiment_combo)
+        layout.addWidget(self.experiment_name_input)
+        layout.addWidget(self.experiment_label)
+        layout.addWidget(QLabel("Image"))
         layout.addWidget(self.file_combo)
         layout.addWidget(self.path_label)
         layout.addWidget(self.transport_label)
@@ -429,20 +443,36 @@ class SavedImageLoaderPanel(QGroupBox):
         layout.addWidget(self.status_label)
         self.setLayout(layout)
 
+        self.refresh_experiments_button.clicked.connect(self._refresh_experiments)
         self.refresh_button.clicked.connect(self._refresh_files)
+        self.create_experiment_button.clicked.connect(self._create_experiment)
         self.configure_button.clicked.connect(self._open_config_dialog)
         self.load_button.clicked.connect(self._load_selected)
+        self.experiment_combo.currentIndexChanged.connect(self._select_experiment)
         self.file_combo.currentIndexChanged.connect(self._update_selected_path_label)
         self.controller.acquisition_files_received.connect(self.update_file_list)
+        self.controller.acquisition_directory_received.connect(self.update_acquisition_directory)
+        self.controller.acquisition_experiments_received.connect(self.update_experiment_list)
         self.controller.frame_received.connect(self.update_frame_status)
         self.controller.response_error.connect(self._show_error)
         self._update_transport_label()
         self._sync_controls_enabled()
+        self._refresh_experiments()
 
     def _refresh_files(self) -> None:
-        self.status_label.setText("Refreshing files.")
-        directory = self.directory.strip() or None
-        self.controller.refresh_acquisition_files(directory=directory)
+        self.status_label.setText("Refreshing images.")
+        self.controller.refresh_acquisition_files()
+
+    def _refresh_experiments(self) -> None:
+        self.status_label.setText("Refreshing experiments.")
+        self.controller.refresh_acquisition_experiments()
+
+    def _select_experiment(self, _index: int | None = None) -> None:
+        name = self.experiment_combo.currentData()
+        if not isinstance(name, str) or not name:
+            return
+        self.status_label.setText(f"Selecting experiment {name}.")
+        self.controller.select_acquisition_experiment(name)
 
     def _load_selected(self) -> None:
         filename = self._selected_filename()
@@ -455,15 +485,18 @@ class SavedImageLoaderPanel(QGroupBox):
         )
         self.controller.load_acquisition_frame(filename, image_transport=image_transport)
 
+    def _create_experiment(self) -> None:
+        name = self.experiment_name_input.text().strip()
+        if not name:
+            self.status_label.setText("Enter an experiment name.")
+            return
+        self.status_label.setText(f"Creating experiment {name}.")
+        self.controller.create_acquisition_experiment(name)
+
     def _open_config_dialog(self) -> None:
         dialog = ConfigDialog(
             title="Saved Image Loader Configuration",
             fields=[
-                ConfigFieldSpec(
-                    "Folder",
-                    "directory",
-                    self.directory,
-                ),
                 ConfigFieldSpec(
                     "Force socket transport",
                     "force_socket_transport",
@@ -476,7 +509,6 @@ class SavedImageLoaderPanel(QGroupBox):
         if dialog.exec_() != dialog.Accepted:
             return
         values = dialog.values()
-        self.directory = str(values["directory"]).strip()
         self.force_socket_transport = bool(values["force_socket_transport"])
         self._update_transport_label()
         self._update_selected_path_label()
@@ -509,15 +541,51 @@ class SavedImageLoaderPanel(QGroupBox):
         self._update_selected_path_label()
         self._sync_controls_enabled()
 
+    def update_experiment_list(self, payload: dict) -> None:
+        active_experiment = payload.get("active_experiment")
+        was_blocked = self.experiment_combo.blockSignals(True)
+        self.experiment_combo.clear()
+        for experiment in payload.get("experiments", []):
+            if not isinstance(experiment, dict):
+                continue
+            name = experiment.get("name")
+            if isinstance(name, str) and name:
+                self.experiment_combo.addItem(name, name)
+        if isinstance(active_experiment, str):
+            index = self.experiment_combo.findData(active_experiment)
+            if index >= 0:
+                self.experiment_combo.setCurrentIndex(index)
+        self.experiment_combo.blockSignals(was_blocked)
+        self._sync_controls_enabled()
+
     def update_frame_status(self, payload: dict) -> None:
         if payload.get("source") != "file":
             return
         path = payload.get("loaded_path") or "-"
         self.status_label.setText(f"Loaded {Path(str(path)).name}: {payload.get('image_shape')}")
 
+    def update_acquisition_directory(self, payload: dict) -> None:
+        directory = str(payload.get("directory") or "")
+        if not directory:
+            return
+        self.directory = directory
+        experiment_name = payload.get("experiment_name") or Path(directory).name
+        self.experiment_label.setText(f"active experiment: {experiment_name}")
+        index = self.experiment_combo.findData(experiment_name)
+        if index >= 0:
+            was_blocked = self.experiment_combo.blockSignals(True)
+            self.experiment_combo.setCurrentIndex(index)
+            self.experiment_combo.blockSignals(was_blocked)
+        self.experiment_name_input.clear()
+        self.status_label.setText(f"Saving acquisitions to {directory}.")
+        self._update_selected_path_label()
+
     def _sync_controls_enabled(self) -> None:
         has_file = self.file_combo.count() > 0
         self.load_button.setEnabled(has_file)
+        self.experiment_combo.setEnabled(self.experiment_combo.count() > 0)
+        self.refresh_experiments_button.setEnabled(True)
+        self.create_experiment_button.setEnabled(True)
         self.configure_button.setEnabled(True)
 
     def _update_selected_path_label(self, _index: int | None = None) -> None:
@@ -535,7 +603,9 @@ class SavedImageLoaderPanel(QGroupBox):
         self.transport_label.setText(f"transport: {transport}")
 
     def _show_error(self, error: str) -> None:
-        if self.status_label.text().startswith(("Refreshing files", "Loading")):
+        if self.status_label.text().startswith(
+            ("Creating experiment", "Selecting experiment", "Refreshing", "Loading")
+        ):
             self.status_label.setText(error)
 
 

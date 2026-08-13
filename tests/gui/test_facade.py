@@ -56,6 +56,7 @@ class FakePeripheralController:
 class FakeStage:
     def __init__(self):
         self.coordinate = Coordinate(1, 2, 3)
+        self.machine_offset = Coordinate(0, 0, 0)
         self.stop_count = 0
 
     def is_initialised(self):
@@ -72,6 +73,9 @@ class FakeStage:
 
     def get_coordinates(self, query_hardware=True):
         return self.coordinate.copy()
+
+    def get_machine_coordinates(self, query_hardware=True):
+        return self.coordinate + self.machine_offset
 
     def move(self, target, block=True):
         if isinstance(target, tuple):
@@ -90,6 +94,10 @@ class FakeStage:
 
     def stop(self):
         self.stop_count += 1
+
+    def zero_coordinates(self):
+        self.machine_offset = self.get_machine_coordinates(query_hardware=True)
+        self.coordinate = Coordinate(0, 0, 0)
 
 
 class FakeLedManager:
@@ -415,6 +423,7 @@ class FakeAutomaton:
         self.last_commands = []
         self.strategy_started = False
         self.strategy_stopped = False
+        self.automaton_stopped = False
 
     def strategy_has_started(self):
         return self.strategy_started
@@ -429,7 +438,10 @@ class FakeAutomaton:
         self.shutdown_count += 1
 
     def stop(self):
-        return None
+        self.automaton_stopped = True
+
+    def stopped(self):
+        return self.automaton_stopped
 
     def initialise_devices(self):
         self.devices_initialised = True
@@ -482,9 +494,13 @@ def test_facade_handles_stage_and_led_requests() -> None:
 
     response = facade.handle(GuiRequest(command=GuiCommandType.STAGE_MOVE_FOV, payload={"direction": "RIGHT"}))
     assert response.ok
-    assert response.payload["coordinate"] == {"x": 12.8, "y": 6.0, "z": 7, "channel_id": 0}
+    assert response.payload["coordinate"] == {"x": -2.8, "y": 6.0, "z": 7, "channel_id": 0}
     assert response.payload["stage"]["fov_step_size"] == 100.0
     assert response.payload["stage"]["camera_fov_step_size"] == pytest.approx(7.8)
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.STAGE_MOVE_FOV, payload={"direction": "LEFT"}))
+    assert response.ok
+    assert response.payload["coordinate"] == {"x": 5.0, "y": 6.0, "z": 7, "channel_id": 0}
 
     response = facade.handle(GuiRequest(command=GuiCommandType.LED_SET, payload={"led": "LED_450_NM", "brightness": 22}))
     assert response.ok
@@ -629,6 +645,68 @@ def test_facade_lists_and_loads_saved_acquisition_tiff(tmp_path) -> None:
     assert np.array_equal(array_from_preview_payload(payload["preview"]), image)
 
 
+def test_facade_creates_and_activates_experiment_directory(tmp_path) -> None:
+    root = tmp_path / "images"
+    file_manager = FileManager(
+        FileNameConfig(directory=root / "_unassigned"),
+        experiment_root=root,
+    )
+    facade = AutomatonGuiFacade(FakeAutomaton(file_manager=file_manager))
+
+    response = facade.handle(
+        GuiRequest(
+            command=GuiCommandType.ACQUISITION_CREATE_EXPERIMENT,
+            payload={"name": "experiment-one"},
+        )
+    )
+
+    experiment = root / "experiment-one"
+    assert response.ok
+    assert response.payload["acquisition_directory"] == str(experiment)
+    assert response.payload["experiment_root"] == str(root)
+    assert response.payload["experiment_name"] == "experiment-one"
+    assert response.payload["acquisition_files"] == []
+    assert file_manager.config.directory == experiment
+
+
+def test_facade_lists_and_selects_experiment_with_its_images(tmp_path) -> None:
+    root = tmp_path / "images"
+    first = root / "experiment-one"
+    second = root / "experiment-two"
+    first.mkdir(parents=True)
+    second.mkdir()
+    tifffile.imwrite(second / "stack.tiff", np.zeros((2, 3), dtype=np.uint16))
+    file_manager = FileManager(
+        FileNameConfig(directory=first),
+        experiment_root=root,
+    )
+    facade = AutomatonGuiFacade(FakeAutomaton(file_manager=file_manager))
+
+    response = facade.handle(
+        GuiRequest(command=GuiCommandType.ACQUISITION_LIST_EXPERIMENTS)
+    )
+
+    assert response.ok
+    assert [item["name"] for item in response.payload["experiments"]] == [
+        "experiment-one",
+        "experiment-two",
+    ]
+    assert response.payload["active_experiment"] == "experiment-one"
+
+    response = facade.handle(
+        GuiRequest(
+            command=GuiCommandType.ACQUISITION_SELECT_EXPERIMENT,
+            payload={"name": "experiment-two"},
+        )
+    )
+
+    assert response.ok
+    assert response.payload["active_experiment"] == "experiment-two"
+    assert response.payload["experiment_name"] == "experiment-two"
+    assert response.payload["acquisition_files"][0]["label"] == "stack.tiff"
+    assert file_manager.config.directory == second
+
+
 def test_facade_handles_z_stack_acquisition_request() -> None:
     automaton = FakeAutomaton()
     facade = AutomatonGuiFacade(automaton)
@@ -655,7 +733,7 @@ def test_facade_handles_z_stack_acquisition_request() -> None:
     assert response.payload["frame"]["stack_preview"]["shape"] == [3, 3, 4]
     assert response.payload["frame"]["z_positions"] == [-1.0, 0.0, 1.0]
     _metadata, z_coordinates, settings = automaton.acq_mngr.calls[-1]
-    assert [coordinate.z for coordinate in z_coordinates] == [-1.0, 0.0, 1.0]
+    assert [coordinate.z for coordinate in z_coordinates] == [2.0, 3.0, 4.0]
     assert settings.illuminate_dmd is False
 
 
@@ -671,6 +749,30 @@ def test_facade_handles_controller_status_request() -> None:
     assert shared["connected"] is True
     assert "Fake Camera" in shared["owners"]
     assert "Fake Filter Wheel" in shared["owners"]
+
+
+def test_facade_zeroes_stage_and_preserves_machine_coordinate() -> None:
+    automaton = FakeAutomaton()
+    facade = AutomatonGuiFacade(automaton)
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.STAGE_ZERO))
+
+    assert response.ok
+    assert response.payload["coordinate"] == {"x": 0, "y": 0, "z": 0, "channel_id": 0}
+    assert response.payload["machine_coordinate"] == {"x": 1, "y": 2, "z": 3, "channel_id": 0}
+
+
+def test_facade_returns_stage_to_calibration_origin() -> None:
+    automaton = FakeAutomaton()
+    facade = AutomatonGuiFacade(automaton)
+    facade.handle(GuiRequest(command=GuiCommandType.STAGE_ZERO))
+    automaton.focus_nav.stage.coordinate = Coordinate(4, 5, 6)
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.STAGE_RETURN_ORIGIN))
+
+    assert response.ok
+    assert response.payload["coordinate"] == {"x": 0, "y": 0, "z": 0, "channel_id": 0}
+    assert response.payload["machine_coordinate"] == {"x": 1, "y": 2, "z": 3, "channel_id": 0}
 
 
 def test_facade_initialise_devices_initialises_controllers_first() -> None:

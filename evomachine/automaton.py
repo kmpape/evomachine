@@ -1158,7 +1158,7 @@ class Automaton:
 
     def stop(self) -> None:
         """
-        Set the stop event.
+        Set the stop event and immediately halt active peripherals.
 
         Parameters
         ----------
@@ -1169,6 +1169,8 @@ class Automaton:
         None
         """
         self._stop_event.set()
+        if self.devices_is_initialised():
+            self.act_on_halt()
 
     def stopped(self) -> bool:
         """

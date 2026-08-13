@@ -157,6 +157,7 @@ class AutomatonGuiFacade:
         return {
             "devices_initialised": bool(self.automaton.devices_is_initialised()),
             "strategy_active": self.gui_strategy_active(),
+            "stopped": bool(self.automaton.stopped()),
             "shutdown": bool(self.automaton.has_shutdown()),
         }
 
@@ -263,8 +264,10 @@ class AutomatonGuiFacade:
 
     def gui_stage_coordinates_payload(self, query_hardware: bool) -> dict[str, Any]:
         coordinate = self.gui_stage().get_coordinates(query_hardware=query_hardware)
+        machine_coordinate = self.gui_stage().get_machine_coordinates(query_hardware=False)
         return {
             "coordinate": gui_coordinate_to_payload(coordinate),
+            "machine_coordinate": gui_coordinate_to_payload(machine_coordinate),
             "stage": self.gui_stage_status_payload(),
         }
 

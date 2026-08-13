@@ -35,6 +35,8 @@ class FakeController(QObject):
     stage_status_received = pyqtSignal(dict)
     camera_status_received = pyqtSignal(dict)
     acquisition_files_received = pyqtSignal(list)
+    acquisition_directory_received = pyqtSignal(dict)
+    acquisition_experiments_received = pyqtSignal(dict)
     frame_received = pyqtSignal(dict)
     filter_wheel_status_received = pyqtSignal(dict)
     led_list_received = pyqtSignal(list)
@@ -62,11 +64,20 @@ class FakeController(QObject):
     def move_stage_absolute(self, x, y, z):
         self.calls.append(("move_stage_absolute", x, y, z))
 
+    def move_stage_relative(self, dx, dy, dz):
+        self.calls.append(("move_stage_relative", dx, dy, dz))
+
     def move_stage_fov(self, direction, multiplier=1.0):
         self.calls.append(("move_stage_fov", direction, multiplier))
 
     def stop_stage(self):
         self.calls.append(("stop_stage",))
+
+    def zero_stage(self):
+        self.calls.append(("zero_stage",))
+
+    def return_stage_to_origin(self):
+        self.calls.append(("return_stage_to_origin",))
 
     def refresh_camera(self):
         self.calls.append(("refresh_camera",))
@@ -80,8 +91,17 @@ class FakeController(QObject):
     def acquire_z_stack(self, payload=None):
         self.calls.append(("acquire_z_stack", payload))
 
-    def refresh_acquisition_files(self, directory=None):
-        self.calls.append(("refresh_acquisition_files", directory))
+    def refresh_acquisition_files(self):
+        self.calls.append(("refresh_acquisition_files",))
+
+    def refresh_acquisition_experiments(self):
+        self.calls.append(("refresh_acquisition_experiments",))
+
+    def create_acquisition_experiment(self, name):
+        self.calls.append(("create_acquisition_experiment", name))
+
+    def select_acquisition_experiment(self, name):
+        self.calls.append(("select_acquisition_experiment", name))
 
     def load_acquisition_frame(self, filename, image_transport=None):
         self.calls.append(("load_acquisition_frame", filename, image_transport))
@@ -168,7 +188,7 @@ def _app():
     return _QT_APP
 
 
-def test_stage_panel_sends_move_request() -> None:
+def test_stage_panel_sends_relative_delta_move_request() -> None:
     _app()
     controller = FakeController()
     panel = StagePanel(controller=controller)
@@ -177,9 +197,31 @@ def test_stage_panel_sends_move_request() -> None:
     panel.y_input.setValue(2)
     panel.z_input.setValue(3)
 
-    panel._move_absolute()
+    panel._move_delta()
 
-    assert controller.calls == [("move_stage_absolute", 1.0, 2.0, 3.0)]
+    assert controller.calls == [("move_stage_relative", 1.0, 2.0, 3.0)]
+
+
+def test_stage_panel_sends_zero_request() -> None:
+    _app()
+    controller = FakeController()
+    panel = StagePanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+
+    panel.zero_button.click()
+
+    assert controller.calls == [("zero_stage",)]
+
+
+def test_stage_panel_sends_return_to_origin_request() -> None:
+    _app()
+    controller = FakeController()
+    panel = StagePanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+
+    panel.origin_button.click()
+
+    assert controller.calls == [("return_stage_to_origin",)]
 
 
 def test_stage_panel_sends_camera_fov_move_request() -> None:
@@ -286,10 +328,22 @@ def test_z_stack_panel_sends_request() -> None:
     ]
 
 
+def test_z_stack_defaults_are_relative_ten_micrometres_around_origin() -> None:
+    _app()
+    settings_panel = FrameAcquisitionSettingsPanel()
+
+    payload = settings_panel.z_stack_payload()
+
+    assert payload["start_z"] == -10.0
+    assert payload["end_z"] == 10.0
+    assert payload["step_z"] == 1.0
+
+
 def test_saved_image_loader_panel_sends_load_requests() -> None:
     _app()
     controller = FakeController()
     panel = SavedImageLoaderPanel(controller=controller)
+    controller.calls.clear()
     panel.update_file_list([{"label": "test.tiff", "path": "/tmp/test.tiff"}])
 
     panel.load_button.click()
@@ -306,11 +360,55 @@ def test_saved_image_loader_panel_refreshes_configured_directory() -> None:
     _app()
     controller = FakeController()
     panel = SavedImageLoaderPanel(controller=controller)
-    panel.directory = "/tmp/example_output"
+    controller.calls.clear()
 
     panel.refresh_button.click()
 
-    assert controller.calls == [("refresh_acquisition_files", "/tmp/example_output")]
+    assert controller.calls == [("refresh_acquisition_files",)]
+
+
+def test_saved_image_loader_panel_creates_and_displays_experiment() -> None:
+    _app()
+    controller = FakeController()
+    panel = SavedImageLoaderPanel(controller=controller)
+    controller.calls.clear()
+    panel.experiment_name_input.setText("2026-07-29 calibration")
+
+    panel.create_experiment_button.click()
+
+    assert controller.calls == [
+        ("create_acquisition_experiment", "2026-07-29 calibration")
+    ]
+
+    panel.update_acquisition_directory({
+        "directory": "/tmp/images/2026-07-29 calibration",
+        "experiment_root": "/tmp/images",
+        "experiment_name": "2026-07-29 calibration",
+    })
+
+    assert panel.directory == "/tmp/images/2026-07-29 calibration"
+    assert panel.experiment_label.text() == "active experiment: 2026-07-29 calibration"
+
+
+def test_saved_image_loader_panel_selects_experiment_from_dropdown() -> None:
+    _app()
+    controller = FakeController()
+    panel = SavedImageLoaderPanel(controller=controller)
+    controller.calls.clear()
+
+    panel.update_experiment_list({
+        "experiments": [
+            {"name": "AD_experiment_1", "directory": "/tmp/images/AD_experiment_1"},
+            {"name": "hardware_z_stack_test", "directory": "/tmp/images/hardware_z_stack_test"},
+        ],
+        "active_experiment": "AD_experiment_1",
+        "experiment_root": "/tmp/images",
+    })
+    panel.experiment_combo.setCurrentIndex(1)
+
+    assert controller.calls == [
+        ("select_acquisition_experiment", "hardware_z_stack_test")
+    ]
 
 
 def test_filter_wheel_panel_sends_set_request() -> None:

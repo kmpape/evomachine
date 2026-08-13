@@ -31,8 +31,8 @@ MAX_Z_STACK_PLANES = 10000
 GUI_CAMERA_FOV_DIRECTION_DELTAS = {
     FovDirectionType.UP: (0.0, -1.0),
     FovDirectionType.DOWN: (0.0, 1.0),
-    FovDirectionType.LEFT: (-1.0, 0.0),
-    FovDirectionType.RIGHT: (1.0, 0.0),
+    FovDirectionType.LEFT: (1.0, 0.0),
+    FovDirectionType.RIGHT: (-1.0, 0.0),
 }
 
 
@@ -239,7 +239,7 @@ def gui_dmd_shape_config_from_payload(payload: dict[str, Any]) -> DmdShapeConfig
 
 
 def gui_z_coordinates_from_payload(payload: dict[str, Any]) -> list[Coordinate]:
-    """Build an inclusive Z-coordinate list from start/end/step GUI fields."""
+    """Build an inclusive list of relative Z deltas from the GUI fields."""
     start_z = float(payload["start_z"])
     end_z = float(payload["end_z"])
     step_z = abs(float(payload["step_z"]))
@@ -503,6 +503,18 @@ def gui_stage_stop(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     return {"stage": facade.gui_stage_status_payload()}
 
 
+def gui_stage_zero(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    gui_require_devices_initialised(facade, "stage")
+    facade.gui_stage().zero_coordinates()
+    return facade.gui_stage_coordinates_payload(query_hardware=False)
+
+
+def gui_stage_return_origin(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    gui_require_devices_initialised(facade, "stage")
+    facade.gui_stage().move(target=Coordinate(0, 0, 0), block=False)
+    return facade.gui_stage_coordinates_payload(query_hardware=False)
+
+
 def gui_camera_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "camera")
     return {"camera": facade.gui_camera_status_payload()}
@@ -514,9 +526,8 @@ def gui_camera_set_exposure(facade: Any, payload: dict[str, Any]) -> dict[str, A
     return {"camera": facade.gui_camera_status_payload()}
 
 
-def gui_acquisition_list_files(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    file_manager = gui_acquisition_file_manager(facade)
-    directory = Path(payload.get("directory") or file_manager.config.directory)
+def gui_acquisition_files_payload(file_manager: FileManager) -> dict[str, Any]:
+    directory = file_manager.config.directory
     paths: dict[Path, None] = {}
     if directory.exists():
         for pattern in ("*.tiff", "*.tif"):
@@ -525,7 +536,46 @@ def gui_acquisition_list_files(facade: Any, payload: dict[str, Any]) -> dict[str
     files = sorted(paths, key=lambda item: item.stat().st_mtime, reverse=True)
     return {
         "acquisition_directory": str(directory),
+        "experiment_root": str(file_manager.experiment_root),
         "acquisition_files": [gui_acquisition_file_payload(path) for path in files],
+    }
+
+
+def gui_acquisition_list_files(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    return gui_acquisition_files_payload(gui_acquisition_file_manager(facade))
+
+
+def gui_acquisition_experiments_payload(file_manager: FileManager) -> dict[str, Any]:
+    return {
+        "experiment_root": str(file_manager.experiment_root),
+        "active_experiment": file_manager.config.directory.name,
+        "experiments": [
+            {"name": path.name, "directory": str(path)}
+            for path in file_manager.list_experiments()
+        ],
+    }
+
+
+def gui_acquisition_list_experiments(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    file_manager = gui_acquisition_file_manager(facade)
+    return gui_acquisition_experiments_payload(file_manager) | gui_acquisition_files_payload(file_manager)
+
+
+def gui_acquisition_create_experiment(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    file_manager = gui_acquisition_file_manager(facade)
+    experiment_directory = file_manager.create_experiment(payload.get("name"))
+    return gui_acquisition_files_payload(file_manager) | gui_acquisition_experiments_payload(file_manager) | {
+        "acquisition_directory": str(experiment_directory),
+        "experiment_name": experiment_directory.name,
+    }
+
+
+def gui_acquisition_select_experiment(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    file_manager = gui_acquisition_file_manager(facade)
+    experiment_directory = file_manager.select_experiment(payload.get("name"))
+    return gui_acquisition_files_payload(file_manager) | gui_acquisition_experiments_payload(file_manager) | {
+        "acquisition_directory": str(experiment_directory),
+        "experiment_name": experiment_directory.name,
     }
 
 
@@ -562,7 +612,14 @@ def gui_acquisition_take_frame(facade: Any, payload: dict[str, Any]) -> dict[str
 def gui_acquisition_take_z_stack(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "acquisition")
     acq_mngr = facade.gui_acquisition_manager()
-    z_coordinates = gui_z_coordinates_from_payload(payload)
+    z_deltas = gui_z_coordinates_from_payload(payload)
+    current_coordinate = facade.gui_stage().get_coordinates(query_hardware=True)
+    if current_coordinate.z is None:
+        raise RuntimeError("Relative Z-stack acquisition requires a current stage Z coordinate.")
+    z_coordinates = [
+        Coordinate(None, None, current_coordinate.z + delta.z)
+        for delta in z_deltas
+    ]
     metadata = gui_frame_metadata_from_payload(facade=facade, payload=payload)
     settings = gui_frame_acquisition_settings_from_payload(payload)
     frame = acq_mngr.take_z_stack(
@@ -574,7 +631,7 @@ def gui_acquisition_take_z_stack(facade: Any, payload: dict[str, Any]) -> dict[s
         "frame": gui_frame_payload(
             frame=frame,
             kind="z_stack",
-            z_positions=[coordinate.z for coordinate in z_coordinates],
+            z_positions=[coordinate.z for coordinate in z_deltas],
             image_transport=payload.get("image_transport"),
         ),
     }
@@ -879,8 +936,13 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.STAGE_MOVE_RELATIVE: gui_stage_move_relative,
     GuiCommandType.STAGE_MOVE_FOV: gui_stage_move_fov,
     GuiCommandType.STAGE_STOP: gui_stage_stop,
+    GuiCommandType.STAGE_ZERO: gui_stage_zero,
+    GuiCommandType.STAGE_RETURN_ORIGIN: gui_stage_return_origin,
     GuiCommandType.CAMERA_STATUS: gui_camera_status,
     GuiCommandType.CAMERA_SET_EXPOSURE: gui_camera_set_exposure,
+    GuiCommandType.ACQUISITION_CREATE_EXPERIMENT: gui_acquisition_create_experiment,
+    GuiCommandType.ACQUISITION_LIST_EXPERIMENTS: gui_acquisition_list_experiments,
+    GuiCommandType.ACQUISITION_SELECT_EXPERIMENT: gui_acquisition_select_experiment,
     GuiCommandType.ACQUISITION_LIST_FILES: gui_acquisition_list_files,
     GuiCommandType.ACQUISITION_LOAD_FRAME: gui_acquisition_load_frame,
     GuiCommandType.ACQUISITION_TAKE_FRAME: gui_acquisition_take_frame,

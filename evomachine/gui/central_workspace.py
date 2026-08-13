@@ -16,7 +16,8 @@ DMD_LAYER = "DMD pattern"
 
 DEFAULT_CAMERA_DISPLAY_SHAPE = (512, 512)
 DMD_DISPLAY_SHAPE = (DMD_WIDTH_HEIGHT[1], DMD_WIDTH_HEIGHT[0])
-HISTOGRAM_BINS = 64
+HISTOGRAM_BINS = 256
+AUTO_CONTRAST_PERCENTILES = (0.5, 99.5)
 
 BACKGROUND = np.array([9, 11, 14], dtype=np.uint8)
 PANEL = np.array([21, 24, 29], dtype=np.uint8)
@@ -158,7 +159,8 @@ def make_visual_workspace(
         *,
         last_image: np.ndarray | None = None,
         camera_shape: tuple[int, int] = DEFAULT_CAMERA_DISPLAY_SHAPE,
-        dmd_pattern: np.ndarray | None = None,
+    dmd_pattern: np.ndarray | None = None,
+    show_last_image: bool = True,
 ) -> np.ndarray:
     """Compose the central visual dashboard as one Napari RGB image layer."""
     main_source = last_image if last_image is not None else make_main_image_placeholder(camera_shape)
@@ -174,9 +176,14 @@ def make_visual_workspace(
     draw = ImageDraw.Draw(pil_canvas)
 
     _draw_panel(draw, main_rect, "Last acquired image")
+    displayed_main_source = (
+        main_source
+        if show_last_image
+        else np.zeros(main_source.shape[:2], dtype=np.uint8)
+    )
     _paste_into_rect(
         pil_canvas,
-        main_source,
+        displayed_main_source,
         _content_rect(main_rect, top=MAIN_CONTENT_TOP, pad=PANEL_PAD),
         magnify_to_width=True,
     )
@@ -204,7 +211,8 @@ def make_visual_workspace_stack(
         *,
         image_stack: np.ndarray,
         camera_shape: tuple[int, int] = DEFAULT_CAMERA_DISPLAY_SHAPE,
-        dmd_pattern: np.ndarray | None = None,
+    dmd_pattern: np.ndarray | None = None,
+    show_last_image: bool = True,
 ) -> np.ndarray:
     """Compose a stack of central visual dashboards, one per acquired plane."""
     if image_stack.ndim == 2:
@@ -218,6 +226,7 @@ def make_visual_workspace_stack(
             last_image=plane,
             camera_shape=camera_shape,
             dmd_pattern=dmd_pattern,
+            show_last_image=show_last_image,
         )
         for plane in planes
     ], axis=0)
@@ -244,6 +253,9 @@ class CentralVisualWorkspace:
             self.viewer.add_image(data, name=VISUAL_WORKSPACE_LAYER, rgb=True)
         else:
             layer.data = data
+        layer = self._layer(LAST_IMAGE_LAYER)
+        if layer is not None:
+            self.viewer.layers.remove(layer)
         self.viewer.grid.enabled = False
         self.viewer.reset_view()
 
@@ -262,11 +274,13 @@ class CentralVisualWorkspace:
         self.last_stack = None
         self.last_image = image
         self._refresh()
+        self._update_camera_layer(image)
 
     def update_last_stack(self, stack: np.ndarray) -> None:
         self.last_stack = stack
         self.last_image = stack[-1]
         self._refresh()
+        self._update_camera_layer(stack)
 
     def update_dmd_pattern(self, pattern: np.ndarray) -> None:
         self.dmd_pattern = pattern
@@ -298,15 +312,17 @@ class CentralVisualWorkspace:
                 image_stack=self.last_stack,
                 camera_shape=self.camera_shape,
                 dmd_pattern=self.dmd_pattern,
+                show_last_image=False,
             )
         return make_visual_workspace(
             last_image=self.last_image,
             camera_shape=self.camera_shape,
             dmd_pattern=self.dmd_pattern,
+            show_last_image=False,
         )
 
     def _remove_obsolete_layers(self) -> None:
-        obsolete = {LAST_IMAGE_LAYER, BRIGHTNESS_LAYER, DMD_LAYER}
+        obsolete = {BRIGHTNESS_LAYER, DMD_LAYER}
         for layer in list(self.viewer.layers):
             if layer.name in obsolete:
                 self.viewer.layers.remove(layer)
@@ -317,6 +333,36 @@ class CentralVisualWorkspace:
         except KeyError:
             return None
 
+    def _update_camera_layer(self, data: np.ndarray) -> None:
+        """Add or update the raw camera layer without replacing display settings."""
+        layer = self._layer(LAST_IMAGE_LAYER)
+        if layer is None:
+            layer = self.viewer.add_image(
+                data,
+                name=LAST_IMAGE_LAYER,
+                colormap="gray",
+                contrast_limits=percentile_contrast_limits(data),
+            )
+        else:
+            layer.data = data
+        self._position_camera_layer(layer=layer, image_shape=data.shape[-2:], ndim=data.ndim)
+
+    @staticmethod
+    def _position_camera_layer(layer: Any, image_shape: tuple[int, int], ndim: int) -> None:
+        main_rect, _spectrum_rect, _dmd_rect, _workspace_shape = _visual_workspace_layout(
+            image_shape,
+            DMD_DISPLAY_SHAPE,
+        )
+        content_rect = _content_rect(main_rect, top=MAIN_CONTENT_TOP, pad=PANEL_PAD)
+        scale = content_rect[2] / image_shape[1]
+        leading_dimensions = max(0, ndim - 2)
+        layer.scale = (*([1.0] * leading_dimensions), scale, scale)
+        layer.translate = (
+            *([0.0] * leading_dimensions),
+            content_rect[1],
+            content_rect[0],
+        )
+
     @staticmethod
     def _is_image_shape(value: Any) -> bool:
         return (
@@ -324,6 +370,23 @@ class CentralVisualWorkspace:
             and len(value) == 2
             and all(isinstance(item, int) and item > 0 for item in value)
         )
+
+
+def percentile_contrast_limits(
+        image: np.ndarray,
+        percentiles: tuple[float, float] = AUTO_CONTRAST_PERCENTILES,
+) -> tuple[float, float]:
+    """Return robust display limits while ignoring non-finite pixels."""
+    values = np.asarray(image)
+    if not np.issubdtype(values.dtype, np.number):
+        raise TypeError(f"Contrast image must be numeric, received dtype {values.dtype}.")
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return 0.0, 1.0
+    low, high = (float(value) for value in np.percentile(finite, percentiles))
+    if high <= low:
+        high = low + 1.0
+    return low, high
 
 
 def _draw_panel(
