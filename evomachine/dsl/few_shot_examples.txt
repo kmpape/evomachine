@@ -1,0 +1,31 @@
+Example 1
+
+User request:
+Start at the first field of view, capture a 100 ms image, and wait for 3 seconds. On each callback move to the next field of view and repeat the same image and wait.
+
+DSL response:
+initialise
+    move first_fov
+    image exposure 100ms
+    wait 3s
+
+callback
+    move next_fov
+    image exposure 100ms
+    wait 3s
+
+finalise
+
+Example 2
+
+User request:
+Move to the first field of view during setup. During each callback, take a 25 ms image at led wavelength 515nm. No finalisation action is required.
+
+DSL response:
+initialise
+    move first_fov
+
+callback
+    image exposure 25ms led 515nm
+
+finalise

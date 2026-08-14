@@ -1,0 +1,16 @@
+The DSL describes one strategy using exactly three lifecycle sections:
+
+- `initialise` runs once before the repeated acquisition callbacks.
+- `callback` describes one acquisition iteration. The automaton repeats it; do not repeat callback commands in the generated text to represent multiple fields of view.
+- `finalise` runs once after acquisition finishes.
+
+Section headings must be unindented. Commands belonging to a section must be indented beneath it. A section may be empty.
+
+Supported commands:
+
+- `move first_fov` moves to the first field of view in the externally supplied field-of-view collection.
+- `move next_fov` moves to the next externally supplied field of view. It is normally used in `callback`.
+- `image exposure NUMBERms` captures an image using the application's default LED channel. Add `led WAVELENGTH` to select a channel explicitly, for example `image exposure 100ms led 515nm`. Exposure must be between 1 and 1000 milliseconds, inclusive. Supported LED wavelengths are `385nm`, `450nm`, `515nm`, `565nm`, and `645nm`.
+- `wait NUMBERs` pauses execution. Duration is measured in seconds and must be greater than 0 and at most 10 seconds. Use one wait command for a requested duration; do not split it into multiple waits unless the requested duration exceeds 10 seconds.
+
+Numbers are written without a space before their unit, for example `100ms` and `3s`. LED brightness is supplied by the application. DMD and filter-wheel state are not exposed by this DSL. Field-of-view coordinates and iteration counts are supplied by the application and must not be invented in DSL text. Conditions, loops, comments, and commands not present in the grammar are unsupported.

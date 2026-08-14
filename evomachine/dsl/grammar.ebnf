@@ -1,0 +1,24 @@
+start: initialise callback finalise
+
+initialise: "initialise" _suite
+callback: "callback" _suite
+finalise: "finalise" _suite
+
+_suite: _NL [_INDENT statement+ _DEDENT]
+
+?statement: move | image | wait
+
+move: "move" FOV_TARGET _NL
+image: "image" "exposure" NUMBER "ms" ["led" LED_WAVELENGTH] _NL
+wait: "wait" NUMBER "s" _NL
+
+FOV_TARGET: "first_fov" | "next_fov"
+LED_WAVELENGTH: "385nm" | "450nm" | "515nm" | "565nm" | "645nm"
+
+_NL: /(\r?\n[\t ]*)+/
+
+%import common.NUMBER
+%import common.WS_INLINE
+%ignore WS_INLINE
+
+%declare _INDENT _DEDENT
