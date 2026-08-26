@@ -2,7 +2,7 @@ examples:
   - name: Explicit illumination imaging loop
     user_request: >-
       Start at the first field of view, capture a 100 ms image using LED wavelength 450 nm, and wait
-      for 3 seconds. On each callback move to the next field of view and repeat the same image and
+      for 3 seconds. At each step, move to the next field of view and repeat the same image and
       wait.
     strategy: |
       initialise
@@ -10,7 +10,7 @@ examples:
           image(exposure=100ms, led=450nm)
           wait(duration=3s)
 
-      callback
+      step
           move(target=next_fov)
           image(exposure=100ms, led=450nm)
           wait(duration=3s)
@@ -19,13 +19,13 @@ examples:
 
   - name: Explicit LED imaging loop
     user_request: >-
-      Move to the first field of view during setup. During each callback, take a 25 ms image at LED
+      Move to the first field of view during setup. During each step, take a 25 ms image at LED
       wavelength 515 nm. No finalisation action is required.
     strategy: |
       initialise
           move(target=first_fov)
 
-      callback
+      step
           image(exposure=25ms, led=515nm)
 
       finalise

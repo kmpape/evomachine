@@ -4,7 +4,7 @@ global_rules:
 command_rules:
   move:
     - "`first_fov` selects the first field of view in the collection supplied by the application."
-    - "`next_fov` selects the next supplied field of view and is normally used during callbacks."
+    - "`next_fov` selects the next supplied field of view and is normally used during steps."
     - Field-of-view coordinates are application-owned and must not be invented by a strategy.
 
   image:
