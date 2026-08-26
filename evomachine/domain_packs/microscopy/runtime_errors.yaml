@@ -1,0 +1,3 @@
+# EvoMachine currently passes an empty error list to strategy callbacks, so no runtime errors are
+# yet safe for a generated strategy to inspect or recover from.
+runtime_errors: {}

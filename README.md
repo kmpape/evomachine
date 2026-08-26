@@ -137,6 +137,8 @@ The main Python package is `evomachine/evomachine`.
   managers for frame capture, focus/stage navigation, and DMD projection tasks.
 - `commands.py`, `strategy.py`, and `automaton.py` describe command objects,
   strategy generation, and high-level experiment orchestration.
+- `domain_packs/` contains EvoMachine-owned strategy declarations and prompting material. The
+  `microscopy/` pack is loaded by the separate strategy-generation library during integration.
 - `coordinates.py`, `types.py`, `config_types.py`, and `filemanager.py` contain
   shared data types, metadata, coordinate handling, and file output utilities.
 - `softwarefocus.py` and `trackingrt.py` support software focus and real-time

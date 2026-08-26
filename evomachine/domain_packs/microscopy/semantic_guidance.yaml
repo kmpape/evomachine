@@ -1,0 +1,15 @@
+global_rules:
+  - Field-of-view collections and iteration counts are supplied by the application.
+
+command_rules:
+  move:
+    - "`first_fov` selects the first field of view in the collection supplied by the application."
+    - "`next_fov` selects the next supplied field of view and is normally used during callbacks."
+    - Field-of-view coordinates are application-owned and must not be invented by a strategy.
+
+  image:
+    - LED brightness is supplied by the application and is not a strategy argument.
+    - DMD and filter-wheel state are not exposed as strategy commands.
+
+  wait:
+    - Use a single wait command when the requested duration is within the permitted range.

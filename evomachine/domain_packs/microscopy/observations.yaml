@@ -1,0 +1,2 @@
+# The current EvoMachine DSL does not expose callback data or image metrics as named observations.
+observations: {}
