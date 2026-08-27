@@ -31,6 +31,7 @@ The expected layout is:
 ```
 workspace/
 ├── evomachine/      ← this repo
+├── AutoStrat/        strategy generation and validation library
 ├── de-lta-rt/       (dev_main)
 ├── asitiger/        (master)
 └── sync_board/      (Signals)
@@ -99,6 +100,11 @@ This project depends on several sibling repositories:
 - URL: `https://github.com/kmpape/evomachine`  
 - Branches: `dev` (in use) and `refactor`
 
+`AutoStrat`:
+- domain-independent strategy generation, parsing, validation, and semantic verification library
+- URL: `https://github.com/Liam-Metcalf/AutoStrat`
+- installed from the sibling checkout in editable mode during EvoMachine development
+
 `asitiger`: 
 - ASI Tiger controller package used by Tiger hardware bindings.  
 - URL: `https://github.com/kmpape/asitiger` (forked from `https://github.com/herophilus/asitiger`)  
@@ -136,7 +142,13 @@ The main Python package is `evomachine/evomachine`.
 - `acquisition.py`, `navigation.py`, and `projection.py` provide focused
   managers for frame capture, focus/stage navigation, and DMD projection tasks.
 - `commands.py`, `strategy.py`, and `automaton.py` describe command objects,
-  strategy generation, and high-level experiment orchestration.
+  strategy execution, and high-level experiment orchestration.
+- `strategy_generation/` contains the application-side AutoStrat integration. It provides a
+  validated-program interpreter, injected command/observation/error interfaces, an
+  `AbstractStrategy` wrapper, and a single-worker service for keeping the synchronous model
+  pipeline off GUI and automaton event-loop threads. Concrete microscopy command mappings,
+  observation calculations, and runtime-error classifications are added separately by the
+  deployment.
 - `domain_packs/` contains EvoMachine-owned strategy declarations and prompting material. The
   `microscopy/` pack is loaded by the separate strategy-generation library during integration.
 - `coordinates.py`, `types.py`, `config_types.py`, and `filemanager.py` contain
