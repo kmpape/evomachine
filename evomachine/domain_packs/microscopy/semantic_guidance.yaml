@@ -1,5 +1,7 @@
 global_rules:
   - Field-of-view collections and iteration counts are supplied by the application.
+  - "`current_fov_id` is unavailable during initialisation because no field of view has yet been established."
+  - "`step_count` is zero during the first step and counts previously completed steps."
 
 command_rules:
   move_fov:

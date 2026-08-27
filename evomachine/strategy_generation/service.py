@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Protocol
 
@@ -56,7 +57,15 @@ class StrategyGenerationService:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="strategy-generation")
 
     def build(self, request: str, cfg: ImageProcessorConfig) -> AutoStratStrategy:
-        """Build on the calling thread, primarily for scripts and notebooks."""
+        """Build directly, or use the isolated worker under a running event loop."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return self._build(request, cfg)
+        return self._executor.submit(self._build_on_worker, request, cfg).result()
+
+    def _build(self, request: str, cfg: ImageProcessorConfig) -> AutoStratStrategy:
+        """Build a strategy on a thread whose event-loop state is already suitable."""
         verified = self._pipeline.run(request)
         return AutoStratStrategy(
             cfg=cfg,
@@ -68,8 +77,18 @@ class StrategyGenerationService:
         )
 
     def submit(self, request: str, cfg: ImageProcessorConfig) -> Future[AutoStratStrategy]:
-        """Submit the synchronous pipeline to the dedicated background worker."""
-        return self._executor.submit(self.build, request, cfg)
+        """Run the synchronous pipeline on a worker with an isolated event loop."""
+        return self._executor.submit(self._build_on_worker, request, cfg)
+
+    def _build_on_worker(self, request: str, cfg: ImageProcessorConfig) -> AutoStratStrategy:
+        """Isolate Pydantic AI's synchronous wrapper from host event-loop policies."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            return self._build(request, cfg)
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
 
     def close(self, *, wait: bool = True) -> None:
         """Release the background worker after outstanding work completes or is cancelled."""

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from threading import current_thread
 
 import pytest
@@ -176,11 +177,12 @@ def test_generation_service_runs_pipeline_on_its_worker() -> None:
     verified = _verified("initialise\nstep\nfinalise\n")
 
     class FakePipeline:
-        thread_name: str | None = None
+        thread_names: list[str] = []
 
         def run(self, request: str) -> VerifiedStrategy:
             assert request == "build a strategy"
-            self.thread_name = current_thread().name
+            self.thread_names.append(current_thread().name)
+            assert not asyncio.get_event_loop().is_running()
             return verified
 
     pipeline = FakePipeline()
@@ -189,12 +191,19 @@ def test_generation_service_runs_pipeline_on_its_worker() -> None:
         domain=_domain(),
         command_adapter=FakeCommandAdapter(),
     ) as service:
-        strategy = service.submit("build a strategy", _cfg()).result(timeout=5)
+        submitted_strategy = service.submit("build a strategy", _cfg()).result(timeout=5)
 
-    assert strategy.source == verified.source
-    assert isinstance(strategy, AbstractStrategy)
-    assert pipeline.thread_name is not None
-    assert pipeline.thread_name.startswith("strategy-generation")
+        async def build_from_running_loop():
+            return service.build("build a strategy", _cfg())
+
+        notebook_strategy = asyncio.run(build_from_running_loop())
+
+    assert submitted_strategy.source == verified.source
+    assert notebook_strategy.source == verified.source
+    assert isinstance(submitted_strategy, AbstractStrategy)
+    assert isinstance(notebook_strategy, AbstractStrategy)
+    assert len(pipeline.thread_names) == 2
+    assert all(name.startswith("strategy-generation") for name in pipeline.thread_names)
 
 
 def test_microscopy_domain_exposes_only_implemented_initial_behavior() -> None:
