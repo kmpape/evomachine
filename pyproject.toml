@@ -43,6 +43,7 @@ dependencies = [
     "delta2 @ git+ssh://git@gitlab.com/kmpape/de-lta-rt.git@v2.1.0.dev1",  # tag created of the `dev_main` branch
     "asitiger @ git+https://github.com/kmpape/asitiger.git@v0.1.0",  # public repo: HTTPS needs no auth
     "syncboard @ git+ssh://git@github.com/kmpape/sync_board.git@v0.1.1-signals",
+    "autostrat @ git+https://github.com/Liam-Metcalf/AutoStrat.git@main",
 ]
 
 [project.optional-dependencies]
@@ -69,6 +70,7 @@ constraint-dependencies = ["numcodecs<0.16"]
 delta2 = { path = "../de-lta-rt", editable = true }
 asitiger = { path = "../asitiger", editable = true }
 syncboard = { path = "../sync_board", editable = true }
+autostrat = { path = "../AutoStrat", editable = true }
 
 [dependency-groups]
 dev = [
