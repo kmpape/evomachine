@@ -6,12 +6,12 @@ examples:
       wait.
     strategy: |
       initialise
-          move(target=first_fov)
+          move_fov(target=first_fov)
           image(exposure=100ms, led=450nm)
           wait(duration=3s)
 
       step
-          move(target=next_fov)
+          move_fov(target=next_fov)
           image(exposure=100ms, led=450nm)
           wait(duration=3s)
 
@@ -23,7 +23,7 @@ examples:
       wavelength 515 nm. No finalisation action is required.
     strategy: |
       initialise
-          move(target=first_fov)
+          move_fov(target=first_fov)
 
       step
           image(exposure=25ms, led=515nm)

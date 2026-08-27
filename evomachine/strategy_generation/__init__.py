@@ -9,6 +9,10 @@ from evomachine.strategy_generation.interfaces import (
     RuntimeErrorProvider,
 )
 from evomachine.strategy_generation.interpreter import ConditionalInterpreter
+from evomachine.strategy_generation.microscopy import (
+    MicroscopyCommandAdapter,
+    MicroscopyObservationProvider,
+)
 from evomachine.strategy_generation.runtime import (
     ActiveRuntimeError,
     InterpretationResult,
@@ -27,6 +31,8 @@ __all__ = [
     "EmptyObservationProvider",
     "EmptyRuntimeErrorProvider",
     "InterpretationResult",
+    "MicroscopyCommandAdapter",
+    "MicroscopyObservationProvider",
     "ObservationProvider",
     "RuntimeErrorProvider",
     "StrategyGenerationService",

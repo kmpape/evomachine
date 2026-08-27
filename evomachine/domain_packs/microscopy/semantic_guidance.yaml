@@ -2,7 +2,7 @@ global_rules:
   - Field-of-view collections and iteration counts are supplied by the application.
 
 command_rules:
-  move:
+  move_fov:
     - "`first_fov` selects the first field of view in the collection supplied by the application."
     - "`next_fov` selects the next supplied field of view and is normally used during steps."
     - Field-of-view coordinates are application-owned and must not be invented by a strategy.

@@ -1,3 +1,10 @@
-# The current EvoMachine domain pack does not expose step data or image metrics as named
-# observations.
-observations: {}
+observations:
+  current_fov_id:
+    description: Identifier of the field of view occupied at the current strategy step.
+    type: integer
+    minimum_inclusive: 0
+
+  step_count:
+    description: Number of strategy step callbacks completed before the current step.
+    type: integer
+    minimum_inclusive: 0

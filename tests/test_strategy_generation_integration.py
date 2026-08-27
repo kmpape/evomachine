@@ -31,6 +31,8 @@ from evomachine.strategy_generation import (
     CommandBuildContext,
     ConditionalInterpreter,
     EmptyRuntimeErrorProvider,
+    MicroscopyCommandAdapter,
+    MicroscopyObservationProvider,
     StrategyGenerationService,
     StrategyInterpretationError,
     StrategyRuntimeContext,
@@ -193,3 +195,143 @@ def test_generation_service_runs_pipeline_on_its_worker() -> None:
     assert isinstance(strategy, AbstractStrategy)
     assert pipeline.thread_name is not None
     assert pipeline.thread_name.startswith("strategy-generation")
+
+
+def test_microscopy_domain_exposes_only_implemented_initial_behavior() -> None:
+    domain = _domain()
+
+    assert set(domain.commands) == {"move_fov", "image", "wait"}
+    assert set(domain.observations) == {"current_fov_id", "step_count"}
+    assert domain.runtime_errors == {}
+
+
+def test_microscopy_adapter_builds_existing_automaton_commands() -> None:
+    verified = _verified(
+        "initialise\n"
+        "    move_fov(target=first_fov)\n"
+        "    image(exposure=25ms, led=515nm)\n"
+        "    wait(duration=3s)\n"
+        "step\n"
+        "finalise\n"
+    )
+    strategy = AutoStratStrategy(
+        cfg=_cfg(),
+        verified=verified,
+        domain=_domain(),
+        command_adapter=MicroscopyCommandAdapter(
+            image_brightness=12,
+            segment_images=False,
+            save_images=True,
+        ),
+        observation_provider=MicroscopyObservationProvider(),
+    )
+
+    commands = strategy.initialise(
+        fovs={4: Coordinate(1, 2, 3)},
+        region_of_interests={4: []},
+        fov_processors={},
+        dmd=None,
+    )
+
+    assert [command.command_type for command in commands] == [
+        AutomatonCommandType.MOVE,
+        AutomatonCommandType.IMAGE,
+        AutomatonCommandType.WAIT,
+    ]
+    assert commands[0].command_args == 4
+    image_args = commands[1].command_args
+    assert image_args["frame_metadata"].exposure == 25
+    assert image_args["frame_metadata"].leds == {LEDType.LED_515_NM: 12}
+    assert image_args["segment"] is False
+    assert image_args["save"] is True
+    assert commands[2].command_args["duration"] == 3
+    assert commands[2].command_args["set_live_mode"] is False
+
+
+def test_microscopy_observations_drive_step_conditionals() -> None:
+    verified = _verified(
+        "initialise\n"
+        "step\n"
+        "    if observation.current_fov_id == 4:\n"
+        "        move_fov(target=next_fov)\n"
+        "    if observation.step_count == 0:\n"
+        "        wait(duration=1s)\n"
+        "finalise\n"
+    )
+    strategy = AutoStratStrategy(
+        cfg=_cfg(),
+        verified=verified,
+        domain=_domain(),
+        command_adapter=MicroscopyCommandAdapter(
+            image_brightness=10,
+            segment_images=False,
+            save_images=True,
+        ),
+        observation_provider=MicroscopyObservationProvider(),
+    )
+    strategy.initialise(
+        fovs={4: Coordinate(1, 2, 3)},
+        region_of_interests={4: []},
+        fov_processors={},
+        dmd=None,
+    )
+
+    first_step = strategy.callback(fov_id=4, data=[], errors=[])
+    second_step = strategy.callback(fov_id=4, data=[], errors=[])
+
+    assert [command.command_type for command in first_step] == [
+        AutomatonCommandType.MOVE,
+        AutomatonCommandType.WAIT,
+    ]
+    assert first_step[0].command_args == -1
+    assert [command.command_type for command in second_step] == [AutomatonCommandType.MOVE]
+
+
+def test_move_fov_requires_valid_application_context() -> None:
+    verified = _verified(
+        "initialise\n"
+        "    move_fov(target=first_fov)\n"
+        "step\n"
+        "finalise\n"
+    )
+    strategy = AutoStratStrategy(
+        cfg=_cfg(),
+        verified=verified,
+        domain=_domain(),
+        command_adapter=MicroscopyCommandAdapter(
+            image_brightness=10,
+            segment_images=False,
+            save_images=True,
+        ),
+    )
+
+    with pytest.raises(StrategyInterpretationError, match="requires at least one"):
+        strategy.initialise(
+            fovs={},
+            region_of_interests={},
+            fov_processors={},
+            dmd=None,
+        )
+
+    next_fov_strategy = AutoStratStrategy(
+        cfg=_cfg(),
+        verified=_verified(
+            "initialise\n"
+            "    move_fov(target=next_fov)\n"
+            "step\n"
+            "finalise\n"
+        ),
+        domain=_domain(),
+        command_adapter=MicroscopyCommandAdapter(
+            image_brightness=10,
+            segment_images=False,
+            save_images=True,
+        ),
+    )
+    with pytest.raises(StrategyInterpretationError, match="established current FOV"):
+        next_fov_strategy.initialise(
+            fovs={4: Coordinate(1, 2, 3)},
+            region_of_interests={4: []},
+            fov_processors={},
+            dmd=None,
+        )

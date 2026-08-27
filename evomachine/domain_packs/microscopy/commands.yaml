@@ -1,5 +1,5 @@
 commands:
-  move:
+  move_fov:
     description: Move to a field of view selected from the collection supplied by the application.
     arguments:
       target:
