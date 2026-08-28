@@ -11,6 +11,16 @@ examples:
           wait(duration=3s)
 
       step
+          if error.device_not_ready:
+              abort
+          if error.movement_failed:
+              retry
+          if error.image_acquisition_failed:
+              retry
+          if error.communication_failed:
+              retry
+          if error.runtime_failure:
+              abort
           move_fov(target=next_fov)
           image(exposure=100ms, led=450nm)
           wait(duration=3s)
@@ -26,6 +36,16 @@ examples:
           move_fov(target=first_fov)
 
       step
+          if error.device_not_ready:
+              abort
+          if error.movement_failed:
+              retry
+          if error.image_acquisition_failed:
+              retry
+          if error.communication_failed:
+              retry
+          if error.runtime_failure:
+              abort
           image(exposure=25ms, led=515nm)
 
       finalise

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+import time
+
 from autostrat.language.model import QuantityValue, ValidatedCommandCall, ValidatedValue
 
 from evomachine.commands import AutomatonCommand
@@ -10,8 +13,13 @@ from evomachine.strategy_generation.interfaces import (
     CommandAdapter,
     CommandBuildContext,
     ObservationProvider,
+    RuntimeErrorProvider,
 )
-from evomachine.strategy_generation.runtime import StrategyInterpretationError
+from evomachine.runtime_errors import CommandExecutionError
+from evomachine.strategy_generation.runtime import (
+    ActiveRuntimeError,
+    StrategyInterpretationError,
+)
 from evomachine.types import AutomatonCommandType, LEDType
 
 
@@ -153,4 +161,91 @@ class MicroscopyObservationProvider(ObservationProvider):
         return observations
 
 
-__all__ = ["MicroscopyCommandAdapter", "MicroscopyObservationProvider"]
+class MicroscopyRuntimeErrorProvider(RuntimeErrorProvider):
+    """Classify Automaton failures into the microscopy domain's stable error names."""
+
+    _DEVICE_NOT_READY_MARKERS = (
+        "not initialised",
+        "not initialized",
+        "not alive",
+        "not available",
+        "missing required device",
+    )
+    _COMMUNICATION_MARKERS = (
+        "communication",
+        "connection",
+        "disconnected",
+        "serial",
+        "socket",
+    )
+
+    def classify(
+        self,
+        *,
+        errors: list[Exception],
+        command_origins: Mapping[int, ValidatedCommandCall],
+    ) -> dict[str, ActiveRuntimeError]:
+        active: dict[str, ActiveRuntimeError] = {}
+        for supplied_error in errors:
+            name, failed_call, command_id, occurred_at, cause = self._classify_one(
+                supplied_error,
+                command_origins,
+            )
+            active[name] = ActiveRuntimeError(
+                name=name,
+                failed_call=failed_call,
+                original_error=supplied_error,
+                message=str(supplied_error),
+                command_id=command_id,
+                exception_type=type(cause).__name__,
+                occurred_at=occurred_at,
+            )
+        return active
+
+    @classmethod
+    def _classify_one(
+        cls,
+        supplied_error: Exception,
+        command_origins: Mapping[int, ValidatedCommandCall],
+    ) -> tuple[str, ValidatedCommandCall | None, int | None, float, Exception]:
+        if not isinstance(supplied_error, CommandExecutionError):
+            return "runtime_failure", None, None, time.time(), supplied_error
+
+        failed_call = command_origins.get(supplied_error.command_id)
+        if failed_call is None:
+            return (
+                "runtime_failure",
+                None,
+                supplied_error.command_id,
+                supplied_error.occurred_at,
+                supplied_error.original_error,
+            )
+
+        cause = supplied_error.original_error
+        detail = f"{type(cause).__module__}.{type(cause).__name__}: {cause}".lower()
+        if any(marker in detail for marker in cls._DEVICE_NOT_READY_MARKERS):
+            name = "device_not_ready"
+        elif isinstance(cause, (ConnectionError, TimeoutError)) or any(
+            marker in detail for marker in cls._COMMUNICATION_MARKERS
+        ):
+            name = "communication_failed"
+        elif supplied_error.command_type is AutomatonCommandType.MOVE:
+            name = "movement_failed"
+        elif supplied_error.command_type is AutomatonCommandType.IMAGE:
+            name = "image_acquisition_failed"
+        else:
+            name = "runtime_failure"
+        return (
+            name,
+            failed_call,
+            supplied_error.command_id,
+            supplied_error.occurred_at,
+            cause,
+        )
+
+
+__all__ = [
+    "MicroscopyCommandAdapter",
+    "MicroscopyObservationProvider",
+    "MicroscopyRuntimeErrorProvider",
+]

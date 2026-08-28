@@ -34,11 +34,13 @@ from evomachine.strategy_generation import (
     EmptyRuntimeErrorProvider,
     MicroscopyCommandAdapter,
     MicroscopyObservationProvider,
+    MicroscopyRuntimeErrorProvider,
     StrategyGenerationService,
     StrategyInterpretationError,
     StrategyRuntimeContext,
 )
 from evomachine.types import AutomatonCommandType, LEDType
+from evomachine.runtime_errors import CommandExecutionError
 
 
 class FakeCommandAdapter(CommandAdapter):
@@ -57,12 +59,27 @@ class FakeCommandAdapter(CommandAdapter):
         return context.command_factory.command_wait(duration=0)
 
 
+ERROR_HANDLERS = (
+    "    if error.device_not_ready:\n"
+    "        abort\n"
+    "    if error.movement_failed:\n"
+    "        retry\n"
+    "    if error.image_acquisition_failed:\n"
+    "        retry\n"
+    "    if error.communication_failed:\n"
+    "        retry\n"
+    "    if error.runtime_failure:\n"
+    "        abort\n"
+)
+
+
 def _domain():
     return load_domain_pack("evomachine/domain_packs/microscopy")
 
 
 def _verified(source: str) -> VerifiedStrategy:
     domain = _domain()
+    source = source.replace("step\n", f"step\n{ERROR_HANDLERS}", 1)
     program = validate_strategy(parse_strategy(source), domain)
     generated = GeneratedStrategy(
         source=source,
@@ -136,6 +153,7 @@ def test_interpreter_retries_the_call_owned_by_the_active_error() -> None:
 
     assert result.action == "retry"
     assert result.retry_error is active_error
+    assert result.inspected_errors == frozenset({"camera_failed"})
 
 
 def test_unconfigured_error_provider_does_not_silently_discard_errors() -> None:
@@ -143,6 +161,166 @@ def test_unconfigured_error_provider_does_not_silently_discard_errors() -> None:
 
     with pytest.raises(StrategyInterpretationError, match="no RuntimeErrorProvider"):
         provider.classify(errors=[RuntimeError("camera failed")], command_origins={})
+
+
+@pytest.mark.parametrize(
+    ("command_type", "cause", "expected_name"),
+    [
+        (AutomatonCommandType.MOVE, RuntimeError("stage is not initialised"), "device_not_ready"),
+        (AutomatonCommandType.MOVE, RuntimeError("motion rejected"), "movement_failed"),
+        (AutomatonCommandType.IMAGE, RuntimeError("no frame returned"), "image_acquisition_failed"),
+        (AutomatonCommandType.IMAGE, ConnectionError("socket closed"), "communication_failed"),
+    ],
+)
+def test_microscopy_runtime_errors_are_classified_with_diagnostics(
+    command_type: AutomatonCommandType,
+    cause: Exception,
+    expected_name: str,
+) -> None:
+    call = ValidatedCommandCall(name="image" if command_type is AutomatonCommandType.IMAGE else "move_fov")
+    supplied = CommandExecutionError(
+        command_id=7,
+        command_type=command_type,
+        command_args={"example": True},
+        lifecycle_section="step",
+        original_error=cause,
+    )
+
+    active = MicroscopyRuntimeErrorProvider().classify(
+        errors=[supplied],
+        command_origins={7: call},
+    )[expected_name]
+
+    assert active.failed_call is call
+    assert active.command_id == 7
+    assert active.exception_type == type(cause).__name__
+    assert str(cause) in active.message
+
+
+def test_image_retry_exhaustion_automatically_continues() -> None:
+    strategy = AutoStratStrategy(
+        cfg=_cfg(),
+        verified=_verified(
+            "initialise\n"
+            "    image(exposure=25ms, led=450nm)\n"
+            "step\n"
+            "    image(exposure=25ms, led=450nm)\n"
+            "finalise\n"
+        ),
+        domain=_domain(),
+        command_adapter=MicroscopyCommandAdapter(
+            image_brightness=10,
+            segment_images=False,
+            save_images=False,
+        ),
+        observation_provider=MicroscopyObservationProvider(),
+        runtime_error_provider=MicroscopyRuntimeErrorProvider(),
+    )
+    command = strategy.initialise(
+        fovs={0: Coordinate(0, 0, 0)},
+        region_of_interests={0: []},
+        fov_processors={},
+        dmd=None,
+    )[0]
+
+    returned_commands = []
+    for _ in range(3):
+        failure = CommandExecutionError(
+            command_id=command.command_id,
+            command_type=command.command_type,
+            command_args=command.command_args,
+            lifecycle_section="step",
+            original_error=RuntimeError("camera returned no frame"),
+        )
+        returned_commands = strategy.callback(fov_id=0, data=[], errors=[failure])
+        if returned_commands:
+            command = returned_commands[0]
+
+    assert returned_commands == []
+    assert [failure.retry_attempt for failure in strategy.failure_history] == [0, 1, 2]
+
+
+def test_movement_retry_exhaustion_terminates_without_leaking_into_finalise() -> None:
+    strategy = AutoStratStrategy(
+        cfg=_cfg(),
+        verified=_verified(
+            "initialise\n"
+            "    move_fov(target=first_fov)\n"
+            "step\n"
+            "finalise\n"
+            "    wait(duration=1s)\n"
+        ),
+        domain=_domain(),
+        command_adapter=MicroscopyCommandAdapter(
+            image_brightness=10,
+            segment_images=False,
+            save_images=False,
+        ),
+        observation_provider=MicroscopyObservationProvider(),
+        runtime_error_provider=MicroscopyRuntimeErrorProvider(),
+    )
+    command = strategy.initialise(
+        fovs={0: Coordinate(0, 0, 0)},
+        region_of_interests={0: []},
+        fov_processors={},
+        dmd=None,
+    )[0]
+
+    returned_commands = []
+    for _ in range(3):
+        failure = CommandExecutionError(
+            command_id=command.command_id,
+            command_type=command.command_type,
+            command_args=command.command_args,
+            lifecycle_section="step",
+            original_error=RuntimeError("stage rejected movement"),
+        )
+        returned_commands = strategy.callback(fov_id=0, data=[], errors=[failure])
+        if returned_commands[0].command_type is AutomatonCommandType.MOVE:
+            command = returned_commands[0]
+
+    assert [command.command_type for command in returned_commands] == [
+        AutomatonCommandType.TERMINATE_STRATEGY
+    ]
+    assert [command.command_type for command in strategy.finalise()] == [
+        AutomatonCommandType.WAIT
+    ]
+
+
+def test_unclassified_runtime_failure_preserves_diagnostics_and_aborts() -> None:
+    strategy = AutoStratStrategy(
+        cfg=_cfg(),
+        verified=_verified("initialise\nstep\nfinalise\n"),
+        domain=_domain(),
+        command_adapter=MicroscopyCommandAdapter(
+            image_brightness=10,
+            segment_images=False,
+            save_images=False,
+        ),
+        observation_provider=MicroscopyObservationProvider(),
+        runtime_error_provider=MicroscopyRuntimeErrorProvider(),
+    )
+    strategy.initialise(
+        fovs={0: Coordinate(0, 0, 0)},
+        region_of_interests={0: []},
+        fov_processors={},
+        dmd=None,
+    )
+
+    commands = strategy.callback(
+        fov_id=0,
+        data=[],
+        errors=[RuntimeError("unexpected adapter failure")],
+    )
+
+    assert [command.command_type for command in commands] == [
+        AutomatonCommandType.ABORT_STRATEGY
+    ]
+    failure = strategy.failure_history[-1]
+    assert failure.name == "runtime_failure"
+    assert failure.failed_call is None
+    assert failure.exception_type == "RuntimeError"
+    assert "unexpected adapter failure" in failure.message
 
 
 def test_verified_program_is_wrapped_as_an_abstract_strategy() -> None:
@@ -170,7 +348,11 @@ def test_verified_program_is_wrapped_as_an_abstract_strategy() -> None:
     assert strategy.source == verified.source
     assert strategy.program is verified.program
     assert [command.command_type for command in commands] == [AutomatonCommandType.WAIT]
-    assert strategy.register_automaton_commands() == {AutomatonCommandType.WAIT}
+    assert strategy.register_automaton_commands() == {
+        AutomatonCommandType.WAIT,
+        AutomatonCommandType.TERMINATE_STRATEGY,
+        AutomatonCommandType.ABORT_STRATEGY,
+    }
 
 
 def test_generation_service_runs_pipeline_on_its_worker() -> None:
@@ -206,12 +388,24 @@ def test_generation_service_runs_pipeline_on_its_worker() -> None:
     assert all(name.startswith("strategy-generation") for name in pipeline.thread_names)
 
 
-def test_microscopy_domain_exposes_only_implemented_initial_behavior() -> None:
+def test_microscopy_domain_exposes_runtime_error_policies() -> None:
     domain = _domain()
 
     assert set(domain.commands) == {"move_fov", "image", "wait"}
     assert set(domain.observations) == {"current_fov_id", "step_count"}
-    assert domain.runtime_errors == {}
+    assert set(domain.runtime_errors) == {
+        "device_not_ready",
+        "movement_failed",
+        "image_acquisition_failed",
+        "communication_failed",
+        "runtime_failure",
+    }
+    assert domain.commands["image"].runtime_errors == (
+        "device_not_ready",
+        "image_acquisition_failed",
+        "communication_failed",
+    )
+    assert domain.runtime_errors["image_acquisition_failed"].retry_exhausted_action == "continue"
 
 
 def test_microscopy_adapter_builds_existing_automaton_commands() -> None:

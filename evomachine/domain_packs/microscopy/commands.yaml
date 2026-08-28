@@ -1,6 +1,10 @@
 commands:
   move_fov:
     description: Move to a field of view selected from the collection supplied by the application.
+    runtime_errors:
+      - device_not_ready
+      - movement_failed
+      - communication_failed
     arguments:
       target:
         description: Select the first or next field of view in the supplied collection.
@@ -11,6 +15,10 @@ commands:
 
   image:
     description: Capture an image using the requested exposure and LED wavelength.
+    runtime_errors:
+      - device_not_ready
+      - image_acquisition_failed
+      - communication_failed
     arguments:
       exposure:
         description: Camera exposure duration.
@@ -31,6 +39,7 @@ commands:
 
   wait:
     description: Pause strategy execution for a bounded duration.
+    runtime_errors: []
     arguments:
       duration:
         description: Length of the pause.

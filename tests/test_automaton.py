@@ -19,6 +19,7 @@ from evomachine.peripherals.dmd import (
     DmdCalibrationConfig,
 )
 from evomachine.projection import ProjectionManager
+from evomachine.runtime_errors import CommandExecutionError, UnexpectedRuntimeError
 from evomachine.strategy import AbstractStrategy, BasicStrategy
 from evomachine.types import AutomatonCommandType, LEDType, UNKNOWN_FOV_ID
 from evomachine.utils import normalise_frame
@@ -366,6 +367,7 @@ class FakeStrategy(AbstractStrategy):
         super().__init__(cfg=cfg)
         self.initialise_count = 0
         self.callbacks = 0
+        self.received_errors: list[Exception] = []
 
     def _initialise(self) -> list[AutomatonCommand]:
         """Return no initial commands."""
@@ -388,7 +390,9 @@ class FakeStrategy(AbstractStrategy):
 
     def _callback(self, fov_id: int, data: list[AutomatonCommand], errors: list[Exception]) -> list[AutomatonCommand]:
         """Record one callback and return no commands."""
+        del fov_id, data
         self.callbacks += 1
+        self.received_errors = list(errors)
         return []
 
     def finalise(self) -> list[AutomatonCommand]:
@@ -626,6 +630,47 @@ def test_automaton_move_delegates_to_focus_navigator() -> None:
     assert focus_navigator.moves == [1]
     assert automaton.get_fov_id() == 1
     assert command.command_data.fov_id == 1
+
+
+def test_command_failure_is_delivered_to_strategy_and_stops_the_batch() -> None:
+    automaton, _, focus_navigator, _, _, _ = make_automaton()
+    strategy = automaton._strategy
+    assert isinstance(strategy, FakeStrategy)
+    focus_navigator.move = lambda fov_id: (_ for _ in ()).throw(RuntimeError("stage blip"))
+    factory = CommandFactory(cfg=make_cfg())
+    failed = factory.command_move(fov_id=1)
+    skipped = factory.command_wait(duration=0)
+    automaton.next_commands = [failed, skipped]
+
+    automaton._process()
+
+    assert len(strategy.received_errors) == 1
+    supplied = strategy.received_errors[0]
+    assert isinstance(supplied, CommandExecutionError)
+    assert supplied.command_id == failed.command_id
+    assert supplied.original_error.args == ("stage blip",)
+    assert skipped.command_execution_time is None
+    assert automaton.runtime_failure_history == (supplied,)
+
+
+def test_unexpected_callback_failure_aborts_and_is_recorded() -> None:
+    automaton, acquisition_manager, *_deps = make_automaton()
+    strategy = automaton._strategy
+    assert isinstance(strategy, FakeStrategy)
+
+    def fail_callback(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("interpreter failed")
+
+    strategy._callback = fail_callback
+
+    with pytest.raises(RuntimeError, match="interpreter failed"):
+        automaton._process()
+
+    assert automaton.strategy_has_stopped()
+    assert automaton.stopped()
+    assert acquisition_manager.stop_count == 1
+    assert isinstance(automaton.runtime_failure_history[-1], UnexpectedRuntimeError)
 
 
 @pytest.mark.parametrize(

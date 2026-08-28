@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import time
 from typing import Mapping
 
 from autostrat.language.model import ControlActionName, ValidatedCommandCall, ValidatedValue
@@ -19,10 +20,19 @@ class ActiveRuntimeError:
     name: str
     failed_call: ValidatedCommandCall | None = None
     original_error: Exception | None = None
+    message: str = ""
+    command_id: int | None = None
+    exception_type: str | None = None
+    occurred_at: float = field(default_factory=time.time)
+    retry_attempt: int = 0
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
             raise ValueError("ActiveRuntimeError.name must be a non-empty string.")
+        if self.command_id is not None and self.command_id < 0:
+            raise ValueError("ActiveRuntimeError.command_id must be non-negative or None.")
+        if self.retry_attempt < 0:
+            raise ValueError("ActiveRuntimeError.retry_attempt must be non-negative.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +59,7 @@ class InterpretationResult:
     calls: tuple[ValidatedCommandCall, ...] = ()
     action: ControlActionName | None = None
     retry_error: ActiveRuntimeError | None = None
+    inspected_errors: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if self.action not in {None, "continue", "retry", "terminate", "abort"}:

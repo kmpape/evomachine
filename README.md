@@ -147,9 +147,13 @@ The main Python package is `evomachine/evomachine`.
   validated-program interpreter, injected command/observation/error interfaces, an
   `AbstractStrategy` wrapper, and a single-worker service for keeping the synchronous model
   pipeline off GUI and automaton event-loop threads. Concrete microscopy command mappings,
-  observation calculations, and runtime-error classifications are added separately by the
-  deployment. Normal strategy termination runs finalisation exactly once; abort halts active
-  peripherals and exits without running strategy finalisation.
+  observation calculations, and runtime-error classifications are owned by EvoMachine. Command
+  failures stop the remainder of their batch and are exposed on the next strategy step with their
+  original exception and command context. Retries are bounded by the domain pack; exhaustion
+  automatically continues, terminates, or aborts according to the declared policy. Unexpected
+  interpreter or integration failures enter a host-owned fail-safe abort path. Normal strategy
+  termination runs finalisation exactly once; abort halts active peripherals and exits without
+  running strategy finalisation.
 - `domain_packs/` contains EvoMachine-owned strategy declarations and prompting material. The
   `microscopy/` pack is loaded by the separate strategy-generation library during integration.
 - `coordinates.py`, `types.py`, `config_types.py`, and `filemanager.py` contain

@@ -42,7 +42,13 @@ class ConditionalInterpreter:
     ) -> InterpretationResult:
         if not isinstance(context, StrategyRuntimeContext):
             raise TypeError("context must be a StrategyRuntimeContext.")
-        return self._interpret(statements, context, retry_error=None)
+        inspected_errors: set[str] = set()
+        return self._interpret(
+            statements,
+            context,
+            retry_error=None,
+            inspected_errors=inspected_errors,
+        )
 
     def _interpret(
         self,
@@ -50,11 +56,16 @@ class ConditionalInterpreter:
         context: StrategyRuntimeContext,
         *,
         retry_error: ActiveRuntimeError | None,
+        inspected_errors: set[str],
     ) -> InterpretationResult:
         calls = []
         for statement in statements:
             if isinstance(statement, ValidatedIfStatement):
-                condition_is_true = self._condition(statement.condition, context)
+                condition_is_true = self._condition(
+                    statement.condition,
+                    context,
+                    inspected_errors,
+                )
                 branch = statement.body if condition_is_true else statement.else_body
                 branch_retry_error = retry_error
                 if condition_is_true and isinstance(statement.condition, ReferenceExpression):
@@ -64,6 +75,7 @@ class ConditionalInterpreter:
                     branch,
                     context,
                     retry_error=branch_retry_error,
+                    inspected_errors=inspected_errors,
                 )
                 calls.extend(branch_result.calls)
                 if branch_result.action is not None:
@@ -71,6 +83,7 @@ class ConditionalInterpreter:
                         calls=tuple(calls),
                         action=branch_result.action,
                         retry_error=branch_result.retry_error,
+                        inspected_errors=frozenset(inspected_errors),
                     )
                 continue
 
@@ -84,15 +97,29 @@ class ConditionalInterpreter:
                         calls=tuple(calls),
                         action="retry",
                         retry_error=retry_error,
+                        inspected_errors=frozenset(inspected_errors),
                     )
-                return InterpretationResult(calls=tuple(calls), action=statement.action)
+                return InterpretationResult(
+                    calls=tuple(calls),
+                    action=statement.action,
+                    inspected_errors=frozenset(inspected_errors),
+                )
 
             calls.append(statement)
-        return InterpretationResult(calls=tuple(calls))
+        return InterpretationResult(
+            calls=tuple(calls),
+            inspected_errors=frozenset(inspected_errors),
+        )
 
-    def _condition(self, expression, context: StrategyRuntimeContext) -> bool:
+    def _condition(
+        self,
+        expression,
+        context: StrategyRuntimeContext,
+        inspected_errors: set[str],
+    ) -> bool:
         if isinstance(expression, ReferenceExpression):
             if expression.namespace == "error":
+                inspected_errors.add(expression.name)
                 return expression.name in context.errors
             if expression.name not in context.observations:
                 raise StrategyInterpretationError(
