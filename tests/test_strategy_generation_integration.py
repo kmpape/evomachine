@@ -296,6 +296,40 @@ def test_microscopy_observations_drive_step_conditionals() -> None:
     assert [command.command_type for command in second_step] == [AutomatonCommandType.MOVE]
 
 
+def test_autostrat_maps_terminate_and_abort_to_distinct_lifecycle_commands() -> None:
+    strategy = AutoStratStrategy(
+        cfg=_cfg(),
+        verified=_verified(
+            "initialise\n"
+            "step\n"
+            "    if observation.step_count == 0:\n"
+            "        abort\n"
+            "    else:\n"
+            "        terminate\n"
+            "finalise\n"
+        ),
+        domain=_domain(),
+        command_adapter=FakeCommandAdapter(),
+        observation_provider=MicroscopyObservationProvider(),
+    )
+    strategy.initialise(
+        fovs={0: Coordinate(0, 0, 0)},
+        region_of_interests={0: []},
+        fov_processors={},
+        dmd=None,
+    )
+
+    first_step = strategy.callback(fov_id=0, data=[], errors=[])
+    second_step = strategy.callback(fov_id=0, data=[], errors=[])
+
+    assert first_step[-1].command_type is AutomatonCommandType.ABORT_STRATEGY
+    assert second_step[-1].command_type is AutomatonCommandType.TERMINATE_STRATEGY
+    assert strategy.register_automaton_commands() == {
+        AutomatonCommandType.ABORT_STRATEGY,
+        AutomatonCommandType.TERMINATE_STRATEGY,
+    }
+
+
 def test_move_fov_requires_valid_application_context() -> None:
     verified = _verified(
         "initialise\n"

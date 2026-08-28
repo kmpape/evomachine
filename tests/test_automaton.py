@@ -396,6 +396,32 @@ class FakeStrategy(AbstractStrategy):
         return []
 
 
+class LifecycleStrategy(FakeStrategy):
+    """Emit one requested lifecycle action and record finalisation."""
+
+    def __init__(self, cfg, action: str, *, fail_finalise: bool = False):
+        super().__init__(cfg=cfg)
+        self.action = action
+        self.fail_finalise = fail_finalise
+        self.finalise_count = 0
+
+    def _initialise(self) -> list[AutomatonCommand]:
+        if self.action == "terminate":
+            return [self.command_factory.command_terminate_strategy()]
+        return [self.command_factory.command_abort_strategy()]
+
+    def register_automaton_commands(self) -> set[AutomatonCommandType]:
+        if self.action == "terminate":
+            return {AutomatonCommandType.TERMINATE_STRATEGY}
+        return {AutomatonCommandType.ABORT_STRATEGY}
+
+    def finalise(self) -> list[AutomatonCommand]:
+        self.finalise_count += 1
+        if self.fail_finalise:
+            raise RuntimeError("finalisation failed")
+        return []
+
+
 def make_cfg():
     """
     Return a small image processor config for automaton tests.
@@ -600,6 +626,43 @@ def test_automaton_move_delegates_to_focus_navigator() -> None:
     assert focus_navigator.moves == [1]
     assert automaton.get_fov_id() == 1
     assert command.command_data.fov_id == 1
+
+
+@pytest.mark.parametrize(
+    ("action", "expected_finalise_count", "expected_halt_count"),
+    [("terminate", 1, 0), ("abort", 0, 1)],
+)
+def test_strategy_lifecycle_actions_have_distinct_finalisation_semantics(
+    action: str,
+    expected_finalise_count: int,
+    expected_halt_count: int,
+) -> None:
+    automaton, acquisition_manager, *_deps = make_automaton()
+    strategy = LifecycleStrategy(cfg=make_cfg(), action=action)
+    automaton.set_strategy(strategy)
+
+    automaton._process()
+    automaton._process()
+
+    assert strategy.finalise_count == expected_finalise_count
+    assert strategy.callbacks == 0
+    assert acquisition_manager.stop_count == expected_halt_count
+    assert automaton.strategy_has_stopped()
+    assert automaton.stopped()
+
+
+def test_failed_strategy_finalisation_falls_back_to_abort_semantics() -> None:
+    automaton, acquisition_manager, *_deps = make_automaton()
+    strategy = LifecycleStrategy(cfg=make_cfg(), action="terminate", fail_finalise=True)
+    automaton.set_strategy(strategy)
+
+    with pytest.raises(RuntimeError, match="finalisation failed"):
+        automaton._process()
+
+    assert strategy.finalise_count == 1
+    assert acquisition_manager.stop_count == 1
+    assert automaton.strategy_has_stopped()
+    assert automaton.stopped()
 
 
 def test_automaton_initialise_passes_strategy_fov_configs_to_focus_navigator() -> None:

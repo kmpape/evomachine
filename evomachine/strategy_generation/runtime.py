@@ -51,7 +51,7 @@ class InterpretationResult:
     retry_error: ActiveRuntimeError | None = None
 
     def __post_init__(self) -> None:
-        if self.action not in {None, "continue", "retry", "terminate"}:
+        if self.action not in {None, "continue", "retry", "terminate", "abort"}:
             raise ValueError(f"Unsupported interpretation action {self.action!r}.")
         if self.action == "retry" and self.retry_error is None:
             raise ValueError("A retry result requires the active runtime error being retried.")

@@ -88,10 +88,16 @@ class AutoStratStrategy(AbstractStrategy):
                 (*self.program.initialise, *self.program.step, *self.program.finalise)
             )
         }
-        if self._contains_termination(
-            (*self.program.initialise, *self.program.step, *self.program.finalise)
+        if self._contains_action(
+            (*self.program.initialise, *self.program.step, *self.program.finalise),
+            "terminate",
         ):
-            command_types.add(AutomatonCommandType.STOP)
+            command_types.add(AutomatonCommandType.TERMINATE_STRATEGY)
+        if self._contains_action(
+            (*self.program.initialise, *self.program.step, *self.program.finalise),
+            "abort",
+        ):
+            command_types.add(AutomatonCommandType.ABORT_STRATEGY)
         return command_types
 
     def _initialise(self) -> list[AutomatonCommand]:
@@ -187,7 +193,9 @@ class AutoStratStrategy(AbstractStrategy):
             commands.append(command)
 
         if interpreted.action == "terminate":
-            commands.append(self.command_factory.command_stop())
+            commands.append(self.command_factory.command_terminate_strategy())
+        elif interpreted.action == "abort":
+            commands.append(self.command_factory.command_abort_strategy())
         return commands
 
     @classmethod
@@ -205,13 +213,17 @@ class AutoStratStrategy(AbstractStrategy):
         return tuple(calls)
 
     @classmethod
-    def _contains_termination(cls, statements: Iterable[ValidatedStatement]) -> bool:
+    def _contains_action(
+        cls,
+        statements: Iterable[ValidatedStatement],
+        action: str,
+    ) -> bool:
         for statement in statements:
-            if isinstance(statement, ControlAction) and statement.action == "terminate":
+            if isinstance(statement, ControlAction) and statement.action == action:
                 return True
             if isinstance(statement, ValidatedIfStatement):
-                if cls._contains_termination(statement.body) or cls._contains_termination(
-                    statement.else_body
+                if cls._contains_action(statement.body, action) or cls._contains_action(
+                    statement.else_body, action
                 ):
                     return True
         return False

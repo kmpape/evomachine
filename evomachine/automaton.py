@@ -45,6 +45,8 @@ class Automaton:
         AutomatonCommandType.PROJECT_ROI: ("_dmd", "_led_mngr"),
         AutomatonCommandType.WAIT: (),
         AutomatonCommandType.STOP: (),
+        AutomatonCommandType.TERMINATE_STRATEGY: (),
+        AutomatonCommandType.ABORT_STRATEGY: (),
         AutomatonCommandType.SAVE_STATE: (),
     }
     _REQUIREMENT_LABELS: ClassVar[dict[str, str]] = {
@@ -176,6 +178,8 @@ class Automaton:
         "True after FoV state has been registered."
         self._strategy_is_initialised: bool = False
         "True after the current strategy has been initialised."
+        self._strategy_is_finalised: bool = False
+        "True after finalisation has been requested for the current strategy."
         self._fov_processors_is_initialised: dict[int, bool] = {}
         "Initialisation status of each FoV processor keyed by FoV ID."
         self.next_commands: list[AutomatonCommand] = []
@@ -526,6 +530,7 @@ class Automaton:
             raise TypeError(f"Automaton.set_strategy: strategy must be AbstractStrategy, received {type(strategy)}.")
         self._strategy = strategy
         self._strategy_is_initialised = False
+        self._strategy_is_finalised = False
         self.next_commands = []
         self.last_commands = []
         if self._fov_list_is_initialised:
@@ -622,6 +627,7 @@ class Automaton:
         if self._strategy is None:
             raise RuntimeError("Automaton._initialise_strategy: strategy is required.")
         self._validate_strategy_command_requirements()
+        self._strategy_is_finalised = False
         self._strategy.command_factory.update_region_of_interests(region_of_interests=self._fov_to_roi)
         self.next_commands = self._strategy.initialise(
             fovs=self._fovs,
@@ -664,7 +670,12 @@ class Automaton:
             raise RuntimeError("Automaton._process: strategy is required.")
         if not self._strategy_is_initialised:
             raise RuntimeError("Automaton._process: strategy is not initialised.")
+        if not finalise and (self.stopped() or self.strategy_has_stopped()):
+            return
         if finalise:
+            if self._strategy_is_finalised:
+                return
+            self._strategy_is_finalised = True
             self.last_commands = self.next_commands
             self.next_commands = self._strategy.finalise()
             self._validate_commands_are_registered(commands=self.next_commands, source="finalise")
@@ -688,6 +699,30 @@ class Automaton:
                 self.sleep(**command.command_args)
             elif command.command_type == AutomatonCommandType.STOP:
                 self.stop()
+                command.command_execution_time = time.time()
+                command.fov_id = self.get_fov_id()
+                return
+            elif command.command_type == AutomatonCommandType.TERMINATE_STRATEGY:
+                if not finalise:
+                    try:
+                        self._process(finalise=True)
+                    except Exception:
+                        self.stop_strategy()
+                        self.stop()
+                        self.act_on_halt()
+                        raise
+                self.stop_strategy()
+                self.stop()
+                command.command_execution_time = time.time()
+                command.fov_id = self.get_fov_id()
+                return
+            elif command.command_type == AutomatonCommandType.ABORT_STRATEGY:
+                self.stop_strategy()
+                self.stop()
+                self.act_on_halt()
+                command.command_execution_time = time.time()
+                command.fov_id = self.get_fov_id()
+                return
             elif command.command_type == AutomatonCommandType.SAVE_STATE:
                 self.save_state(filename_suffix=command.command_args)
             elif command.command_type == AutomatonCommandType.LIVE_MODE:

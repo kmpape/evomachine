@@ -502,6 +502,24 @@ class CommandFactory:
             command_creation_time=time(),
         )
 
+    def command_terminate_strategy(self) -> AutomatonCommand:
+        """Request normal strategy completion, including finalisation."""
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.TERMINATE_STRATEGY,
+            command_args=None,
+            command_id=self.get_next_id(),
+            command_creation_time=time(),
+        )
+
+    def command_abort_strategy(self) -> AutomatonCommand:
+        """Request immediate strategy exit without finalisation."""
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.ABORT_STRATEGY,
+            command_args=None,
+            command_id=self.get_next_id(),
+            command_creation_time=time(),
+        )
+
     def command_wait(
             self,
             duration: float,
