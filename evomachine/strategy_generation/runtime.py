@@ -20,9 +20,7 @@ class ActiveRuntimeError:
     name: str
     failed_call: ValidatedCommandCall | None = None
     original_error: Exception | None = None
-    message: str = ""
     command_id: int | None = None
-    exception_type: str | None = None
     occurred_at: float = field(default_factory=time.time)
     retry_attempt: int = 0
     remaining_calls: tuple[ValidatedCommandCall, ...] = ()
@@ -41,6 +39,16 @@ class ActiveRuntimeError:
             raise TypeError("ActiveRuntimeError.remaining_calls must be validated command calls.")
         if self.remaining_action not in {None, "continue", "terminate", "abort"}:
             raise ValueError("ActiveRuntimeError.remaining_action is not resumable.")
+
+    @property
+    def message(self) -> str:
+        """Return the original exception message without storing a duplicate value."""
+        return "" if self.original_error is None else str(self.original_error)
+
+    @property
+    def exception_type(self) -> str | None:
+        """Return the original exception type without storing a duplicate value."""
+        return None if self.original_error is None else type(self.original_error).__name__
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,7 +75,6 @@ class InterpretationResult:
     calls: tuple[ValidatedCommandCall, ...] = ()
     action: ControlActionName | None = None
     action_error: ActiveRuntimeError | None = None
-    inspected_errors: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if self.action not in {None, "continue", "retry", "terminate", "abort"}:

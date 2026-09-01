@@ -197,10 +197,8 @@ class MicroscopyObservationProvider(ObservationProvider):
         *,
         fov_id: int,
         completed_commands: list[AutomatonCommand],
-        errors: list[Exception],
         step_count: int,
     ) -> dict[str, ValidatedValue]:
-        del errors
         if not isinstance(step_count, int) or isinstance(step_count, bool) or step_count < 0:
             raise StrategyInterpretationError("step_count must be a non-negative integer.")
         if not isinstance(fov_id, int) or isinstance(fov_id, bool) or fov_id < -1:
@@ -315,22 +313,25 @@ class MicroscopyRuntimeErrorProvider(RuntimeErrorProvider):
         errors: list[Exception],
         command_origins: Mapping[int, ValidatedCommandCall],
     ) -> dict[str, ActiveRuntimeError]:
-        active: dict[str, ActiveRuntimeError] = {}
-        for supplied_error in errors:
-            name, failed_call, command_id, occurred_at, cause = self._classify_one(
-                supplied_error,
-                command_origins,
+        if not errors:
+            return {}
+        if len(errors) > 1:
+            raise StrategyInterpretationError(
+                "Microscopy runtime classification requires at most one execution error."
             )
-            active[name] = ActiveRuntimeError(
+        name, failed_call, command_id, occurred_at, cause = self._classify_one(
+            errors[0],
+            command_origins,
+        )
+        return {
+            name: ActiveRuntimeError(
                 name=name,
                 failed_call=failed_call,
-                original_error=supplied_error,
-                message=str(supplied_error),
+                original_error=cause,
                 command_id=command_id,
-                exception_type=type(cause).__name__,
                 occurred_at=occurred_at,
             )
-        return active
+        }
 
     @classmethod
     def _classify_one(

@@ -48,7 +48,6 @@ class ObservationProvider(ABC):
         *,
         fov_id: int,
         completed_commands: list[AutomatonCommand],
-        errors: list[Exception],
         step_count: int,
     ) -> Mapping[str, ValidatedValue]:
         """Return the observation snapshot for one lifecycle invocation."""
@@ -64,7 +63,7 @@ class RuntimeErrorProvider(ABC):
         errors: list[Exception],
         command_origins: Mapping[int, ValidatedCommandCall],
     ) -> Mapping[str, ActiveRuntimeError]:
-        """Return active strategy-facing errors keyed by their domain names."""
+        """Return zero or one active strategy-facing error keyed by its domain name."""
 
 
 class EmptyObservationProvider(ObservationProvider):
@@ -75,10 +74,9 @@ class EmptyObservationProvider(ObservationProvider):
         *,
         fov_id: int,
         completed_commands: list[AutomatonCommand],
-        errors: list[Exception],
         step_count: int,
     ) -> Mapping[str, ValidatedValue]:
-        del fov_id, completed_commands, errors, step_count
+        del fov_id, completed_commands, step_count
         return {}
 
 

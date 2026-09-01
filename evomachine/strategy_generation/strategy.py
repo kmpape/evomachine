@@ -160,10 +160,13 @@ class AutoStratStrategy(AbstractStrategy):
         completed_commands: list[AutomatonCommand],
         errors: list[Exception],
     ) -> StrategyRuntimeContext:
+        if len(errors) > 1:
+            raise StrategyInterpretationError(
+                "A stopped Automaton command batch cannot report more than one execution error."
+            )
         observations = self.observation_provider.observe(
             fov_id=fov_id,
             completed_commands=completed_commands,
-            errors=errors,
             step_count=self.callback_counter,
         )
         active_errors = self.runtime_error_provider.classify(
@@ -179,6 +182,10 @@ class AutoStratStrategy(AbstractStrategy):
         if unknown_errors:
             raise StrategyInterpretationError(
                 f"Runtime error provider returned undeclared errors: {sorted(unknown_errors)!r}."
+            )
+        if len(active_errors) > 1:
+            raise StrategyInterpretationError(
+                "Runtime error provider returned more than one active error for one execution error."
             )
         self._validate_error_origins(active_errors)
         self._clear_successful_retries(completed_commands, errors)
@@ -205,28 +212,12 @@ class AutoStratStrategy(AbstractStrategy):
         calls = list(interpreted.calls)
         action = interpreted.action
         action_error = interpreted.action_error
-        uninspected_errors = [
-            error
-            for name, error in self._runtime_context.errors.items()
-            if name not in interpreted.inspected_errors
-        ]
-        fallback_candidates = uninspected_errors or (
-            list(self._runtime_context.errors.values()) if action is None else []
-        )
-        if fallback_candidates:
-            fallback_error = max(
-                fallback_candidates,
-                key=lambda error: self._action_priority(
-                    self.domain.runtime_errors[error.name].default_action
-                ),
+        if self._runtime_context.errors and action is None:
+            error_name = next(iter(self._runtime_context.errors))
+            raise StrategyInterpretationError(
+                f"Active runtime error {error_name!r} was not handled by the validated strategy."
             )
-            fallback_action = self.domain.runtime_errors[fallback_error.name].default_action
-            if action is None or self._action_priority(fallback_action) > self._action_priority(action):
-                action = fallback_action
-                action_error = fallback_error
-                calls = []
-
-        if self._runtime_context.errors and action is not None:
+        if self._runtime_context.errors:
             calls = []
 
         if action == "retry":
@@ -354,11 +345,6 @@ class AutoStratStrategy(AbstractStrategy):
     def _retry_key(error: ActiveRuntimeError) -> tuple[str, int]:
         failed_call_id = id(error.failed_call) if error.failed_call is not None else -1
         return error.name, failed_call_id
-
-    @staticmethod
-    def _action_priority(action: RecoveryAction) -> int:
-        """Order automatic actions from least to most conservative."""
-        return {"retry": 0, "continue": 1, "terminate": 2, "abort": 3}[action]
 
     @classmethod
     def _all_command_calls(

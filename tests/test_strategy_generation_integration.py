@@ -29,16 +29,19 @@ from evomachine.image_processing_config import ImageProcessorConfigFactory
 from evomachine.navigation import FocusNavigatorFovRecord, FovConfig
 from evomachine.strategy import AbstractStrategy
 from evomachine.strategy_generation import (
-    ActiveRuntimeError,
     AutoStratStrategy,
     CommandAdapter,
     CommandBuildContext,
-    ConditionalInterpreter,
-    EmptyRuntimeErrorProvider,
     MicroscopyCommandAdapter,
     MicroscopyObservationProvider,
     MicroscopyRuntimeErrorProvider,
+    RuntimeErrorProvider,
     StrategyGenerationService,
+)
+from evomachine.strategy_generation.interfaces import EmptyRuntimeErrorProvider
+from evomachine.strategy_generation.interpreter import ConditionalInterpreter
+from evomachine.strategy_generation.runtime import (
+    ActiveRuntimeError,
     StrategyInterpretationError,
     StrategyRuntimeContext,
 )
@@ -158,7 +161,6 @@ def test_interpreter_retries_the_call_owned_by_the_active_error() -> None:
 
     assert result.action == "retry"
     assert result.action_error is active_error
-    assert result.inspected_errors == frozenset({"camera_failed"})
 
 
 def test_unconfigured_error_provider_does_not_silently_discard_errors() -> None:
@@ -166,6 +168,35 @@ def test_unconfigured_error_provider_does_not_silently_discard_errors() -> None:
 
     with pytest.raises(StrategyInterpretationError, match="no RuntimeErrorProvider"):
         provider.classify(errors=[RuntimeError("camera failed")], command_origins={})
+
+
+def test_strategy_rejects_multiple_errors_for_one_stopped_batch() -> None:
+    class MultipleRuntimeErrorProvider(RuntimeErrorProvider):
+        def classify(self, *, errors, command_origins):
+            del command_origins
+            if not errors:
+                return {}
+            return {
+                "device_not_ready": ActiveRuntimeError(name="device_not_ready"),
+                "runtime_failure": ActiveRuntimeError(name="runtime_failure"),
+            }
+
+    strategy = AutoStratStrategy(
+        cfg=_cfg(),
+        verified=_verified("initialise\nstep\nfinalise\n"),
+        domain=_domain(),
+        command_adapter=FakeCommandAdapter(),
+        runtime_error_provider=MultipleRuntimeErrorProvider(),
+    )
+    strategy.initialise(
+        fovs={0: Coordinate(0, 0, 0)},
+        region_of_interests={0: []},
+        fov_processors={},
+        dmd=None,
+    )
+
+    with pytest.raises(StrategyInterpretationError, match="more than one active error"):
+        strategy.callback(fov_id=0, data=[], errors=[RuntimeError("two classifications")])
 
 
 @pytest.mark.parametrize(
@@ -536,7 +567,7 @@ def test_microscopy_adapter_builds_existing_automaton_commands() -> None:
 
 def test_microscopy_provider_exposes_latest_image_and_focus_results() -> None:
     provider = MicroscopyObservationProvider()
-    provider.observe(fov_id=-1, completed_commands=[], errors=[], step_count=0)
+    provider.observe(fov_id=-1, completed_commands=[], step_count=0)
     move = AutomatonCommand(
         command_id=1,
         command_type=AutomatonCommandType.MOVE,
@@ -571,7 +602,6 @@ def test_microscopy_provider_exposes_latest_image_and_focus_results() -> None:
     observations = provider.observe(
         fov_id=0,
         completed_commands=[move, image],
-        errors=[],
         step_count=1,
     )
 
