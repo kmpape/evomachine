@@ -19,6 +19,7 @@ from evomachine.peripherals.dmd import (
     DmdCalibrationConfig,
 )
 from evomachine.projection import ProjectionManager
+from evomachine.runtime_errors import CommandExecutionError, UnexpectedRuntimeError
 from evomachine.strategy import AbstractStrategy, BasicStrategy
 from evomachine.types import AutomatonCommandType, LEDType, UNKNOWN_FOV_ID
 from evomachine.utils import normalise_frame
@@ -366,6 +367,7 @@ class FakeStrategy(AbstractStrategy):
         super().__init__(cfg=cfg)
         self.initialise_count = 0
         self.callbacks = 0
+        self.received_errors: list[Exception] = []
 
     def _initialise(self) -> list[AutomatonCommand]:
         """Return no initial commands."""
@@ -388,11 +390,39 @@ class FakeStrategy(AbstractStrategy):
 
     def _callback(self, fov_id: int, data: list[AutomatonCommand], errors: list[Exception]) -> list[AutomatonCommand]:
         """Record one callback and return no commands."""
+        del fov_id, data
         self.callbacks += 1
+        self.received_errors = list(errors)
         return []
 
     def finalise(self) -> list[AutomatonCommand]:
         """Return no final commands."""
+        return []
+
+
+class LifecycleStrategy(FakeStrategy):
+    """Emit one requested lifecycle action and record finalisation."""
+
+    def __init__(self, cfg, action: str, *, fail_finalise: bool = False):
+        super().__init__(cfg=cfg)
+        self.action = action
+        self.fail_finalise = fail_finalise
+        self.finalise_count = 0
+
+    def _initialise(self) -> list[AutomatonCommand]:
+        if self.action == "terminate":
+            return [self.command_factory.command_terminate_strategy()]
+        return [self.command_factory.command_abort_strategy()]
+
+    def register_automaton_commands(self) -> set[AutomatonCommandType]:
+        if self.action == "terminate":
+            return {AutomatonCommandType.TERMINATE_STRATEGY}
+        return {AutomatonCommandType.ABORT_STRATEGY}
+
+    def finalise(self) -> list[AutomatonCommand]:
+        self.finalise_count += 1
+        if self.fail_finalise:
+            raise RuntimeError("finalisation failed")
         return []
 
 
@@ -600,6 +630,101 @@ def test_automaton_move_delegates_to_focus_navigator() -> None:
     assert focus_navigator.moves == [1]
     assert automaton.get_fov_id() == 1
     assert command.command_data.fov_id == 1
+
+
+def test_command_failure_is_delivered_to_strategy_and_stops_the_batch() -> None:
+    automaton, _, focus_navigator, _, _, _ = make_automaton()
+    strategy = automaton._strategy
+    assert isinstance(strategy, FakeStrategy)
+    focus_navigator.move = lambda fov_id: (_ for _ in ()).throw(RuntimeError("stage blip"))
+    factory = CommandFactory(cfg=make_cfg())
+    failed = factory.command_move(fov_id=1)
+    skipped = factory.command_wait(duration=0)
+    automaton.next_commands = [failed, skipped]
+
+    automaton._process()
+
+    assert len(strategy.received_errors) == 1
+    supplied = strategy.received_errors[0]
+    assert isinstance(supplied, CommandExecutionError)
+    assert supplied.command_id == failed.command_id
+    assert supplied.original_error.args == ("stage blip",)
+    assert skipped.command_execution_time is None
+    assert automaton.runtime_failure_history == (supplied,)
+
+
+def test_unexpected_callback_failure_aborts_and_is_recorded() -> None:
+    automaton, acquisition_manager, *_deps = make_automaton()
+    strategy = automaton._strategy
+    assert isinstance(strategy, FakeStrategy)
+
+    def fail_callback(*args, **kwargs):
+        del args, kwargs
+        raise RuntimeError("interpreter failed")
+
+    strategy._callback = fail_callback
+
+    with pytest.raises(RuntimeError, match="interpreter failed"):
+        automaton._process()
+
+    assert automaton.strategy_has_stopped()
+    assert automaton.stopped()
+    assert acquisition_manager.stop_count == 1
+    assert isinstance(automaton.runtime_failure_history[-1], UnexpectedRuntimeError)
+
+
+@pytest.mark.parametrize(
+    ("action", "expected_finalise_count", "expected_halt_count"),
+    [("terminate", 1, 0), ("abort", 0, 1)],
+)
+def test_strategy_lifecycle_actions_have_distinct_finalisation_semantics(
+    action: str,
+    expected_finalise_count: int,
+    expected_halt_count: int,
+) -> None:
+    automaton, acquisition_manager, *_deps = make_automaton()
+    strategy = LifecycleStrategy(cfg=make_cfg(), action=action)
+    automaton.set_strategy(strategy)
+
+    automaton._process()
+    automaton._process()
+
+    assert strategy.finalise_count == expected_finalise_count
+    assert strategy.callbacks == 0
+    assert acquisition_manager.stop_count == expected_halt_count
+    assert automaton.strategy_has_stopped()
+    assert automaton.stopped()
+
+
+def test_failed_strategy_finalisation_falls_back_to_abort_semantics() -> None:
+    automaton, acquisition_manager, *_deps = make_automaton()
+    strategy = LifecycleStrategy(cfg=make_cfg(), action="terminate", fail_finalise=True)
+    automaton.set_strategy(strategy)
+
+    with pytest.raises(RuntimeError, match="finalisation failed"):
+        automaton._process()
+
+    assert strategy.finalise_count == 1
+    assert acquisition_manager.stop_count == 1
+    assert automaton.strategy_has_stopped()
+    assert automaton.stopped()
+
+
+def test_termination_failure_retains_originating_lifecycle_section() -> None:
+    automaton, *_deps = make_automaton()
+    strategy = LifecycleStrategy(cfg=make_cfg(), action="terminate")
+    automaton.set_strategy(strategy)
+
+    def fail_stop() -> None:
+        raise RuntimeError("stop failed")
+
+    automaton.stop = fail_stop
+
+    with pytest.raises(CommandExecutionError) as captured:
+        automaton._process_commands()
+
+    assert captured.value.command_type is AutomatonCommandType.TERMINATE_STRATEGY
+    assert captured.value.lifecycle_section == "initialise"
 
 
 def test_automaton_initialise_passes_strategy_fov_configs_to_focus_navigator() -> None:

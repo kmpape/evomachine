@@ -1,0 +1,66 @@
+observations:
+  current_fov_id:
+    description: Identifier of the field of view occupied at the current strategy step.
+    type: integer
+    minimum_inclusive: 0
+
+  step_count:
+    description: Number of strategy step callbacks completed before the current step.
+    type: integer
+    minimum_inclusive: 0
+
+  elapsed_time:
+    description: Time elapsed since this strategy began initialisation.
+    type: quantity
+    unit: s
+    minimum_inclusive: 0
+
+  mean_intensity:
+    description: Mean intensity of the most recently acquired image, normalised to the camera data range.
+    type: number
+    minimum_inclusive: 0
+    maximum_inclusive: 1
+
+  contrast_score:
+    description: Difference between the 99th and 1st intensity percentiles of the latest image, normalised to the camera data range.
+    type: number
+    minimum_inclusive: 0
+    maximum_inclusive: 1
+
+  saturation_fraction:
+    description: Fraction of pixels in the latest image at or above 98 percent of the camera data range.
+    type: number
+    minimum_inclusive: 0
+    maximum_inclusive: 1
+
+  focus_score:
+    description: Variance-of-Laplacian focus score for the most recently acquired image; larger values indicate sharper image structure.
+    type: number
+    minimum_inclusive: 0
+
+  hardware_autofocus_locked:
+    description: Whether hardware autofocus reported a lock after the most recent field-of-view movement.
+    type: boolean
+
+  focus_recovery_attempted:
+    description: Whether focus recovery was attempted during the most recent field-of-view movement.
+    type: boolean
+
+  software_focus_status:
+    description: Software-focus outcome reported during the most recent field-of-view movement.
+    type: enum
+    values:
+      - in_focus
+      - bad_focus_curve
+      - out_of_range
+      - device_error
+      - no_image
+      - unknown
+
+  fov_imaging_skipped:
+    description: Whether imaging of the current field of view was skipped after focus management failed.
+    type: boolean
+
+  focus_recovery_exhausted:
+    description: Whether the configured maximum number of focus-recovery attempts was reached.
+    type: boolean

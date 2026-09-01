@@ -25,6 +25,11 @@ from evomachine.peripherals.leds import LedManager
 from evomachine.peripherals.photodiode import Photodiode
 from evomachine.peripherals.stage import Stage
 from evomachine.projection import ProjectionManager
+from evomachine.runtime_errors import (
+    CommandExecutionError,
+    LifecycleSection,
+    UnexpectedRuntimeError,
+)
 from evomachine.softwarefocus import SoftwareFocus
 from evomachine.strategy import AbstractStrategy
 from evomachine.types import AutomatonCommandType, LEDType
@@ -45,6 +50,8 @@ class Automaton:
         AutomatonCommandType.PROJECT_ROI: ("_dmd", "_led_mngr"),
         AutomatonCommandType.WAIT: (),
         AutomatonCommandType.STOP: (),
+        AutomatonCommandType.TERMINATE_STRATEGY: (),
+        AutomatonCommandType.ABORT_STRATEGY: (),
         AutomatonCommandType.SAVE_STATE: (),
     }
     _REQUIREMENT_LABELS: ClassVar[dict[str, str]] = {
@@ -176,12 +183,18 @@ class Automaton:
         "True after FoV state has been registered."
         self._strategy_is_initialised: bool = False
         "True after the current strategy has been initialised."
+        self._strategy_is_finalised: bool = False
+        "True after finalisation has been requested for the current strategy."
         self._fov_processors_is_initialised: dict[int, bool] = {}
         "Initialisation status of each FoV processor keyed by FoV ID."
         self.next_commands: list[AutomatonCommand] = []
         "Strategy commands scheduled for the next processing step."
         self.last_commands: list[AutomatonCommand] = []
         "Strategy commands executed during the previous processing step."
+        self._command_section: LifecycleSection = "initialise"
+        "Lifecycle section that produced next_commands."
+        self._runtime_failure_history: list[CommandExecutionError | UnexpectedRuntimeError] = []
+        "Detailed failures observed during the current Automaton lifetime."
         self._start_strategy_event: Event = start_strategy_event
         "Event set when strategy execution should begin."
         self._stop_strategy_event: Event = stop_strategy_event
@@ -526,8 +539,10 @@ class Automaton:
             raise TypeError(f"Automaton.set_strategy: strategy must be AbstractStrategy, received {type(strategy)}.")
         self._strategy = strategy
         self._strategy_is_initialised = False
+        self._strategy_is_finalised = False
         self.next_commands = []
         self.last_commands = []
+        self._command_section = "initialise"
         if self._fov_list_is_initialised:
             self._initialise_strategy()
             for fov_id, fov_config in self._strategy.initial_fov_configs().items():
@@ -622,6 +637,8 @@ class Automaton:
         if self._strategy is None:
             raise RuntimeError("Automaton._initialise_strategy: strategy is required.")
         self._validate_strategy_command_requirements()
+        self._strategy_is_finalised = False
+        self._command_section = "initialise"
         self._strategy.command_factory.update_region_of_interests(region_of_interests=self._fov_to_roi)
         self.next_commands = self._strategy.initialise(
             fovs=self._fovs,
@@ -647,7 +664,23 @@ class Automaton:
         if self.gui_request_processor is not None:
             self.gui_request_processor(self.gui_request_budget)
 
+    @property
+    def runtime_failure_history(
+        self,
+    ) -> tuple[CommandExecutionError | UnexpectedRuntimeError, ...]:
+        """Return detailed runtime failures in observation order."""
+        return tuple(self._runtime_failure_history)
+
     def _process(self, finalise: bool = False) -> None:
+        """Execute one batch under the Automaton's fail-safe runtime boundary."""
+        section: LifecycleSection = "finalise" if finalise else self._command_section
+        try:
+            self._process_commands(finalise=finalise)
+        except BaseException as error:
+            self._fail_safe_abort(error, section=section)
+            raise
+
+    def _process_commands(self, finalise: bool = False) -> None:
         """
         Execute current strategy commands and request the next command list.
 
@@ -664,46 +697,104 @@ class Automaton:
             raise RuntimeError("Automaton._process: strategy is required.")
         if not self._strategy_is_initialised:
             raise RuntimeError("Automaton._process: strategy is not initialised.")
+        if not finalise and (self.stopped() or self.strategy_has_stopped()):
+            return
         if finalise:
+            if self._strategy_is_finalised:
+                return
+            self._strategy_is_finalised = True
             self.last_commands = self.next_commands
+            self._command_section = "finalise"
             self.next_commands = self._strategy.finalise()
             self._validate_commands_are_registered(commands=self.next_commands, source="finalise")
         else:
             self._validate_commands_are_registered(commands=self.next_commands, source="next_commands")
+        completed_commands: list[AutomatonCommand] = []
+        command_errors: list[Exception] = []
         for command in self.next_commands:
             if self.stopped():
                 return
             command.command_data = None
-            if command.command_type == AutomatonCommandType.MOVE:
-                command.command_data = self._execute_move(command=command)
-            elif command.command_type == AutomatonCommandType.UPDATE_FOV_CONFIG:
-                command.command_data = self._execute_update_fov_config(command=command)
-            elif command.command_type == AutomatonCommandType.IMAGE:
-                command.command_data = self._execute_image(command=command)
-            elif command.command_type == AutomatonCommandType.PROJECT:
-                command.command_data = self._execute_project(command=command)
-            elif command.command_type == AutomatonCommandType.PROJECT_ROI:
-                command.command_data = self._execute_project_roi(command=command)
-            elif command.command_type == AutomatonCommandType.WAIT:
-                self.sleep(**command.command_args)
-            elif command.command_type == AutomatonCommandType.STOP:
-                self.stop()
-            elif command.command_type == AutomatonCommandType.SAVE_STATE:
-                self.save_state(filename_suffix=command.command_args)
-            elif command.command_type == AutomatonCommandType.LIVE_MODE:
-                self.set_cam_live_mode(status=command.command_args)
-            else:
-                raise RuntimeError(f"Automaton._process: unsupported command type {command.command_type}.")
+            command_section = self._command_section
+            try:
+                if command.command_type == AutomatonCommandType.MOVE:
+                    command.command_data = self._execute_move(command=command)
+                elif command.command_type == AutomatonCommandType.UPDATE_FOV_CONFIG:
+                    command.command_data = self._execute_update_fov_config(command=command)
+                elif command.command_type == AutomatonCommandType.IMAGE:
+                    command.command_data = self._execute_image(command=command)
+                elif command.command_type == AutomatonCommandType.PROJECT:
+                    command.command_data = self._execute_project(command=command)
+                elif command.command_type == AutomatonCommandType.PROJECT_ROI:
+                    command.command_data = self._execute_project_roi(command=command)
+                elif command.command_type == AutomatonCommandType.WAIT:
+                    self.sleep(**command.command_args)
+                elif command.command_type == AutomatonCommandType.STOP:
+                    self.stop()
+                    command.command_execution_time = time.time()
+                    command.fov_id = self.get_fov_id()
+                    return
+                elif command.command_type == AutomatonCommandType.TERMINATE_STRATEGY:
+                    if not finalise:
+                        self._process_commands(finalise=True)
+                    self.stop_strategy()
+                    self.stop()
+                    command.command_execution_time = time.time()
+                    command.fov_id = self.get_fov_id()
+                    return
+                elif command.command_type == AutomatonCommandType.ABORT_STRATEGY:
+                    self.stop_strategy()
+                    self.stop()
+                    self.act_on_halt()
+                    command.command_execution_time = time.time()
+                    command.fov_id = self.get_fov_id()
+                    return
+                elif command.command_type == AutomatonCommandType.SAVE_STATE:
+                    self.save_state(filename_suffix=command.command_args)
+                elif command.command_type == AutomatonCommandType.LIVE_MODE:
+                    self.set_cam_live_mode(status=command.command_args)
+                else:
+                    raise RuntimeError(
+                        f"Automaton._process: unsupported command type {command.command_type}."
+                    )
+            except Exception as error:
+                command.command_execution_time = time.time()
+                command.fov_id = self.get_fov_id()
+                failure = CommandExecutionError(
+                    command_id=command.command_id,
+                    command_type=command.command_type,
+                    command_args=self._snapshot_command_args(command.command_args),
+                    lifecycle_section=command_section,
+                    original_error=error,
+                )
+                self._runtime_failure_history.append(failure)
+                if finalise or command.command_type in {
+                    AutomatonCommandType.TERMINATE_STRATEGY,
+                    AutomatonCommandType.ABORT_STRATEGY,
+                }:
+                    raise failure from error
+                command_errors.append(failure)
+                break
             command.command_execution_time = time.time()
             command.fov_id = self.get_fov_id()
+            completed_commands.append(command)
         if not finalise:
-            self.last_commands = self.next_commands
+            self.last_commands = completed_commands
             self.next_commands = self._strategy.callback(
                 fov_id=self.get_fov_id(),
                 data=self.last_commands,
-                errors=[],
+                errors=command_errors,
             )
+            self._command_section = "step"
             self._validate_commands_are_registered(commands=self.next_commands, source="callback")
+
+    @staticmethod
+    def _snapshot_command_args(command_args: Any) -> Any:
+        """Copy diagnostic arguments without allowing copy failures to mask command errors."""
+        try:
+            return copy.copy(command_args)
+        except Exception:
+            return repr(command_args)
 
     def _execute_move(self, command: AutomatonCommand) -> Any:
         """
@@ -947,17 +1038,21 @@ class Automaton:
         -------
         None
         """
-        while not self.has_shutdown():
-            while not self.strategy_has_started() and not self.has_shutdown():
-                self.gui_process_requests()
-                if self.run_timeout > 0:
-                    self.sleep(duration=self.run_timeout)
-            while not self.strategy_has_stopped() and not self.has_shutdown():
-                self.gui_process_requests()
-                if not self.stopped():
-                    self._process()
-                if self.run_timeout > 0:
-                    self.sleep(duration=self.run_timeout)
+        try:
+            while not self.has_shutdown():
+                while not self.strategy_has_started() and not self.has_shutdown():
+                    self.gui_process_requests()
+                    if self.run_timeout > 0:
+                        self.sleep(duration=self.run_timeout)
+                while not self.strategy_has_stopped() and not self.has_shutdown():
+                    self.gui_process_requests()
+                    if not self.stopped():
+                        self._process()
+                    if self.run_timeout > 0:
+                        self.sleep(duration=self.run_timeout)
+        except BaseException as error:
+            self._fail_safe_abort(error, section=self._command_section)
+            raise
 
     def set_cam_live_mode(self, status: bool = False) -> None:
         """
@@ -1065,11 +1160,58 @@ class Automaton:
         -------
         None
         """
-        self.acq_mngr.stop()
+        operations = [("acquisition manager", self.acq_mngr.stop)]
         if self._swfocus is not None and callable(getattr(self._swfocus, "stop", None)):
-            self._swfocus.stop()
+            operations.append(("software focus", self._swfocus.stop))
         if self._autofocus is not None and callable(getattr(self._autofocus, "unlock", None)):
-            self._autofocus.unlock()
+            operations.append(("autofocus", self._autofocus.unlock))
+
+        failures = []
+        for label, operation in operations:
+            try:
+                operation()
+            except Exception as error:
+                failures.append(RuntimeError(f"Failed to halt {label}: {error}"))
+        if failures:
+            raise ExceptionGroup("One or more peripherals failed to halt.", failures)
+
+    def _fail_safe_abort(
+        self,
+        error: BaseException,
+        *,
+        section: LifecycleSection,
+    ) -> None:
+        """Record an unexpected failure and attempt an idempotent emergency halt."""
+        already_recorded = any(
+            failure is error
+            or (
+                isinstance(failure, UnexpectedRuntimeError)
+                and failure.original_error is error
+            )
+            for failure in self._runtime_failure_history
+        )
+        if not already_recorded:
+            self._runtime_failure_history.append(
+                UnexpectedRuntimeError(
+                    lifecycle_section=section,
+                    original_error=error,
+                )
+            )
+
+        already_stopped = self.strategy_has_stopped() and self.stopped()
+        self.stop_strategy()
+        self.stop()
+        if already_stopped:
+            return
+        try:
+            self.act_on_halt()
+        except Exception as halt_error:
+            self._runtime_failure_history.append(
+                UnexpectedRuntimeError(
+                    lifecycle_section=section,
+                    original_error=halt_error,
+                )
+            )
 
     def shutdown(self) -> None:
         """

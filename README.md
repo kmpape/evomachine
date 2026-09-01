@@ -31,6 +31,7 @@ The expected layout is:
 ```
 workspace/
 ├── evomachine/      ← this repo
+├── AutoStrat/        strategy generation and validation library
 ├── de-lta-rt/       (dev_main)
 ├── asitiger/        (master)
 └── sync_board/      (Signals)
@@ -99,6 +100,11 @@ This project depends on several sibling repositories:
 - URL: `https://github.com/kmpape/evomachine`  
 - Branches: `dev` (in use) and `refactor`
 
+`AutoStrat`:
+- domain-independent strategy generation, parsing, validation, and semantic verification library
+- URL: `https://github.com/Liam-Metcalf/AutoStrat`
+- installed from the sibling checkout in editable mode during EvoMachine development
+
 `asitiger`: 
 - ASI Tiger controller package used by Tiger hardware bindings.  
 - URL: `https://github.com/kmpape/asitiger` (forked from `https://github.com/herophilus/asitiger`)  
@@ -136,7 +142,26 @@ The main Python package is `evomachine/evomachine`.
 - `acquisition.py`, `navigation.py`, and `projection.py` provide focused
   managers for frame capture, focus/stage navigation, and DMD projection tasks.
 - `commands.py`, `strategy.py`, and `automaton.py` describe command objects,
-  strategy generation, and high-level experiment orchestration.
+  strategy execution, and high-level experiment orchestration.
+- `strategy_generation/` contains the application-side AutoStrat integration. It provides a
+  validated-program interpreter, injected command/observation/error interfaces, an
+  `AbstractStrategy` wrapper, and a single-worker service. `StrategyGenerationService.build()` is
+  explicitly blocking; GUI and event-loop callers must use `submit()` and consume its future
+  without blocking their thread. Concrete microscopy command mappings,
+  observation calculations, and runtime-error classifications are owned by EvoMachine. Command
+  failures stop the remainder of their batch and are exposed on the next strategy step with their
+  original exception and command context. A retry re-emits the failed command followed by the
+  unexecuted batch tail; `continue` skips the failed command and resumes that tail. Retries are
+  bounded by the domain pack, and exhaustion continues, terminates, or aborts according to the
+  declared policy. Unexpected
+  interpreter or integration failures enter a host-owned fail-safe abort path. Normal strategy
+  termination runs finalisation exactly once; abort halts active peripherals and exits without
+  running strategy finalisation. The initial microscopy adapter maps `move_fov`, explicit `image`,
+  full-field `project`, and `wait` calls onto existing Automaton commands. It exposes lifecycle and
+  focus outcomes plus latest-image mean intensity, percentile contrast, saturation fraction, and
+  variance-of-Laplacian focus score as strategy observations.
+- `domain_packs/` contains EvoMachine-owned strategy declarations and prompting material. The
+  `microscopy/` pack is loaded by the separate strategy-generation library during integration.
 - `coordinates.py`, `types.py`, `config_types.py`, and `filemanager.py` contain
   shared data types, metadata, coordinate handling, and file output utilities.
 - `softwarefocus.py` and `trackingrt.py` support software focus and real-time
