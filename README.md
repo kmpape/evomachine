@@ -153,7 +153,10 @@ The main Python package is `evomachine/evomachine`.
   automatically continues, terminates, or aborts according to the declared policy. Unexpected
   interpreter or integration failures enter a host-owned fail-safe abort path. Normal strategy
   termination runs finalisation exactly once; abort halts active peripherals and exits without
-  running strategy finalisation.
+  running strategy finalisation. The initial microscopy adapter maps `move_fov`, explicit `image`,
+  full-field `project`, and `wait` calls onto existing Automaton commands. It exposes lifecycle and
+  focus outcomes plus latest-image mean intensity, percentile contrast, saturation fraction, and
+  variance-of-Laplacian focus score as strategy observations.
 - `domain_packs/` contains EvoMachine-owned strategy declarations and prompting material. The
   `microscopy/` pack is loaded by the separate strategy-generation library during integration.
 - `coordinates.py`, `types.py`, `config_types.py`, and `filemanager.py` contain

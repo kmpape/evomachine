@@ -376,8 +376,8 @@ class CommandFactory:
             raise TypeError(f"AutomatonCommandFactory.project: Wrong type for argument channel ({type(channel)}).")
         if not (isinstance(image, np.ndarray) and image.shape == DMD_WIDTH_HEIGHT and image.dtype == np.uint8):
             raise TypeError(f"AutomatonCommandFactory.project: Wrong type for argument image ({type(image)}).")
-        if not (isinstance(brightness, int) or not isinstance(brightness, float)) or not (0 <= brightness <= 100):
-            msg = f"AutomatonCommandFactory.project: Brightness must satisfy {0} < {duration} (actual) < 100."
+        if not isinstance(brightness, int | float) or isinstance(brightness, bool) or not 0 <= brightness <= 100:
+            msg = f"AutomatonCommandFactory.project: Brightness must be numeric in [0, 100], received {brightness}."
             raise TypeError(msg)
         max_duration = 60*60 if brightness > 29 else 3600
         if not (isinstance(duration, float) or isinstance(duration, int)) or not (0 < duration < max_duration):

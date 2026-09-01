@@ -1,13 +1,13 @@
 examples:
   - name: Explicit illumination imaging loop
     user_request: >-
-      Start at the first field of view, capture a 100 ms image using LED wavelength 450 nm, and wait
-      for 3 seconds. At each step, move to the next field of view and repeat the same image and
-      wait.
+      Start at the first field of view, capture a 100 ms image using LED wavelength 450 nm at 10
+      percent brightness with the 465 nm filter, and wait for 3 seconds. At each step, move to the
+      next field of view and repeat the same image and wait.
     strategy: |
       initialise
           move_fov(target=first_fov)
-          image(exposure=100ms, led=450nm)
+          image(exposure=100ms, led=450nm, led_brightness=10, filter=465nm)
           wait(duration=3s)
 
       step
@@ -17,12 +17,14 @@ examples:
               retry
           if error.image_acquisition_failed:
               retry
+          if error.projection_failed:
+              retry
           if error.communication_failed:
               retry
           if error.runtime_failure:
               abort
           move_fov(target=next_fov)
-          image(exposure=100ms, led=450nm)
+          image(exposure=100ms, led=450nm, led_brightness=10, filter=465nm)
           wait(duration=3s)
 
       finalise
@@ -30,7 +32,8 @@ examples:
   - name: Explicit LED imaging loop
     user_request: >-
       Move to the first field of view during setup. During each step, take a 25 ms image at LED
-      wavelength 515 nm. No finalisation action is required.
+      wavelength 515 nm at 12 percent brightness with the 527 nm filter. No finalisation action is
+      required.
     strategy: |
       initialise
           move_fov(target=first_fov)
@@ -42,10 +45,12 @@ examples:
               retry
           if error.image_acquisition_failed:
               retry
+          if error.projection_failed:
+              retry
           if error.communication_failed:
               retry
           if error.runtime_failure:
               abort
-          image(exposure=25ms, led=515nm)
+          image(exposure=25ms, led=515nm, led_brightness=12, filter=527nm)
 
       finalise

@@ -3,7 +3,7 @@ schema_version: 7
 domain:
   id: microscopy
   name: EvoMachine microscopy
-  version: "0.2.0"
+  version: "0.3.0"
   description: >-
-    Strategy commands currently supported by EvoMachine for field-of-view movement, image
-    acquisition, and bounded waits.
+    Strategy commands currently supported by EvoMachine for field-of-view movement, explicit
+    image acquisition, full-field DMD projection, and bounded waits.

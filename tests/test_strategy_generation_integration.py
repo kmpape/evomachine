@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 from threading import current_thread
 
+import numpy as np
 import pytest
 
 from autostrat import load_domain_pack
 from autostrat.generation import GeneratedStrategy, Prompt
 from autostrat.language.model import (
     ControlAction,
+    QuantityValue,
     ReferenceExpression,
     ValidatedCommandCall,
     ValidatedComparisonExpression,
@@ -22,8 +24,10 @@ from autostrat.pipeline import StrategyAttempt, VerifiedStrategy
 from autostrat.verification import SemanticVerdict
 
 from evomachine.commands import AutomatonCommand
+from evomachine.config import DMD_WIDTH_HEIGHT
 from evomachine.coordinates import Coordinate
 from evomachine.image_processing_config import ImageProcessorConfigFactory
+from evomachine.navigation import FocusNavigatorFovRecord, FovConfig
 from evomachine.strategy import AbstractStrategy
 from evomachine.strategy_generation import (
     ActiveRuntimeError,
@@ -39,7 +43,7 @@ from evomachine.strategy_generation import (
     StrategyInterpretationError,
     StrategyRuntimeContext,
 )
-from evomachine.types import AutomatonCommandType, LEDType
+from evomachine.types import AutomatonCommandType, FilterWheelType, FocusStatusType, LEDType
 from evomachine.runtime_errors import CommandExecutionError
 
 
@@ -65,6 +69,8 @@ ERROR_HANDLERS = (
     "    if error.movement_failed:\n"
     "        retry\n"
     "    if error.image_acquisition_failed:\n"
+    "        retry\n"
+    "    if error.projection_failed:\n"
     "        retry\n"
     "    if error.communication_failed:\n"
     "        retry\n"
@@ -169,6 +175,7 @@ def test_unconfigured_error_provider_does_not_silently_discard_errors() -> None:
         (AutomatonCommandType.MOVE, RuntimeError("stage is not initialised"), "device_not_ready"),
         (AutomatonCommandType.MOVE, RuntimeError("motion rejected"), "movement_failed"),
         (AutomatonCommandType.IMAGE, RuntimeError("no frame returned"), "image_acquisition_failed"),
+        (AutomatonCommandType.PROJECT, RuntimeError("DMD rejected pattern"), "projection_failed"),
         (AutomatonCommandType.IMAGE, ConnectionError("socket closed"), "communication_failed"),
     ],
 )
@@ -177,7 +184,12 @@ def test_microscopy_runtime_errors_are_classified_with_diagnostics(
     cause: Exception,
     expected_name: str,
 ) -> None:
-    call = ValidatedCommandCall(name="image" if command_type is AutomatonCommandType.IMAGE else "move_fov")
+    call_name = {
+        AutomatonCommandType.IMAGE: "image",
+        AutomatonCommandType.MOVE: "move_fov",
+        AutomatonCommandType.PROJECT: "project",
+    }[command_type]
+    call = ValidatedCommandCall(name=call_name)
     supplied = CommandExecutionError(
         command_id=7,
         command_type=command_type,
@@ -202,14 +214,13 @@ def test_image_retry_exhaustion_automatically_continues() -> None:
         cfg=_cfg(),
         verified=_verified(
             "initialise\n"
-            "    image(exposure=25ms, led=450nm)\n"
+            "    image(exposure=25ms, led=450nm, led_brightness=10, filter=465nm)\n"
             "step\n"
-            "    image(exposure=25ms, led=450nm)\n"
+            "    image(exposure=25ms, led=450nm, led_brightness=10, filter=465nm)\n"
             "finalise\n"
         ),
         domain=_domain(),
         command_adapter=MicroscopyCommandAdapter(
-            image_brightness=10,
             segment_images=False,
             save_images=False,
         ),
@@ -252,7 +263,6 @@ def test_movement_retry_exhaustion_terminates_without_leaking_into_finalise() ->
         ),
         domain=_domain(),
         command_adapter=MicroscopyCommandAdapter(
-            image_brightness=10,
             segment_images=False,
             save_images=False,
         ),
@@ -293,7 +303,6 @@ def test_unclassified_runtime_failure_preserves_diagnostics_and_aborts() -> None
         verified=_verified("initialise\nstep\nfinalise\n"),
         domain=_domain(),
         command_adapter=MicroscopyCommandAdapter(
-            image_brightness=10,
             segment_images=False,
             save_images=False,
         ),
@@ -391,12 +400,26 @@ def test_generation_service_runs_pipeline_on_its_worker() -> None:
 def test_microscopy_domain_exposes_runtime_error_policies() -> None:
     domain = _domain()
 
-    assert set(domain.commands) == {"move_fov", "image", "wait"}
-    assert set(domain.observations) == {"current_fov_id", "step_count"}
+    assert set(domain.commands) == {"move_fov", "image", "project", "wait"}
+    assert set(domain.observations) == {
+        "current_fov_id",
+        "step_count",
+        "elapsed_time",
+        "mean_intensity",
+        "contrast_score",
+        "saturation_fraction",
+        "focus_score",
+        "hardware_autofocus_locked",
+        "focus_recovery_attempted",
+        "software_focus_status",
+        "fov_imaging_skipped",
+        "focus_recovery_exhausted",
+    }
     assert set(domain.runtime_errors) == {
         "device_not_ready",
         "movement_failed",
         "image_acquisition_failed",
+        "projection_failed",
         "communication_failed",
         "runtime_failure",
     }
@@ -406,13 +429,15 @@ def test_microscopy_domain_exposes_runtime_error_policies() -> None:
         "communication_failed",
     )
     assert domain.runtime_errors["image_acquisition_failed"].retry_exhausted_action == "continue"
+    assert domain.runtime_errors["projection_failed"].retry_exhausted_action == "continue"
 
 
 def test_microscopy_adapter_builds_existing_automaton_commands() -> None:
     verified = _verified(
         "initialise\n"
         "    move_fov(target=first_fov)\n"
-        "    image(exposure=25ms, led=515nm)\n"
+        "    image(exposure=25ms, led=515nm, led_brightness=12, filter=527nm)\n"
+        "    project(illumination_led=385nm, illumination_brightness=20, duration=2s)\n"
         "    wait(duration=3s)\n"
         "step\n"
         "finalise\n"
@@ -422,7 +447,6 @@ def test_microscopy_adapter_builds_existing_automaton_commands() -> None:
         verified=verified,
         domain=_domain(),
         command_adapter=MicroscopyCommandAdapter(
-            image_brightness=12,
             segment_images=False,
             save_images=True,
         ),
@@ -439,16 +463,79 @@ def test_microscopy_adapter_builds_existing_automaton_commands() -> None:
     assert [command.command_type for command in commands] == [
         AutomatonCommandType.MOVE,
         AutomatonCommandType.IMAGE,
+        AutomatonCommandType.PROJECT,
         AutomatonCommandType.WAIT,
     ]
     assert commands[0].command_args == 4
     image_args = commands[1].command_args
     assert image_args["frame_metadata"].exposure == 25
     assert image_args["frame_metadata"].leds == {LEDType.LED_515_NM: 12}
+    assert image_args["frame_metadata"].filter_wheel is FilterWheelType.FILTER_527nm
     assert image_args["segment"] is False
     assert image_args["save"] is True
-    assert commands[2].command_args["duration"] == 3
-    assert commands[2].command_args["set_live_mode"] is False
+    project_args = commands[2].command_args
+    assert project_args["channel"] is LEDType.LED_385_NM
+    assert project_args["brightness"] == 20
+    assert project_args["duration"] == 2
+    assert project_args["image"].shape == DMD_WIDTH_HEIGHT
+    assert project_args["image"].dtype == np.uint8
+    assert np.all(project_args["image"] == 255)
+    assert commands[3].command_args["duration"] == 3
+    assert commands[3].command_args["set_live_mode"] is False
+
+
+def test_microscopy_provider_exposes_latest_image_and_focus_results() -> None:
+    provider = MicroscopyObservationProvider()
+    provider.observe(fov_id=-1, completed_commands=[], errors=[], step_count=0)
+    move = AutomatonCommand(
+        command_id=1,
+        command_type=AutomatonCommandType.MOVE,
+        command_args=0,
+        command_creation_time=0,
+        command_data=FocusNavigatorFovRecord(
+            fov_id=0,
+            coordinate=Coordinate(0, 0, 0),
+            fov_config=FovConfig(),
+            is_locked=True,
+            refocusing=True,
+            software_focus_status=FocusStatusType.IN_FOCUS,
+        ),
+    )
+    image_array = np.array(
+        [
+            [0, 0, 0, 0],
+            [0, 64, 128, 0],
+            [0, 128, 255, 0],
+            [0, 0, 0, 0],
+        ],
+        dtype=np.uint8,
+    )
+    image = AutomatonCommand(
+        command_id=2,
+        command_type=AutomatonCommandType.IMAGE,
+        command_args={},
+        command_creation_time=0,
+        command_data={"img": [image_array[np.newaxis, ...]]},
+    )
+
+    observations = provider.observe(
+        fov_id=0,
+        completed_commands=[move, image],
+        errors=[],
+        step_count=1,
+    )
+
+    assert observations["hardware_autofocus_locked"] is True
+    assert observations["focus_recovery_attempted"] is True
+    assert observations["software_focus_status"] == "in_focus"
+    assert observations["fov_imaging_skipped"] is False
+    assert observations["focus_recovery_exhausted"] is False
+    assert observations["mean_intensity"] == pytest.approx(float(image_array.mean()) / 255)
+    assert 0 <= observations["contrast_score"] <= 1
+    assert observations["saturation_fraction"] == pytest.approx(1 / image_array.size)
+    assert observations["focus_score"] >= 0
+    assert isinstance(observations["elapsed_time"], QuantityValue)
+    assert observations["elapsed_time"].unit == "s"
 
 
 def test_microscopy_observations_drive_step_conditionals() -> None:
@@ -466,7 +553,6 @@ def test_microscopy_observations_drive_step_conditionals() -> None:
         verified=verified,
         domain=_domain(),
         command_adapter=MicroscopyCommandAdapter(
-            image_brightness=10,
             segment_images=False,
             save_images=True,
         ),
@@ -536,7 +622,6 @@ def test_move_fov_requires_valid_application_context() -> None:
         verified=verified,
         domain=_domain(),
         command_adapter=MicroscopyCommandAdapter(
-            image_brightness=10,
             segment_images=False,
             save_images=True,
         ),
@@ -560,7 +645,6 @@ def test_move_fov_requires_valid_application_context() -> None:
         ),
         domain=_domain(),
         command_adapter=MicroscopyCommandAdapter(
-            image_brightness=10,
             segment_images=False,
             save_images=True,
         ),

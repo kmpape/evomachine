@@ -27,6 +27,17 @@ runtime_errors:
     max_retries: 2
     retry_exhausted_action: continue
 
+  projection_failed:
+    description: A requested DMD projection could not be completed.
+    allowed_actions:
+      - retry
+      - continue
+      - terminate
+      - abort
+    default_action: retry
+    max_retries: 2
+    retry_exhausted_action: continue
+
   communication_failed:
     description: Communication with a hardware device failed.
     allowed_actions:
