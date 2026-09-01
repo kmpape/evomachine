@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from threading import current_thread
 
 import numpy as np
@@ -158,7 +157,7 @@ def test_interpreter_retries_the_call_owned_by_the_active_error() -> None:
     )
 
     assert result.action == "retry"
-    assert result.retry_error is active_error
+    assert result.action_error is active_error
     assert result.inspected_errors == frozenset({"camera_failed"})
 
 
@@ -215,8 +214,10 @@ def test_image_retry_exhaustion_automatically_continues() -> None:
         verified=_verified(
             "initialise\n"
             "    image(exposure=25ms, led=450nm, led_brightness=10, filter=465nm)\n"
+            "    wait(duration=1s)\n"
             "step\n"
             "    image(exposure=25ms, led=450nm, led_brightness=10, filter=465nm)\n"
+            "    wait(duration=1s)\n"
             "finalise\n"
         ),
         domain=_domain(),
@@ -247,8 +248,61 @@ def test_image_retry_exhaustion_automatically_continues() -> None:
         if returned_commands:
             command = returned_commands[0]
 
-    assert returned_commands == []
+    assert [command.command_type for command in returned_commands] == [
+        AutomatonCommandType.WAIT
+    ]
     assert [failure.retry_attempt for failure in strategy.failure_history] == [0, 1, 2]
+
+
+def test_retry_preserves_interrupted_batch_tail_and_discards_old_tracking() -> None:
+    strategy = AutoStratStrategy(
+        cfg=_cfg(),
+        verified=_verified(
+            "initialise\n"
+            "    wait(duration=1s)\n"
+            "    image(exposure=25ms, led=450nm, led_brightness=10, filter=465nm)\n"
+            "    wait(duration=2s)\n"
+            "    if observation.step_count == 0:\n"
+            "        terminate\n"
+            "step\n"
+            "finalise\n"
+        ),
+        domain=_domain(),
+        command_adapter=MicroscopyCommandAdapter(
+            segment_images=False,
+            save_images=False,
+        ),
+        observation_provider=MicroscopyObservationProvider(),
+        runtime_error_provider=MicroscopyRuntimeErrorProvider(),
+    )
+    original = strategy.initialise(
+        fovs={0: Coordinate(0, 0, 0)},
+        region_of_interests={0: []},
+        fov_processors={},
+        dmd=None,
+    )
+    failure = CommandExecutionError(
+        command_id=original[1].command_id,
+        command_type=original[1].command_type,
+        command_args=original[1].command_args,
+        lifecycle_section="initialise",
+        original_error=RuntimeError("camera returned no frame"),
+    )
+
+    resumed = strategy.callback(fov_id=0, data=[original[0]], errors=[failure])
+
+    assert [command.command_type for command in resumed] == [
+        AutomatonCommandType.IMAGE,
+        AutomatonCommandType.WAIT,
+        AutomatonCommandType.TERMINATE_STRATEGY,
+    ]
+    assert resumed[1].command_args["duration"] == 2
+    assert not ({command.command_id for command in original} & set(strategy._command_origins))
+    assert set(strategy._command_origins) == {
+        command.command_id
+        for command in resumed
+        if command.command_type is not AutomatonCommandType.TERMINATE_STRATEGY
+    }
 
 
 def test_movement_retry_exhaustion_terminates_without_leaking_into_finalise() -> None:
@@ -364,7 +418,7 @@ def test_verified_program_is_wrapped_as_an_abstract_strategy() -> None:
     }
 
 
-def test_generation_service_runs_pipeline_on_its_worker() -> None:
+def test_generation_service_distinguishes_blocking_build_from_worker_submission() -> None:
     verified = _verified("initialise\nstep\nfinalise\n")
 
     class FakePipeline:
@@ -373,7 +427,6 @@ def test_generation_service_runs_pipeline_on_its_worker() -> None:
         def run(self, request: str) -> VerifiedStrategy:
             assert request == "build a strategy"
             self.thread_names.append(current_thread().name)
-            assert not asyncio.get_event_loop().is_running()
             return verified
 
     pipeline = FakePipeline()
@@ -382,19 +435,16 @@ def test_generation_service_runs_pipeline_on_its_worker() -> None:
         domain=_domain(),
         command_adapter=FakeCommandAdapter(),
     ) as service:
+        blocking_strategy = service.build("build a strategy", _cfg())
         submitted_strategy = service.submit("build a strategy", _cfg()).result(timeout=5)
 
-        async def build_from_running_loop():
-            return service.build("build a strategy", _cfg())
-
-        notebook_strategy = asyncio.run(build_from_running_loop())
-
+    assert blocking_strategy.source == verified.source
     assert submitted_strategy.source == verified.source
-    assert notebook_strategy.source == verified.source
+    assert isinstance(blocking_strategy, AbstractStrategy)
     assert isinstance(submitted_strategy, AbstractStrategy)
-    assert isinstance(notebook_strategy, AbstractStrategy)
     assert len(pipeline.thread_names) == 2
-    assert all(name.startswith("strategy-generation") for name in pipeline.thread_names)
+    assert pipeline.thread_names[0] == current_thread().name
+    assert pipeline.thread_names[1].startswith("strategy-generation")
 
 
 def test_microscopy_domain_exposes_runtime_error_policies() -> None:

@@ -69,6 +69,8 @@ class AutoStratStrategy(AbstractStrategy):
         if not isinstance(self.runtime_error_provider, RuntimeErrorProvider):
             raise TypeError("runtime_error_provider must be a RuntimeErrorProvider.")
         self._command_origins: dict[int, ValidatedCommandCall] = {}
+        self._command_tails: dict[int, tuple[ValidatedCommandCall, ...]] = {}
+        self._command_tail_actions: dict[int, RecoveryAction | None] = {}
         self._retry_counts: dict[tuple[str, int], int] = {}
         self._failure_history: list[ActiveRuntimeError] = []
         self._runtime_context = StrategyRuntimeContext()
@@ -142,6 +144,7 @@ class AutoStratStrategy(AbstractStrategy):
         return self._commands_for(self.program.step, current_fov_id=fov_id)
 
     def finalise(self) -> list[AutomatonCommand]:
+        self._discard_pending_batch()
         self._runtime_context = StrategyRuntimeContext(
             observations=self._runtime_context.observations,
         )
@@ -183,11 +186,13 @@ class AutoStratStrategy(AbstractStrategy):
             name: replace(
                 error,
                 retry_attempt=self._retry_counts.get(self._retry_key(error), 0),
+                remaining_calls=self._command_tails.get(error.command_id, ()),
+                remaining_action=self._command_tail_actions.get(error.command_id),
             )
             for name, error in active_errors.items()
         }
         self._failure_history.extend(active_with_attempts.values())
-        self._discard_consumed_command_origins(completed_commands, errors)
+        self._discard_pending_batch()
         return StrategyRuntimeContext(observations=observations, errors=active_with_attempts)
 
     def _commands_for(
@@ -199,7 +204,7 @@ class AutoStratStrategy(AbstractStrategy):
         interpreted = self._interpreter.interpret(statements, self._runtime_context)
         calls = list(interpreted.calls)
         action = interpreted.action
-        retry_error = interpreted.retry_error
+        action_error = interpreted.action_error
         uninspected_errors = [
             error
             for name, error in self._runtime_context.errors.items()
@@ -218,19 +223,23 @@ class AutoStratStrategy(AbstractStrategy):
             fallback_action = self.domain.runtime_errors[fallback_error.name].default_action
             if action is None or self._action_priority(fallback_action) > self._action_priority(action):
                 action = fallback_action
-                retry_error = fallback_error if action == "retry" else None
+                action_error = fallback_error
                 calls = []
 
         if self._runtime_context.errors and action is not None:
             calls = []
 
         if action == "retry":
-            if retry_error is None or retry_error.failed_call is None:
+            if action_error is None or action_error.failed_call is None:
                 raise StrategyInterpretationError(
                     "Retry requires an active error associated with a failed command."
                 )
             calls = []
-            action = self._apply_retry_policy(retry_error, calls)
+            action = self._apply_retry_policy(action_error, calls)
+        elif action == "continue" and action_error is not None:
+            self._retry_counts.pop(self._retry_key(action_error), None)
+            calls = list(action_error.remaining_calls)
+            action = action_error.remaining_action or "continue"
         elif action is not None:
             self._clear_active_retry_counts()
 
@@ -239,7 +248,7 @@ class AutoStratStrategy(AbstractStrategy):
             fovs=self.fovs,
             current_fov_id=current_fov_id,
         )
-        commands = []
+        built_commands: list[tuple[ValidatedCommandCall, AutomatonCommand]] = []
         for call in calls:
             expected_type = self.command_adapter.command_type(call)
             command = self.command_adapter.build(call, context)
@@ -250,8 +259,13 @@ class AutoStratStrategy(AbstractStrategy):
                     f"Command adapter declared {expected_type.name} for {call.name!r} "
                     f"but built {command.command_type.name}."
                 )
+            built_commands.append((call, command))
+
+        commands = [command for _, command in built_commands]
+        for index, (call, command) in enumerate(built_commands):
             self._command_origins[command.command_id] = call
-            commands.append(command)
+            self._command_tails[command.command_id] = tuple(calls[index + 1:])
+            self._command_tail_actions[command.command_id] = action if action != "retry" else None
 
         if action == "terminate":
             commands.append(self.command_factory.command_terminate_strategy())
@@ -279,13 +293,17 @@ class AutoStratStrategy(AbstractStrategy):
         if attempts < definition.max_retries:
             self._retry_counts[key] = attempts + 1
             calls.append(error.failed_call)
-            return "retry"
+            calls.extend(error.remaining_calls)
+            return error.remaining_action or "retry"
         exhausted_action = definition.retry_exhausted_action
         if exhausted_action is None:
             raise StrategyInterpretationError(
                 f"Retryable runtime error {error.name!r} has no exhaustion action."
             )
         self._retry_counts.pop(key, None)
+        if exhausted_action == "continue":
+            calls.extend(error.remaining_calls)
+            return error.remaining_action or "continue"
         return exhausted_action
 
     def _validate_error_origins(
@@ -322,19 +340,11 @@ class AutoStratStrategy(AbstractStrategy):
             if key[1] in completed_call_ids:
                 self._retry_counts.pop(key, None)
 
-    def _discard_consumed_command_origins(
-        self,
-        completed_commands: list[AutomatonCommand],
-        errors: list[Exception],
-    ) -> None:
-        command_ids = {command.command_id for command in completed_commands}
-        command_ids.update(
-            error.command_id
-            for error in errors
-            if hasattr(error, "command_id")
-        )
-        for command_id in command_ids:
-            self._command_origins.pop(command_id, None)
+    def _discard_pending_batch(self) -> None:
+        """Discard bookkeeping for the one batch whose callback is now being handled."""
+        self._command_origins.clear()
+        self._command_tails.clear()
+        self._command_tail_actions.clear()
 
     def _clear_active_retry_counts(self) -> None:
         for error in self._runtime_context.errors.values():

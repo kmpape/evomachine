@@ -715,6 +715,7 @@ class Automaton:
             if self.stopped():
                 return
             command.command_data = None
+            command_section = self._command_section
             try:
                 if command.command_type == AutomatonCommandType.MOVE:
                     command.command_data = self._execute_move(command=command)
@@ -763,7 +764,7 @@ class Automaton:
                     command_id=command.command_id,
                     command_type=command.command_type,
                     command_args=self._snapshot_command_args(command.command_args),
-                    lifecycle_section=self._command_section,
+                    lifecycle_section=command_section,
                     original_error=error,
                 )
                 self._runtime_failure_history.append(failure)

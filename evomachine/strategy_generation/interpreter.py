@@ -46,7 +46,7 @@ class ConditionalInterpreter:
         return self._interpret(
             statements,
             context,
-            retry_error=None,
+            active_error=None,
             inspected_errors=inspected_errors,
         )
 
@@ -55,7 +55,7 @@ class ConditionalInterpreter:
         statements: tuple[ValidatedStatement, ...],
         context: StrategyRuntimeContext,
         *,
-        retry_error: ActiveRuntimeError | None,
+        active_error: ActiveRuntimeError | None,
         inspected_errors: set[str],
     ) -> InterpretationResult:
         calls = []
@@ -67,14 +67,14 @@ class ConditionalInterpreter:
                     inspected_errors,
                 )
                 branch = statement.body if condition_is_true else statement.else_body
-                branch_retry_error = retry_error
+                branch_active_error = active_error
                 if condition_is_true and isinstance(statement.condition, ReferenceExpression):
                     if statement.condition.namespace == "error":
-                        branch_retry_error = context.errors[statement.condition.name]
+                        branch_active_error = context.errors[statement.condition.name]
                 branch_result = self._interpret(
                     branch,
                     context,
-                    retry_error=branch_retry_error,
+                    active_error=branch_active_error,
                     inspected_errors=inspected_errors,
                 )
                 calls.extend(branch_result.calls)
@@ -82,26 +82,27 @@ class ConditionalInterpreter:
                     return InterpretationResult(
                         calls=tuple(calls),
                         action=branch_result.action,
-                        retry_error=branch_result.retry_error,
+                        action_error=branch_result.action_error,
                         inspected_errors=frozenset(inspected_errors),
                     )
                 continue
 
             if isinstance(statement, ControlAction):
                 if statement.action == "retry":
-                    if retry_error is None or retry_error.failed_call is None:
+                    if active_error is None or active_error.failed_call is None:
                         raise StrategyInterpretationError(
                             "retry requires an active error associated with a failed validated command."
                         )
                     return InterpretationResult(
                         calls=tuple(calls),
                         action="retry",
-                        retry_error=retry_error,
+                        action_error=active_error,
                         inspected_errors=frozenset(inspected_errors),
                     )
                 return InterpretationResult(
                     calls=tuple(calls),
                     action=statement.action,
+                    action_error=active_error,
                     inspected_errors=frozenset(inspected_errors),
                 )
 

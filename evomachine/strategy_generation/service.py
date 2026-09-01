@@ -1,4 +1,4 @@
-"""Build AutoStrat-backed strategies synchronously or on one background worker."""
+"""Build AutoStrat-backed strategies through explicit blocking or worker APIs."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ class StrategyPipelineRunner(Protocol):
 
 
 class StrategyGenerationService:
-    """Keep the synchronous model pipeline off GUI and automaton event-loop threads."""
+    """Offer an explicit blocking build and non-blocking worker submission."""
 
     def __init__(
         self,
@@ -57,15 +57,11 @@ class StrategyGenerationService:
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="strategy-generation")
 
     def build(self, request: str, cfg: ImageProcessorConfig) -> AutoStratStrategy:
-        """Build directly, or use the isolated worker under a running event loop."""
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            return self._build(request, cfg)
-        return self._executor.submit(self._build_on_worker, request, cfg).result()
+        """Build on the calling thread; GUI and event-loop callers must use submit()."""
+        return self._build(request, cfg)
 
     def _build(self, request: str, cfg: ImageProcessorConfig) -> AutoStratStrategy:
-        """Build a strategy on a thread whose event-loop state is already suitable."""
+        """Build a strategy synchronously on the current thread."""
         verified = self._pipeline.run(request)
         return AutoStratStrategy(
             cfg=cfg,
@@ -77,11 +73,11 @@ class StrategyGenerationService:
         )
 
     def submit(self, request: str, cfg: ImageProcessorConfig) -> Future[AutoStratStrategy]:
-        """Run the synchronous pipeline on a worker with an isolated event loop."""
+        """Run the synchronous pipeline on the service's background worker."""
         return self._executor.submit(self._build_on_worker, request, cfg)
 
     def _build_on_worker(self, request: str, cfg: ImageProcessorConfig) -> AutoStratStrategy:
-        """Isolate Pydantic AI's synchronous wrapper from host event-loop policies."""
+        """Give the worker an isolated event loop for Pydantic AI's synchronous wrapper."""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:

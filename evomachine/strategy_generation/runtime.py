@@ -25,6 +25,8 @@ class ActiveRuntimeError:
     exception_type: str | None = None
     occurred_at: float = field(default_factory=time.time)
     retry_attempt: int = 0
+    remaining_calls: tuple[ValidatedCommandCall, ...] = ()
+    remaining_action: ControlActionName | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
@@ -33,6 +35,12 @@ class ActiveRuntimeError:
             raise ValueError("ActiveRuntimeError.command_id must be non-negative or None.")
         if self.retry_attempt < 0:
             raise ValueError("ActiveRuntimeError.retry_attempt must be non-negative.")
+        if not isinstance(self.remaining_calls, tuple) or not all(
+            isinstance(call, ValidatedCommandCall) for call in self.remaining_calls
+        ):
+            raise TypeError("ActiveRuntimeError.remaining_calls must be validated command calls.")
+        if self.remaining_action not in {None, "continue", "terminate", "abort"}:
+            raise ValueError("ActiveRuntimeError.remaining_action is not resumable.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,16 +66,14 @@ class InterpretationResult:
 
     calls: tuple[ValidatedCommandCall, ...] = ()
     action: ControlActionName | None = None
-    retry_error: ActiveRuntimeError | None = None
+    action_error: ActiveRuntimeError | None = None
     inspected_errors: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if self.action not in {None, "continue", "retry", "terminate", "abort"}:
             raise ValueError(f"Unsupported interpretation action {self.action!r}.")
-        if self.action == "retry" and self.retry_error is None:
+        if self.action == "retry" and self.action_error is None:
             raise ValueError("A retry result requires the active runtime error being retried.")
-        if self.action != "retry" and self.retry_error is not None:
-            raise ValueError("retry_error is only valid for a retry result.")
 
 
 __all__ = [

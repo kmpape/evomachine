@@ -710,6 +710,23 @@ def test_failed_strategy_finalisation_falls_back_to_abort_semantics() -> None:
     assert automaton.stopped()
 
 
+def test_termination_failure_retains_originating_lifecycle_section() -> None:
+    automaton, *_deps = make_automaton()
+    strategy = LifecycleStrategy(cfg=make_cfg(), action="terminate")
+    automaton.set_strategy(strategy)
+
+    def fail_stop() -> None:
+        raise RuntimeError("stop failed")
+
+    automaton.stop = fail_stop
+
+    with pytest.raises(CommandExecutionError) as captured:
+        automaton._process_commands()
+
+    assert captured.value.command_type is AutomatonCommandType.TERMINATE_STRATEGY
+    assert captured.value.lifecycle_section == "initialise"
+
+
 def test_automaton_initialise_passes_strategy_fov_configs_to_focus_navigator() -> None:
     """
     Check strategy initial FoV configs are passed into focus navigator setup.

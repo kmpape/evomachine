@@ -145,12 +145,15 @@ The main Python package is `evomachine/evomachine`.
   strategy execution, and high-level experiment orchestration.
 - `strategy_generation/` contains the application-side AutoStrat integration. It provides a
   validated-program interpreter, injected command/observation/error interfaces, an
-  `AbstractStrategy` wrapper, and a single-worker service for keeping the synchronous model
-  pipeline off GUI and automaton event-loop threads. Concrete microscopy command mappings,
+  `AbstractStrategy` wrapper, and a single-worker service. `StrategyGenerationService.build()` is
+  explicitly blocking; GUI and event-loop callers must use `submit()` and consume its future
+  without blocking their thread. Concrete microscopy command mappings,
   observation calculations, and runtime-error classifications are owned by EvoMachine. Command
   failures stop the remainder of their batch and are exposed on the next strategy step with their
-  original exception and command context. Retries are bounded by the domain pack; exhaustion
-  automatically continues, terminates, or aborts according to the declared policy. Unexpected
+  original exception and command context. A retry re-emits the failed command followed by the
+  unexecuted batch tail; `continue` skips the failed command and resumes that tail. Retries are
+  bounded by the domain pack, and exhaustion continues, terminates, or aborts according to the
+  declared policy. Unexpected
   interpreter or integration failures enter a host-owned fail-safe abort path. Normal strategy
   termination runs finalisation exactly once; abort halts active peripherals and exits without
   running strategy finalisation. The initial microscopy adapter maps `move_fov`, explicit `image`,
