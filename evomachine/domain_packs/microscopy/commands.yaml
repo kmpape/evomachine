@@ -47,6 +47,7 @@ commands:
         description: Filter-wheel position used for the acquisition.
         type: enum
         values:
+          - filter
           - 465nm
           - 527nm
           - 592nm

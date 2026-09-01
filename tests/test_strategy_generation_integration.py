@@ -511,13 +511,14 @@ def test_microscopy_domain_exposes_runtime_error_policies() -> None:
     )
     assert domain.runtime_errors["image_acquisition_failed"].retry_exhausted_action == "continue"
     assert domain.runtime_errors["projection_failed"].retry_exhausted_action == "continue"
+    assert "filter" in domain.commands["image"].arguments["filter"].values
 
 
 def test_microscopy_adapter_builds_existing_automaton_commands() -> None:
     verified = _verified(
         "initialise\n"
         "    move_fov(target=first_fov)\n"
-        "    image(exposure=25ms, led=515nm, led_brightness=12, filter=527nm)\n"
+        "    image(exposure=25ms, led=515nm, led_brightness=12, filter=filter)\n"
         "    project(illumination_led=385nm, illumination_brightness=20, duration=2s)\n"
         "    wait(duration=3s)\n"
         "step\n"
@@ -551,7 +552,7 @@ def test_microscopy_adapter_builds_existing_automaton_commands() -> None:
     image_args = commands[1].command_args
     assert image_args["frame_metadata"].exposure == 25
     assert image_args["frame_metadata"].leds == {LEDType.LED_515_NM: 12}
-    assert image_args["frame_metadata"].filter_wheel is FilterWheelType.FILTER_527nm
+    assert image_args["frame_metadata"].filter_wheel is FilterWheelType.FILTER
     assert image_args["segment"] is False
     assert image_args["save"] is True
     project_args = commands[2].command_args
