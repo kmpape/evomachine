@@ -31,26 +31,18 @@ def test_gui_stage_moves_are_non_blocking_so_stop_can_be_processed() -> None:
     assert all(request.payload["block"] is False for request in client.requests[:2])
 
 
-def test_gui_controller_sends_create_experiment_request() -> None:
+def test_gui_controller_sends_output_directory_request() -> None:
     client = RecordingClient()
     controller = EvoMachineGuiController(client=client, start_worker=False)
 
-    controller.create_acquisition_experiment("experiment-one")
+    controller.set_acquisition_directory("/tmp/images")
 
-    assert client.requests[-1].command is GuiCommandType.ACQUISITION_CREATE_EXPERIMENT
-    assert client.requests[-1].payload == {"name": "experiment-one"}
+    assert client.requests[-1].command is GuiCommandType.ACQUISITION_SET_DIRECTORY
+    assert client.requests[-1].payload == {"directory": "/tmp/images"}
 
-
-def test_gui_controller_lists_and_selects_experiments() -> None:
-    client = RecordingClient()
-    controller = EvoMachineGuiController(client=client, start_worker=False)
-
-    controller.refresh_acquisition_experiments()
-    controller.select_acquisition_experiment("experiment-one")
-
-    assert client.requests[-2].command is GuiCommandType.ACQUISITION_LIST_EXPERIMENTS
-    assert client.requests[-1].command is GuiCommandType.ACQUISITION_SELECT_EXPERIMENT
-    assert client.requests[-1].payload == {"name": "experiment-one"}
+    controller.refresh_acquisition_files("/tmp/previous-images")
+    assert client.requests[-1].command is GuiCommandType.ACQUISITION_LIST_FILES
+    assert client.requests[-1].payload == {"directory": "/tmp/previous-images"}
 
 
 def test_gui_controller_requests_and_dispatches_incremental_logs() -> None:

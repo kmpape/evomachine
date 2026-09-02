@@ -717,7 +717,7 @@ def test_automaton_dmd_free_basic_strategy_initialises_and_starts() -> None:
     automaton = Automaton(
         acq_mngr=FakeAcquisitionManager(camera=camera, led_manager=led_manager, stage=stage, dmd=None),
         focus_nav=FakeFocusNavigator(stage=stage),
-        strategy=BasicStrategy(cfg=cfg, save_path="."),
+        strategy=BasicStrategy(cfg=cfg),
         cfg_processor=cfg,
         start_strategy_event=Event(),
         stop_strategy_event=Event(),

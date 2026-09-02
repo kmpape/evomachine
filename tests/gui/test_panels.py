@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import QApplication, QFileDialog
 from evomachine.gui.panels.acquisition import (
     FrameAcquisitionSettingsPanel,
     ManualAcquisitionPanel,
+    OutputDirectoryPanel,
     SavedImageLoaderPanel,
     ZStackSettingsPanel,
 )
@@ -37,7 +38,7 @@ class FakeController(QObject):
     camera_status_received = pyqtSignal(dict)
     acquisition_files_received = pyqtSignal(list)
     acquisition_directory_received = pyqtSignal(dict)
-    acquisition_experiments_received = pyqtSignal(dict)
+    acquisition_loading_directory_received = pyqtSignal(str)
     frame_received = pyqtSignal(dict)
     filter_wheel_status_received = pyqtSignal(dict)
     led_list_received = pyqtSignal(list)
@@ -91,17 +92,11 @@ class FakeController(QObject):
     def acquire_z_stack(self, payload=None):
         self.calls.append(("acquire_z_stack", payload))
 
-    def refresh_acquisition_files(self):
-        self.calls.append(("refresh_acquisition_files",))
+    def refresh_acquisition_files(self, directory=None):
+        self.calls.append(("refresh_acquisition_files", directory))
 
-    def refresh_acquisition_experiments(self):
-        self.calls.append(("refresh_acquisition_experiments",))
-
-    def create_acquisition_experiment(self, name):
-        self.calls.append(("create_acquisition_experiment", name))
-
-    def select_acquisition_experiment(self, name):
-        self.calls.append(("select_acquisition_experiment", name))
+    def set_acquisition_directory(self, directory):
+        self.calls.append(("set_acquisition_directory", directory))
 
     def load_acquisition_frame(self, filename, image_transport=None):
         self.calls.append(("load_acquisition_frame", filename, image_transport))
@@ -387,51 +382,46 @@ def test_saved_image_loader_panel_refreshes_configured_directory() -> None:
 
     panel.refresh_button.click()
 
-    assert controller.calls == [("refresh_acquisition_files",)]
+    assert controller.calls == [("refresh_acquisition_files", None)]
 
 
-def test_saved_image_loader_panel_creates_and_displays_experiment() -> None:
+def test_saved_image_loader_panel_selects_and_displays_loading_directory(monkeypatch) -> None:
     _app()
     controller = FakeController()
     panel = SavedImageLoaderPanel(controller=controller)
     controller.calls.clear()
-    panel.experiment_name_input.setText("2026-07-29 calibration")
+    monkeypatch.setattr(
+        QFileDialog,
+        "getExistingDirectory",
+        lambda *_args, **_kwargs: "/tmp/images",
+    )
 
-    panel.create_experiment_button.click()
+    panel.choose_directory_button.click()
 
-    assert controller.calls == [
-        ("create_acquisition_experiment", "2026-07-29 calibration")
-    ]
+    assert controller.calls == [("refresh_acquisition_files", "/tmp/images")]
 
-    panel.update_acquisition_directory({
-        "directory": "/tmp/images/2026-07-29 calibration",
-        "experiment_root": "/tmp/images",
-        "experiment_name": "2026-07-29 calibration",
-    })
+    panel.update_loading_directory("/tmp/images")
 
-    assert panel.directory == "/tmp/images/2026-07-29 calibration"
-    assert panel.experiment_label.text() == "active experiment: 2026-07-29 calibration"
+    assert panel.loading_directory == "/tmp/images"
+    assert panel.path_label.text() == "loading folder: /tmp/images"
 
 
-def test_saved_image_loader_panel_selects_experiment_from_dropdown() -> None:
+def test_output_directory_panel_selects_and_displays_shared_destination(monkeypatch) -> None:
     _app()
     controller = FakeController()
-    panel = SavedImageLoaderPanel(controller=controller)
+    panel = OutputDirectoryPanel(controller=controller)
     controller.calls.clear()
+    monkeypatch.setattr(
+        QFileDialog,
+        "getExistingDirectory",
+        lambda *_args, **_kwargs: "/tmp/output",
+    )
 
-    panel.update_experiment_list({
-        "experiments": [
-            {"name": "AD_experiment_1", "directory": "/tmp/images/AD_experiment_1"},
-            {"name": "hardware_z_stack_test", "directory": "/tmp/images/hardware_z_stack_test"},
-        ],
-        "active_experiment": "AD_experiment_1",
-        "experiment_root": "/tmp/images",
-    })
-    panel.experiment_combo.setCurrentIndex(1)
+    panel.choose_directory_button.click()
 
-    assert controller.calls == [
-        ("select_acquisition_experiment", "hardware_z_stack_test")
-    ]
+    assert controller.calls == [("set_acquisition_directory", "/tmp/output")]
+    panel.update_directory({"directory": "/tmp/output"})
+    assert panel.path_label.text() == "folder: /tmp/output"
 
 
 def test_filter_wheel_panel_sends_set_request() -> None:

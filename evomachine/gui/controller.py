@@ -58,7 +58,7 @@ class EvoMachineGuiController(QObject):
     camera_status_received = pyqtSignal(dict)
     acquisition_files_received = pyqtSignal(list)
     acquisition_directory_received = pyqtSignal(dict)
-    acquisition_experiments_received = pyqtSignal(dict)
+    acquisition_loading_directory_received = pyqtSignal(str)
     frame_received = pyqtSignal(dict)
     filter_wheel_status_received = pyqtSignal(dict)
     led_list_received = pyqtSignal(list)
@@ -188,17 +188,12 @@ class EvoMachineGuiController(QObject):
     def set_camera_exposure(self, exposure: float) -> None:
         self._send(GuiCommandType.CAMERA_SET_EXPOSURE, {"exposure": exposure})
 
-    def refresh_acquisition_files(self) -> None:
-        self._send(GuiCommandType.ACQUISITION_LIST_FILES)
+    def refresh_acquisition_files(self, directory: str | None = None) -> None:
+        payload = {} if directory is None else {"directory": directory}
+        self._send(GuiCommandType.ACQUISITION_LIST_FILES, payload)
 
-    def refresh_acquisition_experiments(self) -> None:
-        self._send(GuiCommandType.ACQUISITION_LIST_EXPERIMENTS)
-
-    def create_acquisition_experiment(self, name: str) -> None:
-        self._send(GuiCommandType.ACQUISITION_CREATE_EXPERIMENT, {"name": name})
-
-    def select_acquisition_experiment(self, name: str) -> None:
-        self._send(GuiCommandType.ACQUISITION_SELECT_EXPERIMENT, {"name": name})
+    def set_acquisition_directory(self, directory: str) -> None:
+        self._send(GuiCommandType.ACQUISITION_SET_DIRECTORY, {"directory": directory})
 
     def load_acquisition_frame(self, filename: str, image_transport: str | None = None) -> None:
         payload: dict[str, Any] = {"filename": filename}
@@ -361,15 +356,9 @@ class EvoMachineGuiController(QObject):
         if "acquisition_directory" in payload:
             self.acquisition_directory_received.emit({
                 "directory": payload["acquisition_directory"],
-                "experiment_root": payload.get("experiment_root"),
-                "experiment_name": payload.get("experiment_name"),
             })
-        if "experiments" in payload:
-            self.acquisition_experiments_received.emit({
-                "experiments": payload["experiments"],
-                "active_experiment": payload.get("active_experiment"),
-                "experiment_root": payload.get("experiment_root"),
-            })
+        if "loading_directory" in payload:
+            self.acquisition_loading_directory_received.emit(payload["loading_directory"])
         if "frame" in payload:
             self.frame_received.emit(payload["frame"])
         if "filter_wheel" in payload:

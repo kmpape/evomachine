@@ -88,7 +88,7 @@ if True:
 
 dmd = DMDControl(debug_mode=True)
 
-strategy = BasicStrategy(save_path=str(camera_config.path_to_save))
+strategy = BasicStrategy(cfg=processor_config)
 
 raise RuntimeError(
     "scripts/run_image_processing.py is a legacy pre-manager Automaton script. "

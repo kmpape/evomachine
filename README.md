@@ -193,35 +193,24 @@ export EVOMACHINE_GUI_STAGE_MAX_Z_UM=1000
 These values are in micrometres relative to the startup zero and must be set to
 the microscope's confirmed safe travel region before hardware use.
 
-#### Experiment image folders
+#### Acquisition output folder
 
-Hardware acquisitions are organised under `images/`, with one folder per
-experiment:
+Manual images, z-stacks, and strategy images use one local output folder. In
+the GUI, select **Choose Output Folder** in the separate **Output Folder**
+panel. The same panel is shown in the Strategy tab so the destination is
+explicit before starting a strategy. Enable **Save** in Acquisition
+Configuration when TIFF output is required. Strategies request that an image
+is saved but do not choose a path; they use this shared folder through
+`FrameAcquisitionManager`.
 
-```text
-images/
-├── _unassigned/
-├── AD_experiment_1/
-└── hardware_z_stack_test/
-```
-
-In the GUI, open Acquisition → **Experiment Files**:
-
-1. Select an existing experiment from the **Experiment** dropdown, or enter a
-   name and select **Create New Experiment**.
-2. The selected experiment becomes the active TIFF save directory.
-3. Select one of that experiment's TIFFs from the **Image** dropdown and choose
-   **Load Selected** to display it.
-
-Enable **Save** in Acquisition Configuration when TIFF output is required.
-Acquisitions made before selecting an experiment go to `images/_unassigned/`.
-Folder paths are managed by the experiment selector rather than entered
-manually.
+The default hardware folder is `images/` and can be changed at startup with
+`EVOMACHINE_GUI_OUTPUT_DIR`. The **Load Saved Images** panel has its own
+**Choose Loading Folder** control. Browsing a different folder does not change
+where new images are saved. Select **Load Selected** to display a listed TIFF.
 
 The `images/` directory is intentionally excluded from Git because microscope
 images are generally too large for source control. Notebook `.pkl` image
-stacks may be moved into their corresponding experiment folders for local
-organisation, but should remain uncommitted; the current example stacks are
+stacks may be organised locally but should remain uncommitted; the current example stacks are
 approximately 801 MiB each.
 
 ### Virtual GUI

@@ -223,7 +223,6 @@ def test_strategy_initialise_injects_dmd() -> None:
     cfg.preproc_enabled = True
     strategy = BasicStrategy(
         cfg=cfg,
-        save_path=".",
     )
     dmd = FakeDmd()
 
@@ -259,7 +258,6 @@ def test_strategy_initialise_accepts_missing_dmd() -> None:
     cfg.preproc_enabled = True
     strategy = BasicStrategy(
         cfg=cfg,
-        save_path=".",
     )
 
     commands = strategy.initialise(
@@ -290,7 +288,7 @@ def test_builtin_and_example_strategies_register_automaton_commands() -> None:
         channels_seg=[LEDType.LED_450_NM],
     )
     assert NoStrategy(cfg=cfg).register_automaton_commands() == set()
-    assert BasicStrategy(cfg=cfg, save_path=".").register_automaton_commands() == {
+    assert BasicStrategy(cfg=cfg).register_automaton_commands() == {
         AutomatonCommandType.MOVE,
         AutomatonCommandType.IMAGE,
         AutomatonCommandType.WAIT,
@@ -343,7 +341,6 @@ def test_strategy_serialization_excludes_dmd() -> None:
     )
     strategy = BasicStrategy(
         cfg=cfg,
-        save_path=".",
     )
     strategy.dmd = FakeDmd()
 
@@ -400,7 +397,6 @@ def test_strategy_initial_fov_configs_validates_and_copies() -> None:
     cfg.preproc_enabled = True
     strategy = BasicStrategy(
         cfg=cfg,
-        save_path=".",
     )
     fov_config = FovConfig(run_software_focus_on_arrival=True)
     strategy.initialise(
@@ -436,7 +432,6 @@ def test_strategy_initial_fov_configs_rejects_unknown_fov() -> None:
     cfg.preproc_enabled = True
     strategy = BasicStrategy(
         cfg=cfg,
-        save_path=".",
     )
     strategy.initialise(
         fovs={1: Coordinate(0, 0, 0)},

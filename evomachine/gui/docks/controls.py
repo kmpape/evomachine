@@ -8,6 +8,7 @@ from evomachine.gui.panels.acquisition import (
     AcquisitionStatusPanel,
     FrameAcquisitionSettingsPanel,
     ManualAcquisitionPanel,
+    OutputDirectoryPanel,
     SavedImageLoaderPanel,
     ZStackSettingsPanel,
 )
@@ -78,6 +79,7 @@ class EvoMachineControlsDock(QWidget):
         layout = QVBoxLayout()
         settings_panel = FrameAcquisitionSettingsPanel()
         layout.addWidget(settings_panel)
+        layout.addWidget(OutputDirectoryPanel(controller=self.controller))
         layout.addWidget(ManualAcquisitionPanel(
             controller=self.controller,
             settings_provider=settings_panel.payload,
@@ -96,6 +98,7 @@ class EvoMachineControlsDock(QWidget):
         widget = QWidget()
         layout = QVBoxLayout()
         layout.addWidget(FovSetupPanel(controller=self.controller))
+        layout.addWidget(OutputDirectoryPanel(controller=self.controller))
         layout.addWidget(StrategySetupPanel(controller=self.controller))
         layout.addWidget(AiAssistancePanel())
         layout.addStretch(1)

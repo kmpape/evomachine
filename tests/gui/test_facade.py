@@ -813,6 +813,7 @@ def test_facade_lists_and_loads_saved_acquisition_tiff(tmp_path) -> None:
     response = facade.handle(GuiRequest(command=GuiCommandType.ACQUISITION_LIST_FILES))
 
     assert response.ok
+    assert response.payload["loading_directory"] == str(tmp_path)
     assert response.payload["acquisition_files"][0]["label"] == "saved_frame.tiff"
     assert response.payload["acquisition_files"][0]["path"] == str(image_path)
 
@@ -831,66 +832,42 @@ def test_facade_lists_and_loads_saved_acquisition_tiff(tmp_path) -> None:
     assert np.array_equal(array_from_preview_payload(payload["preview"]), image)
 
 
-def test_facade_creates_and_activates_experiment_directory(tmp_path) -> None:
-    root = tmp_path / "images"
-    file_manager = FileManager(
-        FileNameConfig(directory=root / "_unassigned"),
-        experiment_root=root,
-    )
+def test_facade_selects_local_output_directory(tmp_path) -> None:
+    initial = tmp_path / "initial"
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    file_manager = FileManager(FileNameConfig(directory=initial))
     facade = AutomatonGuiFacade(FakeAutomaton(file_manager=file_manager))
 
     response = facade.handle(
         GuiRequest(
-            command=GuiCommandType.ACQUISITION_CREATE_EXPERIMENT,
-            payload={"name": "experiment-one"},
+            command=GuiCommandType.ACQUISITION_SET_DIRECTORY,
+            payload={"directory": str(selected)},
         )
     )
 
-    experiment = root / "experiment-one"
     assert response.ok
-    assert response.payload["acquisition_directory"] == str(experiment)
-    assert response.payload["experiment_root"] == str(root)
-    assert response.payload["experiment_name"] == "experiment-one"
-    assert response.payload["acquisition_files"] == []
-    assert file_manager.config.directory == experiment
+    assert response.payload["acquisition_directory"] == str(selected)
+    assert file_manager.config.directory == selected
 
 
-def test_facade_lists_and_selects_experiment_with_its_images(tmp_path) -> None:
-    root = tmp_path / "images"
-    first = root / "experiment-one"
-    second = root / "experiment-two"
-    first.mkdir(parents=True)
-    second.mkdir()
-    tifffile.imwrite(second / "stack.tiff", np.zeros((2, 3), dtype=np.uint16))
-    file_manager = FileManager(
-        FileNameConfig(directory=first),
-        experiment_root=root,
-    )
+def test_facade_browses_images_without_changing_output_directory(tmp_path) -> None:
+    output = tmp_path / "output"
+    loading = tmp_path / "loading"
+    loading.mkdir()
+    tifffile.imwrite(loading / "stack.tiff", np.zeros((2, 3), dtype=np.uint16))
+    file_manager = FileManager(FileNameConfig(directory=output))
     facade = AutomatonGuiFacade(FakeAutomaton(file_manager=file_manager))
 
-    response = facade.handle(
-        GuiRequest(command=GuiCommandType.ACQUISITION_LIST_EXPERIMENTS)
-    )
+    response = facade.handle(GuiRequest(
+        command=GuiCommandType.ACQUISITION_LIST_FILES,
+        payload={"directory": str(loading)},
+    ))
 
     assert response.ok
-    assert [item["name"] for item in response.payload["experiments"]] == [
-        "experiment-one",
-        "experiment-two",
-    ]
-    assert response.payload["active_experiment"] == "experiment-one"
-
-    response = facade.handle(
-        GuiRequest(
-            command=GuiCommandType.ACQUISITION_SELECT_EXPERIMENT,
-            payload={"name": "experiment-two"},
-        )
-    )
-
-    assert response.ok
-    assert response.payload["active_experiment"] == "experiment-two"
-    assert response.payload["experiment_name"] == "experiment-two"
+    assert response.payload["loading_directory"] == str(loading)
     assert response.payload["acquisition_files"][0]["label"] == "stack.tiff"
-    assert file_manager.config.directory == second
+    assert file_manager.config.directory == output
 
 
 def test_facade_handles_z_stack_acquisition_request() -> None:

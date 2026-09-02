@@ -482,8 +482,7 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
         dmd=dmd,
         stage=stage,
         file_manager=FileManager(
-            FileNameConfig(directory=settings.output_directory / "_unassigned"),
-            experiment_root=settings.output_directory,
+            FileNameConfig(directory=settings.output_directory),
         ),
         default_settings=FrameAcquisitionSettings(
             save=False,
