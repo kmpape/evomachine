@@ -166,7 +166,9 @@ def test_virtual_autofocus_lifecycle_and_state_transitions() -> None:
 
     autofocus.initialise()
     assert autofocus.apply_config()
-    assert autofocus.run_calibration()
+    result = autofocus.run_calibration()
+    assert result
+    assert result.measurements == {}
     assert autofocus.get_status() == AutoFocusStatusType.READY
     assert not autofocus.is_locked()
 
@@ -263,7 +265,10 @@ def test_tiger_autofocus_initialise_command_sequence_and_lock() -> None:
     )
 
     autofocus.initialise()
-    assert autofocus.run_calibration(lock_after_calibration=True)
+    result = autofocus.run_calibration(lock_after_calibration=True)
+    assert result
+    assert result.measurements == {"snr": 10.0, "error": 200.0}
+    assert result.failure_reason is None
 
     assert controller.tiger.commands == [
         ("state", CRISPSetState.UNLOCK),
@@ -299,7 +304,11 @@ def test_tiger_autofocus_initialise_returns_false_for_low_snr_or_error() -> None
     -------
     None
     """
-    for controller in [_tiger_controller(snr=1, error=200), _tiger_controller(snr=10, error=50)]:
+    cases = (
+        (_tiger_controller(snr=1, error=200), "SNR 1 is below"),
+        (_tiger_controller(snr=10, error=50), "Absolute error 50 is below"),
+    )
+    for controller, expected_reason in cases:
         autofocus = TigerAutofocus(
             peripheral_ctrl=controller,
             tiger_config=_tiger_config(),
@@ -309,7 +318,10 @@ def test_tiger_autofocus_initialise_returns_false_for_low_snr_or_error() -> None
         )
         autofocus.initialise()
 
-        assert not autofocus.run_calibration(lock_after_calibration=True)
+        result = autofocus.run_calibration(lock_after_calibration=True)
+        assert not result
+        assert expected_reason in (result.failure_reason or "")
+        assert set(result.measurements) == {"snr", "error"}
         assert ("state", CRISPSetState.LOCK) not in controller.tiger.commands
 
 
@@ -326,7 +338,10 @@ def test_tiger_autofocus_cancellation_stops_at_safe_idle_boundary() -> None:
     stop_event = threading.Event()
     stop_event.set()
 
-    assert not autofocus.run_calibration(stop_event=stop_event)
+    result = autofocus.run_calibration(stop_event=stop_event)
+    assert not result
+    assert result.cancelled
+    assert result.failure_reason == "Calibration cancelled."
     assert controller.tiger.commands[-1] == ("state", CRISPSetState.IDLE)
     assert ("state", CRISPSetState.SET_OFFSET) not in controller.tiger.commands
 

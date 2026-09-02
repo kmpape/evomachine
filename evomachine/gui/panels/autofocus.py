@@ -66,6 +66,8 @@ class AutofocusPanel(QGroupBox):
         self.status_label = QLabel("Run Initialise Devices before using autofocus controls.")
         self.status_label.setWordWrap(True)
         self.state_label = QLabel("status: -")
+        self.diagnostics_label = QLabel("calibration: -")
+        self.diagnostics_label.setWordWrap(True)
         self.locked_label = QLabel("locked: -")
         self.note_label = muted_label("CRISP configuration values are applied before calibration.")
         self.note_label.setWordWrap(True)
@@ -96,6 +98,7 @@ class AutofocusPanel(QGroupBox):
         layout = QVBoxLayout()
         layout.addWidget(self.status_label)
         layout.addWidget(self.state_label)
+        layout.addWidget(self.diagnostics_label)
         layout.addWidget(self.locked_label)
         layout.addWidget(self.note_label)
         layout.addWidget(self.calibration_operation_label)
@@ -217,10 +220,14 @@ class AutofocusPanel(QGroupBox):
     def update_status(self, payload: dict) -> None:
         status = payload.get("status", {})
         status_name = status.get("name") if isinstance(status, dict) else status
+        calibration_result = payload.get("calibration_result")
+        display_state = self._display_state(status_name, calibration_result)
         self.status_label.setText(
             f"initialised: {payload.get('is_initialised')}, alive: {payload.get('is_alive')}"
         )
-        self.state_label.setText(f"status: {self._format_status(status_name)}")
+        self.state_label.setText(f"status: {display_state}")
+        self.state_label.setStyleSheet(self._state_style(display_state))
+        self.diagnostics_label.setText(self._diagnostics_text(calibration_result, payload.get("config")))
         self.locked_label.setText(f"locked: {payload.get('is_locked')}")
         config = payload.get("config")
         if isinstance(config, dict):
@@ -294,7 +301,50 @@ class AutofocusPanel(QGroupBox):
             "OUT_OF_FOCUS": "Out of focus",
             "IN_FOCUS": "In focus",
             "INHIBIT": "Inhibit",
-            "ERROR": "Error",
+            "ERROR": "Out of range",
             "LOG_CAL": "Log calibration",
         }
         return labels.get(status_name, str(status_name))
+
+    @classmethod
+    def _display_state(cls, status_name: str | None, calibration_result: object) -> str:
+        if status_name == "IN_FOCUS":
+            return "Locked"
+        if status_name in {"OUT_OF_FOCUS", "ERROR"}:
+            return cls._format_status(status_name)
+        if isinstance(calibration_result, dict):
+            if not calibration_result.get("success") and not calibration_result.get("cancelled"):
+                return "Calibration failed"
+            if calibration_result.get("success") and status_name == "READY":
+                return "Calibrated"
+        return cls._format_status(status_name)
+
+    @staticmethod
+    def _state_style(display_state: str) -> str:
+        if display_state in {"Calibrated", "Locked"}:
+            return "font-weight: 600; color: #4caf50;"
+        if display_state in {"Out of focus", "Out of range"}:
+            return "font-weight: 600; color: #ffb74d;"
+        if display_state == "Calibration failed":
+            return "font-weight: 600; color: #ef5350;"
+        return ""
+
+    @staticmethod
+    def _diagnostics_text(calibration_result: object, config: object) -> str:
+        if not isinstance(calibration_result, dict):
+            return "calibration: -"
+        measurements = calibration_result.get("measurements")
+        measurements = measurements if isinstance(measurements, dict) else {}
+        config = config if isinstance(config, dict) else {}
+        parts = ["calibration: passed" if calibration_result.get("success") else "calibration: failed"]
+        if calibration_result.get("cancelled"):
+            parts[0] = "calibration: cancelled"
+        if "snr" in measurements:
+            suffix = f" (minimum {config['min_snr']:g})" if config.get("min_snr") is not None else ""
+            parts.append(f"SNR {measurements['snr']:g}{suffix}")
+        if "error" in measurements:
+            suffix = f" (minimum absolute {config['min_error']:g})" if config.get("min_error") is not None else ""
+            parts.append(f"error {measurements['error']:g}{suffix}")
+        if calibration_result.get("failure_reason"):
+            parts.append(str(calibration_result["failure_reason"]))
+        return "; ".join(parts)

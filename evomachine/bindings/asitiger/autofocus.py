@@ -10,7 +10,7 @@ from pydantic import field_validator
 from asitiger.command import CRISPSetState
 
 from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
-from evomachine.peripherals.autofocus import Autofocus, AutofocusCalibrationConfig
+from evomachine.peripherals.autofocus import Autofocus, AutofocusCalibrationConfig, AutofocusCalibrationResult
 from evomachine.types import AutoFocusStatusType
 
 
@@ -559,7 +559,7 @@ class TigerAutofocus(Autofocus):
             lock_after_calibration: bool = False,
             stop_event: threading.Event | None = None,
             progress_callback: Callable[[float, str], None] | None = None,
-    ) -> bool:
+    ) -> AutofocusCalibrationResult:
         """
         Run the ASI Tiger CRISP setup/calibration sequence.
 
@@ -573,8 +573,8 @@ class TigerAutofocus(Autofocus):
 
         Returns
         -------
-        bool
-            True when SNR and error checks pass.
+        AutofocusCalibrationResult
+            CRISP calibration outcome with measured SNR and error values.
         """
         tiger_config = self._normalise_config(config=config)
         self._report_calibration_progress(progress_callback, 0.05, "Applying CRISP configuration.")
@@ -583,42 +583,72 @@ class TigerAutofocus(Autofocus):
             stop_event=stop_event,
             progress_callback=progress_callback,
         ):
-            return False
+            if self._calibration_cancelled(stop_event):
+                return self._cancelled_result()
+            return AutofocusCalibrationResult(
+                success=False,
+                failure_reason="CRISP configuration could not be applied.",
+            )
         if self._calibration_cancelled(stop_event):
-            return False
+            return self._cancelled_result()
 
-        is_success = True
+        measurements: dict[str, float] = {}
+        failure_reasons: list[str] = []
         self._report_calibration_progress(progress_callback, 0.25, "Setting CRISP offset.")
         self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.IDLE)
         self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.SET_OFFSET)
         self.sleep(self.pause_short)
         if self._calibration_cancelled(stop_event):
-            return False
+            return self._cancelled_result(measurements)
         self._report_calibration_progress(progress_callback, 0.45, "Running CRISP log calibration.")
         self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.LOG_CAL)
         self.sleep(self.pause_long)
         if self._calibration_cancelled(stop_event):
-            return False
-        if self.tiger.crisp_get_snr(card_address=self.card_address) < tiger_config.min_snr:
-            is_success = False
+            return self._cancelled_result(measurements)
+        snr = float(self.tiger.crisp_get_snr(card_address=self.card_address))
+        measurements["snr"] = snr
+        if snr < tiger_config.min_snr:
+            failure_reasons.append(
+                f"SNR {snr:g} is below the configured minimum {tiger_config.min_snr:g}."
+            )
         self._report_calibration_progress(progress_callback, 0.70, "Running CRISP dither calibration.")
         self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.DITHER)
         self.sleep(self.pause_long)
         if self._calibration_cancelled(stop_event):
-            return False
-        if np.abs(self.tiger.crisp_get_err(card_address=self.card_address)) < tiger_config.min_error:
-            is_success = False
+            return self._cancelled_result(measurements)
+        error = float(self.tiger.crisp_get_err(card_address=self.card_address))
+        measurements["error"] = error
+        if np.abs(error) < tiger_config.min_error:
+            failure_reasons.append(
+                f"Absolute error {abs(error):g} is below the configured minimum {tiger_config.min_error:g}."
+            )
         self._report_calibration_progress(progress_callback, 0.90, "Applying CRISP gain.")
         self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.SET_GAIN)
         self.sleep(self.pause_short)
         if self._calibration_cancelled(stop_event):
-            return False
+            return self._cancelled_result(measurements)
         self._unlock()
         self.sleep(self.pause_short)
+        is_success = not failure_reasons
         if lock_after_calibration and is_success:
             self._lock()
         self._report_calibration_progress(progress_callback, 1.0, "CRISP calibration complete.")
-        return is_success
+        return AutofocusCalibrationResult(
+            success=is_success,
+            measurements=measurements,
+            failure_reason=" ".join(failure_reasons) or None,
+        )
+
+    @staticmethod
+    def _cancelled_result(
+            measurements: dict[str, float] | None = None,
+    ) -> AutofocusCalibrationResult:
+        return AutofocusCalibrationResult(
+            success=False,
+            measurements={} if measurements is None else measurements,
+            failure_reason="Calibration cancelled.",
+            cancelled=True,
+        )
 
     def _calibration_cancelled(self, stop_event: threading.Event | None) -> bool:
         if stop_event is None or not stop_event.is_set():

@@ -693,6 +693,52 @@ def test_autofocus_panel_sends_calibration_request() -> None:
     ]
 
 
+def test_autofocus_panel_maps_crisp_status_and_displays_calibration_diagnostics() -> None:
+    _app()
+    panel = AutofocusPanel(controller=FakeController())
+    payload = {
+        "is_initialised": True,
+        "is_alive": True,
+        "is_locked": False,
+        "status": {"name": "READY", "value": "R"},
+        "config": {"min_snr": 2.0, "min_error": 100},
+        "calibration_result": {
+            "success": True,
+            "measurements": {"snr": 10.0, "error": 200.0},
+            "failure_reason": None,
+            "cancelled": False,
+        },
+    }
+
+    panel.update_status(payload)
+    assert panel.state_label.text() == "status: Calibrated"
+    assert "SNR 10" in panel.diagnostics_label.text()
+    assert "error 200" in panel.diagnostics_label.text()
+
+    payload["status"] = {"name": "ERROR", "value": "E"}
+    panel.update_status(payload)
+    assert panel.state_label.text() == "status: Out of range"
+
+    payload["status"] = {"name": "OUT_OF_FOCUS", "value": "K"}
+    panel.update_status(payload)
+    assert panel.state_label.text() == "status: Out of focus"
+
+    payload["status"] = {"name": "IN_FOCUS", "value": "F"}
+    panel.update_status(payload)
+    assert panel.state_label.text() == "status: Locked"
+
+    payload["status"] = {"name": "READY", "value": "R"}
+    payload["calibration_result"] = {
+        "success": False,
+        "measurements": {"snr": 1.0, "error": 200.0},
+        "failure_reason": "SNR below minimum.",
+        "cancelled": False,
+    }
+    panel.update_status(payload)
+    assert panel.state_label.text() == "status: Calibration failed"
+    assert "SNR below minimum" in panel.diagnostics_label.text()
+
+
 def test_software_focus_panel_sends_run_request() -> None:
     _app()
     controller = FakeController()

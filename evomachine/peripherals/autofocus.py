@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass, field
 import threading
 from typing import Any
 
@@ -36,6 +37,20 @@ class AutofocusConfig(PeripheralConfig):
 
 class AutofocusCalibrationConfig(EvoConfig):
     """Base class for binding-specific autofocus configuration/calibration settings."""
+
+
+@dataclass(frozen=True, slots=True)
+class AutofocusCalibrationResult:
+    """Outcome and measurements from one autofocus calibration attempt."""
+
+    success: bool
+    measurements: dict[str, float] = field(default_factory=dict)
+    failure_reason: str | None = None
+    cancelled: bool = False
+
+    def __bool__(self) -> bool:
+        """Preserve the previous Boolean success contract for existing callers."""
+        return self.success
 
 
 class Autofocus(Peripheral):
@@ -76,6 +91,7 @@ class Autofocus(Peripheral):
         self._check_initialised: bool = check_initialised
         self._check_alive: bool = check_alive
         self.config: AutofocusConfig | None = None
+        self._last_calibration_result: AutofocusCalibrationResult | None = None
 
     def _require_ready(self, action: str) -> None:
         """
@@ -229,7 +245,7 @@ class Autofocus(Peripheral):
             lock_after_calibration: bool = False,
             stop_event: threading.Event | None = None,
             progress_callback: Callable[[float, str], None] | None = None,
-    ) -> bool:
+    ) -> AutofocusCalibrationResult:
         """
         Run the binding-specific autofocus setup/calibration sequence.
 
@@ -243,9 +259,8 @@ class Autofocus(Peripheral):
 
         Returns
         -------
-        bool
-            True when setup succeeded according to the binding's acceptance
-            checks.
+        AutofocusCalibrationResult
+            Calibration outcome, measurements, and any failure reason.
         """
         self._require_ready(action="run_calibration")
         logger.debug(
@@ -253,18 +268,20 @@ class Autofocus(Peripheral):
             self.name,
             lock_after_calibration,
         )
-        return self._run_calibration(
+        result = self._run_calibration(
             config=config,
             lock_after_calibration=lock_after_calibration,
             stop_event=stop_event,
             progress_callback=progress_callback,
         )
+        self._last_calibration_result = result
+        return result
 
     def initialise_autofocus(
             self,
             config: AutofocusCalibrationConfig | None = None,
             lock_after_initialise: bool = False,
-    ) -> bool:
+    ) -> AutofocusCalibrationResult:
         """
         Backwards-compatible alias for run_calibration().
 
@@ -277,11 +294,15 @@ class Autofocus(Peripheral):
 
         Returns
         -------
-        bool
-            True when setup succeeded according to the binding's acceptance
-            checks.
+        AutofocusCalibrationResult
+            Calibration outcome, measurements, and any failure reason.
         """
         return self.run_calibration(config=config, lock_after_calibration=lock_after_initialise)
+
+    @property
+    def last_calibration_result(self) -> AutofocusCalibrationResult | None:
+        """Return the most recent calibration outcome, if calibration has run."""
+        return self._last_calibration_result
 
     def lock(self) -> None:
         """
@@ -390,7 +411,7 @@ class Autofocus(Peripheral):
             lock_after_calibration: bool = False,
             stop_event: threading.Event | None = None,
             progress_callback: Callable[[float, str], None] | None = None,
-    ) -> bool:
+    ) -> AutofocusCalibrationResult:
         """Run binding-specific autofocus calibration/setup."""
         raise NotImplementedError
 

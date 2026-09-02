@@ -414,6 +414,7 @@ class AutomatonGuiFacade:
         autofocus = self.gui_autofocus()
         status = autofocus.get_status()
         config = getattr(autofocus, "tiger_config", None)
+        calibration_result = getattr(autofocus, "last_calibration_result", None)
         return {
             "name": getattr(autofocus, "name", "Autofocus"),
             "is_initialised": bool(autofocus.is_initialised()),
@@ -424,6 +425,14 @@ class AutomatonGuiFacade:
             },
             "is_locked": bool(autofocus.is_locked()),
             "config": self._gui_autofocus_config_payload(config),
+            "calibration_result": None
+            if calibration_result is None
+            else {
+                "success": bool(calibration_result.success),
+                "measurements": dict(calibration_result.measurements),
+                "failure_reason": calibration_result.failure_reason,
+                "cancelled": bool(calibration_result.cancelled),
+            },
         }
 
     @staticmethod

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 import threading
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
-from evomachine.peripherals.autofocus import Autofocus, AutofocusCalibrationConfig
+from evomachine.peripherals.autofocus import Autofocus, AutofocusCalibrationConfig, AutofocusCalibrationResult
 from evomachine.types import AutoFocusStatusType
 
 
@@ -117,8 +117,9 @@ class VirtualAutofocus(Autofocus):
 
         Returns
         -------
-        bool
-            Always True.
+        AutofocusCalibrationResult
+            Successful result, or a cancelled result when requested before the
+            calibration begins.
         """
         self.command_history.append("configure")
         self.is_configured = True
@@ -130,7 +131,7 @@ class VirtualAutofocus(Autofocus):
             lock_after_calibration: bool = False,
             stop_event: threading.Event | None = None,
             progress_callback: Callable[[float, str], None] | None = None,
-    ) -> bool:
+    ) -> AutofocusCalibrationResult:
         """
         Record a virtual autofocus setup command.
 
@@ -143,11 +144,16 @@ class VirtualAutofocus(Autofocus):
 
         Returns
         -------
-        bool
-            Always True.
+        AutofocusCalibrationResult
+            Successful result, or a cancelled result when requested before the
+            calibration begins.
         """
         if stop_event is not None and stop_event.is_set():
-            return False
+            return AutofocusCalibrationResult(
+                success=False,
+                failure_reason="Calibration cancelled.",
+                cancelled=True,
+            )
         if progress_callback is not None:
             progress_callback(0.5, "Calibrating virtual autofocus.")
         self.command_history.append("initialise_autofocus")
@@ -158,7 +164,7 @@ class VirtualAutofocus(Autofocus):
             self._status = AutoFocusStatusType.READY
         if progress_callback is not None:
             progress_callback(1.0, "Autofocus calibration complete.")
-        return True
+        return AutofocusCalibrationResult(success=True)
 
     def _lock(self) -> None:
         """

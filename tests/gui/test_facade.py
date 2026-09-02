@@ -17,6 +17,7 @@ from evomachine.frame import Frame
 from evomachine.image_processing_config import ImageProcessorConfigFactory
 from evomachine.peripherals.camera import CameraConfig, ImageConfigType, ObjectiveConfigType
 from evomachine.types import AutoFocusStatusType, FilterWheelType, FocusCurveType, FocusStatusType, FovDirectionType, LEDType
+from evomachine.peripherals.autofocus import AutofocusCalibrationResult
 from evomachine.gui.facade import AutomatonGuiFacade
 from evomachine.config import get_logger, gui_log_handler
 from evomachine.gui.image_payloads import IMAGE_TRANSPORT_DIR_ENV, IMAGE_TRANSPORT_RAW, array_from_preview_payload
@@ -285,9 +286,14 @@ class FakeAutofocus:
         self.status = AutoFocusStatusType.IDLE
         self.locked = False
         self.calls = []
+        self.last_calibration_result = None
 
     def is_initialised(self):
-        return True
+        self.last_calibration_result = AutofocusCalibrationResult(
+            success=True,
+            measurements={"snr": 10.0, "error": 200.0},
+        )
+        return self.last_calibration_result
 
     def is_alive(self):
         return True
@@ -1022,6 +1028,11 @@ def test_facade_handles_autofocus_requests() -> None:
     assert response.ok
     assert wait_for_operation(facade, "autofocus_calibration")["state"] == "completed"
     assert automaton.focus_nav.autofocus.calls[1][0] == "run_calibration"
+    response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_STATUS))
+    assert response.payload["autofocus"]["calibration_result"]["measurements"] == {
+        "snr": 10.0,
+        "error": 200.0,
+    }
 
     response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_LOCK))
     assert response.ok
