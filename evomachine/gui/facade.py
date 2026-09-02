@@ -324,6 +324,7 @@ class AutomatonGuiFacade:
             "is_full_display": bool(dmd.is_full_display()),
             "is_calibrated": bool(dmd.is_calibrated()),
             "width_height": list(getattr(dmd, "width_height_DMD", ())),
+            "camera_width_height": list(getattr(dmd, "width_height_CAM", ())),
             "calibration_file": None if calibration_filename is None else str(calibration_filename),
             "calibration_files": self.gui_dmd_calibration_files_payload(
                 current_file=calibration_filename

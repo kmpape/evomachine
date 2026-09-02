@@ -11,6 +11,7 @@ from evomachine.bindings.em_dmd_window.peripheralcontroller import EmDmdWindowPe
 from evomachine.bindings.pygame.dmd import PygameDmd
 from evomachine.bindings.pygame.peripheralcontroller import PygameDmdPeripheralController
 from evomachine.bindings.virtual.dmd import VirtualDmd, VirtualDmdPeripheralController
+from evomachine.gui.request_map import gui_dmd_pattern_array
 from evomachine.peripherals.dmd import Dmd, DmdConfig, DmdFactory, DmdShapeConfig
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, SocketPeripheralController
 from evomachine.bindings.binding_types import BindingType
@@ -133,6 +134,19 @@ def make_calibration_file(tmp_path: Path) -> Path:
     return calibration_file
 
 
+def make_translated_calibration_file(tmp_path: Path) -> Path:
+    calibration_file = tmp_path / "translated_calibration.pkl"
+    calibration_data = [
+        ((2, 3), (0, 0), (0, 0)),
+        ((2, 12), (0, 9), (0, 0)),
+        ((11, 3), (9, 0), (0, 0)),
+        ((11, 12), (9, 9), (0, 0)),
+    ]
+    with open(calibration_file, "wb") as file:
+        pickle.dump(calibration_data, file)
+    return calibration_file
+
+
 def make_recording_dmd(tmp_path, width_height=(10, 10), initialise=True) -> RecordingDmd:
     controller = VirtualDmdPeripheralController()
     if initialise:
@@ -218,28 +232,79 @@ def test_shared_display_helpers_generate_arrays_and_call_display_image(tmp_path)
 def test_dmd_builtin_shape_patterns_generate_expected_arrays(tmp_path):
     dmd = make_recording_dmd(tmp_path, width_height=(20, 30))
 
-    assert np.all(dmd.get_pattern("empty") == 0)
-    assert np.all(dmd.get_pattern("clear") == 0)
-    assert np.all(dmd.get_pattern("full") == 255)
+    assert np.all(dmd.get_pattern("empty", warp=False) == 0)
+    assert np.all(dmd.get_pattern("clear", warp=False) == 0)
+    assert np.all(dmd.get_pattern("full", warp=False) == 255)
 
     rectangle = dmd.get_pattern(
         "rectangle",
         DmdShapeConfig(rectangle_row=2, rectangle_col=3, rectangle_height=4, rectangle_width=5),
+        warp=False,
     )
     assert rectangle[2:6, 3:8].min() == 255
     assert rectangle.sum() == 4 * 5 * 255
 
-    checkerboard = dmd.get_pattern("checkerboard", DmdShapeConfig(checkerboard_box_size=2))
+    checkerboard = dmd.get_pattern(
+        "checkerboard",
+        DmdShapeConfig(checkerboard_box_size=2),
+        warp=False,
+    )
     assert checkerboard[0, 0] == 255
     assert checkerboard[0, 2] == 0
     assert checkerboard[2, 2] == 255
 
-    crosshair = dmd.get_pattern("crosshair", DmdShapeConfig(crosshair_row=5, crosshair_col=6))
+    crosshair = dmd.get_pattern(
+        "crosshair",
+        DmdShapeConfig(crosshair_row=5, crosshair_col=6),
+        warp=False,
+    )
     assert crosshair[5, :].min() == 255
     assert crosshair[:, 6].min() == 255
 
-    circle = dmd.get_pattern("circle", DmdShapeConfig(circle_row=8, circle_col=9, circle_radius=3))
+    circle = dmd.get_pattern(
+        "circle",
+        DmdShapeConfig(circle_row=8, circle_col=9, circle_radius=3),
+        warp=False,
+    )
     assert circle[8, 9] == 255
+
+
+def test_gui_builtin_patterns_warp_from_camera_coordinates_by_default(tmp_path):
+    controller = VirtualDmdPeripheralController()
+    controller.initialise()
+    dmd = RecordingDmd(
+        peripheral_ctrl=controller,
+        width_height_DMD=(15, 16),
+        width_height_CAM=(10, 10),
+        calibration_file=make_translated_calibration_file(tmp_path),
+    )
+    config = DmdShapeConfig(
+        rectangle_row=1,
+        rectangle_col=2,
+        rectangle_height=2,
+        rectangle_width=3,
+    )
+    camera_pattern = dmd.get_rectangle(config=config, img_size=dmd.width_height_CAM)
+
+    pattern = gui_dmd_pattern_array(dmd=dmd, pattern="rectangle", config=config)
+
+    assert pattern.shape == dmd.width_height_DMD
+    assert np.array_equal(pattern, dmd.img_to_dmd_array(camera_pattern))
+    assert pattern[3:5, 5:8].min() == 255
+
+
+def test_dmd_builtin_pattern_warp_requires_calibration(tmp_path):
+    dmd = RecordingDmd(
+        peripheral_ctrl=VirtualDmdPeripheralController(),
+        width_height_DMD=(10, 10),
+        width_height_CAM=(10, 10),
+        calibration_file=tmp_path / "missing.pkl",
+    )
+
+    with pytest.raises(RuntimeError, match="no calibration data"):
+        dmd.get_pattern("full")
+
+    assert np.all(dmd.get_pattern("full", warp=False) == 255)
 
 
 def test_dmd_shape_config_rejects_unknown_and_invalid_values():
@@ -285,6 +350,23 @@ def test_roi_pattern_helpers_live_on_dmd(tmp_path):
     assert len(patches) == 3
     assert pattern[1:4, 1:4].max() == 255
     assert pattern[1:4, 6:9].max() == 255
+
+
+def test_roi_patterns_still_warp_from_camera_coordinates_by_default(tmp_path):
+    controller = VirtualDmdPeripheralController()
+    controller.initialise()
+    dmd = RecordingDmd(
+        peripheral_ctrl=controller,
+        width_height_DMD=(15, 16),
+        width_height_CAM=(10, 10),
+        calibration_file=make_translated_calibration_file(tmp_path),
+    )
+    boxes = [SimpleNamespace(xtl=1, ytl=1, xbr=3, ybr=3)]
+
+    camera_pattern = dmd.pattern_from_roi_boxes(boxes=boxes, warp=False, border_px=0)
+    pattern = dmd.pattern_from_roi_boxes(boxes=boxes, border_px=0)
+
+    assert np.array_equal(pattern, dmd.img_to_dmd_array(camera_pattern))
 
 
 def test_load_image_and_display_loaded_image_use_shared_state(tmp_path):

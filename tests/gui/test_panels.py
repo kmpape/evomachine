@@ -502,6 +502,34 @@ def test_dmd_panel_sends_pattern_request() -> None:
     ]
 
 
+def test_dmd_pattern_configuration_uses_camera_dimensions() -> None:
+    _app()
+    panel = DmdPanel(controller=FakeController())
+
+    panel.update_status(
+        {
+            "is_initialised": True,
+            "is_alive": True,
+            "camera_width_height": [100, 200],
+        }
+    )
+    fields = {field.key: field for field in panel._shape_config_fields()}
+
+    assert fields["rectangle_row"].maximum == 99
+    assert fields["rectangle_col"].maximum == 199
+    assert fields["rectangle_height"].maximum == 100
+    assert fields["rectangle_width"].maximum == 200
+    assert fields["circle_radius"].maximum == 200
+    assert (
+        panel.config_values["rectangle_row"] + panel.config_values["rectangle_height"]
+        <= 100
+    )
+    assert (
+        panel.config_values["rectangle_col"] + panel.config_values["rectangle_width"]
+        <= 200
+    )
+
+
 def test_dmd_panel_sends_load_calibration_request() -> None:
     _app()
     controller = FakeController()

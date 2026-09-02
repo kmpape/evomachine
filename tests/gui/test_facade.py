@@ -171,6 +171,7 @@ class FakeDmd:
             path=self.calibration_filename,
         )
         self.image = None
+        self.pattern_warps = []
 
     def is_initialised(self):
         return True
@@ -209,7 +210,8 @@ class FakeDmd:
         image[image.shape[0] // 2, :] = 255
         return image
 
-    def get_pattern(self, pattern, config=None):
+    def get_pattern(self, pattern, config=None, warp=True):
+        self.pattern_warps.append(warp)
         if pattern in {"empty", "clear"}:
             return self.get_zero_array()
         if pattern == "full":
@@ -533,12 +535,25 @@ def test_facade_handles_dmd_requests() -> None:
     response = facade.handle(GuiRequest(command=GuiCommandType.DMD_STATUS))
     assert response.ok
     assert response.payload["dmd"]["name"] == "Fake DMD"
+    assert response.payload["dmd"]["width_height"] == [20, 10]
+    assert response.payload["dmd"]["camera_width_height"] == [30, 30]
 
     response = facade.handle(GuiRequest(command=GuiCommandType.DMD_DISPLAY_PATTERN, payload={"pattern": "checkerboard"}))
     assert response.ok
     assert automaton.acq_mngr.dmd.calls == ["display_image"]
+    assert automaton.acq_mngr.dmd.pattern_warps == [True]
     assert response.payload["dmd"]["last_pattern"] == "checkerboard"
     assert response.payload["dmd"]["preview"]["shape"] == [10, 20]
+
+    response = facade.handle(
+        GuiRequest(
+            command=GuiCommandType.DMD_DISPLAY_PATTERN,
+            payload={"pattern": "full", "warp": False},
+        )
+    )
+    assert response.ok
+    assert automaton.acq_mngr.dmd.pattern_warps[-1] is False
+    assert response.payload["dmd"]["is_full_display"] is True
 
     response = facade.handle(GuiRequest(command=GuiCommandType.DMD_CALIBRATE))
     assert response.ok

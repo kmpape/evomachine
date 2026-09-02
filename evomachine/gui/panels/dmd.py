@@ -16,7 +16,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from evomachine.config import DMD_WIDTH_HEIGHT
+from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT
 from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
 
 
@@ -31,22 +31,22 @@ PATTERN_ACTIONS = (
 
 UTILITY_ACTIONS = (("Refresh", "refresh"),)
 
-DMD_ROWS, DMD_COLS = DMD_WIDTH_HEIGHT
-DEFAULT_RECTANGLE_HEIGHT = DMD_ROWS // 2
-DEFAULT_RECTANGLE_WIDTH = DMD_COLS // 2
+CAM_ROWS, CAM_COLS = CAM_WIDTH_HEIGHT
+DEFAULT_RECTANGLE_HEIGHT = CAM_ROWS // 2
+DEFAULT_RECTANGLE_WIDTH = CAM_COLS // 2
 
 SHAPE_CONFIG_FIELDS = (
-    ("Rect row", "rectangle_row", (DMD_ROWS - DEFAULT_RECTANGLE_HEIGHT) // 2, 0, DMD_ROWS - 1),
-    ("Rect col", "rectangle_col", (DMD_COLS - DEFAULT_RECTANGLE_WIDTH) // 2, 0, DMD_COLS - 1),
-    ("Rect height", "rectangle_height", DEFAULT_RECTANGLE_HEIGHT, 1, DMD_ROWS),
-    ("Rect width", "rectangle_width", DEFAULT_RECTANGLE_WIDTH, 1, DMD_COLS),
-    ("Checker box", "checkerboard_box_size", 200, 1, max(DMD_WIDTH_HEIGHT)),
-    ("Cross row", "crosshair_row", DMD_ROWS // 2, 0, DMD_ROWS - 1),
-    ("Cross col", "crosshair_col", DMD_COLS // 2, 0, DMD_COLS - 1),
-    ("Cross width", "crosshair_width", 1, 1, max(DMD_WIDTH_HEIGHT)),
-    ("Circle row", "circle_row", DMD_ROWS // 2, 0, DMD_ROWS - 1),
-    ("Circle col", "circle_col", DMD_COLS // 2, 0, DMD_COLS - 1),
-    ("Circle radius", "circle_radius", min(DMD_WIDTH_HEIGHT) // 8, 1, max(DMD_WIDTH_HEIGHT)),
+    ("Rect row", "rectangle_row", (CAM_ROWS - DEFAULT_RECTANGLE_HEIGHT) // 2, 0, CAM_ROWS - 1),
+    ("Rect col", "rectangle_col", (CAM_COLS - DEFAULT_RECTANGLE_WIDTH) // 2, 0, CAM_COLS - 1),
+    ("Rect height", "rectangle_height", DEFAULT_RECTANGLE_HEIGHT, 1, CAM_ROWS),
+    ("Rect width", "rectangle_width", DEFAULT_RECTANGLE_WIDTH, 1, CAM_COLS),
+    ("Checker box", "checkerboard_box_size", 200, 1, max(CAM_WIDTH_HEIGHT)),
+    ("Cross row", "crosshair_row", CAM_ROWS // 2, 0, CAM_ROWS - 1),
+    ("Cross col", "crosshair_col", CAM_COLS // 2, 0, CAM_COLS - 1),
+    ("Cross width", "crosshair_width", 1, 1, max(CAM_WIDTH_HEIGHT)),
+    ("Circle row", "circle_row", CAM_ROWS // 2, 0, CAM_ROWS - 1),
+    ("Circle col", "circle_col", CAM_COLS // 2, 0, CAM_COLS - 1),
+    ("Circle radius", "circle_radius", min(CAM_WIDTH_HEIGHT) // 8, 1, max(CAM_WIDTH_HEIGHT)),
 )
 
 
@@ -209,7 +209,7 @@ class DmdPanel(QGroupBox):
             self.devices_initialised = bool(payload.get("is_initialised")) and bool(
                 payload.get("is_alive", True)
             )
-        self._update_config_limits(payload.get("width_height"))
+        self._update_config_limits(payload.get("camera_width_height"))
         self._update_calibration_files(
             calibration_files=payload.get("calibration_files"),
             current_file=payload.get("calibration_file"),
@@ -306,10 +306,13 @@ class DmdPanel(QGroupBox):
             "rectangle_col": (0, cols - 1),
             "rectangle_height": (1, rows),
             "rectangle_width": (1, cols),
+            "checkerboard_box_size": (1, max(rows, cols)),
             "crosshair_row": (0, rows - 1),
             "crosshair_col": (0, cols - 1),
+            "crosshair_width": (1, max(rows, cols)),
             "circle_row": (0, rows - 1),
             "circle_col": (0, cols - 1),
+            "circle_radius": (1, max(rows, cols)),
         }
         for field_name, (minimum, maximum) in ranges.items():
             if field_name in self.config_limits:
@@ -317,6 +320,14 @@ class DmdPanel(QGroupBox):
                 self.config_values[field_name] = min(
                     max(self.config_values[field_name], minimum), maximum
                 )
+        self.config_values["rectangle_row"] = min(
+            self.config_values["rectangle_row"],
+            rows - self.config_values["rectangle_height"],
+        )
+        self.config_values["rectangle_col"] = min(
+            self.config_values["rectangle_col"],
+            cols - self.config_values["rectangle_width"],
+        )
 
     def _update_calibration_files(
         self,
@@ -387,7 +398,7 @@ class DmdCalibrationPlotWindow(QWidget):
 
     def _draw(self, payload: dict) -> None:
         dmd_shape = self._shape_from_payload(payload.get("dmd_shape"), default=DMD_WIDTH_HEIGHT)
-        cam_shape = self._shape_from_payload(payload.get("cam_shape"), default=(3200, 3200))
+        cam_shape = self._shape_from_payload(payload.get("cam_shape"), default=CAM_WIDTH_HEIGHT)
         dmd_points = self._dmd_display_points(self._points_from_payload(payload.get("dmd_points")))
         cam_points = self._points_from_payload(payload.get("cam_points"))
 

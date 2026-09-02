@@ -698,13 +698,17 @@ def gui_dmd_display_pattern(facade: Any, payload: dict[str, Any]) -> dict[str, A
     pattern = payload["pattern"]
     if pattern not in DMD_PATTERNS:
         raise ValueError(f"Unsupported DMD pattern {pattern!r}.")
+    warp = payload.get("warp", True)
+    if not isinstance(warp, bool):
+        raise TypeError(f"DMD pattern warp must be bool, received {type(warp)}.")
     dmd = facade.gui_dmd()
     pattern_array = gui_dmd_pattern_array(
         dmd=dmd,
         pattern=pattern,
         config=gui_dmd_shape_config_from_payload(payload),
+        warp=warp,
     )
-    dmd.display_image(pattern_array, _is_full_display=pattern == "full")
+    dmd.display_image(pattern_array, _is_full_display=pattern == "full" and not warp)
     facade._last_dmd_pattern = pattern
     facade._last_dmd_preview = gui_dmd_preview_payload(dmd=dmd, pattern_array=pattern_array)
     return {"dmd": facade.gui_dmd_status_payload()}
@@ -975,9 +979,14 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
 }
 
 
-def gui_dmd_pattern_array(dmd: Any, pattern: str, config: DmdShapeConfig | None = None) -> np.ndarray:
+def gui_dmd_pattern_array(
+        dmd: Any,
+        pattern: str,
+        config: DmdShapeConfig | None = None,
+        warp: bool = True,
+) -> np.ndarray:
     """Build the DMD array sent for a built-in GUI pattern."""
-    return dmd.get_pattern(pattern=pattern, config=config)
+    return dmd.get_pattern(pattern=pattern, config=config, warp=warp)
 
 
 def gui_dmd_preview_payload(dmd: Any, pattern_array: np.ndarray) -> dict[str, Any]:

@@ -203,8 +203,13 @@ class EvoMachineGuiController(QObject):
     def refresh_dmd(self) -> None:
         self._send(GuiCommandType.DMD_STATUS)
 
-    def display_dmd_pattern(self, pattern: str, config: dict[str, Any] | None = None) -> None:
-        payload: dict[str, Any] = {"pattern": pattern}
+    def display_dmd_pattern(
+            self,
+            pattern: str,
+            config: dict[str, Any] | None = None,
+            warp: bool = True,
+    ) -> None:
+        payload: dict[str, Any] = {"pattern": pattern, "warp": warp}
         if config is not None:
             payload["config"] = config
         self._send(GuiCommandType.DMD_DISPLAY_PATTERN, payload)

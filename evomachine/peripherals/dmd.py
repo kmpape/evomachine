@@ -705,32 +705,47 @@ class Dmd(Peripheral):
         """Return a white uint8 image."""
         return np.ones(img_size or self.width_height_DMD, dtype=ARR_TYPE) * 255
 
-    def get_pattern(self, pattern: str, config: DmdShapeConfig | None = None) -> np.ndarray:
-        """Return a built-in DMD pattern image."""
+    def get_pattern(
+            self,
+            pattern: str,
+            config: DmdShapeConfig | None = None,
+            warp: bool = True,
+    ) -> np.ndarray:
+        """Return a built-in pattern in calibrated DMD or native DMD coordinates."""
+        if not isinstance(warp, bool):
+            raise TypeError(f"Dmd.get_pattern: warp must be bool, received {type(warp)}.")
         pattern = DMD_PATTERN_ALIASES.get(pattern, pattern)
         if pattern not in DMD_BUILT_IN_PATTERNS:
             raise ValueError(f"Unsupported DMD pattern {pattern!r}.")
         config = config or DmdShapeConfig()
+        img_size = self.width_height_CAM if warp else self.width_height_DMD
         if pattern == "empty":
-            return self.get_zero_array()
-        if pattern == "full":
-            return self.get_one_array()
-        if pattern == "rectangle":
-            return self.get_rectangle(config=config)
-        if pattern == "checkerboard":
-            return self.get_checkerboard(square_size=config.checkerboard_box_size)
-        if pattern == "crosshair":
-            return self.get_crosshair(
+            pattern_array = self.get_zero_array(img_size=img_size)
+        elif pattern == "full":
+            pattern_array = self.get_one_array(img_size=img_size)
+        elif pattern == "rectangle":
+            pattern_array = self.get_rectangle(config=config, img_size=img_size)
+        elif pattern == "checkerboard":
+            pattern_array = self.get_checkerboard(
+                square_size=config.checkerboard_box_size,
+                img_size=img_size,
+            )
+        elif pattern == "crosshair":
+            pattern_array = self.get_crosshair(
                 at_pos=self._shape_position_or_none(config.crosshair_row, config.crosshair_col),
                 line_width=config.crosshair_width,
+                img_size=img_size,
             )
-        if pattern == "circle":
-            return self.get_circle(
+        elif pattern == "circle":
+            pattern_array = self.get_circle(
                 row=config.circle_row,
                 col=config.circle_col,
                 radius=config.circle_radius,
+                img_size=img_size,
             )
-        raise ValueError(f"Unsupported DMD pattern {pattern!r}.")
+        else:
+            raise ValueError(f"Unsupported DMD pattern {pattern!r}.")
+        return self.img_to_dmd_array(pattern_array) if warp else pattern_array
 
     @staticmethod
     def _shape_position_or_none(row: int | None, col: int | None) -> tuple[int, int] | None:
@@ -756,17 +771,17 @@ class Dmd(Peripheral):
     @staticmethod
     def _validate_position(row: int, col: int, img_shape: tuple[int, int], action: str) -> None:
         if not (0 <= row < img_shape[0]):
-            raise ValueError(f"{action}: row {row} outside DMD bounds 0-{img_shape[0] - 1}.")
+            raise ValueError(f"{action}: row {row} outside image bounds 0-{img_shape[0] - 1}.")
         if not (0 <= col < img_shape[1]):
-            raise ValueError(f"{action}: col {col} outside DMD bounds 0-{img_shape[1] - 1}.")
+            raise ValueError(f"{action}: col {col} outside image bounds 0-{img_shape[1] - 1}.")
 
     @staticmethod
     def _validate_rectangle(row: int, col: int, height: int, width: int, img_shape: tuple[int, int]) -> None:
         Dmd._validate_position(row=row, col=col, img_shape=img_shape, action="Dmd.get_rectangle")
         if row + height > img_shape[0]:
-            raise ValueError(f"Dmd.get_rectangle: row + height {row + height} exceeds DMD rows {img_shape[0]}.")
+            raise ValueError(f"Dmd.get_rectangle: row + height {row + height} exceeds image rows {img_shape[0]}.")
         if col + width > img_shape[1]:
-            raise ValueError(f"Dmd.get_rectangle: col + width {col + width} exceeds DMD cols {img_shape[1]}.")
+            raise ValueError(f"Dmd.get_rectangle: col + width {col + width} exceeds image cols {img_shape[1]}.")
 
     def get_rectangle(
             self,
