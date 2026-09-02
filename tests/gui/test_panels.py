@@ -21,6 +21,7 @@ from evomachine.gui.panels.camera import CameraPanel
 from evomachine.gui.panels.dmd import DmdPanel
 from evomachine.gui.panels.filterwheel import FilterWheelPanel
 from evomachine.gui.panels.leds import LedManagerPanel
+from evomachine.gui.panels.logs import ApplicationLogPanel
 from evomachine.gui.panels.software_focus import SoftwareFocusPanel
 from evomachine.gui.panels.stage import StagePanel
 from evomachine.gui.panels.strategy import FovSetupPanel, StrategySetupPanel
@@ -46,6 +47,7 @@ class FakeController(QObject):
     autofocus_status_received = pyqtSignal(dict)
     software_focus_status_received = pyqtSignal(dict)
     operation_status_received = pyqtSignal(dict)
+    logs_received = pyqtSignal(dict)
     strategies_received = pyqtSignal(list)
     strategy_status_received = pyqtSignal(dict)
     lifecycle_status_received = pyqtSignal(dict)
@@ -58,6 +60,9 @@ class FakeController(QObject):
 
     def refresh_stage(self):
         self.calls.append(("refresh_stage",))
+
+    def refresh_logs(self, after_sequence=0):
+        self.calls.append(("refresh_logs", after_sequence))
 
     def initialise_fovs(self, fovs, use_autofocus=False):
         self.calls.append(("initialise_fovs", fovs, use_autofocus))
@@ -697,6 +702,39 @@ def test_software_focus_panel_sends_run_request() -> None:
     panel.run_button.click()
 
     assert controller.calls == [("run_software_focus",)]
+
+
+def test_application_log_panel_is_incremental_and_bounded() -> None:
+    _app()
+    controller = FakeController()
+    panel = ApplicationLogPanel(controller=controller, history_limit=2)
+    assert controller.calls[-1] == ("refresh_logs", 0)
+
+    controller.logs_received.emit(
+        {
+            "records": [
+                {"sequence": 1, "timestamp": "10:00:00", "level": "INFO", "logger": "a", "message": "first"},
+                {"sequence": 2, "timestamp": "10:00:01", "level": "WARNING", "logger": "b", "message": "second"},
+                {"sequence": 3, "timestamp": "10:00:02", "level": "ERROR", "logger": "c", "message": "third"},
+            ],
+            "latest_sequence": 3,
+        }
+    )
+    controller.logs_received.emit(
+        {
+            "records": [
+                {"sequence": 3, "timestamp": "10:00:02", "level": "ERROR", "logger": "c", "message": "third"},
+            ],
+            "latest_sequence": 3,
+        }
+    )
+
+    rendered = panel.log_view.toPlainText()
+    assert "first" not in rendered
+    assert rendered.count("second") == 1
+    assert rendered.count("third") == 1
+    panel.refresh()
+    assert controller.calls[-1] == ("refresh_logs", 3)
 
 
 def test_long_operation_status_updates_controls_and_cancellation() -> None:

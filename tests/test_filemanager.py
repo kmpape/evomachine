@@ -187,6 +187,7 @@ def test_get_logger_uses_binding_level() -> None:
 
     assert logger.level == logging.DEBUG
     assert config_module.file_handler.level == logging.DEBUG
+    assert config_module.gui_log_handler in logger.handlers
 
 
 def test_configure_binding_loggers_configures_external_packages() -> None:

@@ -54,3 +54,23 @@ def test_gui_controller_lists_and_selects_experiments() -> None:
     assert client.requests[-2].command is GuiCommandType.ACQUISITION_LIST_EXPERIMENTS
     assert client.requests[-1].command is GuiCommandType.ACQUISITION_SELECT_EXPERIMENT
     assert client.requests[-1].payload == {"name": "experiment-one"}
+
+
+def test_gui_controller_requests_and_dispatches_incremental_logs() -> None:
+    client = RecordingClient()
+    controller = EvoMachineGuiController(client=client, start_worker=False)
+    received = []
+    controller.logs_received.connect(received.append)
+
+    controller.refresh_logs(after_sequence=12)
+    controller._handle_response(
+        GuiResponse(
+            request_id="logs",
+            ok=True,
+            payload={"logs": {"records": [], "latest_sequence": 12}},
+        )
+    )
+
+    assert client.requests[-1].command is GuiCommandType.LOGS_RECENT
+    assert client.requests[-1].payload == {"after_sequence": 12}
+    assert received == [{"records": [], "latest_sequence": 12}]

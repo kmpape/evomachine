@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 
 from evomachine.acquisition import FrameAcquisitionSettings
-from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT
+from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT, gui_log_handler
 from evomachine.coordinates import Coordinate
 from evomachine.filemanager import FileManager
 from evomachine.frame import FrameMetaDataFactory
@@ -54,6 +54,21 @@ def gui_coordinate_from_payload(payload: dict[str, Any]) -> Coordinate:
         z=payload.get("z"),
         channel_id=int(payload.get("channel_id", 0)),
     )
+
+
+def gui_recent_logs(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """Return buffered application logs newer than the GUI's cursor."""
+    del facade
+    after_sequence = payload.get("after_sequence", 0)
+    if not isinstance(after_sequence, int) or isinstance(after_sequence, bool):
+        raise TypeError("after_sequence must be an integer.")
+    records = gui_log_handler.records_after(after_sequence)
+    return {
+        "logs": {
+            "records": list(records),
+            "latest_sequence": gui_log_handler.latest_sequence,
+        }
+    }
 
 
 def gui_led_type_from_payload(value: Any) -> LEDType:
@@ -992,6 +1007,7 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.STOP: gui_stop,
     GuiCommandType.SHUTDOWN: gui_shutdown,
     GuiCommandType.CONTROLLER_STATUS: gui_controller_status,
+    GuiCommandType.LOGS_RECENT: gui_recent_logs,
     GuiCommandType.FOV_INITIALISE: gui_fov_initialise,
     GuiCommandType.STAGE_STATUS: gui_stage_status,
     GuiCommandType.STAGE_GET_COORDINATES: gui_stage_get_coordinates,

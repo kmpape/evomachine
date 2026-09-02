@@ -47,6 +47,7 @@ class EvoMachineGuiController(QObject):
     request_ready = pyqtSignal(object)
     response_error = pyqtSignal(str)
     controller_status_received = pyqtSignal(dict)
+    logs_received = pyqtSignal(dict)
     fovs_received = pyqtSignal(list)
     stage_status_received = pyqtSignal(dict)
     stage_coordinates_received = pyqtSignal(dict)
@@ -118,6 +119,9 @@ class EvoMachineGuiController(QObject):
 
     def refresh_controller_status(self) -> None:
         self._send(GuiCommandType.CONTROLLER_STATUS)
+
+    def refresh_logs(self, after_sequence: int = 0) -> None:
+        self._send(GuiCommandType.LOGS_RECENT, {"after_sequence": after_sequence})
 
     def initialise_fovs(self, fovs: list[dict[str, Any]], use_autofocus: bool = False) -> None:
         self._send(GuiCommandType.FOV_INITIALISE, {"fovs": fovs, "use_autofocus": use_autofocus})
@@ -316,6 +320,8 @@ class EvoMachineGuiController(QObject):
             self.stage_coordinates_received.emit(payload)
         if "controllers" in payload:
             self.controller_status_received.emit(payload)
+        if "logs" in payload:
+            self.logs_received.emit(payload["logs"])
         if "fovs" in payload:
             self.fovs_received.emit(payload["fovs"])
         if "stage" in payload and "coordinate" not in payload:

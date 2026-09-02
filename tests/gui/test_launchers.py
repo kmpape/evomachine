@@ -111,18 +111,40 @@ def test_napari_app_fits_central_viewer_to_workspace_aspect() -> None:
     assert viewer.reset_count == 1
 
 
-def test_napari_app_shows_native_layer_controls() -> None:
+def test_napari_app_hides_layer_list_and_tabifies_status_with_layer_controls() -> None:
     class FakeDock:
         def __init__(self):
             self.shown = False
+            self.hidden = False
+            self.raised = False
 
         def show(self):
             self.shown = True
 
+        def hide(self):
+            self.hidden = True
+
+        def raise_(self):
+            self.raised = True
+
+    class FakeQtWindow:
+        def __init__(self):
+            self.added = []
+            self.tabified = []
+
+        def addDockWidget(self, area, dock):  # noqa: N802
+            self.added.append((area, dock))
+
+        def tabifyDockWidget(self, first, second):  # noqa: N802
+            self.tabified.append((first, second))
+
     controls = FakeDock()
     layers = FakeDock()
+    status = FakeDock()
+    qt_window = FakeQtWindow()
     viewer = SimpleNamespace(
         window=SimpleNamespace(
+            _qt_window=qt_window,
             _qt_viewer=SimpleNamespace(
                 dockLayerControls=controls,
                 dockLayerList=layers,
@@ -130,7 +152,53 @@ def test_napari_app_shows_native_layer_controls() -> None:
         )
     )
 
-    napari_app._show_default_napari_left_docks(viewer)
+    napari_app._configure_left_docks(viewer, status_dock_widget=status)
 
     assert controls.shown
-    assert layers.shown
+    assert layers.hidden
+    assert qt_window.added[0][1] is controls
+    assert qt_window.tabified == [(controls, status)]
+    assert status.shown
+    assert status.raised
+
+
+def test_napari_app_sizes_bottom_log_dock() -> None:
+    class FakeDock:
+        def __init__(self):
+            self.shown = False
+            self.visible = False
+            self.raised = False
+            self.minimum_height = None
+
+        def show(self):
+            self.shown = True
+
+        def setVisible(self, visible):  # noqa: N802
+            self.visible = visible
+
+        def raise_(self):
+            self.raised = True
+
+        def setMinimumHeight(self, height):  # noqa: N802
+            self.minimum_height = height
+
+    class FakeQtWindow:
+        def __init__(self):
+            self.calls = []
+
+        def resizeDocks(self, docks, sizes, orientation):  # noqa: N802
+            self.calls.append((docks, sizes, orientation))
+
+    logs_dock = FakeDock()
+    qt_window = FakeQtWindow()
+    viewer = SimpleNamespace(window=SimpleNamespace(_qt_window=qt_window))
+
+    napari_app._resize_logs_dock(viewer, logs_dock_widget=logs_dock)
+
+    docks, sizes, _orientation = qt_window.calls[0]
+    assert docks == [logs_dock]
+    assert sizes == [napari_app.STARTUP_LOG_DOCK_HEIGHT]
+    assert logs_dock.shown
+    assert logs_dock.visible
+    assert logs_dock.raised
+    assert logs_dock.minimum_height == napari_app.STARTUP_LOG_DOCK_HEIGHT

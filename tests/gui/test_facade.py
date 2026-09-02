@@ -18,6 +18,7 @@ from evomachine.image_processing_config import ImageProcessorConfigFactory
 from evomachine.peripherals.camera import CameraConfig, ImageConfigType, ObjectiveConfigType
 from evomachine.types import AutoFocusStatusType, FilterWheelType, FocusCurveType, FocusStatusType, FovDirectionType, LEDType
 from evomachine.gui.facade import AutomatonGuiFacade
+from evomachine.config import get_logger, gui_log_handler
 from evomachine.gui.image_payloads import IMAGE_TRANSPORT_DIR_ENV, IMAGE_TRANSPORT_RAW, array_from_preview_payload
 from evomachine.gui.protocol import GuiCommandType, GuiRequest
 
@@ -559,6 +560,51 @@ def test_long_dmd_operation_can_be_polled_cancelled_and_followed_by_requests() -
     assert cancelled.ok
     assert wait_for_operation(facade, "dmd_calibration")["state"] == "cancelled"
     assert facade.handle(GuiRequest(command=GuiCommandType.DMD_STATUS)).ok
+
+
+def test_facade_returns_incremental_structured_application_logs() -> None:
+    facade = AutomatonGuiFacade(FakeAutomaton())
+    gui_log_handler.clear()
+    cursor = gui_log_handler.latest_sequence
+    get_logger("test.gui.forwarding").warning("forward this warning")
+
+    response = facade.handle(
+        GuiRequest(
+            command=GuiCommandType.LOGS_RECENT,
+            payload={"after_sequence": cursor},
+        )
+    )
+
+    assert response.ok
+    records = response.payload["logs"]["records"]
+    assert len(records) == 1
+    assert records[0]["level"] == "WARNING"
+    assert records[0]["logger"] == "test.gui.forwarding"
+    assert records[0]["message"] == "forward this warning"
+
+
+def test_facade_logs_user_hardware_command_lifecycle() -> None:
+    facade = AutomatonGuiFacade(FakeAutomaton())
+    gui_log_handler.clear()
+    cursor = gui_log_handler.latest_sequence
+
+    response = facade.handle(
+        GuiRequest(
+            command=GuiCommandType.STAGE_MOVE_ABSOLUTE,
+            payload={"x": 4, "y": 5, "z": 6, "block": False},
+        )
+    )
+    logs = facade.handle(
+        GuiRequest(
+            command=GuiCommandType.LOGS_RECENT,
+            payload={"after_sequence": cursor},
+        )
+    )
+
+    assert response.ok
+    messages = [record["message"] for record in logs.payload["logs"]["records"]]
+    assert messages[0] == "GUI command started: stage.move_absolute."
+    assert messages[1].startswith("GUI command completed: stage.move_absolute (")
 
 
 def test_failed_background_operation_reports_error_and_releases_facade() -> None:

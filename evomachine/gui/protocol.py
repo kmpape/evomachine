@@ -22,6 +22,7 @@ class GuiCommandType(str, Enum):
     STOP = "stop"
     SHUTDOWN = "shutdown"
     CONTROLLER_STATUS = "controllers.status"
+    LOGS_RECENT = "logs.recent"
     FOV_INITIALISE = "fov.initialise"
     STAGE_STATUS = "stage.status"
     STAGE_GET_COORDINATES = "stage.get_coordinates"

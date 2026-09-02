@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from evomachine.config import EVOMACHINE_DIR, get_logger
@@ -21,6 +22,7 @@ logger = get_logger(name=__name__)
 _OPERATION_SAFE_COMMANDS = frozenset(
     {
         GuiCommandType.PING,
+        GuiCommandType.LOGS_RECENT,
         GuiCommandType.DMD_CALIBRATION_STATUS,
         GuiCommandType.DMD_CANCEL_CALIBRATION,
         GuiCommandType.AUTOFOCUS_CALIBRATION_STATUS,
@@ -57,10 +59,24 @@ class AutomatonGuiFacade:
                 ok=False,
                 error=f"{request.command.value} is not allowed while a strategy is running.",
             )
+        log_command = request.command in MUTATING_COMMANDS or request.command in {
+            GuiCommandType.STOP,
+            GuiCommandType.SHUTDOWN,
+        }
+        started_at = perf_counter()
+        if log_command:
+            logger.info("GUI command started: %s.", request.command.value)
         try:
             payload = self.gui_handle_payload(request.command, request.payload)
+            if log_command:
+                logger.info(
+                    "GUI command completed: %s (%.2fs).",
+                    request.command.value,
+                    perf_counter() - started_at,
+                )
             return GuiResponse(request_id=request.request_id, ok=True, payload=payload)
         except Exception as error:
+            logger.exception("GUI command failed: %s.", request.command.value)
             return GuiResponse(
                 request_id=request.request_id, ok=False, error=f"{type(error).__name__}: {error}"
             )
