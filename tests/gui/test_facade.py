@@ -914,6 +914,26 @@ def test_facade_handles_controller_status_request() -> None:
     assert "Fake Filter Wheel" in shared["owners"]
 
 
+def test_facade_isolates_failed_controller_health_check_and_remains_usable() -> None:
+    automaton = FakeAutomaton()
+    shared_controller = automaton.acq_mngr.camera.peripheral_ctrl
+
+    def fail_health_check():
+        raise TimeoutError("controller did not respond")
+
+    shared_controller.is_alive = fail_health_check
+    facade = AutomatonGuiFacade(automaton)
+
+    status = facade.handle(GuiRequest(command=GuiCommandType.CONTROLLER_STATUS))
+    following_request = facade.handle(GuiRequest(command=GuiCommandType.PING))
+
+    assert status.ok
+    assert status.payload["controllers"][0]["connected"] is False
+    assert status.payload["controllers"][0]["error"] == "TimeoutError: controller did not respond"
+    assert status.payload["controllers"][1]["connected"] is True
+    assert following_request.ok
+
+
 def test_facade_returns_stage_to_origin() -> None:
     automaton = FakeAutomaton()
     facade = AutomatonGuiFacade(automaton)
