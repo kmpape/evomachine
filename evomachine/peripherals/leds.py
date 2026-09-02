@@ -262,10 +262,12 @@ class LedSource(Peripheral):
         None
         """
         logger.debug("LedSource.finalise: finalising %s with force=%s.", self.name, force)
-        self._cancel_all_timers()
-        if self._is_initialised or not self.check_initialised:
-            self.disable_led()
-        self._is_initialised = False
+        try:
+            self._cancel_all_timers()
+            if self._is_initialised or not self.check_initialised:
+                self.disable_led()
+        finally:
+            self._is_initialised = False
 
     def get_available_leds(self) -> list[LEDType]:
         """
@@ -706,8 +708,15 @@ class LedManager(Peripheral):
         None
         """
         logger.debug("LedManager.finalise: finalising %s with force=%s.", self.name, force)
+        errors: list[str] = []
         for source in self.led_sources:
-            source.finalise(force=force)
+            try:
+                source.finalise(force=force)
+            except Exception as error:
+                logger.exception("LedManager.finalise: failed to finalise %s.", source.name)
+                errors.append(f"{source.name}: {type(error).__name__}: {error}")
+        if errors:
+            raise RuntimeError("LED finalisation completed with errors: " + "; ".join(errors))
 
     def get_available_leds(self) -> list[LEDType]:
         """
@@ -777,8 +786,17 @@ class LedManager(Peripheral):
         """
         if led_type is None or led_type == LEDType.NO_LED:
             logger.debug("LedManager.disable_led: disabling all LEDs for %s.", self.name)
+            errors: list[str] = []
             for source in self.led_sources:
-                source.disable_led()
+                if source.check_initialised and not source.is_initialised():
+                    continue
+                try:
+                    source.disable_led()
+                except Exception as error:
+                    logger.exception("LedManager.disable_led: failed to disable %s.", source.name)
+                    errors.append(f"{source.name}: {type(error).__name__}: {error}")
+            if errors:
+                raise RuntimeError("LED disable completed with errors: " + "; ".join(errors))
             return
         logger.debug("LedManager.disable_led: disabling %s through %s.", led_type, self.name)
         self._get_source(led_type=led_type).disable_led(led_type=led_type)

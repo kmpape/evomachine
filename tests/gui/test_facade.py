@@ -995,6 +995,25 @@ def test_facade_shutdown_closes_controllers_and_reports_status() -> None:
     assert [controller["connected"] for controller in response.payload["controllers"]] == [False, False]
 
 
+def test_facade_shutdown_attempts_remaining_controllers_after_failure(monkeypatch) -> None:
+    automaton = FakeAutomaton()
+    shared_controller = automaton.acq_mngr.camera.peripheral_ctrl
+    dmd_controller = automaton.acq_mngr.dmd.peripheral_ctrl
+    facade = AutomatonGuiFacade(automaton)
+
+    def fail_shutdown():
+        raise RuntimeError("DMD connection did not close")
+
+    monkeypatch.setattr(dmd_controller, "shutdown", fail_shutdown)
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.SHUTDOWN))
+
+    assert not response.ok
+    assert "DMD connection did not close" in (response.error or "")
+    assert shared_controller.shutdown_count == 1
+    assert automaton.has_shutdown()
+
+
 def test_facade_handles_filter_wheel_requests() -> None:
     automaton = FakeAutomaton()
     facade = AutomatonGuiFacade(automaton)

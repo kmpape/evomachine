@@ -277,12 +277,33 @@ class FrameAcquisitionManager:
         -------
         None
         """
-        self.led_manager.disable_led()
-        if self.dmd is not None:
-            self.dmd.display_none()
-        self.camera.stop()
-        if self.stage is not None:
-            self.stage.stop()
+        actions = [("LED manager", self.led_manager.disable_led)]
+        if self.dmd is not None and self._device_is_initialised(self.dmd):
+            actions.append(("DMD", self.dmd.display_none))
+        if self._device_is_initialised(self.camera):
+            actions.append(("camera", self.camera.stop))
+        if self.stage is not None and self._device_is_initialised(self.stage):
+            actions.append(("stage", self.stage.stop))
+
+        errors: list[str] = []
+        for name, action in actions:
+            try:
+                action()
+            except Exception as error:
+                logger.exception("FrameAcquisitionManager.stop: failed to stop %s.", name)
+                errors.append(f"{name}: {type(error).__name__}: {error}")
+        if errors:
+            raise RuntimeError("Acquisition shutdown completed with errors: " + "; ".join(errors))
+
+    @staticmethod
+    def _device_is_initialised(device: object) -> bool:
+        is_initialised = getattr(device, "is_initialised", None)
+        if not callable(is_initialised):
+            return True
+        try:
+            return bool(is_initialised())
+        except Exception:
+            return True
 
     @staticmethod
     def _normalise_frame_metadata(frame_metadata: FrameMetaData | list[FrameMetaData]) -> list[FrameMetaData]:

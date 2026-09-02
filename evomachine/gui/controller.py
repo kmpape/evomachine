@@ -6,6 +6,7 @@ from typing import Any
 
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
+from evomachine.config import get_logger
 from evomachine.gui.image_payloads import (
     IMAGE_TRANSPORT_AUTO,
     IMAGE_TRANSPORT_ENV,
@@ -17,6 +18,9 @@ from evomachine.gui.protocol import GUI_HOST_ENV as HOST_ENV
 from evomachine.gui.protocol import GUI_PORT_ENV as PORT_ENV
 from evomachine.gui.protocol import GuiCommandType, GuiRequest, GuiResponse
 from evomachine.gui.socket_transport import GuiSocketClient
+
+
+logger = get_logger(name=__name__)
 
 
 class RpcClientWorker(QObject):
@@ -87,6 +91,7 @@ class EvoMachineGuiController(QObject):
         )
         self._thread: QThread | None = None
         self._worker: RpcClientWorker | None = None
+        self._closed = False
         if start_worker:
             self._thread = QThread()
             self._worker = RpcClientWorker(client=self.client)
@@ -97,6 +102,10 @@ class EvoMachineGuiController(QObject):
             self._thread.start()
 
     def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._request_shutdown_before_close()
         if self._worker is not None:
             self._worker.close()
         else:
@@ -104,6 +113,31 @@ class EvoMachineGuiController(QObject):
         if self._thread is not None:
             self._thread.quit()
             self._thread.wait(1000)
+
+    def _request_shutdown_before_close(self) -> None:
+        """Best-effort terminal shutdown request before disconnecting the GUI."""
+        request = GuiRequest(command=GuiCommandType.SHUTDOWN)
+        shutdown_client = self.client
+        owns_client = False
+        if isinstance(self.client, GuiSocketClient):
+            shutdown_client = GuiSocketClient(
+                host=self.client.host,
+                port=self.client.port,
+                timeout=min(self.client.timeout, 2.0),
+            )
+            owns_client = True
+        try:
+            response = shutdown_client.request_object(request)
+            if not response.ok:
+                error = response.error or "Unknown automaton shutdown error."
+                logger.error("EvoMachine GUI shutdown failed: %s", error)
+                self.response_error.emit(error)
+        except Exception as error:
+            logger.error("EvoMachine GUI could not request shutdown: %s: %s", type(error).__name__, error)
+            self.response_error.emit(f"{type(error).__name__}: {error}")
+        finally:
+            if owns_client:
+                shutdown_client.close()
 
     def ping(self) -> None:
         self._send(GuiCommandType.PING)

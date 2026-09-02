@@ -5,13 +5,14 @@ from evomachine.gui.protocol import GuiCommandType, GuiResponse
 class RecordingClient:
     def __init__(self):
         self.requests = []
+        self.closed = False
 
     def request_object(self, request):
         self.requests.append(request)
         return GuiResponse(request_id=request.request_id, ok=True)
 
     def close(self):
-        return None
+        self.closed = True
 
 
 def test_gui_stage_moves_are_non_blocking_so_stop_can_be_processed() -> None:
@@ -74,3 +75,14 @@ def test_gui_controller_requests_and_dispatches_incremental_logs() -> None:
     assert client.requests[-1].command is GuiCommandType.LOGS_RECENT
     assert client.requests[-1].payload == {"after_sequence": 12}
     assert received == [{"records": [], "latest_sequence": 12}]
+
+
+def test_gui_controller_requests_shutdown_before_closing_connection() -> None:
+    client = RecordingClient()
+    controller = EvoMachineGuiController(client=client, start_worker=False)
+
+    controller.close()
+    controller.close()
+
+    assert [request.command for request in client.requests] == [GuiCommandType.SHUTDOWN]
+    assert client.closed

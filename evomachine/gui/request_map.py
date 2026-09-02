@@ -439,14 +439,18 @@ def gui_stop(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def gui_shutdown(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    devices_were_initialised = bool(facade.automaton.devices_is_initialised())
+    errors: list[str] = []
     try:
-        if devices_were_initialised:
-            facade.automaton.shutdown()
-        else:
-            facade.gui_mark_automaton_shutdown()
-    finally:
+        facade.automaton.shutdown()
+    except Exception as error:
+        errors.append(f"automaton: {type(error).__name__}: {error}")
+        facade.gui_mark_automaton_shutdown()
+    try:
         facade.gui_shutdown_controllers()
+    except Exception as error:
+        errors.append(f"controllers: {type(error).__name__}: {error}")
+    if errors:
+        raise RuntimeError("GUI shutdown completed with errors: " + "; ".join(errors))
     return {**facade.gui_status_payload(), **facade.gui_controller_status_payload()}
 
 

@@ -266,12 +266,22 @@ class AutomatonGuiFacade:
 
     def gui_shutdown_controllers(self) -> None:
         """Shutdown every peripheral controller used by configured devices."""
+        errors: list[str] = []
         for entry in reversed(self._gui_controller_entries()):
             controller = entry["controller"]
             shutdown = getattr(controller, "shutdown", None)
-            is_initialised, _error = self._safe_bool_call(controller.is_initialised)
-            if is_initialised and callable(shutdown):
+            if not callable(shutdown):
+                continue
+            controller_name = getattr(controller, "name", type(controller).__name__)
+            try:
                 shutdown()
+            except Exception as error:
+                logger.exception(
+                    "AutomatonGuiFacade: failed to shutdown controller %s.", controller_name
+                )
+                errors.append(f"{controller_name}: {type(error).__name__}: {error}")
+        if errors:
+            raise RuntimeError("Controller shutdown completed with errors: " + "; ".join(errors))
 
     def gui_mark_automaton_shutdown(self) -> None:
         """Set automaton shutdown events when normal shutdown cannot run safely."""

@@ -234,7 +234,39 @@ def test_tiger_led_source_sends_full_brightness_mapping():
 
     source.set_led(LEDType.TIGER_LED_2, brightness=42.8)
 
-    assert tiger.led_calls == [({"X": 0, "Y": 42}, 7)]
+    assert tiger.led_calls == [
+        ({"X": 0, "Y": 0}, 7),
+        ({"X": 0, "Y": 42}, 7),
+    ]
+
+
+def test_led_manager_finalise_attempts_every_source_after_failure(monkeypatch) -> None:
+    first_controller = VirtualPeripheralController()
+    second_controller = VirtualPeripheralController()
+    first_controller.initialise()
+    second_controller.initialise()
+    first = VirtualLedSource(
+        peripheral_ctrl=first_controller,
+        available_leds=[LEDType.LED_450_NM],
+        name="first source",
+    )
+    second = VirtualLedSource(
+        peripheral_ctrl=second_controller,
+        available_leds=[LEDType.LED_515_NM],
+        name="second source",
+    )
+    first.initialise()
+    second.initialise()
+
+    def fail_finalise(force=False):
+        raise RuntimeError("failed to disable")
+
+    monkeypatch.setattr(first, "finalise", fail_finalise)
+
+    with pytest.raises(RuntimeError, match="first source.*failed to disable"):
+        LedManager([first, second]).finalise()
+
+    assert not second.is_initialised()
 
 
 def test_syncboard_led_source_uses_native_duration_and_intensity(monkeypatch):

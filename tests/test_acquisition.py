@@ -786,3 +786,25 @@ def test_stop_calls_camera_and_stage_stop_directly() -> None:
     assert dmd.none_count == 1
     assert camera.stop_count == 1
     assert stage.stop_count == 1
+
+
+def test_stop_attempts_remaining_devices_after_one_failure(monkeypatch) -> None:
+    camera = FakeCamera()
+    leds = FakeLedManager()
+    dmd = FakeDmd()
+    stage = FakeStage()
+    manager = _manager(camera=camera, led_manager=leds, dmd=dmd, stage=stage)
+
+    def fail_disable(led_type=None):
+        leds.disable_count += 1
+        raise RuntimeError("LED disable failed")
+
+    monkeypatch.setattr(leds, "disable_led", fail_disable)
+
+    with pytest.raises(RuntimeError, match="LED disable failed"):
+        manager.stop()
+
+    assert leds.disable_count == 1
+    assert dmd.none_count == 1
+    assert camera.stop_count == 1
+    assert stage.stop_count == 1

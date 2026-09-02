@@ -1496,6 +1496,30 @@ def test_automaton_shutdown_stops_and_finalises_peripherals() -> None:
     assert automaton.has_shutdown()
 
 
+def test_automaton_shutdown_attempts_all_cleanup_after_partial_failures(monkeypatch) -> None:
+    automaton, acquisition_manager, focus_navigator, projection_manager, led_manager, dmd = make_automaton()
+
+    def fail_stop():
+        raise RuntimeError("stop failed")
+
+    def fail_dmd_finalise(force=False):
+        dmd.finalise_count += 1
+        raise RuntimeError("DMD finalise failed")
+
+    monkeypatch.setattr(acquisition_manager, "stop", fail_stop)
+    monkeypatch.setattr(dmd, "finalise", fail_dmd_finalise)
+
+    with pytest.raises(RuntimeError, match="stop failed.*DMD finalise failed"):
+        automaton.shutdown()
+
+    assert dmd.finalise_count == 1
+    assert acquisition_manager.camera.finalise_count == 1
+    assert focus_navigator.stage.finalise_count == 1
+    assert led_manager.finalise_count == 1
+    assert projection_manager.photodiode.finalise_count == 1
+    assert automaton.has_shutdown()
+
+
 def test_automaton_run_services_bounded_gui_request_processor() -> None:
     """
     Check the typed GUI hook is called from the automaton loop with its budget.

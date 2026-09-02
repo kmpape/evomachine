@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QScrollArea, QTabWidget, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import QApplication, QScrollArea, QTabWidget, QVBoxLayout, QWidget
 
 from evomachine.gui.central_workspace import CentralVisualWorkspace
 from evomachine.gui.controller import EvoMachineGuiController
@@ -29,6 +29,9 @@ class EvoMachineControlsDock(QWidget):
         super().__init__()
         self.viewer = napari_viewer
         self.controller = EvoMachineGuiController()
+        application = QApplication.instance()
+        if application is not None:
+            application.aboutToQuit.connect(self.controller.close)
         self.central_workspace = (
             CentralVisualWorkspace(viewer=self.viewer, controller=self.controller)
             if self.viewer is not None
@@ -46,7 +49,6 @@ class EvoMachineControlsDock(QWidget):
         self.setLayout(layout)
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        self.controller.close()
         super().closeEvent(event)
 
     @staticmethod

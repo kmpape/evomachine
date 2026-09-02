@@ -14,11 +14,13 @@ from evomachine.gui.facade import AutomatonGuiFacade
 from evomachine.gui.image_payloads import IMAGE_TRANSPORT_CHOICES, IMAGE_TRANSPORT_ENV, normalise_image_transport
 from evomachine.gui.protocol import GUI_HOST_ENV, GUI_PORT_ENV, GuiCommandType
 from evomachine.gui.socket_transport import GuiRpcServer, GuiSocketClient
+from evomachine.config import get_logger
 
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 DEFAULT_HARDWARE_RUNTIME = "evomachine.gui.runtime:build_hardware_automaton"
+logger = get_logger(name=__name__)
 
 
 def _repo_root() -> Path:
@@ -116,11 +118,16 @@ def _run_napari(host: str, port: int, napari_args: Sequence[str], *, image_trans
 
 
 def _shutdown_child(process: mp.Process, host: str, port: int) -> None:
+    if not process.is_alive():
+        process.join(timeout=1.0)
+        return
     try:
         with GuiSocketClient(host=host, port=port, timeout=1.0) as client:
-            client.request(GuiCommandType.SHUTDOWN)
-    except Exception:
-        pass
+            response = client.request(GuiCommandType.SHUTDOWN)
+            if not response.ok:
+                logger.error("Automaton shutdown request failed: %s", response.error)
+    except Exception as error:
+        logger.error("Could not request automaton shutdown: %s: %s", type(error).__name__, error)
     process.join(timeout=3.0)
     if process.is_alive():
         process.terminate()

@@ -1071,11 +1071,21 @@ class Automaton:
         -------
         None
         """
-        self.acq_mngr.stop()
+        actions = [("acquisition manager", self.acq_mngr.stop)]
         if self._swfocus is not None and callable(getattr(self._swfocus, "stop", None)):
-            self._swfocus.stop()
+            actions.append(("software focus", self._swfocus.stop))
         if self._autofocus is not None and callable(getattr(self._autofocus, "unlock", None)):
-            self._autofocus.unlock()
+            actions.append(("autofocus", self._autofocus.unlock))
+
+        errors: list[str] = []
+        for name, action in actions:
+            try:
+                action()
+            except Exception as error:
+                logger.exception("Automaton.act_on_halt: failed to halt %s.", name)
+                errors.append(f"{name}: {type(error).__name__}: {error}")
+        if errors:
+            raise RuntimeError("Automaton halt completed with errors: " + "; ".join(errors))
 
     def shutdown(self) -> None:
         """
@@ -1089,15 +1099,29 @@ class Automaton:
         -------
         None
         """
-        self.act_on_halt()
-        for device in reversed(self._iter_peripherals()):
-            finalise = getattr(device, "finalise", None)
-            if callable(finalise):
-                finalise()
-        self._stop_strategy_event.set()
-        self._start_strategy_event.set()
-        self._stop_event.set()
-        self._shutdown_event.set()
+        errors: list[str] = []
+        try:
+            try:
+                self.act_on_halt()
+            except Exception as error:
+                errors.append(f"halt: {type(error).__name__}: {error}")
+            for device in reversed(self._iter_peripherals()):
+                finalise = getattr(device, "finalise", None)
+                if not callable(finalise):
+                    continue
+                device_name = getattr(device, "name", type(device).__name__)
+                try:
+                    finalise()
+                except Exception as error:
+                    logger.exception("Automaton.shutdown: failed to finalise %s.", device_name)
+                    errors.append(f"{device_name}: {type(error).__name__}: {error}")
+        finally:
+            self._stop_strategy_event.set()
+            self._start_strategy_event.set()
+            self._stop_event.set()
+            self._shutdown_event.set()
+        if errors:
+            raise RuntimeError("Automaton shutdown completed with errors: " + "; ".join(errors))
 
     def start_strategy(self) -> None:
         """
