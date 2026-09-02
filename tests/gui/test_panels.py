@@ -67,9 +67,6 @@ class FakeController(QObject):
     def initialise_fovs(self, fovs, use_autofocus=False):
         self.calls.append(("initialise_fovs", fovs, use_autofocus))
 
-    def move_stage_absolute(self, x, y, z):
-        self.calls.append(("move_stage_absolute", x, y, z))
-
     def move_stage_relative(self, dx, dy, dz):
         self.calls.append(("move_stage_relative", dx, dy, dz))
 
@@ -78,9 +75,6 @@ class FakeController(QObject):
 
     def stop_stage(self):
         self.calls.append(("stop_stage",))
-
-    def zero_stage(self):
-        self.calls.append(("zero_stage",))
 
     def return_stage_to_origin(self):
         self.calls.append(("return_stage_to_origin",))
@@ -226,15 +220,20 @@ def test_stage_panel_sends_relative_delta_move_request() -> None:
     assert controller.calls == [("move_stage_relative", 1.0, 2.0, 3.0)]
 
 
-def test_stage_panel_sends_zero_request() -> None:
+def test_stage_panel_displays_active_limits() -> None:
     _app()
-    controller = FakeController()
-    panel = StagePanel(controller=controller)
-    panel.update_lifecycle_status({"devices_initialised": True})
+    panel = StagePanel(controller=FakeController())
 
-    panel.zero_button.click()
+    panel.update_status(
+        {
+            "coordinate_bounds": {
+                "low": {"x": -10, "y": -20, "z": -30},
+                "high": {"x": 10, "y": 20, "z": 30},
+            }
+        }
+    )
 
-    assert controller.calls == [("zero_stage",)]
+    assert "X [-10, 10]" in panel.limits_label.text()
 
 
 def test_stage_panel_sends_return_to_origin_request() -> None:

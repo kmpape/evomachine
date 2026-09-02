@@ -30,7 +30,7 @@ class StagePanel(QGroupBox):
         self._latest_coordinate: dict = {}
         self._latest_status: dict = {}
         self.coordinate_label = QLabel("x: -, y: -, z: -")
-        self.machine_coordinate_label = QLabel("machine x: -, y: -, z: -")
+        self.limits_label = QLabel("active limits: -")
         self.fov_step_label = QLabel("camera FoV step: -")
         self.status_label = QLabel("Run Initialise Devices before using stage controls.")
         self.devices_initialised = False
@@ -42,14 +42,10 @@ class StagePanel(QGroupBox):
 
         self.refresh_button = QPushButton("Refresh")
         self.move_button = QPushButton("Move by ΔXYZ")
-        self.move_button.setToolTip("Move relative to the current calibration coordinates.")
+        self.move_button.setToolTip("Move relative to the current zeroed Tiger coordinates.")
         self.stop_button = QPushButton("Stop")
-        self.zero_button = QPushButton("Set Current XYZ as Zero")
-        self.zero_button.setToolTip(
-            "Set the current position to user XYZ = 0 while retaining the original machine coordinates."
-        )
-        self.origin_button = QPushButton("Return to Calibration Origin")
-        self.origin_button.setToolTip("Move the stage to user/calibration coordinates XYZ = 0.")
+        self.origin_button = QPushButton("Return to Origin")
+        self.origin_button.setToolTip("Move the stage to Tiger coordinates XYZ = 0.")
         self.configure_button = QPushButton("Configure")
 
         form = QFormLayout()
@@ -61,9 +57,8 @@ class StagePanel(QGroupBox):
         buttons.addWidget(self.refresh_button, 0, 0)
         buttons.addWidget(self.move_button, 0, 1)
         buttons.addWidget(self.stop_button, 0, 2)
-        buttons.addWidget(self.zero_button, 1, 0, 1, 3)
-        buttons.addWidget(self.origin_button, 2, 0, 1, 3)
-        buttons.addWidget(self.configure_button, 3, 0, 1, 3)
+        buttons.addWidget(self.origin_button, 1, 0, 1, 3)
+        buttons.addWidget(self.configure_button, 2, 0, 1, 3)
 
         fov_buttons = QGridLayout()
         for label, direction, row, column in self.FOV_DIRECTIONS:
@@ -77,7 +72,7 @@ class StagePanel(QGroupBox):
 
         layout = QVBoxLayout()
         layout.addWidget(self.coordinate_label)
-        layout.addWidget(self.machine_coordinate_label)
+        layout.addWidget(self.limits_label)
         layout.addWidget(self.fov_step_label)
         layout.addWidget(self.status_label)
         layout.addLayout(form)
@@ -89,7 +84,6 @@ class StagePanel(QGroupBox):
         self.refresh_button.clicked.connect(self.controller.refresh_stage)
         self.move_button.clicked.connect(self._move_delta)
         self.stop_button.clicked.connect(self.controller.stop_stage)
-        self.zero_button.clicked.connect(self._zero_stage)
         self.origin_button.clicked.connect(self._return_to_origin)
         self.configure_button.clicked.connect(self._open_config_dialog)
         self.controller.stage_coordinates_received.connect(self.update_coordinates)
@@ -124,18 +118,11 @@ class StagePanel(QGroupBox):
         self.status_label.setText(f"Moving one camera FoV {direction.lower()}.")
         self.controller.move_stage_fov(direction=direction, multiplier=1.0)
 
-    def _zero_stage(self) -> None:
-        if not self.devices_initialised:
-            self.status_label.setText("Run Initialise Devices before zeroing the stage.")
-            return
-        self.status_label.setText("Setting current XYZ as the calibration zero.")
-        self.controller.zero_stage()
-
     def _return_to_origin(self) -> None:
         if not self.devices_initialised:
             self.status_label.setText("Run Initialise Devices before returning to the origin.")
             return
-        self.status_label.setText("Returning stage to calibration origin XYZ = 0.")
+        self.status_label.setText("Returning stage to origin XYZ = 0.")
         self.controller.return_stage_to_origin()
 
     def _open_config_dialog(self) -> None:
@@ -155,11 +142,6 @@ class StagePanel(QGroupBox):
         self.coordinate_label.setText(
             f"x: {coordinate.get('x')}, y: {coordinate.get('y')}, z: {coordinate.get('z')}"
         )
-        machine_coordinate = payload.get("machine_coordinate", {})
-        self.machine_coordinate_label.setText(
-            f"machine x: {machine_coordinate.get('x')}, "
-            f"y: {machine_coordinate.get('y')}, z: {machine_coordinate.get('z')}"
-        )
         if "stage" in payload:
             self.update_status(payload["stage"])
 
@@ -175,6 +157,20 @@ class StagePanel(QGroupBox):
         else:
             fov_step_text = "-"
         self.fov_step_label.setText(f"camera FoV step: {fov_step_text}")
+        self._update_limits(payload.get("coordinate_bounds"))
+
+    def _update_limits(self, bounds: dict | None) -> None:
+        if not isinstance(bounds, dict):
+            self.limits_label.setText("active limits: -")
+            return
+        low = bounds.get("low", {})
+        high = bounds.get("high", {})
+        self.limits_label.setText(
+            "active limits (µm): "
+            f"X [{low.get('x')}, {high.get('x')}], "
+            f"Y [{low.get('y')}, {high.get('y')}], "
+            f"Z [{low.get('z')}, {high.get('z')}]"
+        )
 
     def update_lifecycle_status(self, payload: dict) -> None:
         self.devices_initialised = bool(payload.get("devices_initialised"))
@@ -197,7 +193,6 @@ class StagePanel(QGroupBox):
             self.y_input,
             self.z_input,
             self.move_button,
-            self.zero_button,
             self.origin_button,
             self.configure_button,
             *self.fov_buttons,

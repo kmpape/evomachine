@@ -176,6 +176,23 @@ The hardware runtime uses the Micro-Manager camera, SyncBoard LEDs, ASI Tiger
 stage/filter/autofocus and overhead LED, KWR103 overhead light, and EM DMD
 window. Serial ports are detected from their USB hardware IDs.
 
+The hardware GUI zeroes the ASI Tiger stage at its startup position. Relative
+and field-of-view movements then use that Tiger coordinate system and are
+checked against the configured software limits. The deployment defaults can be
+overridden before launch with:
+
+```bash
+export EVOMACHINE_GUI_STAGE_MIN_X_UM=-8000
+export EVOMACHINE_GUI_STAGE_MAX_X_UM=8000
+export EVOMACHINE_GUI_STAGE_MIN_Y_UM=-19000
+export EVOMACHINE_GUI_STAGE_MAX_Y_UM=19000
+export EVOMACHINE_GUI_STAGE_MIN_Z_UM=-1000
+export EVOMACHINE_GUI_STAGE_MAX_Z_UM=1000
+```
+
+These values are in micrometres relative to the startup zero and must be set to
+the microscope's confirmed safe travel region before hardware use.
+
 #### Experiment image folders
 
 Hardware acquisitions are organised under `images/`, with one folder per

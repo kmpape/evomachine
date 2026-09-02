@@ -1,5 +1,5 @@
 from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
-from evomachine.coordinates import Coordinate
+from evomachine.coordinates import Coordinate, CoordinateBounds
 from evomachine.peripherals.stage import Stage
 
 
@@ -81,6 +81,8 @@ class TigerStage(Stage):
             peripheral_ctrl: TigerPeripheralController,
             fov_step_size: float,
             name: str = "ASI Tiger Stage",
+            coordinate_bounds: CoordinateBounds | None = None,
+            zero_on_initialise: bool = False,
             check_initialised: bool = True,
             check_alive: bool = True,
     ):
@@ -113,6 +115,8 @@ class TigerStage(Stage):
         super().__init__(
             name=name,
             fov_step_size=fov_step_size,
+            coordinate_bounds=coordinate_bounds,
+            zero_on_initialise=zero_on_initialise,
             check_initialised=check_initialised,
             check_alive=check_alive,
         )

@@ -163,9 +163,6 @@ class EvoMachineGuiController(QObject):
     def refresh_stage(self) -> None:
         self._send(GuiCommandType.STAGE_GET_COORDINATES)
 
-    def move_stage_absolute(self, x: float | None, y: float | None, z: float | None) -> None:
-        self._send(GuiCommandType.STAGE_MOVE_ABSOLUTE, {"x": x, "y": y, "z": z, "block": False})
-
     def move_stage_relative(self, dx: float | None, dy: float | None, dz: float | None) -> None:
         self._send(GuiCommandType.STAGE_MOVE_RELATIVE, {"dx": dx, "dy": dy, "dz": dz, "block": False})
 
@@ -177,9 +174,6 @@ class EvoMachineGuiController(QObject):
 
     def stop_stage(self) -> None:
         self._send(GuiCommandType.STAGE_STOP)
-
-    def zero_stage(self) -> None:
-        self._send(GuiCommandType.STAGE_ZERO)
 
     def return_stage_to_origin(self) -> None:
         self._send(GuiCommandType.STAGE_RETURN_ORIGIN)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 import os
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,12 @@ class HardwareGuiRuntimeSettings:
     camera_height: int = CAM_WIDTH_HEIGHT[1]
     camera_exposure_ms: float = 200.0
     stage_fov_step_size: float = 100.0
+    stage_min_x_um: float = -8000.0
+    stage_max_x_um: float = 8000.0
+    stage_min_y_um: float = -19000.0
+    stage_max_y_um: float = 19000.0
+    stage_min_z_um: float = -1000.0
+    stage_max_z_um: float = 1000.0
     filter_card_address: int = 8
     dmd_width: int = DMD_WIDTH_HEIGHT[0]
     dmd_height: int = DMD_WIDTH_HEIGHT[1]
@@ -33,6 +40,25 @@ class HardwareGuiRuntimeSettings:
     output_directory: Path = DATA_DIR
     use_dmd: bool = True
     use_kwr103: bool = True
+
+    def __post_init__(self) -> None:
+        for axis, minimum, maximum in (
+            ("X", self.stage_min_x_um, self.stage_max_x_um),
+            ("Y", self.stage_min_y_um, self.stage_max_y_um),
+            ("Z", self.stage_min_z_um, self.stage_max_z_um),
+        ):
+            if not isfinite(minimum) or not isfinite(maximum):
+                raise ValueError(
+                    f"HardwareGuiRuntimeSettings: stage {axis} limits must be finite."
+                )
+            if minimum >= maximum:
+                raise ValueError(
+                    f"HardwareGuiRuntimeSettings: stage {axis} minimum must be below maximum."
+                )
+            if minimum > 0 or maximum < 0:
+                raise ValueError(
+                    f"HardwareGuiRuntimeSettings: stage {axis} limits must include the startup zero."
+                )
 
     @classmethod
     def from_env(cls) -> "HardwareGuiRuntimeSettings":
@@ -53,6 +79,12 @@ class HardwareGuiRuntimeSettings:
             camera_height=_env_int("EVOMACHINE_GUI_CAMERA_HEIGHT", defaults.camera_height),
             camera_exposure_ms=_env_float("EVOMACHINE_GUI_CAMERA_EXPOSURE_MS", defaults.camera_exposure_ms),
             stage_fov_step_size=_env_float("EVOMACHINE_GUI_STAGE_FOV_STEP_SIZE", defaults.stage_fov_step_size),
+            stage_min_x_um=_env_float("EVOMACHINE_GUI_STAGE_MIN_X_UM", defaults.stage_min_x_um),
+            stage_max_x_um=_env_float("EVOMACHINE_GUI_STAGE_MAX_X_UM", defaults.stage_max_x_um),
+            stage_min_y_um=_env_float("EVOMACHINE_GUI_STAGE_MIN_Y_UM", defaults.stage_min_y_um),
+            stage_max_y_um=_env_float("EVOMACHINE_GUI_STAGE_MAX_Y_UM", defaults.stage_max_y_um),
+            stage_min_z_um=_env_float("EVOMACHINE_GUI_STAGE_MIN_Z_UM", defaults.stage_min_z_um),
+            stage_max_z_um=_env_float("EVOMACHINE_GUI_STAGE_MAX_Z_UM", defaults.stage_max_z_um),
             filter_card_address=_env_int("EVOMACHINE_GUI_FILTER_CARD_ADDRESS", defaults.filter_card_address),
             dmd_width=_env_int("EVOMACHINE_GUI_DMD_WIDTH", defaults.dmd_width),
             dmd_height=_env_int("EVOMACHINE_GUI_DMD_HEIGHT", defaults.dmd_height),
@@ -72,6 +104,26 @@ class HardwareGuiRuntimeSettings:
     @property
     def dmd_size(self) -> tuple[int, int]:
         return self.dmd_width, self.dmd_height
+
+    @property
+    def stage_bounds(self):
+        """Return microscope-safe bounds in zeroed Tiger coordinates, in micrometres."""
+        from evomachine.coordinates import Coordinate, CoordinateBounds
+
+        return CoordinateBounds(
+            low=Coordinate(self.stage_min_x_um, self.stage_min_y_um, self.stage_min_z_um),
+            high=Coordinate(self.stage_max_x_um, self.stage_max_y_um, self.stage_max_z_um),
+        )
+
+    @property
+    def tiger_stage_limits(self) -> dict[str, tuple[float, float]]:
+        """Return the same bounds in the Tiger driver's tenths-of-a-micrometre units."""
+        scale = 10.0
+        return {
+            "X": (self.stage_min_x_um * scale, self.stage_max_x_um * scale),
+            "Y": (self.stage_min_y_um * scale, self.stage_max_y_um * scale),
+            "Z": (self.stage_min_z_um * scale, self.stage_max_z_um * scale),
+        }
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -327,6 +379,7 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
             initialise=False,
         ),
         card_address_filter_wheel=settings.filter_card_address,
+        stage_limits=settings.tiger_stage_limits,
     )
     kwr103_controller = None
     if kwr103_port is not None:
@@ -401,6 +454,8 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
         StageConfig(
             binding=BindingType.ASI_TIGER,
             fov_step_size=settings.stage_fov_step_size,
+            coordinate_bounds=settings.stage_bounds,
+            zero_on_initialise=True,
         ),
         peripheral_controllers=tiger_controller,
     )

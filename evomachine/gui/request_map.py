@@ -483,13 +483,6 @@ def gui_stage_get_coordinates(facade: Any, payload: dict[str, Any]) -> dict[str,
     return facade.gui_stage_coordinates_payload(query_hardware=bool(payload.get("query_hardware", True)))
 
 
-def gui_stage_move_absolute(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    gui_require_devices_initialised(facade, "stage")
-    coordinate = gui_coordinate_from_payload(payload)
-    facade.gui_stage().move(target=coordinate, block=bool(payload.get("block", True)))
-    return facade.gui_stage_coordinates_payload(query_hardware=False)
-
-
 def gui_stage_move_relative(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "stage")
     current = facade.gui_stage().get_coordinates(query_hardware=True)
@@ -520,12 +513,6 @@ def gui_stage_stop(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "stage")
     facade.gui_stage().stop()
     return {"stage": facade.gui_stage_status_payload()}
-
-
-def gui_stage_zero(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    gui_require_devices_initialised(facade, "stage")
-    facade.gui_stage().zero_coordinates()
-    return facade.gui_stage_coordinates_payload(query_hardware=False)
 
 
 def gui_stage_return_origin(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1015,11 +1002,9 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.FOV_INITIALISE: gui_fov_initialise,
     GuiCommandType.STAGE_STATUS: gui_stage_status,
     GuiCommandType.STAGE_GET_COORDINATES: gui_stage_get_coordinates,
-    GuiCommandType.STAGE_MOVE_ABSOLUTE: gui_stage_move_absolute,
     GuiCommandType.STAGE_MOVE_RELATIVE: gui_stage_move_relative,
     GuiCommandType.STAGE_MOVE_FOV: gui_stage_move_fov,
     GuiCommandType.STAGE_STOP: gui_stage_stop,
-    GuiCommandType.STAGE_ZERO: gui_stage_zero,
     GuiCommandType.STAGE_RETURN_ORIGIN: gui_stage_return_origin,
     GuiCommandType.CAMERA_STATUS: gui_camera_status,
     GuiCommandType.CAMERA_SET_EXPOSURE: gui_camera_set_exposure,

@@ -14,6 +14,8 @@ def test_hardware_gui_settings_can_be_overridden_from_env(monkeypatch) -> None:
     monkeypatch.setenv("EVOMACHINE_GUI_USE_KWR103", "false")
     monkeypatch.setenv("EVOMACHINE_GUI_TIGER_PORT", "/dev/ttyTiger")
     monkeypatch.setenv("EVOMACHINE_GUI_KWR103_PORT", "/dev/ttyKWR103")
+    monkeypatch.setenv("EVOMACHINE_GUI_STAGE_MIN_X_UM", "-123")
+    monkeypatch.setenv("EVOMACHINE_GUI_STAGE_MAX_X_UM", "456")
 
     settings = HardwareGuiRuntimeSettings.from_env()
 
@@ -22,6 +24,20 @@ def test_hardware_gui_settings_can_be_overridden_from_env(monkeypatch) -> None:
     assert settings.use_kwr103 is False
     assert settings.tiger_port == "/dev/ttyTiger"
     assert settings.kwr103_port == "/dev/ttyKWR103"
+    assert settings.stage_bounds.low.x == -123
+    assert settings.stage_bounds.high.x == 456
+    assert settings.tiger_stage_limits["X"] == (-1230, 4560)
+
+
+def test_hardware_gui_settings_reject_inverted_stage_limits() -> None:
+    with pytest.raises(ValueError, match="stage X minimum"):
+        HardwareGuiRuntimeSettings(stage_min_x_um=1, stage_max_x_um=1)
+
+    with pytest.raises(ValueError, match="stage Z limits must be finite"):
+        HardwareGuiRuntimeSettings(stage_max_z_um=float("nan"))
+
+    with pytest.raises(ValueError, match="stage Y limits must include the startup zero"):
+        HardwareGuiRuntimeSettings(stage_min_y_um=1, stage_max_y_um=2)
 
 
 def test_serial_port_lookup_uses_hwid_fragment() -> None:

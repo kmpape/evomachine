@@ -298,6 +298,8 @@ class AutomatonGuiFacade:
 
     def gui_stage_status_payload(self) -> dict[str, Any]:
         stage = self.gui_stage()
+        bounds = stage.get_coordinate_bounds()
+        lower_limit, upper_limit = bounds.as_limits()
         camera_fov_step_size = None
         try:
             camera_fov_step_size = float(self.gui_camera().fov_size())
@@ -309,14 +311,16 @@ class AutomatonGuiFacade:
             "fov_id": stage.get_fov_id(),
             "fov_step_size": stage.get_fov_step_size(),
             "camera_fov_step_size": camera_fov_step_size,
+            "coordinate_bounds": {
+                "low": gui_coordinate_to_payload(lower_limit),
+                "high": gui_coordinate_to_payload(upper_limit),
+            },
         }
 
     def gui_stage_coordinates_payload(self, query_hardware: bool) -> dict[str, Any]:
         coordinate = self.gui_stage().get_coordinates(query_hardware=query_hardware)
-        machine_coordinate = self.gui_stage().get_machine_coordinates(query_hardware=False)
         return {
             "coordinate": gui_coordinate_to_payload(coordinate),
-            "machine_coordinate": gui_coordinate_to_payload(machine_coordinate),
             "stage": self.gui_stage_status_payload(),
         }
 
