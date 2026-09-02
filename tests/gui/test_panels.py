@@ -45,6 +45,7 @@ class FakeController(QObject):
     dmd_calibration_points_received = pyqtSignal(dict)
     autofocus_status_received = pyqtSignal(dict)
     software_focus_status_received = pyqtSignal(dict)
+    operation_status_received = pyqtSignal(dict)
     strategies_received = pyqtSignal(list)
     strategy_status_received = pyqtSignal(dict)
     lifecycle_status_received = pyqtSignal(dict)
@@ -142,6 +143,12 @@ class FakeController(QObject):
     def calibrate_dmd(self):
         self.calls.append(("calibrate_dmd",))
 
+    def refresh_dmd_calibration_operation(self):
+        self.calls.append(("refresh_dmd_calibration_operation",))
+
+    def cancel_dmd_calibration(self):
+        self.calls.append(("cancel_dmd_calibration",))
+
     def load_dmd_calibration(self, filename):
         self.calls.append(("load_dmd_calibration", filename))
 
@@ -156,6 +163,12 @@ class FakeController(QObject):
 
     def initialise_autofocus(self, lock_after_initialise=False, config=None):
         self.calls.append(("initialise_autofocus", lock_after_initialise, config))
+
+    def refresh_autofocus_calibration_operation(self):
+        self.calls.append(("refresh_autofocus_calibration_operation",))
+
+    def cancel_autofocus_calibration(self):
+        self.calls.append(("cancel_autofocus_calibration",))
 
     def lock_autofocus(self):
         self.calls.append(("lock_autofocus",))
@@ -685,6 +698,40 @@ def test_software_focus_panel_sends_run_request() -> None:
 
     assert controller.calls == [("run_software_focus",)]
 
+
+def test_long_operation_status_updates_controls_and_cancellation() -> None:
+    _app()
+    controller = FakeController()
+    dmd = DmdPanel(controller=controller)
+    autofocus = AutofocusPanel(controller=controller)
+    for panel in (dmd, autofocus):
+        panel.update_lifecycle_status({"devices_initialised": True})
+
+    controller.operation_status_received.emit(
+        {
+            "kind": "dmd_calibration",
+            "state": "running",
+            "progress": 0.4,
+            "message": "Scanning.",
+        }
+    )
+    assert dmd.calibration_operation_label.text() == "operation: running — Scanning."
+    assert dmd.cancel_calibration_button.isEnabled()
+    assert not dmd.pattern_buttons["full"].isEnabled()
+    dmd.cancel_calibration_button.click()
+    assert controller.calls[-1] == ("cancel_dmd_calibration",)
+
+    controller.operation_status_received.emit(
+        {
+            "kind": "autofocus_calibration",
+            "state": "failed",
+            "progress": 0.5,
+            "message": "Failed.",
+            "error": "RuntimeError: CRISP failed",
+        }
+    )
+    assert autofocus.calibration_operation_label.text() == "operation: failed — Failed."
+    assert "CRISP failed" in autofocus.status_label.text()
 
 def test_peripheral_panels_lock_unsafe_controls_while_strategy_runs() -> None:
     _app()

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Callable
+import threading
 from typing import Any
 
 from evomachine.bindings.binding_types import BindingType
@@ -225,6 +227,8 @@ class Autofocus(Peripheral):
             self,
             config: AutofocusCalibrationConfig | None = None,
             lock_after_calibration: bool = False,
+            stop_event: threading.Event | None = None,
+            progress_callback: Callable[[float, str], None] | None = None,
     ) -> bool:
         """
         Run the binding-specific autofocus setup/calibration sequence.
@@ -249,7 +253,12 @@ class Autofocus(Peripheral):
             self.name,
             lock_after_calibration,
         )
-        return self._run_calibration(config=config, lock_after_calibration=lock_after_calibration)
+        return self._run_calibration(
+            config=config,
+            lock_after_calibration=lock_after_calibration,
+            stop_event=stop_event,
+            progress_callback=progress_callback,
+        )
 
     def initialise_autofocus(
             self,
@@ -379,6 +388,8 @@ class Autofocus(Peripheral):
             self,
             config: AutofocusCalibrationConfig | None = None,
             lock_after_calibration: bool = False,
+            stop_event: threading.Event | None = None,
+            progress_callback: Callable[[float, str], None] | None = None,
     ) -> bool:
         """Run binding-specific autofocus calibration/setup."""
         raise NotImplementedError

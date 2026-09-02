@@ -332,9 +332,16 @@ class FakeProjectionManager(ProjectionManager):
         self.photodiode = photodiode
         self.calls: list[tuple[DmdCalibrationConfig, str | Path | None]] = []
 
-    def dmd_calibrate(self, cfg: DmdCalibrationConfig, filename: str | Path | None = None):
+    def dmd_calibrate(
+            self,
+            cfg: DmdCalibrationConfig,
+            filename: str | Path | None = None,
+            progress_callback=None,
+    ):
         """Record one calibration request."""
         self.calls.append((cfg, filename))
+        if progress_callback is not None:
+            progress_callback(1.0, "complete")
         return None
 
 

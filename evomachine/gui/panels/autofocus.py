@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
     QCheckBox,
     QGridLayout,
@@ -61,6 +62,7 @@ class AutofocusPanel(QGroupBox):
         self.controller = controller
         self.devices_initialised = False
         self.strategy_running = False
+        self.calibration_running = False
         self.status_label = QLabel("Run Initialise Devices before using autofocus controls.")
         self.status_label.setWordWrap(True)
         self.state_label = QLabel("status: -")
@@ -76,6 +78,11 @@ class AutofocusPanel(QGroupBox):
         self.run_calibration_button = QPushButton("Run Calibration")
         self.lock_button = QPushButton("Lock")
         self.unlock_button = QPushButton("Unlock")
+        self.cancel_calibration_button = QPushButton("Stop Calibration")
+        self.calibration_operation_label = QLabel("operation: -")
+        self.calibration_operation_label.setWordWrap(True)
+        self.calibration_poll_timer = QTimer(self)
+        self.calibration_poll_timer.setInterval(250)
 
         buttons = QGridLayout()
         buttons.addWidget(self.refresh_button, 0, 0)
@@ -84,12 +91,14 @@ class AutofocusPanel(QGroupBox):
         buttons.addWidget(self.lock_after_calibration_checkbox, 1, 1)
         buttons.addWidget(self.lock_button, 2, 0)
         buttons.addWidget(self.unlock_button, 2, 1)
+        buttons.addWidget(self.cancel_calibration_button, 3, 0, 1, 2)
 
         layout = QVBoxLayout()
         layout.addWidget(self.status_label)
         layout.addWidget(self.state_label)
         layout.addWidget(self.locked_label)
         layout.addWidget(self.note_label)
+        layout.addWidget(self.calibration_operation_label)
         layout.addLayout(buttons)
         self.setLayout(layout)
 
@@ -98,7 +107,14 @@ class AutofocusPanel(QGroupBox):
         self.run_calibration_button.clicked.connect(self._run_calibration)
         self.lock_button.clicked.connect(self._lock_autofocus)
         self.unlock_button.clicked.connect(self._unlock_autofocus)
+        self.cancel_calibration_button.clicked.connect(
+            self.controller.cancel_autofocus_calibration
+        )
+        self.calibration_poll_timer.timeout.connect(
+            self.controller.refresh_autofocus_calibration_operation
+        )
         self.controller.autofocus_status_received.connect(self.update_status)
+        self.controller.operation_status_received.connect(self.update_operation_status)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
         self.controller.strategy_status_received.connect(self.update_strategy_status)
         self.controller.response_error.connect(self._show_error)
@@ -161,10 +177,30 @@ class AutofocusPanel(QGroupBox):
         if not self._ensure_devices_initialised():
             return
         self.status_label.setText("Running autofocus calibration.")
+        self.calibration_running = True
+        self.calibration_operation_label.setText("operation: starting")
+        self.calibration_poll_timer.start()
+        self._sync_controls_enabled()
         self.controller.initialise_autofocus(
             lock_after_initialise=self.lock_after_calibration_checkbox.isChecked(),
             config=self._config_payload(),
         )
+
+    def update_operation_status(self, operation: dict) -> None:
+        if operation.get("kind") != "autofocus_calibration":
+            return
+        state = str(operation.get("state", "-"))
+        message = operation.get("message") or ""
+        self.calibration_operation_label.setText(f"operation: {state} — {message}")
+        self.calibration_running = state == "running"
+        if not self.calibration_running:
+            self.calibration_poll_timer.stop()
+            if state == "failed" and operation.get("error"):
+                self.status_label.setText(str(operation["error"]))
+            else:
+                self.status_label.setText(f"Autofocus calibration {state}.")
+            self.controller.refresh_autofocus()
+        self._sync_controls_enabled()
 
     def _lock_autofocus(self) -> None:
         if not self._ensure_devices_initialised():
@@ -218,7 +254,11 @@ class AutofocusPanel(QGroupBox):
         return False
 
     def _sync_controls_enabled(self) -> None:
-        manual_controls_enabled = self.devices_initialised and not self.strategy_running
+        manual_controls_enabled = (
+            self.devices_initialised
+            and not self.strategy_running
+            and not self.calibration_running
+        )
         for widget in (
             self.configure_button,
             self.run_calibration_button,
@@ -227,10 +267,20 @@ class AutofocusPanel(QGroupBox):
             self.unlock_button,
         ):
             widget.setEnabled(manual_controls_enabled)
-        self.refresh_button.setEnabled(self.devices_initialised)
+        self.refresh_button.setEnabled(self.devices_initialised and not self.calibration_running)
+        self.cancel_calibration_button.setEnabled(self.calibration_running)
 
     def _show_error(self, error: str) -> None:
-        if "autofocus" in error.lower() or self.status_label.text().endswith("autofocus."):
+        calibration_request = self.status_label.text().startswith("Running autofocus calibration")
+        if calibration_request:
+            self.calibration_running = False
+            self.calibration_poll_timer.stop()
+            self._sync_controls_enabled()
+        if (
+            "autofocus" in error.lower()
+            or self.status_label.text().endswith("autofocus.")
+            or calibration_request
+        ):
             self.status_label.setText(error)
 
     @staticmethod

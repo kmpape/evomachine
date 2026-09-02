@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -59,6 +60,7 @@ class DmdPanel(QGroupBox):
         self.controller = controller
         self.devices_initialised = False
         self.strategy_running = False
+        self.calibration_running = False
         self.custom_pattern_loaded = False
         self.custom_pattern_path: str | None = None
         self.pattern_buttons: dict[str, QPushButton] = {}
@@ -79,6 +81,11 @@ class DmdPanel(QGroupBox):
         self.custom_pattern_space_label.setWordWrap(True)
         self.load_calibration_button = QPushButton("Load Existing")
         self.show_calibration_plot_button = QPushButton("Show Calibration Plot")
+        self.cancel_calibration_button = QPushButton("Stop Calibration")
+        self.calibration_operation_label = QLabel("operation: -")
+        self.calibration_operation_label.setWordWrap(True)
+        self.calibration_poll_timer = QTimer(self)
+        self.calibration_poll_timer.setInterval(250)
         self.calibration_plot_windows: list[DmdCalibrationPlotWindow] = []
         self.status_label = QLabel("Run Initialise Devices before using DMD controls.")
         self.status_label.setWordWrap(True)
@@ -103,6 +110,10 @@ class DmdPanel(QGroupBox):
         self.calibration_buttons["calibrate"].clicked.connect(self._calibrate)
         self.load_calibration_button.clicked.connect(self._load_selected_calibration)
         self.show_calibration_plot_button.clicked.connect(self._request_calibration_plot)
+        self.cancel_calibration_button.clicked.connect(self.controller.cancel_dmd_calibration)
+        self.calibration_poll_timer.timeout.connect(
+            self.controller.refresh_dmd_calibration_operation
+        )
         self.utility_buttons["refresh"].clicked.connect(self.controller.refresh_dmd)
         self.calibration_buttons["calibrate"].setToolTip(
             "Runs the default DMD calibration workflow and saves a new file."
@@ -113,6 +124,7 @@ class DmdPanel(QGroupBox):
         )
         self.controller.dmd_status_received.connect(self.update_status)
         self.controller.dmd_calibration_points_received.connect(self._show_calibration_plot)
+        self.controller.operation_status_received.connect(self.update_operation_status)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
         self.controller.strategy_status_received.connect(self.update_strategy_status)
         self.controller.response_error.connect(self._show_error)
@@ -177,7 +189,9 @@ class DmdPanel(QGroupBox):
         grid.addWidget(self.calibration_buttons["calibrate"], 0, 0)
         grid.addWidget(self.load_calibration_button, 0, 1)
         grid.addWidget(self.show_calibration_plot_button, 1, 0, 1, 2)
+        grid.addWidget(self.cancel_calibration_button, 2, 0, 1, 2)
         layout.addLayout(grid)
+        layout.addWidget(self.calibration_operation_label)
 
     def _display_pattern(self, pattern: str) -> None:
         if not self.devices_initialised:
@@ -219,7 +233,27 @@ class DmdPanel(QGroupBox):
             self.status_label.setText("Run Initialise Devices before using DMD controls.")
             return
         self.status_label.setText("Starting DMD calibration.")
+        self.calibration_running = True
+        self.calibration_operation_label.setText("operation: starting")
+        self.calibration_poll_timer.start()
+        self._sync_controls_enabled()
         self.controller.calibrate_dmd()
+
+    def update_operation_status(self, operation: dict) -> None:
+        if operation.get("kind") != "dmd_calibration":
+            return
+        state = str(operation.get("state", "-"))
+        message = operation.get("message") or ""
+        self.calibration_operation_label.setText(f"operation: {state} — {message}")
+        self.calibration_running = state == "running"
+        if not self.calibration_running:
+            self.calibration_poll_timer.stop()
+            if state == "failed" and operation.get("error"):
+                self.status_label.setText(str(operation["error"]))
+            else:
+                self.status_label.setText(f"DMD calibration {state}.")
+            self.controller.refresh_dmd()
+        self._sync_controls_enabled()
 
     def _load_selected_calibration(self) -> None:
         if not self.devices_initialised:
@@ -291,25 +325,36 @@ class DmdPanel(QGroupBox):
         self._sync_controls_enabled()
 
     def _sync_controls_enabled(self) -> None:
-        manual_controls_enabled = self.devices_initialised and not self.strategy_running
+        manual_controls_enabled = (
+            self.devices_initialised
+            and not self.strategy_running
+            and not self.calibration_running
+        )
         for button in (
             *self.pattern_buttons.values(),
             *self.calibration_buttons.values(),
         ):
             button.setEnabled(manual_controls_enabled)
-        self.configure_pattern_button.setEnabled(not self.strategy_running)
+        self.configure_pattern_button.setEnabled(
+            not self.strategy_running and not self.calibration_running
+        )
         self.select_custom_pattern_button.setEnabled(manual_controls_enabled)
         self.display_custom_pattern_button.setEnabled(
             manual_controls_enabled and self.custom_pattern_loaded
         )
         for button in (*self.utility_buttons.values(), self.show_calibration_plot_button):
-            button.setEnabled(self.devices_initialised)
+            button.setEnabled(self.devices_initialised and not self.calibration_running)
         has_calibration_files = self.calibration_file_combo.count() > 0
         self.calibration_file_combo.setEnabled(not self.strategy_running and has_calibration_files)
         self.load_calibration_button.setEnabled(manual_controls_enabled and has_calibration_files)
+        self.cancel_calibration_button.setEnabled(self.calibration_running)
 
     def _show_error(self, error: str) -> None:
         text = self.status_label.text()
+        if text.startswith("Starting DMD calibration"):
+            self.calibration_running = False
+            self.calibration_poll_timer.stop()
+            self._sync_controls_enabled()
         loading_custom_pattern = text.startswith("Loading custom DMD pattern")
         if loading_custom_pattern:
             self.custom_pattern_loaded = False

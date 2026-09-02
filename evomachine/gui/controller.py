@@ -62,6 +62,7 @@ class EvoMachineGuiController(QObject):
     dmd_calibration_points_received = pyqtSignal(dict)
     autofocus_status_received = pyqtSignal(dict)
     software_focus_status_received = pyqtSignal(dict)
+    operation_status_received = pyqtSignal(dict)
     strategies_received = pyqtSignal(list)
     strategy_status_received = pyqtSignal(dict)
     lifecycle_status_received = pyqtSignal(dict)
@@ -223,6 +224,12 @@ class EvoMachineGuiController(QObject):
     def calibrate_dmd(self) -> None:
         self._send(GuiCommandType.DMD_CALIBRATE)
 
+    def refresh_dmd_calibration_operation(self) -> None:
+        self._send(GuiCommandType.DMD_CALIBRATION_STATUS)
+
+    def cancel_dmd_calibration(self) -> None:
+        self._send(GuiCommandType.DMD_CANCEL_CALIBRATION)
+
     def load_dmd_calibration(self, filename: str) -> None:
         self._send(GuiCommandType.DMD_LOAD_CALIBRATION, {"filename": filename})
 
@@ -245,6 +252,12 @@ class EvoMachineGuiController(QObject):
         if config is not None:
             payload["config"] = config
         self._send(GuiCommandType.AUTOFOCUS_INITIALISE, payload)
+
+    def refresh_autofocus_calibration_operation(self) -> None:
+        self._send(GuiCommandType.AUTOFOCUS_CALIBRATION_STATUS)
+
+    def cancel_autofocus_calibration(self) -> None:
+        self._send(GuiCommandType.AUTOFOCUS_CANCEL_CALIBRATION)
 
     def lock_autofocus(self) -> None:
         self._send(GuiCommandType.AUTOFOCUS_LOCK)
@@ -339,6 +352,8 @@ class EvoMachineGuiController(QObject):
             self.autofocus_status_received.emit(payload["autofocus"])
         if "software_focus" in payload:
             self.software_focus_status_received.emit(payload["software_focus"])
+        if "operation" in payload:
+            self.operation_status_received.emit(payload["operation"])
         if "strategies" in payload:
             self.strategies_received.emit(payload["strategies"])
         if "strategy" in payload:

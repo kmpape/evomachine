@@ -83,6 +83,7 @@ class ProjectionManager:
             self,
             cfg: DmdCalibrationConfig,
             filename: str | Path | None = None,
+            progress_callback: Callable[[float, str], None] | None = None,
     ) -> None:
         """
         Calibrate DMD-to-camera projection by scanning DMD points and imaging them.
@@ -105,36 +106,45 @@ class ProjectionManager:
         if not isinstance(cfg, DmdCalibrationConfig):
             raise TypeError(f"ProjectionManager.dmd_calibrate: cfg must be DmdCalibrationConfig, received {type(cfg)}.")
         if not self.devices_are_initialised():
-            logger.error("ProjectionManager.dmd_calibrate: devices are not initialised. Returning.")
-            return
+            raise RuntimeError("ProjectionManager.dmd_calibrate: devices are not initialised.")
         filename = self._normalise_calibration_filename(filename=filename)
         logger.info(f"ProjectionManager.dmd_calibrate: starting with config {cfg} and filename {filename}.")
         rows, cols = self._build_calibration_grid(cfg=cfg)
         self._disable_camera_live_mode()
         last_filter_type = self.filter_wheel.get_filter_wheel() if self.filter_wheel is not None else None
         try:
+            self._report_progress(progress_callback, 0.05, "Configuring calibration peripherals.")
             self._configure_calibration_peripherals(cfg=cfg)
-            max_intensity = self._measure_on_screen_intensity(cfg=cfg)
+            max_intensity = self._measure_on_screen_intensity(
+                cfg=cfg,
+                progress_callback=progress_callback,
+            )
             if max_intensity is None:
                 return
+            self._report_progress(progress_callback, 0.22, "Measuring background intensity.")
             min_intensity = self._measure_minimum_required_intensity(
                 cfg=cfg,
                 max_intensity=max_intensity,
             )
             if min_intensity is None:
-                return
+                raise RuntimeError(
+                    "ProjectionManager.dmd_calibrate: could not determine a valid intensity threshold."
+                )
             calib_data_raw = self._scan_calibration_grid(
                 cfg=cfg,
                 rows=rows,
                 cols=cols,
                 min_intensity=min_intensity,
+                progress_callback=progress_callback,
             )
             if calib_data_raw is None:
                 return
+            self._report_progress(progress_callback, 0.97, "Saving calibration results.")
             self._save_calibration_results(filename=filename, results=calib_data_raw)
             self.dmd.calibrate_from_path(path=filename)
 
             logger.info(f"ProjectionManager.dmd_calibrate: saved calibration data under {filename}.")
+            self._report_progress(progress_callback, 1.0, "DMD calibration complete.")
 
         finally:
             self._restore_calibration_peripherals(last_filter_type=last_filter_type)
@@ -270,7 +280,11 @@ class ProjectionManager:
             return
         self.led_manager.set_led(led_type=channel, brightness=brightness)
 
-    def _measure_on_screen_intensity(self, cfg: DmdCalibrationConfig) -> float | None:
+    def _measure_on_screen_intensity(
+            self,
+            cfg: DmdCalibrationConfig,
+            progress_callback: Callable[[float, str], None] | None = None,
+    ) -> float | None:
         """
         Estimate the on-screen calibration intensity.
 
@@ -307,6 +321,12 @@ class ProjectionManager:
                 self.sleep_func(float(cfg.delay))
                 test_img = self.camera.get_frame(normalise=False)
                 max_intensity += float(test_img.max())
+                point_index = i_row * 3 + i_col + 1
+                self._report_progress(
+                    progress_callback,
+                    0.05 + 0.15 * point_index / 9,
+                    f"Measuring calibration intensity ({point_index}/9).",
+                )
                 logger.debug(f"ProjectionManager.dmd_calibrate: init image ({row}, {col}): {test_img.max()}")
         return max_intensity / 9.0
 
@@ -358,6 +378,7 @@ class ProjectionManager:
             rows: np.ndarray,
             cols: np.ndarray,
             min_intensity: float,
+            progress_callback: Callable[[float, str], None] | None = None,
     ) -> list[tuple[tuple[int, int], tuple[int, int], tuple[float, float]]] | None:
         """
         Scan DMD calibration points and return accepted DMD-to-camera mappings.
@@ -379,7 +400,10 @@ class ProjectionManager:
             Accepted calibration point mappings, or None when calibration aborts.
         """
         results: list[tuple[tuple[int, int], tuple[int, int], tuple[float, float]]] = []
-        for index, (col, row) in enumerate(zip(cols.flatten(), rows.flatten())):
+        flat_cols = cols.flatten()
+        flat_rows = rows.flatten()
+        total = len(flat_cols)
+        for index, (col, row) in enumerate(zip(flat_cols, flat_rows)):
             if index % 50 == 0:
                 logger.info(f"ProjectionManager.dmd_calibrate: at {index + 1} of {len(cols.flatten())}.")
             if self._should_stop():
@@ -403,7 +427,21 @@ class ProjectionManager:
                     f"ProjectionManager.dmd_calibrate: DMD point (r{row},c{col}) off screen with intensity "
                     f"{img_max} < {min_intensity}."
                 )
+            self._report_progress(
+                progress_callback,
+                0.25 + 0.70 * (index + 1) / total,
+                f"Scanning DMD calibration grid ({index + 1}/{total}).",
+            )
         return results
+
+    @staticmethod
+    def _report_progress(
+            callback: Callable[[float, str], None] | None,
+            progress: float,
+            message: str,
+    ) -> None:
+        if callback is not None:
+            callback(progress, message)
 
     def _save_calibration_results(
             self,

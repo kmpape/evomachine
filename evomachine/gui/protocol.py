@@ -54,9 +54,13 @@ class GuiCommandType(str, Enum):
     DMD_LOAD_CALIBRATION = "dmd.load_calibration"
     DMD_CALIBRATION_POINTS = "dmd.calibration_points"
     DMD_CALIBRATE = "dmd.calibrate"
+    DMD_CALIBRATION_STATUS = "dmd.calibration_status"
+    DMD_CANCEL_CALIBRATION = "dmd.cancel_calibration"
     AUTOFOCUS_STATUS = "autofocus.status"
     AUTOFOCUS_CONFIGURE = "autofocus.configure"
     AUTOFOCUS_INITIALISE = "autofocus.initialise_autofocus"
+    AUTOFOCUS_CALIBRATION_STATUS = "autofocus.calibration_status"
+    AUTOFOCUS_CANCEL_CALIBRATION = "autofocus.cancel_calibration"
     AUTOFOCUS_LOCK = "autofocus.lock"
     AUTOFOCUS_UNLOCK = "autofocus.unlock"
     AUTOFOCUS_DISABLE = "autofocus.disable"
@@ -93,8 +97,10 @@ MUTATING_COMMANDS = frozenset(
         GuiCommandType.DMD_DISPLAY_LOADED_PATTERN,
         GuiCommandType.DMD_LOAD_CALIBRATION,
         GuiCommandType.DMD_CALIBRATE,
+        GuiCommandType.DMD_CANCEL_CALIBRATION,
         GuiCommandType.AUTOFOCUS_CONFIGURE,
         GuiCommandType.AUTOFOCUS_INITIALISE,
+        GuiCommandType.AUTOFOCUS_CANCEL_CALIBRATION,
         GuiCommandType.AUTOFOCUS_LOCK,
         GuiCommandType.AUTOFOCUS_UNLOCK,
         GuiCommandType.AUTOFOCUS_DISABLE,

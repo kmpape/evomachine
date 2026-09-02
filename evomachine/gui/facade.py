@@ -12,10 +12,21 @@ from evomachine.gui.protocol import (
     GuiRequest,
     GuiResponse,
 )
+from evomachine.gui.operations import GuiOperationManager
 from evomachine.gui.request_map import GUI_REQUEST_HANDLERS, gui_coordinate_to_payload
 
 
 logger = get_logger(name=__name__)
+
+_OPERATION_SAFE_COMMANDS = frozenset(
+    {
+        GuiCommandType.PING,
+        GuiCommandType.DMD_CALIBRATION_STATUS,
+        GuiCommandType.DMD_CANCEL_CALIBRATION,
+        GuiCommandType.AUTOFOCUS_CALIBRATION_STATUS,
+        GuiCommandType.AUTOFOCUS_CANCEL_CALIBRATION,
+    }
+)
 
 
 class AutomatonGuiFacade:
@@ -27,8 +38,19 @@ class AutomatonGuiFacade:
         self._last_dmd_preview: dict[str, Any] | None = None
         self._loaded_dmd_pattern: dict[str, Any] | None = None
         self._last_software_focus_result: dict[str, Any] | None = None
+        self.gui_operations = GuiOperationManager()
 
     def handle(self, request: GuiRequest) -> GuiResponse:
+        active_operation = self.gui_operations.active()
+        if active_operation is not None and request.command not in _OPERATION_SAFE_COMMANDS:
+            return GuiResponse(
+                request_id=request.request_id,
+                ok=False,
+                error=(
+                    f"{request.command.value} is not allowed while "
+                    f"{active_operation['kind']} is running."
+                ),
+            )
         if self.gui_strategy_active() and self.gui_is_rejected_during_strategy(request.command):
             return GuiResponse(
                 request_id=request.request_id,

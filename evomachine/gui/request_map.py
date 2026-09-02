@@ -757,28 +757,32 @@ def gui_dmd_calibrate(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
         else:
             config_updates = {**config_updates, "channel": gui_led_type_from_payload(channel)}
     config = DmdCalibrationConfigFactory.default().update_from_mapping(config_updates)
-    result = facade.automaton.dmd_calibrate(
-        cfg=config,
-        filename=payload.get("filename"),
-    )
-    dmd = facade.gui_dmd()
-    calibration_data = None
-    calibration_file = dmd.get_calibration_filename() if hasattr(dmd, "get_calibration_filename") else payload.get("filename")
-    if isinstance(result, tuple) and len(result) == 4:
-        calibration_data, _homography, _homography_inv, calibration_file = result
-    elif hasattr(dmd, "_calib_data"):
-        calibration_data = getattr(dmd, "_calib_data")
-    if hasattr(calibration_data, "dmd_points"):
-        calibration_points = len(calibration_data.dmd_points)
-    else:
-        calibration_points = len(calibration_data) if calibration_data else 0
-    return {
-        "dmd": {
-            **facade.gui_dmd_status_payload(),
-            "calibration_file": None if calibration_file is None else str(calibration_file),
-            "calibration_points": calibration_points,
-        },
-    }
+    filename = payload.get("filename")
+
+    def run(cancel_event, report):
+        projection_manager = facade.automaton.proj_mngr
+        previous_stop_requested = projection_manager.stop_requested
+        projection_manager.stop_requested = lambda: cancel_event.is_set() or (
+            previous_stop_requested is not None and previous_stop_requested()
+        )
+        try:
+            facade.automaton.dmd_calibrate(
+                cfg=config,
+                filename=filename,
+                progress_callback=report,
+            )
+        finally:
+            projection_manager.stop_requested = previous_stop_requested
+
+    return {"operation": facade.gui_operations.start("dmd_calibration", run)}
+
+
+def gui_dmd_calibration_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    return {"operation": _require_operation_status(facade, "dmd_calibration")}
+
+
+def gui_dmd_cancel_calibration(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    return {"operation": facade.gui_operations.cancel("dmd_calibration")}
 
 
 def gui_dmd_load_calibration(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -831,11 +835,28 @@ def gui_autofocus_configure(facade: Any, payload: dict[str, Any]) -> dict[str, A
 
 def gui_autofocus_initialise(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "autofocus")
-    initialised = facade.gui_autofocus().run_calibration(
-        config=gui_autofocus_config_from_payload(payload),
-        lock_after_calibration=bool(payload.get("lock_after_initialise", False)),
-    )
-    return {"autofocus": {**facade.gui_autofocus_status_payload(), "autofocus_initialised": bool(initialised)}}
+    config = gui_autofocus_config_from_payload(payload)
+    lock_after_calibration = bool(payload.get("lock_after_initialise", False))
+
+    def run(cancel_event, report):
+        initialised = facade.gui_autofocus().run_calibration(
+            config=config,
+            lock_after_calibration=lock_after_calibration,
+            stop_event=cancel_event,
+            progress_callback=report,
+        )
+        if not initialised and not cancel_event.is_set():
+            raise RuntimeError("Autofocus calibration did not pass its acceptance checks.")
+
+    return {"operation": facade.gui_operations.start("autofocus_calibration", run)}
+
+
+def gui_autofocus_calibration_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    return {"operation": _require_operation_status(facade, "autofocus_calibration")}
+
+
+def gui_autofocus_cancel_calibration(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    return {"operation": facade.gui_operations.cancel("autofocus_calibration")}
 
 
 def gui_autofocus_lock(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -872,6 +893,13 @@ def gui_software_focus_run(facade: Any, payload: dict[str, Any]) -> dict[str, An
             "last_result": result_payload,
         },
     }
+
+
+def _require_operation_status(facade: Any, kind: str) -> dict[str, Any]:
+    status = facade.gui_operations.status(kind)
+    if status is None:
+        raise RuntimeError(f"No {kind} operation has been started.")
+    return status
 
 
 def gui_strategy_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -996,9 +1024,13 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.DMD_LOAD_CALIBRATION: gui_dmd_load_calibration,
     GuiCommandType.DMD_CALIBRATION_POINTS: gui_dmd_calibration_points,
     GuiCommandType.DMD_CALIBRATE: gui_dmd_calibrate,
+    GuiCommandType.DMD_CALIBRATION_STATUS: gui_dmd_calibration_status,
+    GuiCommandType.DMD_CANCEL_CALIBRATION: gui_dmd_cancel_calibration,
     GuiCommandType.AUTOFOCUS_STATUS: gui_autofocus_status,
     GuiCommandType.AUTOFOCUS_CONFIGURE: gui_autofocus_configure,
     GuiCommandType.AUTOFOCUS_INITIALISE: gui_autofocus_initialise,
+    GuiCommandType.AUTOFOCUS_CALIBRATION_STATUS: gui_autofocus_calibration_status,
+    GuiCommandType.AUTOFOCUS_CANCEL_CALIBRATION: gui_autofocus_cancel_calibration,
     GuiCommandType.AUTOFOCUS_LOCK: gui_autofocus_lock,
     GuiCommandType.AUTOFOCUS_UNLOCK: gui_autofocus_unlock,
     GuiCommandType.AUTOFOCUS_DISABLE: gui_autofocus_disable,

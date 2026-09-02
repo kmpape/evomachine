@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+import threading
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
 from evomachine.peripherals.autofocus import Autofocus, AutofocusCalibrationConfig
 from evomachine.types import AutoFocusStatusType
@@ -126,6 +128,8 @@ class VirtualAutofocus(Autofocus):
             self,
             config: AutofocusCalibrationConfig | None = None,
             lock_after_calibration: bool = False,
+            stop_event: threading.Event | None = None,
+            progress_callback: Callable[[float, str], None] | None = None,
     ) -> bool:
         """
         Record a virtual autofocus setup command.
@@ -142,12 +146,18 @@ class VirtualAutofocus(Autofocus):
         bool
             Always True.
         """
+        if stop_event is not None and stop_event.is_set():
+            return False
+        if progress_callback is not None:
+            progress_callback(0.5, "Calibrating virtual autofocus.")
         self.command_history.append("initialise_autofocus")
         self.is_configured = True
         if lock_after_calibration:
             self._lock()
         else:
             self._status = AutoFocusStatusType.READY
+        if progress_callback is not None:
+            progress_callback(1.0, "Autofocus calibration complete.")
         return True
 
     def _lock(self) -> None:

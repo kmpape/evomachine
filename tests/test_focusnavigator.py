@@ -288,7 +288,13 @@ class FakeAutofocus(Autofocus):
         self.history.append("configure")
         return True
 
-    def _run_calibration(self, config=None, lock_after_calibration: bool = False) -> bool:
+    def _run_calibration(
+            self,
+            config=None,
+            lock_after_calibration: bool = False,
+            stop_event=None,
+            progress_callback=None,
+    ) -> bool:
         """
         Record a fake autofocus initialisation command.
 

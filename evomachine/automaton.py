@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable
 import copy
 from multiprocessing import Event
 from pathlib import Path
@@ -979,6 +980,7 @@ class Automaton:
             self,
             cfg: DmdCalibrationConfig,
             filename: str | Path | None = None,
+            progress_callback: Callable[[float, str], None] | None = None,
     ) -> None:
         """
         Calibrate DMD projection through ProjectionManager.
@@ -998,7 +1000,11 @@ class Automaton:
         """
         if self.proj_mngr is None:
             raise RuntimeError("Automaton.dmd_calibrate: proj_mngr is required.")
-        self.proj_mngr.dmd_calibrate(cfg=cfg, filename=filename)
+        self.proj_mngr.dmd_calibrate(
+            cfg=cfg,
+            filename=filename,
+            progress_callback=progress_callback,
+        )
 
     def sleep(
             self,

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import threading
+import time
 from types import SimpleNamespace
 
 import numpy as np
@@ -302,7 +304,15 @@ class FakeAutofocus:
     def configure(self, config=None):
         return self.apply_config(config=config)
 
-    def run_calibration(self, config=None, lock_after_calibration=False):
+    def run_calibration(
+            self,
+            config=None,
+            lock_after_calibration=False,
+            stop_event=None,
+            progress_callback=None,
+    ):
+        if progress_callback is not None:
+            progress_callback(0.5, "calibrating")
         self.calls.append(("run_calibration", config, lock_after_calibration))
         self.status = AutoFocusStatusType.READY
         if lock_after_calibration:
@@ -435,6 +445,7 @@ class FakeAutomaton:
         self.shutdown_count = 0
         self.devices_initialised = devices_initialised
         self.dmd_calibration_calls = []
+        self.proj_mngr = SimpleNamespace(stop_requested=None)
         self._cfg = ImageProcessorConfigFactory.default_config(channels=[LEDType.LED_450_NM], channels_seg=[LEDType.LED_450_NM])
         self._strategy = None
         self._strategy_is_initialised = False
@@ -495,10 +506,76 @@ class FakeAutomaton:
     def stop_strategy(self):
         self.strategy_stopped = True
 
-    def dmd_calibrate(self, cfg, filename=None):
+    def dmd_calibrate(self, cfg, filename=None, progress_callback=None):
+        if progress_callback is not None:
+            progress_callback(1.0, "calibrated")
         self.dmd_calibration_calls.append((cfg, filename))
         self.acq_mngr.dmd.calibrated = True
-        return [("point",)], None, None, Path(filename or "calibration.pkl")
+
+
+def wait_for_operation(
+    facade: AutomatonGuiFacade,
+    kind: str,
+    timeout: float = 1.0,
+) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status = facade.gui_operations.status(kind)
+        if status is not None and status["state"] != "running":
+            return status
+        time.sleep(0.001)
+    raise AssertionError(f"Operation {kind} did not finish within {timeout} seconds.")
+
+
+def test_long_dmd_operation_can_be_polled_cancelled_and_followed_by_requests() -> None:
+    automaton = FakeAutomaton()
+    facade = AutomatonGuiFacade(automaton)
+    started = threading.Event()
+
+    def blocking_calibration(cfg, filename=None, progress_callback=None):
+        started.set()
+        if progress_callback is not None:
+            progress_callback(0.5, "Scanning.")
+        while not automaton.proj_mngr.stop_requested():
+            time.sleep(0.001)
+
+    automaton.dmd_calibrate = blocking_calibration
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.DMD_CALIBRATE))
+    assert response.ok
+    assert started.wait(timeout=1)
+
+    status = facade.handle(GuiRequest(command=GuiCommandType.DMD_CALIBRATION_STATUS))
+    assert status.ok
+    assert status.payload["operation"]["state"] == "running"
+    assert status.payload["operation"]["progress"] == 0.5
+    assert facade.handle(GuiRequest(command=GuiCommandType.PING)).ok
+    assert not facade.handle(GuiRequest(command=GuiCommandType.DMD_STATUS)).ok
+    assert not facade.handle(
+        GuiRequest(command=GuiCommandType.AUTOFOCUS_INITIALISE)
+    ).ok
+
+    cancelled = facade.handle(GuiRequest(command=GuiCommandType.DMD_CANCEL_CALIBRATION))
+    assert cancelled.ok
+    assert wait_for_operation(facade, "dmd_calibration")["state"] == "cancelled"
+    assert facade.handle(GuiRequest(command=GuiCommandType.DMD_STATUS)).ok
+
+
+def test_failed_background_operation_reports_error_and_releases_facade() -> None:
+    automaton = FakeAutomaton()
+    facade = AutomatonGuiFacade(automaton)
+
+    def failing_calibration(*_args, **_kwargs):
+        raise RuntimeError("DMD calibration failed")
+
+    automaton.dmd_calibrate = failing_calibration
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.DMD_CALIBRATE))
+    assert response.ok
+    operation = wait_for_operation(facade, "dmd_calibration")
+    assert operation["state"] == "failed"
+    assert "DMD calibration failed" in operation["error"]
+    assert facade.handle(GuiRequest(command=GuiCommandType.DMD_STATUS)).ok
 
 
 def test_facade_handles_stage_and_led_requests() -> None:
@@ -599,9 +676,9 @@ def test_facade_handles_dmd_requests() -> None:
 
     response = facade.handle(GuiRequest(command=GuiCommandType.DMD_CALIBRATE))
     assert response.ok
+    assert response.payload["operation"]["state"] == "running"
+    assert wait_for_operation(facade, "dmd_calibration")["state"] == "completed"
     assert automaton.dmd_calibration_calls
-    assert response.payload["dmd"]["calibration_file"] == "calibration.pkl"
-    assert response.payload["dmd"]["calibration_points"] == 1
 
     response = facade.handle(
         GuiRequest(command=GuiCommandType.DMD_LOAD_CALIBRATION, payload={"filename": "selected_calibration.pkl"})
@@ -897,9 +974,8 @@ def test_facade_handles_autofocus_requests() -> None:
         GuiRequest(command=GuiCommandType.AUTOFOCUS_INITIALISE, payload={"lock_after_initialise": True})
     )
     assert response.ok
+    assert wait_for_operation(facade, "autofocus_calibration")["state"] == "completed"
     assert automaton.focus_nav.autofocus.calls[1][0] == "run_calibration"
-    assert response.payload["autofocus"]["autofocus_initialised"] is True
-    assert response.payload["autofocus"]["status"]["name"] == "IN_FOCUS"
 
     response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_LOCK))
     assert response.ok

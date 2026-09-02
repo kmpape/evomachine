@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+
 import pytest
 
 from evomachine.peripherals.autofocus import AutofocusCalibrationConfig, AutofocusConfig, AutofocusFactory
@@ -309,6 +311,24 @@ def test_tiger_autofocus_initialise_returns_false_for_low_snr_or_error() -> None
 
         assert not autofocus.run_calibration(lock_after_calibration=True)
         assert ("state", CRISPSetState.LOCK) not in controller.tiger.commands
+
+
+def test_tiger_autofocus_cancellation_stops_at_safe_idle_boundary() -> None:
+    controller = _tiger_controller()
+    autofocus = TigerAutofocus(
+        peripheral_ctrl=controller,
+        tiger_config=_tiger_config(),
+        pause_long=0,
+        pause_short=0,
+        sleep=lambda seconds: None,
+    )
+    autofocus.initialise()
+    stop_event = threading.Event()
+    stop_event.set()
+
+    assert not autofocus.run_calibration(stop_event=stop_event)
+    assert controller.tiger.commands[-1] == ("state", CRISPSetState.IDLE)
+    assert ("state", CRISPSetState.SET_OFFSET) not in controller.tiger.commands
 
 
 def test_tiger_autofocus_disable_unlock_and_status() -> None:
