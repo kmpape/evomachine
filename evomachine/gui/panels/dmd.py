@@ -57,6 +57,7 @@ class DmdPanel(QGroupBox):
         super().__init__("DMD", parent)
         self.controller = controller
         self.devices_initialised = False
+        self.strategy_running = False
         self.pattern_buttons: dict[str, QPushButton] = {}
         self.utility_buttons: dict[str, QPushButton] = {}
         self.calibration_buttons: dict[str, QPushButton] = {}
@@ -101,6 +102,7 @@ class DmdPanel(QGroupBox):
         self.controller.dmd_status_received.connect(self.update_status)
         self.controller.dmd_calibration_points_received.connect(self._show_calibration_plot)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
+        self.controller.strategy_status_received.connect(self.update_strategy_status)
         self.controller.response_error.connect(self._show_error)
         self._sync_controls_enabled()
 
@@ -230,17 +232,23 @@ class DmdPanel(QGroupBox):
         elif self.status_label.text().startswith("Run Initialise Devices"):
             self.status_label.setText("Refresh DMD to read status.")
 
+    def update_strategy_status(self, payload: dict) -> None:
+        self.strategy_running = bool(payload.get("running"))
+        self._sync_controls_enabled()
+
     def _sync_controls_enabled(self) -> None:
+        manual_controls_enabled = self.devices_initialised and not self.strategy_running
         for button in (
             *self.pattern_buttons.values(),
             *self.calibration_buttons.values(),
-            *self.utility_buttons.values(),
-            self.show_calibration_plot_button,
         ):
+            button.setEnabled(manual_controls_enabled)
+        self.configure_pattern_button.setEnabled(not self.strategy_running)
+        for button in (*self.utility_buttons.values(), self.show_calibration_plot_button):
             button.setEnabled(self.devices_initialised)
         has_calibration_files = self.calibration_file_combo.count() > 0
-        self.calibration_file_combo.setEnabled(has_calibration_files)
-        self.load_calibration_button.setEnabled(self.devices_initialised and has_calibration_files)
+        self.calibration_file_combo.setEnabled(not self.strategy_running and has_calibration_files)
+        self.load_calibration_button.setEnabled(manual_controls_enabled and has_calibration_files)
 
     def _show_error(self, error: str) -> None:
         text = self.status_label.text()

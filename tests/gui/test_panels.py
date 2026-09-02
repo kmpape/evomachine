@@ -614,6 +614,67 @@ def test_software_focus_panel_sends_run_request() -> None:
     assert controller.calls == [("run_software_focus",)]
 
 
+def test_peripheral_panels_lock_unsafe_controls_while_strategy_runs() -> None:
+    _app()
+    controller = FakeController()
+    stage = StagePanel(controller=controller)
+    camera = CameraPanel(controller=controller)
+    filter_wheel = FilterWheelPanel(controller=controller)
+    leds = LedManagerPanel(controller=controller)
+    dmd = DmdPanel(controller=controller)
+    autofocus = AutofocusPanel(controller=controller)
+    software_focus = SoftwareFocusPanel(controller=controller)
+    panels = (stage, camera, filter_wheel, leds, dmd, autofocus, software_focus)
+
+    for panel in panels:
+        panel.update_lifecycle_status({"devices_initialised": True})
+    filter_wheel.update_status(
+        {
+            "available_filters": [{"name": "FILTER_465nm"}],
+            "current_filter": {"name": "FILTER_465nm"},
+        }
+    )
+    leds.update_leds(["LED_450_NM"])
+
+    unsafe_controls = (
+        stage.configure_button,
+        stage.move_button,
+        camera.configure_button,
+        camera.acquire_frame_button,
+        filter_wheel.configure_button,
+        filter_wheel.set_button,
+        leds.configure_button,
+        leds.led_buttons[LEDType.LED_450_NM],
+        dmd.configure_pattern_button,
+        dmd.pattern_buttons["full"],
+        autofocus.configure_button,
+        autofocus.lock_button,
+        software_focus.configure_button,
+        software_focus.run_button,
+    )
+    safe_controls = (
+        stage.refresh_button,
+        stage.stop_button,
+        camera.refresh_button,
+        filter_wheel.refresh_button,
+        leds.refresh_button,
+        dmd.utility_buttons["refresh"],
+        autofocus.refresh_button,
+        software_focus.refresh_button,
+    )
+
+    assert all(control.isEnabled() for control in (*unsafe_controls, *safe_controls))
+
+    controller.strategy_status_received.emit({"running": True})
+
+    assert not any(control.isEnabled() for control in unsafe_controls)
+    assert all(control.isEnabled() for control in safe_controls)
+
+    controller.strategy_status_received.emit({"running": False})
+
+    assert all(control.isEnabled() for control in (*unsafe_controls, *safe_controls))
+
+
 def test_strategy_panel_sends_lifecycle_requests() -> None:
     _app()
     controller = FakeController()

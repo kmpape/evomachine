@@ -58,6 +58,7 @@ class LedManagerPanel(QGroupBox):
         self.available_leds: set[LEDType] = set()
         self._timed_led_stop_times: dict[LEDType, float] = {}
         self.devices_initialised = False
+        self.strategy_running = False
         self.state_label = QLabel("Run Initialise Devices before using LED controls.")
 
         refresh_button = QPushButton("Refresh")
@@ -88,6 +89,7 @@ class LedManagerPanel(QGroupBox):
         self.controller.led_list_received.connect(self.update_leds)
         self.controller.led_state_received.connect(self.update_state)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
+        self.controller.strategy_status_received.connect(self.update_strategy_status)
 
     def _build_led_button_grid(self, led_types: tuple[LEDType, ...]) -> QGridLayout:
         grid = QGridLayout()
@@ -174,14 +176,20 @@ class LedManagerPanel(QGroupBox):
         self._sync_controls_enabled()
         self._update_status_label()
 
+    def update_strategy_status(self, payload: dict) -> None:
+        self.strategy_running = bool(payload.get("running"))
+        self._sync_controls_enabled()
+
     def _sync_controls_enabled(self) -> None:
         self.refresh_button.setEnabled(self.devices_initialised)
-        self.configure_button.setEnabled(self.devices_initialised)
+        manual_controls_enabled = self.devices_initialised and not self.strategy_running
+        self.configure_button.setEnabled(manual_controls_enabled)
         for led_type, button in self.led_buttons.items():
-            is_enabled = self.devices_initialised and led_type in self.available_leds
+            is_available = self.devices_initialised and led_type in self.available_leds
+            is_enabled = manual_controls_enabled and led_type in self.available_leds
             button.setEnabled(is_enabled)
             self.brightness_inputs[led_type].setEnabled(is_enabled)
-            if not is_enabled:
+            if not is_available:
                 self._set_led_checked(led_type, False)
 
     def update_state(self, state: dict) -> None:

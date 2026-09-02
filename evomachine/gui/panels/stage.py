@@ -34,6 +34,7 @@ class StagePanel(QGroupBox):
         self.fov_step_label = QLabel("camera FoV step: -")
         self.status_label = QLabel("Run Initialise Devices before using stage controls.")
         self.devices_initialised = False
+        self.strategy_running = False
         self.fov_buttons: list[QPushButton] = []
         self.x_input = self._axis_input()
         self.y_input = self._axis_input()
@@ -94,6 +95,7 @@ class StagePanel(QGroupBox):
         self.controller.stage_coordinates_received.connect(self.update_coordinates)
         self.controller.stage_status_received.connect(self.update_status)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
+        self.controller.strategy_status_received.connect(self.update_strategy_status)
         self._sync_controls_enabled()
 
     @staticmethod
@@ -184,20 +186,25 @@ class StagePanel(QGroupBox):
         elif self.status_label.text().startswith("Run Initialise Devices"):
             self.status_label.setText("Refresh stage to read coordinates.")
 
+    def update_strategy_status(self, payload: dict) -> None:
+        self.strategy_running = bool(payload.get("running"))
+        self._sync_controls_enabled()
+
     def _sync_controls_enabled(self) -> None:
+        manual_controls_enabled = self.devices_initialised and not self.strategy_running
         for widget in (
             self.x_input,
             self.y_input,
             self.z_input,
-            self.refresh_button,
             self.move_button,
-            self.stop_button,
             self.zero_button,
             self.origin_button,
             self.configure_button,
             *self.fov_buttons,
         ):
-            widget.setEnabled(self.devices_initialised)
+            widget.setEnabled(manual_controls_enabled)
+        self.refresh_button.setEnabled(self.devices_initialised)
+        self.stop_button.setEnabled(self.devices_initialised)
 
     def _config_fields(self) -> list[ConfigFieldSpec]:
         return [

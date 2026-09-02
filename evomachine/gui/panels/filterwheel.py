@@ -20,6 +20,7 @@ class FilterWheelPanel(QGroupBox):
         super().__init__("Filter Wheel", parent)
         self.controller = controller
         self.devices_initialised = False
+        self.strategy_running = False
         self._available_filters: list[dict] = []
         self.status_label = QLabel("Run Initialise Devices before using filter wheel controls.")
         self.status_label.setWordWrap(True)
@@ -46,6 +47,7 @@ class FilterWheelPanel(QGroupBox):
         self.configure_button.clicked.connect(self._open_config_dialog)
         self.controller.filter_wheel_status_received.connect(self.update_status)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
+        self.controller.strategy_status_received.connect(self.update_strategy_status)
         self.controller.response_error.connect(self._show_error)
         self._sync_controls_enabled()
 
@@ -96,6 +98,10 @@ class FilterWheelPanel(QGroupBox):
         elif self.status_label.text().startswith("Run Initialise Devices"):
             self.status_label.setText("Refresh filter wheel to read status.")
 
+    def update_strategy_status(self, payload: dict) -> None:
+        self.strategy_running = bool(payload.get("running"))
+        self._sync_controls_enabled()
+
     def _set_available_filters(self, available_filters: list[dict]) -> None:
         current_data = self.filter_combo.currentData()
         self.filter_combo.clear()
@@ -114,9 +120,10 @@ class FilterWheelPanel(QGroupBox):
     def _sync_controls_enabled(self) -> None:
         has_filters = self.filter_combo.count() > 0
         self.refresh_button.setEnabled(self.devices_initialised)
-        self.filter_combo.setEnabled(self.devices_initialised and has_filters)
-        self.set_button.setEnabled(self.devices_initialised and has_filters)
-        self.configure_button.setEnabled(self.devices_initialised)
+        manual_controls_enabled = self.devices_initialised and not self.strategy_running
+        self.filter_combo.setEnabled(manual_controls_enabled and has_filters)
+        self.set_button.setEnabled(manual_controls_enabled and has_filters)
+        self.configure_button.setEnabled(manual_controls_enabled)
 
     def _show_error(self, error: str) -> None:
         if "filter wheel" in error.lower() or self.status_label.text().startswith(

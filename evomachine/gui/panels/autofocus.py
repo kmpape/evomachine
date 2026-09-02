@@ -60,6 +60,7 @@ class AutofocusPanel(QGroupBox):
         super().__init__("Hardware Autofocus", parent)
         self.controller = controller
         self.devices_initialised = False
+        self.strategy_running = False
         self.status_label = QLabel("Run Initialise Devices before using autofocus controls.")
         self.status_label.setWordWrap(True)
         self.state_label = QLabel("status: -")
@@ -99,6 +100,7 @@ class AutofocusPanel(QGroupBox):
         self.unlock_button.clicked.connect(self._unlock_autofocus)
         self.controller.autofocus_status_received.connect(self.update_status)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
+        self.controller.strategy_status_received.connect(self.update_strategy_status)
         self.controller.response_error.connect(self._show_error)
         self._sync_controls_enabled()
 
@@ -205,6 +207,10 @@ class AutofocusPanel(QGroupBox):
         elif self.status_label.text().startswith("Run Initialise Devices"):
             self.status_label.setText("Refresh autofocus to read status.")
 
+    def update_strategy_status(self, payload: dict) -> None:
+        self.strategy_running = bool(payload.get("running"))
+        self._sync_controls_enabled()
+
     def _ensure_devices_initialised(self) -> bool:
         if self.devices_initialised:
             return True
@@ -212,15 +218,16 @@ class AutofocusPanel(QGroupBox):
         return False
 
     def _sync_controls_enabled(self) -> None:
+        manual_controls_enabled = self.devices_initialised and not self.strategy_running
         for widget in (
-            self.refresh_button,
             self.configure_button,
             self.run_calibration_button,
             self.lock_after_calibration_checkbox,
             self.lock_button,
             self.unlock_button,
         ):
-            widget.setEnabled(self.devices_initialised)
+            widget.setEnabled(manual_controls_enabled)
+        self.refresh_button.setEnabled(self.devices_initialised)
 
     def _show_error(self, error: str) -> None:
         if "autofocus" in error.lower() or self.status_label.text().endswith("autofocus."):
