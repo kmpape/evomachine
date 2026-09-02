@@ -172,6 +172,7 @@ class FakeDmd:
         )
         self.image = None
         self.pattern_warps = []
+        self.loaded_image_info = None
 
     def is_initialised(self):
         return True
@@ -226,6 +227,24 @@ class FakeDmd:
         self.calls.append("display_image")
         self.image = image
         self.full_display = _is_full_display
+
+    def load_image(self, filename, display_image=True):
+        self.calls.append(("load_image", filename, display_image))
+        self.image = self.get_checkerboard()
+        self.loaded_image_info = SimpleNamespace(
+            filename=Path(filename),
+            source_shape=self.width_height_CAM,
+            coordinate_space="camera",
+        )
+        return self.image
+
+    def get_loaded_image_info(self):
+        return self.loaded_image_info
+
+    def display_loaded_image(self):
+        if self.loaded_image_info is None:
+            raise RuntimeError("No image loaded.")
+        self.calls.append("display_loaded_image")
 
 
 class FakeFilterWheel:
@@ -544,6 +563,29 @@ def test_facade_handles_dmd_requests() -> None:
     assert automaton.acq_mngr.dmd.pattern_warps == [True]
     assert response.payload["dmd"]["last_pattern"] == "checkerboard"
     assert response.payload["dmd"]["preview"]["shape"] == [10, 20]
+
+    response = facade.handle(
+        GuiRequest(
+            command=GuiCommandType.DMD_LOAD_PATTERN,
+            payload={"filename": "/tmp/custom.png"},
+        )
+    )
+    assert response.ok
+    assert automaton.acq_mngr.dmd.calls[-1] == (
+        "load_image",
+        "/tmp/custom.png",
+        False,
+    )
+    assert response.payload["dmd"]["custom_pattern"] == {
+        "filename": "/tmp/custom.png",
+        "source_shape": [30, 30],
+        "coordinate_space": "camera",
+    }
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.DMD_DISPLAY_LOADED_PATTERN))
+    assert response.ok
+    assert automaton.acq_mngr.dmd.calls[-1] == "display_loaded_image"
+    assert response.payload["dmd"]["last_pattern"] == "custom"
 
     response = facade.handle(
         GuiRequest(

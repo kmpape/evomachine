@@ -214,6 +214,12 @@ class EvoMachineGuiController(QObject):
             payload["config"] = config
         self._send(GuiCommandType.DMD_DISPLAY_PATTERN, payload)
 
+    def load_dmd_pattern(self, filename: str) -> None:
+        self._send(GuiCommandType.DMD_LOAD_PATTERN, {"filename": filename})
+
+    def display_loaded_dmd_pattern(self) -> None:
+        self._send(GuiCommandType.DMD_DISPLAY_LOADED_PATTERN)
+
     def calibrate_dmd(self) -> None:
         self._send(GuiCommandType.DMD_CALIBRATE)
 

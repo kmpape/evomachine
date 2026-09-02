@@ -8,7 +8,7 @@ if os.environ.get("EVOMACHINE_GUI_RUN_QT_TESTS") != "1":
     pytest.skip("Qt widget tests are opt-in in headless environments.", allow_module_level=True)
 
 from PyQt5.QtCore import QObject, pyqtSignal
-from PyQt5.QtWidgets import QApplication
+from PyQt5.QtWidgets import QApplication, QFileDialog
 
 from evomachine.gui.panels.acquisition import (
     FrameAcquisitionSettingsPanel,
@@ -132,6 +132,12 @@ class FakeController(QObject):
 
     def display_dmd_pattern(self, pattern, config=None):
         self.calls.append(("display_dmd_pattern", pattern, config))
+
+    def load_dmd_pattern(self, filename):
+        self.calls.append(("load_dmd_pattern", filename))
+
+    def display_loaded_dmd_pattern(self):
+        self.calls.append(("display_loaded_dmd_pattern",))
 
     def calibrate_dmd(self):
         self.calls.append(("calibrate_dmd",))
@@ -530,6 +536,44 @@ def test_dmd_pattern_configuration_uses_camera_dimensions() -> None:
     )
 
 
+def test_dmd_panel_loads_previews_and_displays_custom_pattern(monkeypatch) -> None:
+    _app()
+    controller = FakeController()
+    panel = DmdPanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+    monkeypatch.setattr(
+        QFileDialog,
+        "getOpenFileName",
+        lambda *_args, **_kwargs: ("/tmp/custom.png", "Pattern images (*.png)"),
+    )
+
+    panel.select_custom_pattern_button.click()
+    assert controller.calls == [("load_dmd_pattern", "/tmp/custom.png")]
+    assert not panel.display_custom_pattern_button.isEnabled()
+
+    panel.update_status(
+        {
+            "is_initialised": True,
+            "is_alive": True,
+            "custom_pattern": {
+                "filename": "/tmp/custom.png",
+                "source_shape": [100, 200],
+                "coordinate_space": "camera",
+            },
+        }
+    )
+    assert panel.display_custom_pattern_button.isEnabled()
+    assert "warped using loaded calibration" in panel.custom_pattern_space_label.text()
+
+    panel.display_custom_pattern_button.click()
+    assert controller.calls[-1] == ("display_loaded_dmd_pattern",)
+
+    panel.status_label.setText("Loading custom DMD pattern invalid.png.")
+    panel._show_error("RuntimeError: img_to_dmd_array: no calibration data provided.")
+    assert not panel.display_custom_pattern_button.isEnabled()
+    assert panel.custom_pattern_space_label.text() == "coordinates: load failed"
+
+
 def test_dmd_panel_sends_load_calibration_request() -> None:
     _app()
     controller = FakeController()
@@ -663,6 +707,17 @@ def test_peripheral_panels_lock_unsafe_controls_while_strategy_runs() -> None:
         }
     )
     leds.update_leds(["LED_450_NM"])
+    dmd.update_status(
+        {
+            "is_initialised": True,
+            "is_alive": True,
+            "custom_pattern": {
+                "filename": "/tmp/custom.png",
+                "source_shape": [10, 20],
+                "coordinate_space": "dmd",
+            },
+        }
+    )
 
     unsafe_controls = (
         stage.configure_button,
@@ -675,6 +730,8 @@ def test_peripheral_panels_lock_unsafe_controls_while_strategy_runs() -> None:
         leds.led_buttons[LEDType.LED_450_NM],
         dmd.configure_pattern_button,
         dmd.pattern_buttons["full"],
+        dmd.select_custom_pattern_button,
+        dmd.display_custom_pattern_button,
         autofocus.configure_button,
         autofocus.lock_button,
         software_focus.configure_button,

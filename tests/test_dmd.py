@@ -381,6 +381,90 @@ def test_load_image_and_display_loaded_image_use_shared_state(tmp_path):
 
     assert loaded.shape == (10, 10)
     assert np.array_equal(dmd.images[-1], loaded)
+    info = dmd.get_loaded_image_info()
+    assert info is not None
+    assert info.coordinate_space == "camera"
+    assert info.source_shape == (10, 10)
+
+
+def test_load_camera_image_warps_and_dmd_image_is_already_warped(tmp_path):
+    controller = VirtualDmdPeripheralController()
+    controller.initialise()
+    dmd = RecordingDmd(
+        peripheral_ctrl=controller,
+        width_height_DMD=(15, 16),
+        width_height_CAM=(10, 10),
+        calibration_file=make_translated_calibration_file(tmp_path),
+    )
+    import skimage.io
+
+    camera_file = tmp_path / "camera.png"
+    camera_image = np.zeros((10, 10), dtype=np.uint8)
+    camera_image[2:5, 3:6] = 255
+    skimage.io.imsave(camera_file, camera_image, check_contrast=False)
+    loaded_camera = dmd.load_image(str(camera_file), display_image=False)
+    assert np.array_equal(loaded_camera, dmd.img_to_dmd_array(camera_image))
+    assert dmd.get_loaded_image_info().coordinate_space == "camera"
+
+    dmd_file = tmp_path / "dmd.tiff"
+    dmd_image = np.zeros((15, 16), dtype=np.uint8)
+    dmd_image[1:4, 2:7] = 255
+    skimage.io.imsave(dmd_file, dmd_image, check_contrast=False)
+    loaded_dmd = dmd.load_image(str(dmd_file), display_image=False)
+    assert np.array_equal(loaded_dmd, dmd_image)
+    assert dmd.get_loaded_image_info().coordinate_space == "dmd"
+
+
+def test_failed_custom_image_load_clears_previous_pattern(tmp_path):
+    dmd = make_recording_dmd(tmp_path)
+    import skimage.io
+
+    image_file = tmp_path / "image.png"
+    skimage.io.imsave(image_file, np.ones((10, 10), dtype=np.uint8), check_contrast=False)
+    dmd.load_image(str(image_file), display_image=False)
+
+    with pytest.raises(FileNotFoundError):
+        dmd.load_image(str(tmp_path / "missing.png"), display_image=False)
+    with pytest.raises(RuntimeError, match="No image loaded"):
+        dmd.display_loaded_image()
+
+
+def test_custom_image_loading_rejects_invalid_inputs_and_requires_calibration_for_camera_space(
+    tmp_path,
+):
+    controller = VirtualDmdPeripheralController()
+    controller.initialise()
+    dmd = RecordingDmd(
+        peripheral_ctrl=controller,
+        width_height_DMD=(15, 16),
+        width_height_CAM=(10, 10),
+        calibration_file=tmp_path / "missing-calibration.pkl",
+    )
+    import skimage.io
+
+    camera_file = tmp_path / "camera.png"
+    dmd_file = tmp_path / "dmd.tif"
+    invalid_size_file = tmp_path / "invalid.png"
+    unsupported_file = tmp_path / "pattern.jpg"
+    skimage.io.imsave(camera_file, np.ones((10, 10), dtype=np.uint8), check_contrast=False)
+    skimage.io.imsave(dmd_file, np.ones((15, 16), dtype=np.uint8), check_contrast=False)
+    skimage.io.imsave(
+        invalid_size_file,
+        np.ones((4, 5), dtype=np.uint8),
+        check_contrast=False,
+    )
+    unsupported_file.touch()
+
+    with pytest.raises(RuntimeError, match="no calibration data"):
+        dmd.load_image(str(camera_file), display_image=False)
+    assert np.array_equal(
+        dmd.load_image(str(dmd_file), display_image=False),
+        np.ones((15, 16), dtype=np.uint8),
+    )
+    with pytest.raises(ValueError, match="not of size"):
+        dmd.load_image(str(invalid_size_file), display_image=False)
+    with pytest.raises(TypeError, match="not supported"):
+        dmd.load_image(str(unsupported_file), display_image=False)
 
 
 def test_load_constant_non_uint8_image_normalises_without_nan(tmp_path):

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import pickle as pkl
-from typing import Any
+from typing import Any, Literal
 
 import cv2
 import numpy as np
@@ -338,6 +338,15 @@ class DmdCalibrationData:
         )
 
 
+@dataclass(frozen=True)
+class LoadedDmdImageInfo:
+    """Describe how a successfully loaded custom pattern was interpreted."""
+
+    filename: Path
+    source_shape: tuple[int, int]
+    coordinate_space: Literal["camera", "dmd"]
+
+
 class Dmd(Peripheral):
     """  TODO(CODEX): Modify doc if needed with implemented changes.
     Class for communicating with the DMD. After calling initialise(), communicate with the DMD using following
@@ -411,6 +420,7 @@ class Dmd(Peripheral):
         self.default_line_width: int = self.DEFAULT_LINE_WIDTH
         self._is_full_display: bool = False
         self._loaded_img: np.ndarray | None = None
+        self._loaded_img_info: LoadedDmdImageInfo | None = None
         default_calibration_file = EVOMACHINE_DIR / "calibration_data" / "dmd" / "dmd_calibration_data_2025-08-14_v2.pkl"
         packaged_calibration_file = EVOMACHINE_DIR / "evomachine" / "dmd_calibration_data.pkl"
         if not default_calibration_file.exists() and packaged_calibration_file.exists():
@@ -1018,8 +1028,14 @@ class Dmd(Peripheral):
             raise RuntimeError("display_loaded_image: No image loaded. Use load_image() first.")
         self.display_image(img=self._loaded_img)
 
+    def get_loaded_image_info(self) -> LoadedDmdImageInfo | None:
+        """Return metadata for the most recently loaded custom pattern."""
+        return self._loaded_img_info
+
     def load_image(self, filename: str, display_image: bool = True) -> np.ndarray:
         """Load an image file, convert/map it to DMD coordinates, and optionally display it."""
+        self._loaded_img = None
+        self._loaded_img_info = None
         if not os.path.exists(filename):
             raise FileNotFoundError(f"load_image: Provided filename {filename} does not exist.")
         extension = filename.split(".")[-1].lower()
@@ -1043,13 +1059,22 @@ class Dmd(Peripheral):
         else:
             raise ValueError(f"load_image: Unsupported image format: {img}")
 
-        if img.shape == self.width_height_CAM:
+        source_shape = tuple(img.shape)
+        if source_shape == self.width_height_CAM:
             logger.info("load_image: Mapping image using img_to_dmd_array.")
             img = self.img_to_dmd_array(img)
-        elif img.shape != self.width_height_DMD:
+            coordinate_space = "camera"
+        elif source_shape == self.width_height_DMD:
+            coordinate_space = "dmd"
+        else:
             raise ValueError(f"load_image: Provided image {img.shape} is not of size "
                              f"{self.width_height_CAM} or {self.width_height_DMD}")
         self._loaded_img = img
+        self._loaded_img_info = LoadedDmdImageInfo(
+            filename=Path(filename),
+            source_shape=source_shape,
+            coordinate_space=coordinate_space,
+        )
         if display_image:
             self.display_image(img=img)
         return img

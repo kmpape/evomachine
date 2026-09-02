@@ -7,6 +7,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt5.QtWidgets import (
     QComboBox,
+    QFileDialog,
     QGridLayout,
     QGroupBox,
     QLabel,
@@ -58,6 +59,8 @@ class DmdPanel(QGroupBox):
         self.controller = controller
         self.devices_initialised = False
         self.strategy_running = False
+        self.custom_pattern_loaded = False
+        self.custom_pattern_path: str | None = None
         self.pattern_buttons: dict[str, QPushButton] = {}
         self.utility_buttons: dict[str, QPushButton] = {}
         self.calibration_buttons: dict[str, QPushButton] = {}
@@ -68,6 +71,12 @@ class DmdPanel(QGroupBox):
         }
         self.calibration_file_combo = QComboBox()
         self.configure_pattern_button = QPushButton("Configure Pattern")
+        self.select_custom_pattern_button = QPushButton("Select Pattern…")
+        self.display_custom_pattern_button = QPushButton("Display Loaded Pattern")
+        self.custom_pattern_path_label = QLabel("file: -")
+        self.custom_pattern_path_label.setWordWrap(True)
+        self.custom_pattern_space_label = QLabel("coordinates: -")
+        self.custom_pattern_space_label.setWordWrap(True)
         self.load_calibration_button = QPushButton("Load Existing")
         self.show_calibration_plot_button = QPushButton("Show Calibration Plot")
         self.calibration_plot_windows: list[DmdCalibrationPlotWindow] = []
@@ -78,6 +87,7 @@ class DmdPanel(QGroupBox):
         layout = QVBoxLayout()
         self._add_button_section(layout, "Patterns", PATTERN_ACTIONS, self.pattern_buttons)
         self._add_config_section(layout)
+        self._add_custom_pattern_section(layout)
         self._add_calibration_section(layout)
         self._add_button_section(layout, "Utilities", UTILITY_ACTIONS, self.utility_buttons)
         layout.addWidget(self.status_label)
@@ -88,6 +98,8 @@ class DmdPanel(QGroupBox):
                 lambda _checked=False, selected=pattern: self._display_pattern(selected)
             )
         self.configure_pattern_button.clicked.connect(self._open_pattern_config_dialog)
+        self.select_custom_pattern_button.clicked.connect(self._select_custom_pattern)
+        self.display_custom_pattern_button.clicked.connect(self._display_custom_pattern)
         self.calibration_buttons["calibrate"].clicked.connect(self._calibrate)
         self.load_calibration_button.clicked.connect(self._load_selected_calibration)
         self.show_calibration_plot_button.clicked.connect(self._request_calibration_plot)
@@ -132,6 +144,17 @@ class DmdPanel(QGroupBox):
         layout.addWidget(section_label)
         layout.addWidget(self.configure_pattern_button)
 
+    def _add_custom_pattern_section(self, layout: QVBoxLayout) -> None:
+        section_label = QLabel("Custom pattern")
+        section_label.setStyleSheet("font-weight: 600;")
+        layout.addWidget(section_label)
+        layout.addWidget(self.custom_pattern_path_label)
+        layout.addWidget(self.custom_pattern_space_label)
+        grid = QGridLayout()
+        grid.addWidget(self.select_custom_pattern_button, 0, 0)
+        grid.addWidget(self.display_custom_pattern_button, 0, 1)
+        layout.addLayout(grid)
+
     def _add_calibration_section(self, layout: QVBoxLayout) -> None:
         section_label = QLabel("Calibration")
         section_label.setStyleSheet("font-weight: 600;")
@@ -162,6 +185,34 @@ class DmdPanel(QGroupBox):
             return
         self.status_label.setText(f"Displaying {self._format_pattern(pattern)}")
         self.controller.display_dmd_pattern(pattern=pattern, config=self._shape_config_payload())
+
+    def _select_custom_pattern(self) -> None:
+        if not self.devices_initialised:
+            self.status_label.setText("Run Initialise Devices before using DMD controls.")
+            return
+        filename, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "Select DMD Pattern",
+            "",
+            "Pattern images (*.png *.tif *.tiff)",
+        )
+        if not filename:
+            return
+        self.custom_pattern_path = filename
+        self.custom_pattern_loaded = False
+        self.custom_pattern_path_label.setText(f"file: {Path(filename).name}")
+        self.custom_pattern_path_label.setToolTip(filename)
+        self.custom_pattern_space_label.setText("coordinates: loading…")
+        self.status_label.setText(f"Loading custom DMD pattern {Path(filename).name}.")
+        self._sync_controls_enabled()
+        self.controller.load_dmd_pattern(filename)
+
+    def _display_custom_pattern(self) -> None:
+        if not self.custom_pattern_loaded:
+            self.status_label.setText("Select and successfully load a custom pattern first.")
+            return
+        self.status_label.setText("Displaying custom DMD pattern.")
+        self.controller.display_loaded_dmd_pattern()
 
     def _calibrate(self) -> None:
         if not self.devices_initialised:
@@ -214,6 +265,8 @@ class DmdPanel(QGroupBox):
             calibration_files=payload.get("calibration_files"),
             current_file=payload.get("calibration_file"),
         )
+        if "custom_pattern" in payload:
+            self._update_custom_pattern(payload.get("custom_pattern"))
         last_pattern = payload.get("last_pattern")
         pattern_text = f", pattern: {self._format_pattern(last_pattern)}" if last_pattern else ""
         calibration_file = self._format_calibration_file(payload.get("calibration_file"))
@@ -221,6 +274,7 @@ class DmdPanel(QGroupBox):
             f"initialised: {payload.get('is_initialised')}, alive: {payload.get('is_alive')}, "
             f"calibrated: {payload.get('is_calibrated')}{pattern_text}, calibration: {calibration_file}"
         )
+        self._sync_controls_enabled()
 
     def update_lifecycle_status(self, payload: dict) -> None:
         self.devices_initialised = bool(payload.get("devices_initialised"))
@@ -244,6 +298,10 @@ class DmdPanel(QGroupBox):
         ):
             button.setEnabled(manual_controls_enabled)
         self.configure_pattern_button.setEnabled(not self.strategy_running)
+        self.select_custom_pattern_button.setEnabled(manual_controls_enabled)
+        self.display_custom_pattern_button.setEnabled(
+            manual_controls_enabled and self.custom_pattern_loaded
+        )
         for button in (*self.utility_buttons.values(), self.show_calibration_plot_button):
             button.setEnabled(self.devices_initialised)
         has_calibration_files = self.calibration_file_combo.count() > 0
@@ -252,8 +310,41 @@ class DmdPanel(QGroupBox):
 
     def _show_error(self, error: str) -> None:
         text = self.status_label.text()
-        if "dmd" in error.lower() or "calibrat" in error.lower() or text.startswith("Starting DMD"):
+        loading_custom_pattern = text.startswith("Loading custom DMD pattern")
+        if loading_custom_pattern:
+            self.custom_pattern_loaded = False
+            self.custom_pattern_space_label.setText("coordinates: load failed")
+            self._sync_controls_enabled()
+        if (
+            "dmd" in error.lower()
+            or "calibrat" in error.lower()
+            or text.startswith("Starting DMD")
+            or loading_custom_pattern
+            or text.startswith("Displaying custom DMD pattern")
+        ):
             self.status_label.setText(error)
+
+    def _update_custom_pattern(self, pattern: dict | None) -> None:
+        if not isinstance(pattern, dict):
+            self.custom_pattern_loaded = False
+            self.custom_pattern_path = None
+            self.custom_pattern_path_label.setText("file: -")
+            self.custom_pattern_path_label.setToolTip("")
+            self.custom_pattern_space_label.setText("coordinates: -")
+            return
+        filename = str(pattern.get("filename", ""))
+        self.custom_pattern_path = filename
+        self.custom_pattern_loaded = True
+        self.custom_pattern_path_label.setText(f"file: {Path(filename).name}")
+        self.custom_pattern_path_label.setToolTip(filename)
+        source_shape = pattern.get("source_shape", [])
+        shape_text = " × ".join(str(value) for value in source_shape)
+        if pattern.get("coordinate_space") == "camera":
+            description = "camera — warped using loaded calibration"
+        else:
+            description = "DMD — already warped"
+        suffix = f" ({shape_text})" if shape_text else ""
+        self.custom_pattern_space_label.setText(f"coordinates: {description}{suffix}")
 
     def _shape_config_payload(self) -> dict[str, int]:
         return dict(self.config_values)

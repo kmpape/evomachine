@@ -25,6 +25,7 @@ class AutomatonGuiFacade:
         self.automaton = automaton
         self._last_dmd_pattern: str | None = None
         self._last_dmd_preview: dict[str, Any] | None = None
+        self._loaded_dmd_pattern: dict[str, Any] | None = None
         self._last_software_focus_result: dict[str, Any] | None = None
 
     def handle(self, request: GuiRequest) -> GuiResponse:
@@ -331,6 +332,7 @@ class AutomatonGuiFacade:
             ),
             "last_pattern": self._last_dmd_pattern,
             "preview": self._last_dmd_preview,
+            "custom_pattern": self._loaded_dmd_pattern,
         }
 
     @staticmethod

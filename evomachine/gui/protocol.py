@@ -49,6 +49,8 @@ class GuiCommandType(str, Enum):
     LED_GET_STATE = "led.get_state"
     DMD_STATUS = "dmd.status"
     DMD_DISPLAY_PATTERN = "dmd.display_pattern"
+    DMD_LOAD_PATTERN = "dmd.load_pattern"
+    DMD_DISPLAY_LOADED_PATTERN = "dmd.display_loaded_pattern"
     DMD_LOAD_CALIBRATION = "dmd.load_calibration"
     DMD_CALIBRATION_POINTS = "dmd.calibration_points"
     DMD_CALIBRATE = "dmd.calibrate"
@@ -87,6 +89,8 @@ MUTATING_COMMANDS = frozenset(
         GuiCommandType.LED_DISABLE,
         GuiCommandType.LED_DISABLE_ALL,
         GuiCommandType.DMD_DISPLAY_PATTERN,
+        GuiCommandType.DMD_LOAD_PATTERN,
+        GuiCommandType.DMD_DISPLAY_LOADED_PATTERN,
         GuiCommandType.DMD_LOAD_CALIBRATION,
         GuiCommandType.DMD_CALIBRATE,
         GuiCommandType.AUTOFOCUS_CONFIGURE,

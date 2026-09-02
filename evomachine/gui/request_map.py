@@ -714,6 +714,37 @@ def gui_dmd_display_pattern(facade: Any, payload: dict[str, Any]) -> dict[str, A
     return {"dmd": facade.gui_dmd_status_payload()}
 
 
+def gui_dmd_load_pattern(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """Load and preview a custom pattern without displaying it on the DMD."""
+    gui_require_devices_initialised(facade, "DMD")
+    filename = payload.get("filename")
+    if not isinstance(filename, str) or not filename:
+        raise ValueError("DMD pattern filename must be a non-empty string.")
+    dmd = facade.gui_dmd()
+    facade._loaded_dmd_pattern = None
+    facade._last_dmd_preview = None
+    pattern_array = dmd.load_image(filename, display_image=False)
+    info = dmd.get_loaded_image_info()
+    if info is None:
+        raise RuntimeError("DMD did not report metadata for the loaded custom pattern.")
+    facade._loaded_dmd_pattern = {
+        "filename": str(info.filename),
+        "source_shape": list(info.source_shape),
+        "coordinate_space": info.coordinate_space,
+    }
+    facade._last_dmd_preview = gui_dmd_preview_payload(dmd=dmd, pattern_array=pattern_array)
+    return {"dmd": facade.gui_dmd_status_payload()}
+
+
+def gui_dmd_display_loaded_pattern(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """Display the custom pattern most recently loaded through the GUI."""
+    gui_require_devices_initialised(facade, "DMD")
+    dmd = facade.gui_dmd()
+    dmd.display_loaded_image()
+    facade._last_dmd_pattern = "custom"
+    return {"dmd": facade.gui_dmd_status_payload()}
+
+
 def gui_dmd_calibrate(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "DMD")
     config_updates = payload.get("config", {})
@@ -960,6 +991,8 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.LED_GET_STATE: gui_led_get_state,
     GuiCommandType.DMD_STATUS: gui_dmd_status,
     GuiCommandType.DMD_DISPLAY_PATTERN: gui_dmd_display_pattern,
+    GuiCommandType.DMD_LOAD_PATTERN: gui_dmd_load_pattern,
+    GuiCommandType.DMD_DISPLAY_LOADED_PATTERN: gui_dmd_display_loaded_pattern,
     GuiCommandType.DMD_LOAD_CALIBRATION: gui_dmd_load_calibration,
     GuiCommandType.DMD_CALIBRATION_POINTS: gui_dmd_calibration_points,
     GuiCommandType.DMD_CALIBRATE: gui_dmd_calibrate,
