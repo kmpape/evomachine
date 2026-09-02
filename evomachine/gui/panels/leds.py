@@ -4,6 +4,7 @@ import time
 
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
+    QCheckBox,
     QDoubleSpinBox,
     QGridLayout,
     QGroupBox,
@@ -44,7 +45,17 @@ LED_LABELS = {
 
 MANUAL_BRIGHTNESS_MAX = 100.0
 MANUAL_BRIGHTNESS_DEFAULT = 29.0
+HIGH_BRIGHTNESS_THRESHOLD = 29.0
+DEFAULT_HIGH_BRIGHTNESS_DURATION_S = 3.0
 TIMED_LED_REFRESH_GRACE_MS = 100
+
+WAVELENGTH_INDICATOR_COLOURS = {
+    LEDType.LED_385_NM: "#74608f",
+    LEDType.LED_450_NM: "#4f7197",
+    LEDType.LED_515_NM: "#5f8468",
+    LEDType.LED_565_NM: "#a1844f",
+    LEDType.LED_645_NM: "#9a5d62",
+}
 
 
 class LedManagerPanel(QGroupBox):
@@ -54,6 +65,7 @@ class LedManagerPanel(QGroupBox):
         super().__init__("LEDManager", parent)
         self.controller = controller
         self.led_buttons: dict[LEDType, QPushButton] = {}
+        self.wavelength_indicators: dict[LEDType, QLabel] = {}
         self.brightness_inputs: dict[LEDType, QDoubleSpinBox] = {}
         self.available_leds: set[LEDType] = set()
         self._timed_led_stop_times: dict[LEDType, float] = {}
@@ -66,6 +78,15 @@ class LedManagerPanel(QGroupBox):
         self.refresh_button = refresh_button
         self.configure_button = QPushButton("Configure")
         self.configure_button.setEnabled(False)
+        self.custom_duration_checkbox = QCheckBox("Custom high-brightness duration")
+        self.custom_duration_checkbox.setEnabled(False)
+        self.high_brightness_duration_input = QDoubleSpinBox()
+        self.high_brightness_duration_input.setRange(0.1, 3600.0)
+        self.high_brightness_duration_input.setDecimals(1)
+        self.high_brightness_duration_input.setSingleStep(0.5)
+        self.high_brightness_duration_input.setSuffix(" s")
+        self.high_brightness_duration_input.setValue(DEFAULT_HIGH_BRIGHTNESS_DURATION_S)
+        self.high_brightness_duration_input.setEnabled(False)
 
         led_layout = QVBoxLayout()
         for group_name, led_types in LED_GROUPS:
@@ -78,14 +99,21 @@ class LedManagerPanel(QGroupBox):
         buttons.addWidget(refresh_button, 0, 0)
         buttons.addWidget(self.configure_button, 0, 1)
 
+        duration_controls = QGridLayout()
+        duration_controls.addWidget(self.custom_duration_checkbox, 0, 0, 1, 2)
+        duration_controls.addWidget(QLabel("Duration"), 1, 0)
+        duration_controls.addWidget(self.high_brightness_duration_input, 1, 1)
+
         layout = QVBoxLayout()
         layout.addLayout(led_layout)
+        layout.addLayout(duration_controls)
         layout.addLayout(buttons)
         layout.addWidget(self.state_label)
         self.setLayout(layout)
 
         refresh_button.clicked.connect(self.controller.refresh_leds)
         self.configure_button.clicked.connect(self._open_config_dialog)
+        self.custom_duration_checkbox.toggled.connect(self._sync_controls_enabled)
         self.controller.led_list_received.connect(self.update_leds)
         self.controller.led_state_received.connect(self.update_state)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
@@ -93,8 +121,8 @@ class LedManagerPanel(QGroupBox):
 
     def _build_led_button_grid(self, led_types: tuple[LEDType, ...]) -> QGridLayout:
         grid = QGridLayout()
-        grid.addWidget(QLabel("LED"), 0, 0)
-        grid.addWidget(QLabel("Brightness"), 0, 1)
+        grid.addWidget(QLabel("LED"), 0, 0, 1, 2)
+        grid.addWidget(QLabel("Brightness"), 0, 2)
         for index, led_type in enumerate(led_types):
             button = QPushButton(LED_LABELS.get(led_type, led_type.name))
             button.setCheckable(True)
@@ -103,6 +131,9 @@ class LedManagerPanel(QGroupBox):
             button.toggled.connect(
                 lambda checked, selected=led_type: self._toggle_led(selected, checked)
             )
+
+            indicator = self._wavelength_indicator(led_type)
+            self.wavelength_indicators[led_type] = indicator
 
             brightness_input = self._brightness_input()
             brightness_input.setEnabled(False)
@@ -114,8 +145,9 @@ class LedManagerPanel(QGroupBox):
             self.brightness_inputs[led_type] = brightness_input
 
             row = index + 1
-            grid.addWidget(button, row, 0)
-            grid.addWidget(brightness_input, row, 1)
+            grid.addWidget(indicator, row, 0)
+            grid.addWidget(button, row, 1)
+            grid.addWidget(brightness_input, row, 2)
         return grid
 
     @staticmethod
@@ -141,12 +173,26 @@ class LedManagerPanel(QGroupBox):
         self.state_label.setText(f"Disabling {self._format_led(led_type)}")
 
     def _set_led(self, led_type: LEDType) -> None:
+        brightness = self.brightness_inputs[led_type].value()
         self.controller.set_led(
             led=led_type.name,
-            brightness=self.brightness_inputs[led_type].value(),
-            duration=None,
+            brightness=brightness,
+            duration=self._high_brightness_duration_ms(led_type, brightness),
         )
         self.state_label.setText(f"Setting {self._format_led(led_type)}")
+
+    def _high_brightness_duration_ms(
+            self,
+            led_type: LEDType,
+            brightness: float,
+    ) -> float | None:
+        if (
+            led_type not in WAVELENGTH_INDICATOR_COLOURS
+            or brightness <= HIGH_BRIGHTNESS_THRESHOLD
+            or not self.custom_duration_checkbox.isChecked()
+        ):
+            return None
+        return self.high_brightness_duration_input.value() * 1000.0
 
     def _update_active_led(self, led_type: LEDType) -> None:
         button = self.led_buttons[led_type]
@@ -184,6 +230,10 @@ class LedManagerPanel(QGroupBox):
         self.refresh_button.setEnabled(self.devices_initialised)
         manual_controls_enabled = self.devices_initialised and not self.strategy_running
         self.configure_button.setEnabled(manual_controls_enabled)
+        self.custom_duration_checkbox.setEnabled(manual_controls_enabled)
+        self.high_brightness_duration_input.setEnabled(
+            manual_controls_enabled and self.custom_duration_checkbox.isChecked()
+        )
         for led_type, button in self.led_buttons.items():
             is_available = self.devices_initialised and led_type in self.available_leds
             is_enabled = manual_controls_enabled and led_type in self.available_leds
@@ -206,9 +256,16 @@ class LedManagerPanel(QGroupBox):
                 self._schedule_timed_state_refresh(
                     led_type=led_type, stop_time=state.get("stop_time")
                 )
-        self.state_label.setText(
-            f"{self._format_led(led_type)}: brightness {state.get('brightness')}, on {state.get('is_on')}"
-        )
+        if state.get("is_on") is True and isinstance(state.get("stop_time"), int | float):
+            self.state_label.setText(
+                f"{self._format_led(led_type)}: brightness {state.get('brightness')}, "
+                "timed illumination active"
+            )
+        else:
+            self.state_label.setText(
+                f"{self._format_led(led_type)}: brightness {state.get('brightness')}, "
+                f"on {state.get('is_on')}"
+            )
 
     def _schedule_timed_state_refresh(self, led_type: LEDType, stop_time: object) -> None:
         if not isinstance(stop_time, int | float):
@@ -285,3 +342,15 @@ class LedManagerPanel(QGroupBox):
     @staticmethod
     def _format_led(led_type: LEDType) -> str:
         return LED_LABELS.get(led_type, led_type.name)
+
+    @staticmethod
+    def _wavelength_indicator(led_type: LEDType) -> QLabel:
+        indicator = QLabel()
+        indicator.setFixedSize(12, 12)
+        colour = WAVELENGTH_INDICATOR_COLOURS.get(led_type)
+        if colour is not None:
+            indicator.setStyleSheet(
+                f"background-color: {colour}; border-radius: 6px;"
+            )
+            indicator.setToolTip(f"{LED_LABELS[led_type]} nm wavelength")
+        return indicator

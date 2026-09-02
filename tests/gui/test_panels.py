@@ -470,6 +470,51 @@ def test_led_panel_sends_set_request() -> None:
     assert controller.calls == [("set_led", "LED_450_NM", 12.0, None)]
 
 
+def test_led_panel_sends_optional_high_brightness_duration_in_milliseconds() -> None:
+    _app()
+    controller = FakeController()
+    panel = LedManagerPanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+    panel.update_leds(["LED_450_NM"])
+    panel.custom_duration_checkbox.setChecked(True)
+    panel.high_brightness_duration_input.setValue(4.5)
+
+    panel.brightness_inputs[LEDType.LED_450_NM].setValue(50)
+    panel.led_buttons[LEDType.LED_450_NM].setChecked(True)
+
+    assert controller.calls == [("set_led", "LED_450_NM", 50.0, 4500.0)]
+
+
+def test_led_panel_omits_custom_duration_at_safe_continuous_brightness() -> None:
+    _app()
+    controller = FakeController()
+    panel = LedManagerPanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+    panel.update_leds(["LED_450_NM"])
+    panel.custom_duration_checkbox.setChecked(True)
+    panel.high_brightness_duration_input.setValue(4.5)
+
+    panel.brightness_inputs[LEDType.LED_450_NM].setValue(29)
+    panel.led_buttons[LEDType.LED_450_NM].setChecked(True)
+
+    assert controller.calls == [("set_led", "LED_450_NM", 29.0, None)]
+
+
+def test_led_panel_shows_timed_state_and_muted_wavelength_indicators() -> None:
+    _app()
+    panel = LedManagerPanel(controller=FakeController())
+
+    panel.update_state(
+        {"led": "LED_450_NM", "brightness": 50, "is_on": True, "stop_time": 1003.0}
+    )
+
+    assert "timed illumination active" in panel.state_label.text()
+    assert panel.led_buttons[LEDType.LED_450_NM].styleSheet() == ""
+    assert "#4f7197" in panel.wavelength_indicators[LEDType.LED_450_NM].styleSheet()
+    assert panel.led_buttons[LEDType.LED_OVERHEAD].styleSheet() == ""
+    assert panel.wavelength_indicators[LEDType.LED_OVERHEAD].styleSheet() == ""
+
+
 def test_led_panel_allows_full_backend_brightness_range() -> None:
     _app()
     controller = FakeController()
