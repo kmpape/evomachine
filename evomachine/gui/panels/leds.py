@@ -43,6 +43,12 @@ LED_LABELS = {
     LEDType.LED_OVERHEAD: "KWR103 overhead",
 }
 
+LED_BUTTON_LABELS = {
+    **LED_LABELS,
+    LEDType.LED_OVERHEAD_TIGER: "Overhead",
+    LEDType.LED_OVERHEAD: "Overhead",
+}
+
 MANUAL_BRIGHTNESS_MAX = 100.0
 MANUAL_BRIGHTNESS_DEFAULT = 29.0
 HIGH_BRIGHTNESS_THRESHOLD = 29.0
@@ -78,7 +84,7 @@ class LedManagerPanel(QGroupBox):
         self.refresh_button = refresh_button
         self.configure_button = QPushButton("Configure")
         self.configure_button.setEnabled(False)
-        self.custom_duration_checkbox = QCheckBox("Custom high-brightness duration")
+        self.custom_duration_checkbox = QCheckBox("Custom duration")
         self.custom_duration_checkbox.setEnabled(False)
         self.high_brightness_duration_input = QDoubleSpinBox()
         self.high_brightness_duration_input.setRange(0.1, 3600.0)
@@ -124,10 +130,10 @@ class LedManagerPanel(QGroupBox):
         grid.addWidget(QLabel("LED"), 0, 0, 1, 2)
         grid.addWidget(QLabel("Brightness"), 0, 2)
         for index, led_type in enumerate(led_types):
-            button = QPushButton(LED_LABELS.get(led_type, led_type.name))
+            button = QPushButton(LED_BUTTON_LABELS.get(led_type, led_type.name))
             button.setCheckable(True)
             button.setEnabled(False)
-            button.setToolTip(led_type.name)
+            button.setToolTip(LED_LABELS.get(led_type, led_type.name))
             button.toggled.connect(
                 lambda checked, selected=led_type: self._toggle_led(selected, checked)
             )

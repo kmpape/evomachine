@@ -72,15 +72,20 @@ class AutofocusPanel(QGroupBox):
         self.note_label = muted_label("CRISP configuration values are applied before calibration.")
         self.note_label.setWordWrap(True)
         self.config_values = self._default_config_values()
-        self.lock_after_calibration_checkbox = QCheckBox("Lock after calibration")
+        self.lock_after_calibration_checkbox = QCheckBox("Lock afterwards")
+        self.lock_after_calibration_checkbox.setToolTip(
+            "Lock the hardware autofocus after calibration succeeds."
+        )
         self.lock_after_calibration_checkbox.setChecked(False)
 
         self.refresh_button = QPushButton("Refresh")
         self.configure_button = QPushButton("Configure")
-        self.run_calibration_button = QPushButton("Run Calibration")
+        self.run_calibration_button = QPushButton("Calibrate")
+        self.run_calibration_button.setToolTip("Run CRISP autofocus calibration.")
         self.lock_button = QPushButton("Lock")
         self.unlock_button = QPushButton("Unlock")
-        self.cancel_calibration_button = QPushButton("Stop Calibration")
+        self.cancel_calibration_button = QPushButton("Stop")
+        self.cancel_calibration_button.setToolTip("Stop CRISP autofocus calibration.")
         self.calibration_operation_label = QLabel("operation: -")
         self.calibration_operation_label.setWordWrap(True)
         self.calibration_poll_timer = QTimer(self)

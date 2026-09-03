@@ -10,14 +10,15 @@ class AutomatonPanel(QGroupBox):
         super().__init__("Automaton", parent)
         self.controller = controller
         self.status_label = QLabel("Disconnected")
+        self.status_label.setWordWrap(True)
         self.initialisation_label = QLabel("Run Initialise Devices before using hardware controls.")
         self.initialisation_label.setWordWrap(True)
         self.initialisation_label.setStyleSheet("color: #aab2bd;")
 
         self.ping_button = QPushButton("Ping")
-        self.initialise_button = QPushButton("Initialise Devices")
+        self.initialise_button = QPushButton("Initialise")
         self.stop_button = QPushButton("Stop")
-        self.shutdown_button = QPushButton("Shutdown Automaton")
+        self.shutdown_button = QPushButton("Shutdown")
         self.shutdown_button.setToolTip("Terminal shutdown. Restart the GUI to reconnect afterwards.")
 
         buttons = QGridLayout()

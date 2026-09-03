@@ -1,6 +1,18 @@
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QApplication, QScrollArea, QTabWidget, QVBoxLayout, QWidget
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (
+    QApplication,
+    QGroupBox,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSplitter,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from evomachine.gui.central_workspace import CentralVisualWorkspace
 from evomachine.gui.controller import EvoMachineGuiController
@@ -28,6 +40,7 @@ class EvoMachineControlsDock(QWidget):
 
     def __init__(self, napari_viewer=None):
         super().__init__()
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.viewer = napari_viewer
         self.controller = EvoMachineGuiController()
         application = QApplication.instance()
@@ -40,13 +53,34 @@ class EvoMachineControlsDock(QWidget):
         )
         self.controller.probe_image_transport()
 
-        tabs = QTabWidget()
-        tabs.addTab(self._scrollable_tab(self._build_main_controls_tab()), "Main Controls")
-        tabs.addTab(self._scrollable_tab(self._build_acquisition_tab()), "Acquisition")
-        tabs.addTab(self._scrollable_tab(self._build_strategy_tab()), "Strategy")
+        main_controls = QGroupBox("Main Controls")
+        main_controls.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        main_controls_layout = QVBoxLayout()
+        main_controls_layout.addWidget(
+            self._scrollable_tab(self._build_main_controls_column()),
+            stretch=1,
+        )
+        main_controls.setLayout(main_controls_layout)
+
+        workflow_tabs = QTabWidget()
+        workflow_tabs.addTab(self._scrollable_tab(self._build_acquisition_tab()), "Acquisition")
+        workflow_tabs.addTab(self._scrollable_tab(self._build_strategy_tab()), "Strategy")
+
+        controls_splitter = QSplitter(Qt.Horizontal)
+        controls_splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        controls_splitter.setChildrenCollapsible(False)
+        controls_splitter.addWidget(main_controls)
+        controls_splitter.addWidget(workflow_tabs)
+        controls_splitter.setStretchFactor(0, 1)
+        controls_splitter.setStretchFactor(1, 1)
+        controls_splitter.setSizes([1, 1])
+
+        self.main_controls = main_controls
+        self.workflow_tabs = workflow_tabs
+        self.controls_splitter = controls_splitter
 
         layout = QVBoxLayout()
-        layout.addWidget(tabs)
+        layout.addWidget(controls_splitter, stretch=1)
         self.setLayout(layout)
 
     def closeEvent(self, event) -> None:  # noqa: N802
@@ -54,12 +88,31 @@ class EvoMachineControlsDock(QWidget):
 
     @staticmethod
     def _scrollable_tab(widget: QWidget) -> QScrollArea:
+        EvoMachineControlsDock._make_panel_contents_responsive(widget)
+        widget_policy = widget.sizePolicy()
+        widget_policy.setHorizontalPolicy(QSizePolicy.Ignored)
+        widget.setSizePolicy(widget_policy)
         scroll_area = QScrollArea()
+        scroll_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll_area.setWidgetResizable(True)
         scroll_area.setWidget(widget)
         return scroll_area
 
-    def _build_main_controls_tab(self) -> QWidget:
+    @staticmethod
+    def _make_panel_contents_responsive(widget: QWidget) -> None:
+        for label in widget.findChildren(QLabel):
+            label.setWordWrap(True)
+            label.setMinimumWidth(0)
+            label_policy = label.sizePolicy()
+            label_policy.setHorizontalPolicy(QSizePolicy.Ignored)
+            label.setSizePolicy(label_policy)
+        for button in widget.findChildren(QPushButton):
+            button.setMinimumWidth(0)
+            button.setMinimumHeight(button.fontMetrics().height() + 10)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+
+    def _build_main_controls_column(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout()
         layout.addWidget(AutomatonPanel(controller=self.controller))

@@ -72,16 +72,20 @@ class DmdPanel(QGroupBox):
             for _label, field_name, _default, minimum, maximum in SHAPE_CONFIG_FIELDS
         }
         self.calibration_file_combo = QComboBox()
-        self.configure_pattern_button = QPushButton("Configure Pattern")
-        self.select_custom_pattern_button = QPushButton("Select Pattern…")
-        self.display_custom_pattern_button = QPushButton("Display Loaded Pattern")
+        self.configure_pattern_button = QPushButton("Configure")
+        self.configure_pattern_button.setToolTip("Configure the built-in DMD patterns.")
+        self.select_custom_pattern_button = QPushButton("Choose File…")
+        self.select_custom_pattern_button.setToolTip("Select a custom DMD pattern image.")
+        self.display_custom_pattern_button = QPushButton("Display")
+        self.display_custom_pattern_button.setToolTip("Display the loaded custom DMD pattern.")
         self.custom_pattern_path_label = QLabel("file: -")
         self.custom_pattern_path_label.setWordWrap(True)
         self.custom_pattern_space_label = QLabel("coordinates: -")
         self.custom_pattern_space_label.setWordWrap(True)
-        self.load_calibration_button = QPushButton("Load Existing")
-        self.show_calibration_plot_button = QPushButton("Show Calibration Plot")
-        self.cancel_calibration_button = QPushButton("Stop Calibration")
+        self.load_calibration_button = QPushButton("Load")
+        self.show_calibration_plot_button = QPushButton("Show Plot")
+        self.cancel_calibration_button = QPushButton("Stop")
+        self.cancel_calibration_button.setToolTip("Stop the running DMD calibration.")
         self.calibration_operation_label = QLabel("operation: -")
         self.calibration_operation_label.setWordWrap(True)
         self.calibration_poll_timer = QTimer(self)
@@ -178,7 +182,7 @@ class DmdPanel(QGroupBox):
         file_grid.addWidget(self.calibration_file_combo, 0, 1)
         layout.addLayout(file_grid)
 
-        self.calibration_buttons["calibrate"] = QPushButton("Run New Calibration")
+        self.calibration_buttons["calibrate"] = QPushButton("Calibrate")
         for button in (
             *self.calibration_buttons.values(),
             self.load_calibration_button,

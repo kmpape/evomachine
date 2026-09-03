@@ -4,15 +4,19 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from evomachine.gui.central_workspace import WORKSPACE_SHAPE
-
-CENTRAL_VIEWER_FIT_TOLERANCE = 8
-STARTUP_CONTROLS_DOCK_MIN_WIDTH = 480
-STARTUP_LOG_DOCK_HEIGHT = 210
+REFERENCE_WINDOW_WIDTH = 1280
+REFERENCE_WINDOW_HEIGHT = 800
+REFERENCE_CONTROLS_DOCK_WIDTH = 610
+REFERENCE_LOG_DOCK_HEIGHT = 100
+CONTROLS_DOCK_WIDTH_RATIO = REFERENCE_CONTROLS_DOCK_WIDTH / REFERENCE_WINDOW_WIDTH
+LOG_DOCK_HEIGHT_RATIO = REFERENCE_LOG_DOCK_HEIGHT / REFERENCE_WINDOW_HEIGHT
+MINIMUM_CONTROLS_DOCK_WIDTH = 480
+MINIMUM_LOG_DOCK_HEIGHT = 72
+MAXIMUM_LOG_DOCK_HEIGHT_RATIO = 0.2
 
 
 def _configure_left_docks(viewer, *, status_dock_widget) -> None:
-    """Show layer controls and status as tabs while hiding the layer list."""
+    """Show image settings and status as tabs while hiding the layer list."""
     qt_window = getattr(viewer.window, "_qt_window", None)
     qt_viewer = getattr(viewer.window, "_qt_viewer", None)
     if qt_window is None or qt_viewer is None:
@@ -25,6 +29,15 @@ def _configure_left_docks(viewer, *, status_dock_widget) -> None:
     if layer_controls is None:
         return
 
+    set_title = getattr(layer_controls, "setWindowTitle", None)
+    if callable(set_title):
+        set_title("Image Settings")
+    toggle_action = getattr(layer_controls, "toggleViewAction", None)
+    if callable(toggle_action):
+        action = toggle_action()
+        if action is not None:
+            action.setText("Image Settings")
+
     from PyQt5.QtCore import Qt
 
     qt_window.addDockWidget(Qt.LeftDockWidgetArea, layer_controls)
@@ -35,43 +48,41 @@ def _configure_left_docks(viewer, *, status_dock_widget) -> None:
 
 
 def _schedule_startup_central_viewer_fit(
-        viewer,
-        *,
-        controls_dock_widget,
-        logs_dock_widget=None,
-        status_dock_widget=None,
+    viewer,
+    *,
+    controls_dock_widget,
+    logs_dock_widget=None,
+    status_dock_widget=None,
 ) -> None:
     """Fit the central viewer to the workspace aspect ratio once Qt has laid out the docks."""
     from PyQt5.QtCore import QTimer
 
-    for delay_ms in (0, 150, 500):
-        QTimer.singleShot(
-            delay_ms,
-            lambda viewer=viewer,
-            controls_dock_widget=controls_dock_widget,
-            logs_dock_widget=logs_dock_widget,
-            status_dock_widget=status_dock_widget: _apply_startup_dock_layout(
+    QTimer.singleShot(
+        500,
+        lambda viewer=viewer, controls_dock_widget=controls_dock_widget, logs_dock_widget=logs_dock_widget, status_dock_widget=status_dock_widget: (
+            _apply_startup_dock_layout(
                 viewer,
                 controls_dock_widget=controls_dock_widget,
                 logs_dock_widget=logs_dock_widget,
                 status_dock_widget=status_dock_widget,
-            ),
-        )
+            )
+        ),
+    )
 
 
 def _apply_startup_dock_layout(
-        viewer,
-        *,
-        controls_dock_widget,
-        logs_dock_widget=None,
-        status_dock_widget=None,
+    viewer,
+    *,
+    controls_dock_widget,
+    logs_dock_widget=None,
+    status_dock_widget=None,
 ) -> None:
     _configure_bottom_dock_corners(viewer)
     if status_dock_widget is not None:
         _configure_left_docks(viewer, status_dock_widget=status_dock_widget)
     if logs_dock_widget is not None:
         _resize_logs_dock(viewer, logs_dock_widget=logs_dock_widget)
-    _fit_central_viewer_to_workspace(viewer, controls_dock_widget=controls_dock_widget)
+    _resize_controls_dock(viewer, controls_dock_widget=controls_dock_widget)
 
 
 def _resize_logs_dock(viewer, *, logs_dock_widget) -> None:
@@ -86,14 +97,26 @@ def _resize_logs_dock(viewer, *, logs_dock_widget) -> None:
         raise_dock()
     set_minimum_height = getattr(logs_dock_widget, "setMinimumHeight", None)
     if callable(set_minimum_height):
-        set_minimum_height(STARTUP_LOG_DOCK_HEIGHT)
+        set_minimum_height(0)
     qt_window = getattr(viewer.window, "_qt_window", None)
     resize_docks = getattr(qt_window, "resizeDocks", None)
     if not callable(resize_docks):
         return
+    window_height = _widget_extent(qt_window, "height", REFERENCE_WINDOW_HEIGHT)
+    target_height = max(
+        MINIMUM_LOG_DOCK_HEIGHT,
+        round(window_height * LOG_DOCK_HEIGHT_RATIO),
+    )
+    maximum_height = max(
+        target_height,
+        round(window_height * MAXIMUM_LOG_DOCK_HEIGHT_RATIO),
+    )
+    set_maximum_height = getattr(logs_dock_widget, "setMaximumHeight", None)
+    if callable(set_maximum_height):
+        set_maximum_height(maximum_height)
     from PyQt5.QtCore import Qt
 
-    resize_docks([logs_dock_widget], [STARTUP_LOG_DOCK_HEIGHT], Qt.Vertical)
+    resize_docks([logs_dock_widget], [target_height], Qt.Vertical)
 
 
 def _configure_bottom_dock_corners(viewer) -> None:
@@ -108,45 +131,36 @@ def _configure_bottom_dock_corners(viewer) -> None:
     set_corner(Qt.BottomRightCorner, Qt.BottomDockWidgetArea)
 
 
-def _fit_central_viewer_to_workspace(viewer, *, controls_dock_widget) -> None:
-    """Resize the right dock so the central viewer matches the workspace aspect ratio."""
+def _resize_controls_dock(viewer, *, controls_dock_widget) -> None:
+    """Size the two-column controls in proportion to the current window."""
     qt_window = getattr(viewer.window, "_qt_window", None)
-    qt_viewer = getattr(viewer.window, "_qt_viewer", None)
     resize_docks = getattr(qt_window, "resizeDocks", None)
-    if not callable(resize_docks) or qt_viewer is None:
+    if not callable(resize_docks):
         return
+    window_width = _widget_extent(qt_window, "width", REFERENCE_WINDOW_WIDTH)
+    target_width = max(
+        MINIMUM_CONTROLS_DOCK_WIDTH,
+        round(window_width * CONTROLS_DOCK_WIDTH_RATIO),
+    )
 
-    central_width = _qt_dimension(qt_viewer, "width")
-    central_height = _qt_dimension(qt_viewer, "height")
-    controls_width = _qt_dimension(controls_dock_widget, "width")
-    if central_width is None or central_height is None or controls_width is None or central_height <= 0:
-        return
-
-    desired_width = round(central_height * WORKSPACE_SHAPE[1] / WORKSPACE_SHAPE[0])
-    width_delta = central_width - desired_width
-    if abs(width_delta) <= CENTRAL_VIEWER_FIT_TOLERANCE:
-        _reset_view(viewer)
-        return
-
-    new_controls_width = max(STARTUP_CONTROLS_DOCK_MIN_WIDTH, controls_width + width_delta)
-
-    from PyQt5.QtCore import Qt
+    from PyQt5.QtCore import Qt, QTimer
 
     resize_docks(
         [controls_dock_widget],
-        [new_controls_width],
+        [target_width],
         Qt.Horizontal,
     )
     _reset_view(viewer)
+    QTimer.singleShot(0, lambda viewer=viewer: _reset_view(viewer))
 
 
-def _qt_dimension(widget, dimension_name: str) -> int | None:
-    dimension = getattr(widget, dimension_name, None)
-    if callable(dimension):
-        return int(dimension())
-    if isinstance(dimension, int | float):
-        return int(dimension)
-    return None
+def _widget_extent(widget, name: str, fallback: int) -> int:
+    """Return a positive Qt widget dimension, or a stable startup fallback."""
+    extent = getattr(widget, name, None)
+    value = extent() if callable(extent) else extent
+    if isinstance(value, int | float) and value > 0:
+        return round(value)
+    return fallback
 
 
 def _reset_view(viewer) -> None:
@@ -176,7 +190,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     viewer = napari.Viewer()
     _configure_bottom_dock_corners(viewer)
     controls_dock = EvoMachineControlsDock(napari_viewer=viewer)
-    controls_dock_widget = viewer.window.add_dock_widget(controls_dock, name="EvoMachine Controls", area="right")
+    controls_dock_widget = viewer.window.add_dock_widget(
+        controls_dock, name="EvoMachine Controls", area="right"
+    )
     status_dock = PeripheralControllerStatusDock(controller=controls_dock.controller)
     status_dock_widget = viewer.window.add_dock_widget(
         status_dock,

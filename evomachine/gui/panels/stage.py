@@ -41,7 +41,7 @@ class StagePanel(QGroupBox):
         self.z_input = self._axis_input()
 
         self.refresh_button = QPushButton("Refresh")
-        self.move_button = QPushButton("Move by ΔXYZ")
+        self.move_button = QPushButton("Move")
         self.move_button.setToolTip("Move relative to the current zeroed Tiger coordinates.")
         self.stop_button = QPushButton("Stop")
         self.origin_button = QPushButton("Return to Origin")

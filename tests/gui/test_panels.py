@@ -7,9 +7,20 @@ import pytest
 if os.environ.get("EVOMACHINE_GUI_RUN_QT_TESTS") != "1":
     pytest.skip("Qt widget tests are opt-in in headless environments.", allow_module_level=True)
 
-from PyQt5.QtCore import QObject, pyqtSignal
-from PyQt5.QtWidgets import QApplication, QFileDialog
+from PyQt5.QtCore import QObject, Qt, pyqtSignal
+from PyQt5.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
+from evomachine.gui.docks import controls as controls_module
+from evomachine.gui.docks.controls import EvoMachineControlsDock
 from evomachine.gui.panels.acquisition import (
     FrameAcquisitionSettingsPanel,
     ManualAcquisitionPanel,
@@ -201,6 +212,75 @@ def _app():
     return _QT_APP
 
 
+def test_controls_dock_keeps_main_controls_beside_workflow_tabs(monkeypatch) -> None:
+    _app()
+
+    class StubController:
+        def close(self) -> None:
+            pass
+
+        def probe_image_transport(self) -> None:
+            pass
+
+    seen_controllers = []
+
+    class StubControlsDock(EvoMachineControlsDock):
+        def _placeholder(self) -> QWidget:
+            seen_controllers.append(self.controller)
+            return QWidget()
+
+        def _build_main_controls_column(self) -> QWidget:
+            return self._placeholder()
+
+        def _build_acquisition_tab(self) -> QWidget:
+            return self._placeholder()
+
+        def _build_strategy_tab(self) -> QWidget:
+            return self._placeholder()
+
+    monkeypatch.setattr(controls_module, "EvoMachineGuiController", StubController)
+
+    dock = StubControlsDock()
+
+    assert dock.controls_splitter.count() == 2
+    assert dock.controls_splitter.widget(0) is dock.main_controls
+    assert dock.controls_splitter.widget(1) is dock.workflow_tabs
+    assert dock.sizePolicy().verticalPolicy() == QSizePolicy.Expanding
+    assert dock.controls_splitter.sizePolicy().verticalPolicy() == QSizePolicy.Expanding
+    assert dock.main_controls.sizePolicy().verticalPolicy() == QSizePolicy.Expanding
+    assert all(
+        scroll_area.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
+        for scroll_area in dock.findChildren(QScrollArea)
+    )
+    assert dock.main_controls.title() == "Main Controls"
+    assert [dock.workflow_tabs.tabText(index) for index in range(dock.workflow_tabs.count())] == [
+        "Acquisition",
+        "Strategy",
+    ]
+    assert seen_controllers == [dock.controller, dock.controller, dock.controller]
+
+
+def test_scrollable_control_column_wraps_labels_and_sizes_buttons_for_font() -> None:
+    _app()
+    contents = QWidget()
+    label = QLabel("A status message that must fit within the control column.")
+    button = QPushButton("A long action label")
+    layout = QVBoxLayout()
+    layout.addWidget(label)
+    layout.addWidget(button)
+    contents.setLayout(layout)
+
+    scroll_area = EvoMachineControlsDock._scrollable_tab(contents)
+
+    assert label.wordWrap()
+    assert label.minimumWidth() == 0
+    assert label.sizePolicy().horizontalPolicy() == QSizePolicy.Ignored
+    assert button.minimumWidth() == 0
+    assert button.minimumHeight() >= button.fontMetrics().height() + 10
+    assert button.sizePolicy().horizontalPolicy() == QSizePolicy.Expanding
+    assert scroll_area.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
+
+
 def test_stage_panel_sends_relative_delta_move_request() -> None:
     _app()
     controller = FakeController()
@@ -213,6 +293,29 @@ def test_stage_panel_sends_relative_delta_move_request() -> None:
     panel._move_delta()
 
     assert controller.calls == [("move_stage_relative", 1.0, 2.0, 3.0)]
+
+
+def test_narrow_control_columns_use_compact_action_labels() -> None:
+    _app()
+    controller = FakeController()
+    stage = StagePanel(controller=controller)
+    dmd = DmdPanel(controller=controller)
+    autofocus = AutofocusPanel(controller=controller)
+    fovs = FovSetupPanel(controller=controller)
+
+    assert stage.move_button.text() == "Move"
+    assert dmd.select_custom_pattern_button.text() == "Choose File…"
+    assert dmd.display_custom_pattern_button.text() == "Display"
+    assert dmd.calibration_buttons["calibrate"].text() == "Calibrate"
+    assert dmd.load_calibration_button.text() == "Load"
+    assert dmd.show_calibration_plot_button.text() == "Show Plot"
+    assert autofocus.run_calibration_button.text() == "Calibrate"
+    assert autofocus.lock_after_calibration_checkbox.text() == "Lock afterwards"
+    assert fovs.use_autofocus_checkbox.text() == "Use autofocus"
+    assert fovs.use_current_button.text() == "Use Current"
+    assert fovs.add_button.text() == "Add / Update"
+    assert fovs.remove_button.text() == "Remove"
+    assert fovs.initialise_button.text() == "Initialise"
 
 
 def test_stage_panel_displays_active_limits() -> None:
@@ -457,6 +560,19 @@ def test_led_panel_sends_set_request() -> None:
     panel.led_buttons[LEDType.LED_450_NM].setChecked(True)
 
     assert controller.calls == [("set_led", "LED_450_NM", 12.0, None)]
+
+
+def test_led_panel_uses_compact_labels_for_overhead_controls() -> None:
+    _app()
+    panel = LedManagerPanel(controller=FakeController())
+
+    tiger_button = panel.led_buttons[LEDType.LED_OVERHEAD_TIGER]
+    kwr103_button = panel.led_buttons[LEDType.LED_OVERHEAD]
+    assert tiger_button.text() == "Overhead"
+    assert tiger_button.toolTip() == "Tiger overhead"
+    assert kwr103_button.text() == "Overhead"
+    assert kwr103_button.toolTip() == "KWR103 overhead"
+    assert panel.custom_duration_checkbox.text() == "Custom duration"
 
 
 def test_led_panel_sends_optional_high_brightness_duration_in_milliseconds() -> None:
