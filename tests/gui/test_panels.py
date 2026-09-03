@@ -88,6 +88,9 @@ class FakeController(QObject):
     def stop_stage(self):
         self.calls.append(("stop_stage",))
 
+    def refresh_stage_movement_operation(self):
+        self.calls.append(("refresh_stage_movement_operation",))
+
     def return_stage_to_origin(self):
         self.calls.append(("return_stage_to_origin",))
 
@@ -102,6 +105,9 @@ class FakeController(QObject):
 
     def acquire_z_stack(self, payload=None):
         self.calls.append(("acquire_z_stack", payload))
+
+    def refresh_z_stack_operation(self):
+        self.calls.append(("refresh_z_stack_operation",))
 
     def refresh_acquisition_files(self, directory=None):
         self.calls.append(("refresh_acquisition_files", directory))
@@ -189,6 +195,9 @@ class FakeController(QObject):
 
     def run_software_focus(self):
         self.calls.append(("run_software_focus",))
+
+    def refresh_software_focus_operation(self):
+        self.calls.append(("refresh_software_focus_operation",))
 
     def refresh_strategies(self):
         self.calls.append(("refresh_strategies",))
@@ -293,6 +302,28 @@ def test_stage_panel_sends_relative_delta_move_request() -> None:
     panel._move_delta()
 
     assert controller.calls == [("move_stage_relative", 1.0, 2.0, 3.0)]
+
+
+def test_stage_panel_disables_all_movement_controls_until_operation_finishes() -> None:
+    _app()
+    controller = FakeController()
+    panel = StagePanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+
+    panel._move_delta()
+    panel._move_camera_fov("RIGHT")
+    panel._return_to_origin()
+
+    assert controller.calls == [("move_stage_relative", 0.0, 0.0, 0.0)]
+    assert not panel.move_button.isEnabled()
+    assert not panel.origin_button.isEnabled()
+    assert all(not button.isEnabled() for button in panel.fov_buttons)
+    assert panel.stop_button.isEnabled()
+
+    panel.update_operation_status({"kind": "stage_movement", "state": "completed"})
+    assert panel.move_button.isEnabled()
+    assert panel.origin_button.isEnabled()
+    assert all(button.isEnabled() for button in panel.fov_buttons)
 
 
 def test_narrow_control_columns_use_compact_action_labels() -> None:

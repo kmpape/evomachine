@@ -180,15 +180,23 @@ def gui_frame_acquisition_settings_from_payload(payload: dict[str, Any]) -> Fram
     if unknown_fields:
         raise ValueError(f"Unknown acquisition setting(s): {', '.join(unknown_fields)}.")
     return FrameAcquisitionSettings(**{
-        field_name: bool(settings_payload[field_name])
+        field_name: settings_payload[field_name]
         for field_name in allowed_fields
         if field_name in settings_payload
     })
 
 
+def gui_bool_from_payload(payload: dict[str, Any], field_name: str, default: bool) -> bool:
+    """Return one external payload boolean without truthiness coercion."""
+    value = payload.get(field_name, default)
+    if not isinstance(value, bool):
+        raise TypeError(f"{field_name} must be bool, received {type(value)}.")
+    return value
+
+
 def gui_acquisition_uses_current_main_controls(payload: dict[str, Any]) -> bool:
     """Return whether acquisition should leave main-control peripheral state alone."""
-    return bool(payload.get("use_current_main_controls", False))
+    return gui_bool_from_payload(payload, "use_current_main_controls", False)
 
 
 def gui_acquisition_leds_from_payload(payload: dict[str, Any]) -> dict[LEDType, float] | None:
@@ -264,16 +272,17 @@ def gui_z_coordinates_from_payload(payload: dict[str, Any]) -> list[Coordinate]:
     signed_step = step_z * direction
     z_values: list[float] = []
     current_z = start_z
-    for _index in range(MAX_Z_STACK_PLANES):
-        if direction > 0 and current_z > end_z:
-            break
-        if direction < 0 and current_z < end_z:
-            break
+    while not (
+        (direction > 0 and current_z > end_z)
+        or (direction < 0 and current_z < end_z)
+    ):
+        if len(z_values) >= MAX_Z_STACK_PLANES:
+            raise ValueError(f"Z-stack cannot exceed {MAX_Z_STACK_PLANES} planes.")
         z_values.append(current_z)
         current_z += signed_step
-    else:
-        raise ValueError(f"Z-stack cannot exceed {MAX_Z_STACK_PLANES} planes.")
     if not z_values or not np.isclose(z_values[-1], end_z):
+        if len(z_values) >= MAX_Z_STACK_PLANES:
+            raise ValueError(f"Z-stack cannot exceed {MAX_Z_STACK_PLANES} planes.")
         z_values.append(end_z)
     return [Coordinate(None, None, z) for z in z_values]
 
@@ -434,8 +443,14 @@ def gui_initialise_devices(facade: Any, payload: dict[str, Any]) -> dict[str, An
 
 
 def gui_stop(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    active_operation = facade.gui_operations.active()
+    if active_operation is not None:
+        facade.gui_operations.cancel(active_operation["kind"])
     facade.automaton.stop()
-    return facade.gui_status_payload()
+    response = facade.gui_status_payload()
+    if active_operation is not None:
+        response["operation"] = facade.gui_operations.status(active_operation["kind"])
+    return response
 
 
 def gui_shutdown(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -463,7 +478,7 @@ def gui_fov_initialise(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     facade.gui_initialise_controllers()
     facade.automaton.initialise(
         fovs=fovs,
-        use_autofocus=bool(payload.get("use_autofocus", False)),
+        use_autofocus=gui_bool_from_payload(payload, "use_autofocus", False),
     )
     return {
         **facade.gui_status_payload(),
@@ -480,7 +495,19 @@ def gui_stage_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
 def gui_stage_get_coordinates(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "stage")
-    return facade.gui_stage_coordinates_payload(query_hardware=bool(payload.get("query_hardware", True)))
+    return facade.gui_stage_coordinates_payload(
+        query_hardware=gui_bool_from_payload(payload, "query_hardware", True)
+    )
+
+
+def _start_stage_movement(facade: Any, target: Coordinate) -> dict[str, Any]:
+    def run(cancel_event, report):
+        del cancel_event
+        report(0.0, "Moving stage.")
+        facade.gui_stage().move(target=target, block=True)
+        return facade.gui_stage_coordinates_payload(query_hardware=False)
+
+    return {"operation": facade.gui_operations.start("stage_movement", run)}
 
 
 def gui_stage_move_relative(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -491,8 +518,8 @@ def gui_stage_move_relative(facade: Any, payload: dict[str, Any]) -> dict[str, A
         y=None if payload.get("dy") is None else current.y + payload.get("dy"),
         z=None if payload.get("dz") is None else current.z + payload.get("dz"),
     )
-    facade.gui_stage().move(target=target, block=bool(payload.get("block", True)))
-    return facade.gui_stage_coordinates_payload(query_hardware=False)
+    gui_bool_from_payload(payload, "block", True)
+    return _start_stage_movement(facade, target)
 
 
 def gui_stage_move_fov(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -502,23 +529,29 @@ def gui_stage_move_fov(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     stage = facade.gui_stage()
     camera = facade.gui_camera()
     target = gui_camera_fov_move_coordinate(stage=stage, camera=camera, direction=direction, multiplier=multiplier)
-    stage.move(
-        target=target,
-        block=bool(payload.get("block", True)),
-    )
-    return facade.gui_stage_coordinates_payload(query_hardware=False)
+    gui_bool_from_payload(payload, "block", True)
+    return _start_stage_movement(facade, target)
 
 
 def gui_stage_stop(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "stage")
+    operation = facade.gui_operations.status("stage_movement")
+    if operation is not None and operation["state"] == "running":
+        facade.gui_operations.cancel("stage_movement")
     facade.gui_stage().stop()
-    return {"stage": facade.gui_stage_status_payload()}
+    response = {"stage": facade.gui_stage_status_payload()}
+    if operation is not None:
+        response["operation"] = facade.gui_operations.status("stage_movement")
+    return response
+
+
+def gui_stage_movement_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    return {"operation": _require_operation_status(facade, "stage_movement")}
 
 
 def gui_stage_return_origin(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "stage")
-    facade.gui_stage().move(target=Coordinate(0, 0, 0), block=False)
-    return facade.gui_stage_coordinates_payload(query_hardware=False)
+    return _start_stage_movement(facade, Coordinate(0, 0, 0))
 
 
 def gui_camera_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -609,19 +642,28 @@ def gui_acquisition_take_z_stack(facade: Any, payload: dict[str, Any]) -> dict[s
     ]
     metadata = gui_frame_metadata_from_payload(facade=facade, payload=payload)
     settings = gui_frame_acquisition_settings_from_payload(payload)
-    frame = acq_mngr.take_z_stack(
-        frame_metadata=metadata,
-        z_coordinates=z_coordinates,
-        settings=settings,
-    )
-    return {
-        "frame": gui_frame_payload(
-            frame=frame,
-            kind="z_stack",
-            z_positions=[coordinate.z for coordinate in z_deltas],
-            image_transport=payload.get("image_transport"),
-        ),
-    }
+    def run(cancel_event, report):
+        report(0.0, "Acquiring Z-stack.")
+        frame = acq_mngr.take_z_stack(
+            frame_metadata=metadata,
+            z_coordinates=z_coordinates,
+            settings=settings,
+            stop_event=cancel_event,
+        )
+        return {
+            "frame": gui_frame_payload(
+                frame=frame,
+                kind="z_stack",
+                z_positions=[coordinate.z for coordinate in z_deltas],
+                image_transport=payload.get("image_transport"),
+            ),
+        }
+
+    return {"operation": facade.gui_operations.start("z_stack_acquisition", run)}
+
+
+def gui_acquisition_z_stack_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    return {"operation": _require_operation_status(facade, "z_stack_acquisition")}
 
 
 def gui_filter_wheel_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -823,7 +865,7 @@ def gui_autofocus_configure(facade: Any, payload: dict[str, Any]) -> dict[str, A
 def gui_autofocus_initialise(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "autofocus")
     config = gui_autofocus_config_from_payload(payload)
-    lock_after_calibration = bool(payload.get("lock_after_initialise", False))
+    lock_after_calibration = gui_bool_from_payload(payload, "lock_after_initialise", False)
 
     def run(cancel_event, report):
         initialised = facade.gui_autofocus().run_calibration(
@@ -872,14 +914,25 @@ def gui_software_focus_status(facade: Any, payload: dict[str, Any]) -> dict[str,
 def gui_software_focus_run(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "software focus")
     fov_id = payload.get("fov_id")
-    result = facade.gui_software_focus().run(fov_id=None if fov_id is None else int(fov_id))
-    result_payload = facade.gui_software_focus_result_payload(result)
-    return {
-        "software_focus": {
-            **facade.gui_software_focus_status_payload(),
-            "last_result": result_payload,
-        },
-    }
+    def run(cancel_event, report):
+        report(0.0, "Running software focus.")
+        result = facade.gui_software_focus().run(
+            fov_id=None if fov_id is None else int(fov_id),
+            stop_event=cancel_event,
+        )
+        result_payload = facade.gui_software_focus_result_payload(result)
+        return {
+            "software_focus": {
+                **facade.gui_software_focus_status_payload(),
+                "last_result": result_payload,
+            },
+        }
+
+    return {"operation": facade.gui_operations.start("software_focus", run)}
+
+
+def gui_software_focus_operation_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    return {"operation": _require_operation_status(facade, "software_focus")}
 
 
 def _require_operation_status(facade: Any, kind: str) -> dict[str, Any]:
@@ -986,6 +1039,7 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.STAGE_MOVE_RELATIVE: gui_stage_move_relative,
     GuiCommandType.STAGE_MOVE_FOV: gui_stage_move_fov,
     GuiCommandType.STAGE_STOP: gui_stage_stop,
+    GuiCommandType.STAGE_MOVEMENT_STATUS: gui_stage_movement_status,
     GuiCommandType.STAGE_RETURN_ORIGIN: gui_stage_return_origin,
     GuiCommandType.CAMERA_STATUS: gui_camera_status,
     GuiCommandType.CAMERA_SET_EXPOSURE: gui_camera_set_exposure,
@@ -994,6 +1048,7 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.ACQUISITION_LOAD_FRAME: gui_acquisition_load_frame,
     GuiCommandType.ACQUISITION_TAKE_FRAME: gui_acquisition_take_frame,
     GuiCommandType.ACQUISITION_TAKE_Z_STACK: gui_acquisition_take_z_stack,
+    GuiCommandType.ACQUISITION_Z_STACK_STATUS: gui_acquisition_z_stack_status,
     GuiCommandType.FILTER_WHEEL_STATUS: gui_filter_wheel_status,
     GuiCommandType.FILTER_WHEEL_SET: gui_filter_wheel_set,
     GuiCommandType.LED_LIST: gui_led_list,
@@ -1020,6 +1075,7 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.AUTOFOCUS_DISABLE: gui_autofocus_disable,
     GuiCommandType.SOFTWARE_FOCUS_STATUS: gui_software_focus_status,
     GuiCommandType.SOFTWARE_FOCUS_RUN: gui_software_focus_run,
+    GuiCommandType.SOFTWARE_FOCUS_OPERATION_STATUS: gui_software_focus_operation_status,
     GuiCommandType.STRATEGY_STATUS: gui_strategy_status,
     GuiCommandType.STRATEGY_LIST: gui_strategy_list,
     GuiCommandType.STRATEGY_SET: gui_strategy_set,

@@ -9,7 +9,7 @@ from uuid import uuid4
 
 
 OperationReporter = Callable[[float, str], None]
-OperationRunner = Callable[[threading.Event, OperationReporter], None]
+OperationRunner = Callable[[threading.Event, OperationReporter], Any]
 
 
 @dataclass
@@ -25,6 +25,7 @@ class GuiOperation:
     started_at: str
     finished_at: str | None
     cancel_event: threading.Event
+    result: Any = None
 
 
 class GuiOperationManager:
@@ -95,7 +96,7 @@ class GuiOperationManager:
                 operation.message = str(message)
 
         try:
-            runner(operation.cancel_event, report)
+            result = runner(operation.cancel_event, report)
         except Exception as error:
             with self._lock:
                 operation.state = "cancelled" if operation.cancel_event.is_set() else "failed"
@@ -108,6 +109,7 @@ class GuiOperationManager:
                 operation.state = "cancelled"
                 operation.message = "Cancelled."
             else:
+                operation.result = result
                 operation.state = "completed"
                 operation.progress = 1.0
                 operation.message = "Completed."
@@ -129,6 +131,7 @@ class GuiOperationManager:
             "error": operation.error,
             "started_at": operation.started_at,
             "finished_at": operation.finished_at,
+            "result": operation.result,
         }
 
 

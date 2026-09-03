@@ -175,6 +175,9 @@ class EvoMachineGuiController(QObject):
     def stop_stage(self) -> None:
         self._send(GuiCommandType.STAGE_STOP)
 
+    def refresh_stage_movement_operation(self) -> None:
+        self._send(GuiCommandType.STAGE_MOVEMENT_STATUS)
+
     def return_stage_to_origin(self) -> None:
         self._send(GuiCommandType.STAGE_RETURN_ORIGIN)
 
@@ -206,6 +209,9 @@ class EvoMachineGuiController(QObject):
 
     def acquire_z_stack(self, payload: dict[str, Any] | None = None) -> None:
         self._send(GuiCommandType.ACQUISITION_TAKE_Z_STACK, self._with_image_transport(payload))
+
+    def refresh_z_stack_operation(self) -> None:
+        self._send(GuiCommandType.ACQUISITION_Z_STACK_STATUS)
 
     def refresh_filter_wheel(self) -> None:
         self._send(GuiCommandType.FILTER_WHEEL_STATUS)
@@ -301,6 +307,9 @@ class EvoMachineGuiController(QObject):
     def run_software_focus(self) -> None:
         self._send(GuiCommandType.SOFTWARE_FOCUS_RUN)
 
+    def refresh_software_focus_operation(self) -> None:
+        self._send(GuiCommandType.SOFTWARE_FOCUS_OPERATION_STATUS)
+
     def refresh_strategy_status(self) -> None:
         self._send(GuiCommandType.STRATEGY_STATUS)
 
@@ -376,7 +385,14 @@ class EvoMachineGuiController(QObject):
         if "software_focus" in payload:
             self.software_focus_status_received.emit(payload["software_focus"])
         if "operation" in payload:
-            self.operation_status_received.emit(payload["operation"])
+            operation = payload["operation"]
+            self.operation_status_received.emit(operation)
+            result = operation.get("result") if isinstance(operation, dict) else None
+            if isinstance(result, dict):
+                if "frame" in result:
+                    self.frame_received.emit(result["frame"])
+                if "software_focus" in result:
+                    self.software_focus_status_received.emit(result["software_focus"])
         if "strategies" in payload:
             self.strategies_received.emit(payload["strategies"])
         if "strategy" in payload:

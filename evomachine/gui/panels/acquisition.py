@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -353,8 +354,11 @@ class ZStackSettingsPanel(QGroupBox):
         self.controller = controller
         self.settings_provider = settings_provider or (lambda: {})
         self.devices_initialised = False
+        self.acquisition_running = False
         self.acquire_button = QPushButton("Acquire Z Stack")
         self.status_label = QLabel("Run Initialise Devices before z-stack acquisition.")
+        self.operation_poll_timer = QTimer(self)
+        self.operation_poll_timer.setInterval(250)
 
         layout = QVBoxLayout()
         layout.addWidget(self.acquire_button)
@@ -365,6 +369,8 @@ class ZStackSettingsPanel(QGroupBox):
         self.controller.frame_received.connect(self.update_frame_status)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
         self.controller.response_error.connect(self._show_error)
+        self.controller.operation_status_received.connect(self.update_operation_status)
+        self.operation_poll_timer.timeout.connect(self.controller.refresh_z_stack_operation)
         self._sync_controls_enabled()
 
     def _acquire_z_stack(self) -> None:
@@ -373,7 +379,23 @@ class ZStackSettingsPanel(QGroupBox):
             return
         payload = self.settings_provider()
         self.status_label.setText("Acquiring z-stack.")
+        self.acquisition_running = True
+        self.operation_poll_timer.start()
+        self._sync_controls_enabled()
         self.controller.acquire_z_stack(payload)
+
+    def update_operation_status(self, operation: dict) -> None:
+        if operation.get("kind") != "z_stack_acquisition":
+            return
+        state = str(operation.get("state", "-"))
+        self.acquisition_running = state == "running"
+        if not self.acquisition_running:
+            self.operation_poll_timer.stop()
+            if state == "failed" and operation.get("error"):
+                self.status_label.setText(str(operation["error"]))
+            elif state != "completed":
+                self.status_label.setText(f"Z-stack acquisition {state}.")
+        self._sync_controls_enabled()
 
     def update_frame_status(self, payload: dict) -> None:
         if payload.get("kind") != "z_stack":
@@ -393,10 +415,13 @@ class ZStackSettingsPanel(QGroupBox):
             self.status_label.setText("Ready to acquire a z-stack.")
 
     def _sync_controls_enabled(self) -> None:
-        self.acquire_button.setEnabled(self.devices_initialised)
+        self.acquire_button.setEnabled(self.devices_initialised and not self.acquisition_running)
 
     def _show_error(self, error: str) -> None:
         if self.status_label.text().startswith("Acquiring z-stack"):
+            self.acquisition_running = False
+            self.operation_poll_timer.stop()
+            self._sync_controls_enabled()
             self.status_label.setText(error)
 
 

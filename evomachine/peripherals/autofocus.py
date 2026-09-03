@@ -281,7 +281,7 @@ class Autofocus(Peripheral):
             self,
             config: AutofocusCalibrationConfig | None = None,
             lock_after_initialise: bool = False,
-    ) -> AutofocusCalibrationResult:
+    ) -> bool:
         """
         Backwards-compatible alias for run_calibration().
 
@@ -294,10 +294,10 @@ class Autofocus(Peripheral):
 
         Returns
         -------
-        AutofocusCalibrationResult
-            Calibration outcome, measurements, and any failure reason.
+        bool
+            True when calibration succeeded, preserving the legacy API.
         """
-        return self.run_calibration(config=config, lock_after_calibration=lock_after_initialise)
+        return bool(self.run_calibration(config=config, lock_after_calibration=lock_after_initialise))
 
     @property
     def last_calibration_result(self) -> AutofocusCalibrationResult | None:

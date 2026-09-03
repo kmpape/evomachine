@@ -22,11 +22,17 @@ logger = get_logger(name=__name__)
 _OPERATION_SAFE_COMMANDS = frozenset(
     {
         GuiCommandType.PING,
+        GuiCommandType.STOP,
         GuiCommandType.LOGS_RECENT,
+        GuiCommandType.STAGE_STOP,
+        GuiCommandType.STAGE_MOVEMENT_STATUS,
+        GuiCommandType.ACQUISITION_Z_STACK_STATUS,
         GuiCommandType.DMD_CALIBRATION_STATUS,
         GuiCommandType.DMD_CANCEL_CALIBRATION,
         GuiCommandType.AUTOFOCUS_CALIBRATION_STATUS,
         GuiCommandType.AUTOFOCUS_CANCEL_CALIBRATION,
+        GuiCommandType.SOFTWARE_FOCUS_STATUS,
+        GuiCommandType.SOFTWARE_FOCUS_OPERATION_STATUS,
     }
 )
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import QGridLayout, QGroupBox, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
@@ -13,6 +14,7 @@ class SoftwareFocusPanel(QGroupBox):
         self.controller = controller
         self.devices_initialised = False
         self.strategy_running = False
+        self.focus_running = False
         self._latest_config: dict = {}
         self.status_label = QLabel("Run Initialise Devices before using software focus controls.")
         self.status_label.setWordWrap(True)
@@ -22,6 +24,8 @@ class SoftwareFocusPanel(QGroupBox):
         self.refresh_button = QPushButton("Refresh")
         self.configure_button = QPushButton("Configure")
         self.run_button = QPushButton("Run Software Focus")
+        self.operation_poll_timer = QTimer(self)
+        self.operation_poll_timer.setInterval(250)
 
         buttons = QGridLayout()
         buttons.addWidget(self.refresh_button, 0, 0)
@@ -41,6 +45,10 @@ class SoftwareFocusPanel(QGroupBox):
         self.controller.software_focus_status_received.connect(self.update_status)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
         self.controller.strategy_status_received.connect(self.update_strategy_status)
+        self.controller.operation_status_received.connect(self.update_operation_status)
+        self.operation_poll_timer.timeout.connect(
+            self.controller.refresh_software_focus_operation
+        )
         self.controller.response_error.connect(self._show_error)
         self._sync_controls_enabled()
 
@@ -48,7 +56,23 @@ class SoftwareFocusPanel(QGroupBox):
         if not self._ensure_devices_initialised():
             return
         self.status_label.setText("Running software focus.")
+        self.focus_running = True
+        self.operation_poll_timer.start()
+        self._sync_controls_enabled()
         self.controller.run_software_focus()
+
+    def update_operation_status(self, operation: dict) -> None:
+        if operation.get("kind") != "software_focus":
+            return
+        state = str(operation.get("state", "-"))
+        self.focus_running = state == "running"
+        if not self.focus_running:
+            self.operation_poll_timer.stop()
+            if state == "failed" and operation.get("error"):
+                self.status_label.setText(str(operation["error"]))
+            else:
+                self.status_label.setText(f"Software focus {state}.")
+        self._sync_controls_enabled()
 
     def _open_config_dialog(self) -> None:
         if not self._ensure_devices_initialised():
@@ -99,7 +123,11 @@ class SoftwareFocusPanel(QGroupBox):
 
     def _sync_controls_enabled(self) -> None:
         self.refresh_button.setEnabled(self.devices_initialised)
-        manual_controls_enabled = self.devices_initialised and not self.strategy_running
+        manual_controls_enabled = (
+            self.devices_initialised
+            and not self.strategy_running
+            and not self.focus_running
+        )
         self.configure_button.setEnabled(manual_controls_enabled)
         self.run_button.setEnabled(manual_controls_enabled)
 

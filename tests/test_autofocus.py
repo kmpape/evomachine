@@ -171,6 +171,7 @@ def test_virtual_autofocus_lifecycle_and_state_transitions() -> None:
     assert result.measurements == {}
     assert autofocus.get_status() == AutoFocusStatusType.READY
     assert not autofocus.is_locked()
+    assert autofocus.initialise_autofocus() is True
 
     autofocus.lock()
     assert autofocus.get_status() == AutoFocusStatusType.IN_FOCUS
@@ -184,6 +185,7 @@ def test_virtual_autofocus_lifecycle_and_state_transitions() -> None:
     assert autofocus.get_status() == AutoFocusStatusType.IDLE
     assert autofocus.command_history == [
         "configure",
+        "initialise_autofocus",
         "initialise_autofocus",
         "lock",
         "unlock",

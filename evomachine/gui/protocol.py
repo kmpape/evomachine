@@ -37,6 +37,7 @@ class GuiCommandType(str, Enum):
     ACQUISITION_LOAD_FRAME = "acquisition.load_frame"
     ACQUISITION_TAKE_FRAME = "acquisition.take_frame"
     ACQUISITION_TAKE_Z_STACK = "acquisition.take_z_stack"
+    ACQUISITION_Z_STACK_STATUS = "acquisition.z_stack_status"
     FILTER_WHEEL_STATUS = "filter_wheel.status"
     FILTER_WHEEL_SET = "filter_wheel.set"
     LED_LIST = "led.list"
@@ -63,6 +64,8 @@ class GuiCommandType(str, Enum):
     AUTOFOCUS_DISABLE = "autofocus.disable"
     SOFTWARE_FOCUS_STATUS = "software_focus.status"
     SOFTWARE_FOCUS_RUN = "software_focus.run"
+    SOFTWARE_FOCUS_OPERATION_STATUS = "software_focus.operation_status"
+    STAGE_MOVEMENT_STATUS = "stage.movement_status"
     STRATEGY_STATUS = "strategy.status"
     STRATEGY_LIST = "strategy.list"
     STRATEGY_SET = "strategy.set"
@@ -114,13 +117,6 @@ ALWAYS_ALLOWED_MUTATING_COMMANDS = frozenset(
         GuiCommandType.STRATEGY_STOP,
     }
 )
-
-NO_RESPONSE_TIMEOUT_COMMANDS = frozenset(
-    {
-        GuiCommandType.ACQUISITION_TAKE_Z_STACK,
-    }
-)
-
 
 @dataclass(kw_only=True)
 class GuiRequest:

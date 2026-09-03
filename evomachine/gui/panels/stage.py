@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
@@ -36,6 +37,7 @@ class StagePanel(QGroupBox):
         self.status_label = QLabel("Run Initialise Devices before using stage controls.")
         self.devices_initialised = False
         self.strategy_running = False
+        self.movement_running = False
         self.fov_buttons: list[QPushButton] = []
         self.x_input = self._axis_input()
         self.y_input = self._axis_input()
@@ -48,6 +50,8 @@ class StagePanel(QGroupBox):
         self.origin_button = QPushButton("Return to Origin")
         self.origin_button.setToolTip("Move the stage to Tiger coordinates XYZ = 0.")
         self.configure_button = QPushButton("Configure")
+        self.movement_poll_timer = QTimer(self)
+        self.movement_poll_timer.setInterval(250)
 
         form = QFormLayout()
         form.addRow("ΔX (µm)", self.x_input)
@@ -91,6 +95,10 @@ class StagePanel(QGroupBox):
         self.controller.stage_status_received.connect(self.update_status)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
         self.controller.strategy_status_received.connect(self.update_strategy_status)
+        self.controller.operation_status_received.connect(self.update_operation_status)
+        self.movement_poll_timer.timeout.connect(
+            self.controller.refresh_stage_movement_operation
+        )
         self._sync_controls_enabled()
 
     @staticmethod
@@ -102,10 +110,11 @@ class StagePanel(QGroupBox):
         return box
 
     def _move_delta(self) -> None:
-        if not self.devices_initialised:
+        if not self.devices_initialised or self.movement_running:
             self.status_label.setText("Run Initialise Devices before using stage controls.")
             return
         self.status_label.setText("Moving stage by relative ΔXYZ.")
+        self._start_movement()
         self.controller.move_stage_relative(
             dx=self.x_input.value(),
             dy=self.y_input.value(),
@@ -113,18 +122,38 @@ class StagePanel(QGroupBox):
         )
 
     def _move_camera_fov(self, direction: str) -> None:
-        if not self.devices_initialised:
+        if not self.devices_initialised or self.movement_running:
             self.status_label.setText("Run Initialise Devices before using stage controls.")
             return
         self.status_label.setText(f"Moving one camera FoV {direction.lower()}.")
+        self._start_movement()
         self.controller.move_stage_fov(direction=direction, multiplier=1.0)
 
     def _return_to_origin(self) -> None:
-        if not self.devices_initialised:
+        if not self.devices_initialised or self.movement_running:
             self.status_label.setText("Run Initialise Devices before returning to the origin.")
             return
         self.status_label.setText("Returning stage to origin XYZ = 0.")
+        self._start_movement()
         self.controller.return_stage_to_origin()
+
+    def _start_movement(self) -> None:
+        self.movement_running = True
+        self.movement_poll_timer.start()
+        self._sync_controls_enabled()
+
+    def update_operation_status(self, operation: dict) -> None:
+        if operation.get("kind") != "stage_movement":
+            return
+        state = str(operation.get("state", "-"))
+        self.movement_running = state == "running"
+        if not self.movement_running:
+            self.movement_poll_timer.stop()
+            if state == "failed" and operation.get("error"):
+                self.status_label.setText(str(operation["error"]))
+            else:
+                self.status_label.setText(f"Stage movement {state}.")
+        self._sync_controls_enabled()
 
     def _open_config_dialog(self) -> None:
         if not self.devices_initialised:
@@ -188,18 +217,22 @@ class StagePanel(QGroupBox):
         self._sync_controls_enabled()
 
     def _sync_controls_enabled(self) -> None:
-        manual_controls_enabled = self.devices_initialised and not self.strategy_running
+        manual_controls_enabled = (
+            self.devices_initialised
+            and not self.strategy_running
+            and not self.movement_running
+        )
         for widget in (
             self.x_input,
             self.y_input,
             self.z_input,
             self.move_button,
             self.origin_button,
-            self.configure_button,
             *self.fov_buttons,
         ):
             widget.setEnabled(manual_controls_enabled)
-        self.refresh_button.setEnabled(self.devices_initialised)
+        self.configure_button.setEnabled(self.devices_initialised and not self.strategy_running)
+        self.refresh_button.setEnabled(self.devices_initialised and not self.movement_running)
         self.stop_button.setEnabled(self.devices_initialised)
 
     def _config_fields(self) -> list[ConfigFieldSpec]:

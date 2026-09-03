@@ -379,6 +379,7 @@ class SoftwareFocus:
             frame_metadata=frame_metadata_items,
             z_coordinates=[Coordinate(None, None, int(z_coord)) for z_coord in z_coordinates],
             settings=settings,
+            stop_event=stop_event,
         )
         scores_array, stack_array = self._score_z_stack(
             frame=z_stack_frame,

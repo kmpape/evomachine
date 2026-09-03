@@ -22,6 +22,7 @@ from evomachine.gui.facade import AutomatonGuiFacade
 from evomachine.config import get_logger, gui_log_handler
 from evomachine.gui.image_payloads import IMAGE_TRANSPORT_DIR_ENV, IMAGE_TRANSPORT_RAW, array_from_preview_payload
 from evomachine.gui.protocol import GuiCommandType, GuiRequest
+from evomachine.gui.request_map import gui_z_coordinates_from_payload
 
 
 @dataclass
@@ -352,7 +353,8 @@ class FakeSoftwareFocus:
         )
         self.calls = []
 
-    def run(self, fov_id=None):
+    def run(self, fov_id=None, stop_event=None):
+        del stop_event
         self.calls.append(("run", fov_id))
         return SimpleNamespace(
             focus_status=FocusStatusType.IN_FOCUS,
@@ -378,7 +380,8 @@ class FakeAcquisitionManager:
         saved_paths = [Path("frame_0.tiff")] if getattr(settings, "save", False) else [None]
         return Frame(frame_metadata=[frame_metadata], array=np.stack([image]), saved_paths=saved_paths)
 
-    def take_z_stack(self, frame_metadata, z_coordinates, settings=None):
+    def take_z_stack(self, frame_metadata, z_coordinates, settings=None, stop_event=None):
+        del stop_event
         self.calls.append((frame_metadata, z_coordinates, settings))
         images = [
             np.full((3, 4), index, dtype=np.uint16)
@@ -640,17 +643,20 @@ def test_facade_handles_stage_and_led_requests() -> None:
         GuiRequest(command=GuiCommandType.STAGE_MOVE_RELATIVE, payload={"dx": 4, "dy": 4, "dz": 4})
     )
     assert response.ok
-    assert response.payload["coordinate"] == {"x": 5, "y": 6, "z": 7, "channel_id": 0}
+    operation = wait_for_operation(facade, "stage_movement")
+    assert operation["result"]["coordinate"] == {"x": 5, "y": 6, "z": 7, "channel_id": 0}
 
     response = facade.handle(GuiRequest(command=GuiCommandType.STAGE_MOVE_FOV, payload={"direction": "RIGHT"}))
     assert response.ok
-    assert response.payload["coordinate"] == {"x": -2.8, "y": 6.0, "z": 7, "channel_id": 0}
-    assert response.payload["stage"]["fov_step_size"] == 100.0
-    assert response.payload["stage"]["camera_fov_step_size"] == pytest.approx(7.8)
+    operation = wait_for_operation(facade, "stage_movement")
+    assert operation["result"]["coordinate"] == {"x": -2.8, "y": 6.0, "z": 7, "channel_id": 0}
+    assert operation["result"]["stage"]["fov_step_size"] == 100.0
+    assert operation["result"]["stage"]["camera_fov_step_size"] == pytest.approx(7.8)
 
     response = facade.handle(GuiRequest(command=GuiCommandType.STAGE_MOVE_FOV, payload={"direction": "LEFT"}))
     assert response.ok
-    assert response.payload["coordinate"] == {"x": 5.0, "y": 6.0, "z": 7, "channel_id": 0}
+    operation = wait_for_operation(facade, "stage_movement")
+    assert operation["result"]["coordinate"] == {"x": 5.0, "y": 6.0, "z": 7, "channel_id": 0}
 
     response = facade.handle(GuiRequest(command=GuiCommandType.LED_SET, payload={"led": "LED_450_NM", "brightness": 22}))
     assert response.ok
@@ -888,13 +894,15 @@ def test_facade_handles_z_stack_acquisition_request() -> None:
     )
 
     assert response.ok
-    assert response.payload["frame"]["kind"] == "z_stack"
-    assert response.payload["frame"]["planes"] == 3
-    assert response.payload["frame"]["image_shape"] == [3, 4]
-    assert response.payload["frame"]["stack_shape"] == [3, 3, 4]
-    assert response.payload["frame"]["stack_preview"]["is_stack"] is True
-    assert response.payload["frame"]["stack_preview"]["shape"] == [3, 3, 4]
-    assert response.payload["frame"]["z_positions"] == [-1.0, 0.0, 1.0]
+    operation = wait_for_operation(facade, "z_stack_acquisition")
+    frame_payload = operation["result"]["frame"]
+    assert frame_payload["kind"] == "z_stack"
+    assert frame_payload["planes"] == 3
+    assert frame_payload["image_shape"] == [3, 4]
+    assert frame_payload["stack_shape"] == [3, 3, 4]
+    assert frame_payload["stack_preview"]["is_stack"] is True
+    assert frame_payload["stack_preview"]["shape"] == [3, 3, 4]
+    assert frame_payload["z_positions"] == [-1.0, 0.0, 1.0]
     _metadata, z_coordinates, settings = automaton.acq_mngr.calls[-1]
     assert [coordinate.z for coordinate in z_coordinates] == [2.0, 3.0, 4.0]
     assert settings.illuminate_dmd is False
@@ -942,7 +950,8 @@ def test_facade_returns_stage_to_origin() -> None:
     response = facade.handle(GuiRequest(command=GuiCommandType.STAGE_RETURN_ORIGIN))
 
     assert response.ok
-    assert response.payload["coordinate"] == {"x": 0, "y": 0, "z": 0, "channel_id": 0}
+    operation = wait_for_operation(facade, "stage_movement")
+    assert operation["result"]["coordinate"] == {"x": 0, "y": 0, "z": 0, "channel_id": 0}
 
 
 def test_facade_initialise_devices_initialises_controllers_first() -> None:
@@ -1061,11 +1070,128 @@ def test_facade_handles_software_focus_requests() -> None:
 
     response = facade.handle(GuiRequest(command=GuiCommandType.SOFTWARE_FOCUS_RUN))
     assert response.ok
+    operation = wait_for_operation(facade, "software_focus")
     assert automaton.focus_nav.software_focus.calls == [("run", None)]
-    result = response.payload["software_focus"]["last_result"]
+    result = operation["result"]["software_focus"]["last_result"]
     assert result["focus_status"]["name"] == "IN_FOCUS"
     assert result["best_coordinate"]["z"] == 4
     assert result["z_points"] == 3
+
+
+def test_blocking_software_focus_keeps_ping_and_stop_responsive() -> None:
+    automaton = FakeAutomaton()
+    facade = AutomatonGuiFacade(automaton)
+    started = threading.Event()
+
+    def blocking_run(fov_id=None, stop_event=None):
+        del fov_id
+        started.set()
+        assert stop_event is not None
+        stop_event.wait(timeout=1)
+        return SimpleNamespace(
+            focus_status=FocusStatusType.UNKNOWN,
+            curve_status=FocusCurveType.UNKNOWN,
+            best_coordinate=None,
+            previous_coordinate=Coordinate(1, 2, 3),
+            z_coordinates=np.asarray([]),
+        )
+
+    automaton.focus_nav.software_focus.run = blocking_run
+    response = facade.handle(GuiRequest(command=GuiCommandType.SOFTWARE_FOCUS_RUN))
+
+    assert response.ok
+    assert started.wait(timeout=1)
+    assert facade.handle(GuiRequest(command=GuiCommandType.PING)).ok
+    assert facade.handle(GuiRequest(command=GuiCommandType.STOP)).ok
+    assert wait_for_operation(facade, "software_focus")["state"] == "cancelled"
+
+
+def test_stop_remains_responsive_during_long_z_stack() -> None:
+    automaton = FakeAutomaton()
+    facade = AutomatonGuiFacade(automaton)
+    started = threading.Event()
+
+    def blocking_z_stack(frame_metadata, z_coordinates, settings=None, stop_event=None):
+        del frame_metadata, z_coordinates, settings
+        started.set()
+        assert stop_event is not None
+        stop_event.wait(timeout=1)
+        return Frame(frame_metadata=[SimpleNamespace(fov_id=0)], array=np.zeros((1, 1, 1)), saved_paths=[None])
+
+    automaton.acq_mngr.take_z_stack = blocking_z_stack
+    response = facade.handle(GuiRequest(
+        command=GuiCommandType.ACQUISITION_TAKE_Z_STACK,
+        payload={"start_z": 0, "end_z": 1, "step_z": 1, "image_transport": IMAGE_TRANSPORT_RAW},
+    ))
+
+    assert response.ok
+    assert started.wait(timeout=1)
+    stop_response = facade.handle(GuiRequest(command=GuiCommandType.STOP))
+    assert stop_response.ok
+    assert wait_for_operation(facade, "z_stack_acquisition")["state"] == "cancelled"
+
+
+def test_second_stage_movement_is_rejected_until_first_stops() -> None:
+    automaton = FakeAutomaton()
+    facade = AutomatonGuiFacade(automaton)
+    started = threading.Event()
+    stopped = threading.Event()
+    calls = []
+
+    def blocking_move(target, block=True):
+        calls.append((target, block))
+        started.set()
+        stopped.wait(timeout=1)
+
+    def stop():
+        stopped.set()
+
+    automaton.focus_nav.stage.move = blocking_move
+    automaton.focus_nav.stage.stop = stop
+    first = facade.handle(GuiRequest(
+        command=GuiCommandType.STAGE_MOVE_RELATIVE,
+        payload={"dx": 1, "dy": 0, "dz": 0, "block": False},
+    ))
+
+    assert first.ok
+    assert started.wait(timeout=1)
+    second = facade.handle(GuiRequest(
+        command=GuiCommandType.STAGE_RETURN_ORIGIN,
+    ))
+    assert not second.ok
+    assert len(calls) == 1
+    assert facade.handle(GuiRequest(command=GuiCommandType.STAGE_STOP)).ok
+    assert wait_for_operation(facade, "stage_movement")["state"] == "cancelled"
+
+
+@pytest.mark.parametrize(
+    ("command", "payload"),
+    [
+        (GuiCommandType.ACQUISITION_TAKE_FRAME, {"settings": {"save": "false"}}),
+        (GuiCommandType.ACQUISITION_TAKE_FRAME, {"use_current_main_controls": "false"}),
+        (GuiCommandType.FOV_INITIALISE, {"fovs": [{"fov_id": 0, "x": 1, "y": 2, "z": 3}], "use_autofocus": "false"}),
+        (GuiCommandType.STAGE_GET_COORDINATES, {"query_hardware": "false"}),
+        (GuiCommandType.STAGE_MOVE_RELATIVE, {"dx": 1, "dy": 0, "dz": 0, "block": "false"}),
+        (GuiCommandType.AUTOFOCUS_INITIALISE, {"lock_after_initialise": "false"}),
+        (GuiCommandType.DMD_DISPLAY_PATTERN, {"pattern": "full", "warp": "false"}),
+    ],
+)
+def test_external_boolean_strings_are_rejected(command, payload) -> None:
+    response = AutomatonGuiFacade(FakeAutomaton()).handle(GuiRequest(command=command, payload=payload))
+
+    assert not response.ok
+    assert "must be bool" in (response.error or "")
+
+
+@pytest.mark.parametrize(("plane_count", "accepted"), [(9999, True), (10000, True), (10001, False)])
+def test_z_stack_plane_limit_boundary(plane_count, accepted) -> None:
+    payload = {"start_z": 0, "end_z": plane_count - 1, "step_z": 1}
+
+    if accepted:
+        assert len(gui_z_coordinates_from_payload(payload)) == plane_count
+    else:
+        with pytest.raises(ValueError, match="cannot exceed 10000 planes"):
+            gui_z_coordinates_from_payload(payload)
 
 
 def test_facade_handles_strategy_lifecycle_requests() -> None:

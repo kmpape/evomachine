@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+import threading
 
 import numpy as np
 from pydantic import field_validator
@@ -210,6 +211,7 @@ class FrameAcquisitionManager:
             frame_metadata: FrameMetaData | list[FrameMetaData],
             z_coordinates: list[Coordinate],
             settings: FrameAcquisitionSettings | None = None,
+            stop_event: threading.Event | None = None,
     ) -> Frame:
         """
         Acquire frames at a sequence of Z coordinates and restore the original Z.
@@ -224,6 +226,9 @@ class FrameAcquisitionManager:
             Optional runtime acquisition settings. When omitted, the manager's
             default settings are used. When supplied, settings replace defaults
             for this call only.
+        stop_event
+            Optional cancellation event checked at safe boundaries between stage
+            movement and frame acquisition.
 
         Returns
         -------
@@ -244,7 +249,11 @@ class FrameAcquisitionManager:
         saved_paths: list[Path | None] = []
         try:
             for z_coordinate in z_coordinates:
+                if stop_event is not None and stop_event.is_set():
+                    break
                 self.stage.move(target=z_coordinate, block=True)
+                if stop_event is not None and stop_event.is_set():
+                    break
                 stack_coordinate = previous_coordinate.copy()
                 stack_coordinate.z = z_coordinate.z
                 stack_metadata = [
@@ -256,7 +265,8 @@ class FrameAcquisitionManager:
                 frames.extend(frame.array[index] for index in range(frame.array.shape[0]))
                 saved_paths.extend(frame.saved_paths)
         finally:
-            self.stage.move(target=Coordinate(None, None, previous_coordinate.z), block=True)
+            if stop_event is None or not stop_event.is_set():
+                self.stage.move(target=Coordinate(None, None, previous_coordinate.z), block=True)
         if not frames:
             raise RuntimeError("FrameAcquisitionManager.take_z_stack: no frames were acquired.")
         return Frame(

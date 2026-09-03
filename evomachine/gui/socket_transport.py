@@ -8,7 +8,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from evomachine.gui.protocol import NO_RESPONSE_TIMEOUT_COMMANDS, GuiRequest, GuiResponse, response_from_exception
+from evomachine.gui.protocol import GuiRequest, GuiResponse, response_from_exception
 
 
 HEADER_SIZE = 4
@@ -156,10 +156,7 @@ class GuiRpcServer:
                     request = GuiRequest.from_dict(receive_packet(client_socket))
                     job = RpcJob(request=request)
                     self._jobs.put(job)
-                    response_timeout = (
-                        None if request.command in NO_RESPONSE_TIMEOUT_COMMANDS else self.response_timeout
-                    )
-                    response = job.response_queue.get(timeout=response_timeout)
+                    response = job.response_queue.get(timeout=self.response_timeout)
                     send_packet(client_socket, response.to_dict())
                 except (ConnectionError, socket.timeout):
                     break
@@ -201,8 +198,7 @@ class GuiSocketClient:
     def request_object(self, request: GuiRequest) -> GuiResponse:
         self.connect()
         assert self._socket is not None
-        response_timeout = None if request.command in NO_RESPONSE_TIMEOUT_COMMANDS else self.timeout
-        self._socket.settimeout(response_timeout)
+        self._socket.settimeout(self.timeout)
         try:
             send_packet(self._socket, request.to_dict())
             response = GuiResponse.from_dict(receive_packet(self._socket))
