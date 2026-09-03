@@ -331,7 +331,9 @@ def test_stage_panel_displays_active_limits() -> None:
         }
     )
 
-    assert "X [-10, 10]" in panel.limits_label.text()
+    assert panel.limits_label.text() == (
+        "active limits (µm):\nX [-10, 10]\nY [-20, 20]\nZ [-30, 30]"
+    )
 
 
 def test_stage_panel_sends_return_to_origin_request() -> None:
@@ -423,7 +425,9 @@ def test_z_stack_panel_sends_request() -> None:
     settings_panel.config_values["start_z"] = -1.0
     settings_panel.config_values["end_z"] = 1.0
     settings_panel.config_values["step_z"] = 0.5
-    panel = ZStackSettingsPanel(controller=controller, settings_provider=settings_panel.z_stack_payload)
+    panel = ZStackSettingsPanel(
+        controller=controller, settings_provider=settings_panel.z_stack_payload
+    )
     panel.update_lifecycle_status({"devices_initialised": True})
 
     panel.acquire_button.click()
@@ -609,9 +613,7 @@ def test_led_panel_shows_timed_state_and_muted_wavelength_indicators() -> None:
     _app()
     panel = LedManagerPanel(controller=FakeController())
 
-    panel.update_state(
-        {"led": "LED_450_NM", "brightness": 50, "is_on": True, "stop_time": 1003.0}
-    )
+    panel.update_state({"led": "LED_450_NM", "brightness": 50, "is_on": True, "stop_time": 1003.0})
 
     assert "timed illumination active" in panel.state_label.text()
     assert panel.led_buttons[LEDType.LED_450_NM].styleSheet() == ""
@@ -694,14 +696,8 @@ def test_dmd_pattern_configuration_uses_camera_dimensions() -> None:
     assert fields["rectangle_height"].maximum == 100
     assert fields["rectangle_width"].maximum == 200
     assert fields["circle_radius"].maximum == 200
-    assert (
-        panel.config_values["rectangle_row"] + panel.config_values["rectangle_height"]
-        <= 100
-    )
-    assert (
-        panel.config_values["rectangle_col"] + panel.config_values["rectangle_width"]
-        <= 200
-    )
+    assert panel.config_values["rectangle_row"] + panel.config_values["rectangle_height"] <= 100
+    assert panel.config_values["rectangle_col"] + panel.config_values["rectangle_width"] <= 200
 
 
 def test_dmd_panel_loads_previews_and_displays_custom_pattern(monkeypatch) -> None:
@@ -909,9 +905,27 @@ def test_application_log_panel_is_incremental_and_bounded() -> None:
     controller.logs_received.emit(
         {
             "records": [
-                {"sequence": 1, "timestamp": "10:00:00", "level": "INFO", "logger": "a", "message": "first"},
-                {"sequence": 2, "timestamp": "10:00:01", "level": "WARNING", "logger": "b", "message": "second"},
-                {"sequence": 3, "timestamp": "10:00:02", "level": "ERROR", "logger": "c", "message": "third"},
+                {
+                    "sequence": 1,
+                    "timestamp": "10:00:00",
+                    "level": "INFO",
+                    "logger": "a",
+                    "message": "first",
+                },
+                {
+                    "sequence": 2,
+                    "timestamp": "10:00:01",
+                    "level": "WARNING",
+                    "logger": "b",
+                    "message": "second",
+                },
+                {
+                    "sequence": 3,
+                    "timestamp": "10:00:02",
+                    "level": "ERROR",
+                    "logger": "c",
+                    "message": "third",
+                },
             ],
             "latest_sequence": 3,
         }
@@ -919,7 +933,13 @@ def test_application_log_panel_is_incremental_and_bounded() -> None:
     controller.logs_received.emit(
         {
             "records": [
-                {"sequence": 3, "timestamp": "10:00:02", "level": "ERROR", "logger": "c", "message": "third"},
+                {
+                    "sequence": 3,
+                    "timestamp": "10:00:02",
+                    "level": "ERROR",
+                    "logger": "c",
+                    "message": "third",
+                },
             ],
             "latest_sequence": 3,
         }
@@ -966,6 +986,7 @@ def test_long_operation_status_updates_controls_and_cancellation() -> None:
     )
     assert autofocus.calibration_operation_label.text() == "operation: failed — Failed."
     assert "CRISP failed" in autofocus.status_label.text()
+
 
 def test_peripheral_panels_lock_unsafe_controls_while_strategy_runs() -> None:
     _app()
@@ -1110,3 +1131,60 @@ def test_fov_setup_panel_sends_initialise_request() -> None:
             False,
         )
     ]
+
+
+def test_fov_setup_panel_generates_linear_fovs_from_stage_endpoints() -> None:
+    _app()
+    controller = FakeController()
+    panel = FovSetupPanel(controller=controller)
+
+    assert panel.set_linear_start_button.text() == "Use Current as Start"
+    assert panel.set_linear_end_button.text() == "Use Current as End"
+
+    panel.update_current_coordinate(
+        {
+            "coordinate": {"x": 0, "y": 0, "z": 0},
+            "stage": {"camera_fov_step_size": 10},
+        }
+    )
+    panel.set_linear_start_button.click()
+    panel.update_current_coordinate(
+        {
+            "coordinate": {"x": 15, "y": 7.5, "z": 3},
+            "stage": {"camera_fov_step_size": 10},
+        }
+    )
+    panel.set_linear_end_button.click()
+    panel.generate_line_button.click()
+
+    assert panel._fov_payload() == [
+        {"fov_id": 0, "x": 0.0, "y": 0.0, "z": 0.0, "channel_id": 0},
+        {"fov_id": 1, "x": 10.0, "y": 5.0, "z": 2.0, "channel_id": 0},
+        {"fov_id": 2, "x": 20.0, "y": 10.0, "z": 4.0, "channel_id": 0},
+    ]
+    assert "Generated 3 linear FoV(s)" in panel.status_label.text()
+
+
+def test_fov_setup_panel_requires_endpoints_and_camera_spacing() -> None:
+    _app()
+    panel = FovSetupPanel(controller=FakeController())
+
+    assert not panel.set_linear_start_button.isEnabled()
+    assert not panel.generate_line_button.isEnabled()
+
+    panel.update_current_coordinate({"coordinate": {"x": 1, "y": 2, "z": 3}})
+    panel.set_linear_start_button.click()
+    panel.set_linear_end_button.click()
+
+    assert panel.linear_spacing_label.text() == "spacing: unavailable"
+    assert not panel.generate_line_button.isEnabled()
+
+    panel.update_current_coordinate(
+        {
+            "coordinate": {"x": 1, "y": None, "z": 3},
+            "stage": {"camera_fov_step_size": 10},
+        }
+    )
+
+    assert panel.current_coordinate is None
+    assert not panel.set_linear_start_button.isEnabled()

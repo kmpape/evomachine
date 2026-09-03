@@ -31,6 +31,7 @@ class StagePanel(QGroupBox):
         self._latest_status: dict = {}
         self.coordinate_label = QLabel("x: -, y: -, z: -")
         self.limits_label = QLabel("active limits: -")
+        self.limits_label.setWordWrap(True)
         self.fov_step_label = QLabel("camera FoV step: -")
         self.status_label = QLabel("Run Initialise Devices before using stage controls.")
         self.devices_initialised = False
@@ -166,9 +167,9 @@ class StagePanel(QGroupBox):
         low = bounds.get("low", {})
         high = bounds.get("high", {})
         self.limits_label.setText(
-            "active limits (µm): "
-            f"X [{low.get('x')}, {high.get('x')}], "
-            f"Y [{low.get('y')}, {high.get('y')}], "
+            "active limits (µm):\n"
+            f"X [{low.get('x')}, {high.get('x')}]\n"
+            f"Y [{low.get('y')}, {high.get('y')}]\n"
             f"Z [{low.get('z')}, {high.get('z')}]"
         )
 

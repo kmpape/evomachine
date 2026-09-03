@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from math import isfinite
+
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -17,6 +19,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from evomachine.coordinates import Coordinate, CoordinateFactory
 from evomachine.gui.panels.common import muted_label
 
 
@@ -29,6 +32,9 @@ class FovSetupPanel(QGroupBox):
         super().__init__("FoV Setup", parent)
         self.controller = controller
         self.current_coordinate: dict | None = None
+        self.linear_start: dict | None = None
+        self.linear_end: dict | None = None
+        self.camera_fov_step_size: float | None = None
         self.fov_id_input = QSpinBox()
         self.fov_id_input.setRange(0, 9999)
         self.x_input = self._axis_input()
@@ -53,6 +59,23 @@ class FovSetupPanel(QGroupBox):
         self.clear_button = QPushButton("Clear")
         self.initialise_button = QPushButton("Initialise")
         self.initialise_button.setToolTip("Initialise the configured fields of view.")
+        self.linear_start_label = QLabel("start: -")
+        self.linear_start_label.setWordWrap(True)
+        self.linear_end_label = QLabel("end: -")
+        self.linear_end_label.setWordWrap(True)
+        self.linear_spacing_label = QLabel("spacing: -")
+        self.set_linear_start_button = QPushButton("Use Current as Start")
+        self.set_linear_start_button.setToolTip(
+            "Use the current stage coordinates as the start of a linear FoV path."
+        )
+        self.set_linear_end_button = QPushButton("Use Current as End")
+        self.set_linear_end_button.setToolTip(
+            "Use the current stage coordinates as the end of a linear FoV path."
+        )
+        self.generate_line_button = QPushButton("Generate Line")
+        self.generate_line_button.setToolTip(
+            "Append a straight, non-overlapping line of camera-sized FoVs to the table."
+        )
         self.table = QTableWidget(0, len(self.COLUMNS))
         self.table.setHorizontalHeaderLabels(self.COLUMNS)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -73,11 +96,24 @@ class FovSetupPanel(QGroupBox):
         buttons.addWidget(self.clear_button, 2, 0)
         buttons.addWidget(self.initialise_button, 2, 1)
 
+        linear_group = QGroupBox("Linear FoVs")
+        linear_layout = QVBoxLayout()
+        linear_layout.addWidget(self.linear_start_label)
+        linear_layout.addWidget(self.linear_end_label)
+        linear_layout.addWidget(self.linear_spacing_label)
+        linear_buttons = QGridLayout()
+        linear_buttons.addWidget(self.set_linear_start_button, 0, 0)
+        linear_buttons.addWidget(self.set_linear_end_button, 1, 0)
+        linear_buttons.addWidget(self.generate_line_button, 2, 0)
+        linear_layout.addLayout(linear_buttons)
+        linear_group.setLayout(linear_layout)
+
         layout = QVBoxLayout()
         layout.addWidget(self.current_label)
         layout.addLayout(form)
         layout.addWidget(self.use_autofocus_checkbox)
         layout.addLayout(buttons)
+        layout.addWidget(linear_group)
         layout.addWidget(self.table)
         layout.addWidget(self.status_label)
         layout.addWidget(muted_label("FoVs are stage positions visited by strategies."))
@@ -89,8 +125,16 @@ class FovSetupPanel(QGroupBox):
         self.remove_button.clicked.connect(self._remove_selected_fov)
         self.clear_button.clicked.connect(self._clear_fovs)
         self.initialise_button.clicked.connect(self._initialise_fovs)
+        self.set_linear_start_button.clicked.connect(
+            lambda _checked=False: self._set_linear_endpoint("start")
+        )
+        self.set_linear_end_button.clicked.connect(
+            lambda _checked=False: self._set_linear_endpoint("end")
+        )
+        self.generate_line_button.clicked.connect(self._generate_linear_fovs)
         self.table.itemSelectionChanged.connect(self._load_selected_fov)
         self.controller.stage_coordinates_received.connect(self.update_current_coordinate)
+        self.controller.stage_status_received.connect(self.update_stage_status)
         self.controller.fovs_received.connect(self.update_initialised_fovs)
         self.controller.response_error.connect(self._show_error)
         self._sync_buttons()
@@ -104,11 +148,31 @@ class FovSetupPanel(QGroupBox):
         return box
 
     def update_current_coordinate(self, payload: dict) -> None:
-        coordinate = payload.get("coordinate", {})
-        self.current_coordinate = coordinate
-        self.current_label.setText(
-            f"current stage: x={coordinate.get('x')}, y={coordinate.get('y')}, z={coordinate.get('z')}"
-        )
+        self.current_coordinate = self._validated_coordinate_payload(payload.get("coordinate"))
+        if self.current_coordinate is None:
+            self.current_label.setText("current stage: unavailable")
+        else:
+            self.current_label.setText(
+                f"current stage: {self._format_coordinate(self.current_coordinate)}"
+            )
+        self.update_stage_status(payload.get("stage", {}))
+        self._sync_buttons()
+
+    def update_stage_status(self, payload: dict) -> None:
+        value = payload.get("camera_fov_step_size")
+        if (
+            isinstance(value, int | float)
+            and not isinstance(value, bool)
+            and isfinite(value)
+            and value > 0
+        ):
+            self.camera_fov_step_size = float(value)
+            self.linear_spacing_label.setText(
+                f"spacing: {self._format_float(self.camera_fov_step_size)} µm"
+            )
+        else:
+            self.camera_fov_step_size = None
+            self.linear_spacing_label.setText("spacing: unavailable")
         self._sync_buttons()
 
     def update_initialised_fovs(self, fovs: list[dict]) -> None:
@@ -118,9 +182,9 @@ class FovSetupPanel(QGroupBox):
         if self.current_coordinate is None:
             self.status_label.setText("Refresh the stage before using current coordinates.")
             return
-        self.x_input.setValue(float(self.current_coordinate.get("x") or 0.0))
-        self.y_input.setValue(float(self.current_coordinate.get("y") or 0.0))
-        self.z_input.setValue(float(self.current_coordinate.get("z") or 0.0))
+        self.x_input.setValue(self.current_coordinate["x"])
+        self.y_input.setValue(self.current_coordinate["y"])
+        self.z_input.setValue(self.current_coordinate["z"])
 
     def _add_or_update_fov(self) -> None:
         fov = {
@@ -139,6 +203,57 @@ class FovSetupPanel(QGroupBox):
         self.status_label.setText(f"{self.table.rowCount()} FoV(s) staged for initialisation.")
         self._sync_buttons()
 
+    def _set_linear_endpoint(self, endpoint: str) -> None:
+        if self.current_coordinate is None:
+            self.status_label.setText("Refresh the stage before setting a linear path endpoint.")
+            return
+        coordinate = dict(self.current_coordinate)
+        if endpoint == "start":
+            self.linear_start = coordinate
+            self.linear_start_label.setText(f"start: {self._format_coordinate(coordinate)}")
+        elif endpoint == "end":
+            self.linear_end = coordinate
+            self.linear_end_label.setText(f"end: {self._format_coordinate(coordinate)}")
+        else:
+            raise ValueError(f"Unknown linear FoV endpoint {endpoint!r}.")
+        self._sync_buttons()
+
+    def _generate_linear_fovs(self) -> None:
+        if self.linear_start is None or self.linear_end is None:
+            self.status_label.setText("Set both linear FoV endpoints before generating a line.")
+            return
+        if self.camera_fov_step_size is None:
+            self.status_label.setText("Camera FoV spacing is unavailable; refresh the stage.")
+            return
+
+        factory = CoordinateFactory(dfov=self.camera_fov_step_size)
+        coordinates = factory.make_grid(
+            start=self._coordinate_from_payload(self.linear_start),
+            stop=self._coordinate_from_payload(self.linear_end),
+        )
+        first_id = self._next_fov_id()
+        if first_id + len(coordinates) - 1 > self.fov_id_input.maximum():
+            self.status_label.setText("The generated line would exceed the maximum FoV ID.")
+            return
+        for offset, coordinate in enumerate(coordinates):
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self._set_row(
+                row=row,
+                fov={
+                    "fov_id": first_id + offset,
+                    "x": coordinate.x,
+                    "y": coordinate.y,
+                    "z": coordinate.z,
+                },
+            )
+        self.fov_id_input.setValue(self._next_fov_id())
+        self.status_label.setText(
+            f"Generated {len(coordinates)} linear FoV(s); "
+            f"{self.table.rowCount()} FoV(s) staged for initialisation."
+        )
+        self._sync_buttons()
+
     def _remove_selected_fov(self) -> None:
         row = self._selected_row()
         if row is None:
@@ -150,6 +265,10 @@ class FovSetupPanel(QGroupBox):
     def _clear_fovs(self) -> None:
         self.table.setRowCount(0)
         self.fov_id_input.setValue(0)
+        self.linear_start = None
+        self.linear_end = None
+        self.linear_start_label.setText("start: -")
+        self.linear_end_label.setText("end: -")
         self.status_label.setText("Add at least one FoV before initialising.")
         self._sync_buttons()
 
@@ -177,13 +296,15 @@ class FovSetupPanel(QGroupBox):
     def _fov_payload(self) -> list[dict]:
         fovs = []
         for row in range(self.table.rowCount()):
-            fovs.append({
-                "fov_id": int(float(self.table.item(row, 0).text())),
-                "x": float(self.table.item(row, 1).text()),
-                "y": float(self.table.item(row, 2).text()),
-                "z": float(self.table.item(row, 3).text()),
-                "channel_id": 0,
-            })
+            fovs.append(
+                {
+                    "fov_id": int(float(self.table.item(row, 0).text())),
+                    "x": float(self.table.item(row, 1).text()),
+                    "y": float(self.table.item(row, 2).text()),
+                    "z": float(self.table.item(row, 3).text()),
+                    "channel_id": 0,
+                }
+            )
         return fovs
 
     def _set_row(self, row: int, fov: dict) -> None:
@@ -225,6 +346,13 @@ class FovSetupPanel(QGroupBox):
     def _sync_buttons(self) -> None:
         has_rows = self.table.rowCount() > 0
         self.use_current_button.setEnabled(self.current_coordinate is not None)
+        self.set_linear_start_button.setEnabled(self.current_coordinate is not None)
+        self.set_linear_end_button.setEnabled(self.current_coordinate is not None)
+        self.generate_line_button.setEnabled(
+            self.linear_start is not None
+            and self.linear_end is not None
+            and self.camera_fov_step_size is not None
+        )
         self.remove_button.setEnabled(self._selected_row() is not None)
         self.clear_button.setEnabled(has_rows)
         self.initialise_button.setEnabled(has_rows)
@@ -235,6 +363,32 @@ class FovSetupPanel(QGroupBox):
     @staticmethod
     def _format_float(value: float) -> str:
         return f"{float(value):.3f}"
+
+    @classmethod
+    def _format_coordinate(cls, coordinate: dict) -> str:
+        return ", ".join(
+            f"{axis}={cls._format_float(coordinate[axis])}" for axis in ("x", "y", "z")
+        )
+
+    @staticmethod
+    def _coordinate_from_payload(coordinate: dict) -> Coordinate:
+        return Coordinate(
+            x=float(coordinate["x"]),
+            y=float(coordinate["y"]),
+            z=float(coordinate["z"]),
+        )
+
+    @staticmethod
+    def _validated_coordinate_payload(coordinate: object) -> dict[str, float] | None:
+        if not isinstance(coordinate, dict):
+            return None
+        values = {axis: coordinate.get(axis) for axis in ("x", "y", "z")}
+        if any(
+            not isinstance(value, int | float) or isinstance(value, bool) or not isfinite(value)
+            for value in values.values()
+        ):
+            return None
+        return {axis: float(value) for axis, value in values.items()}
 
 
 class StrategySetupPanel(QGroupBox):
@@ -335,7 +489,12 @@ class StrategySetupPanel(QGroupBox):
         running = bool(strategy_status.get("running"))
         started = bool(strategy_status.get("started"))
         stopped = bool(strategy_status.get("stopped"))
-        can_start = bool(strategy_status.get("is_initialised")) and not started and not stopped and not running
+        can_start = (
+            bool(strategy_status.get("is_initialised"))
+            and not started
+            and not stopped
+            and not running
+        )
         self.set_button.setEnabled(self._selected_strategy() is not None and not started)
         self.start_button.setEnabled(can_start)
         self.stop_button.setEnabled(running)
