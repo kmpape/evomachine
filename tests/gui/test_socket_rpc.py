@@ -91,23 +91,36 @@ def test_z_stack_request_uses_normal_response_timeout() -> None:
 
     assert processed == [True]
 
-
 def test_background_operation_keeps_same_socket_usable_with_normal_timeout() -> None:
+    operation_started = threading.Event()
+    allow_operation_to_finish = threading.Event()
     operation_finished = threading.Event()
 
     class BackgroundHandler:
         def handle(self, request: GuiRequest) -> GuiResponse:
             if request.command == GuiCommandType.SOFTWARE_FOCUS_RUN:
-                threading.Thread(
-                    target=lambda: (time.sleep(0.05), operation_finished.set()),
-                    daemon=True,
-                ).start()
+
+                def run() -> None:
+                    operation_started.set()
+                    allow_operation_to_finish.wait(timeout=2.0)
+                    operation_finished.set()
+
+                threading.Thread(target=run, daemon=True).start()
                 payload = {"operation": {"state": "running"}}
             else:
                 payload = {"command": request.command.value}
-            return GuiResponse(request_id=request.request_id, ok=True, payload=payload)
 
-    server = GuiRpcServer(handler=BackgroundHandler(), port=0, response_timeout=0.01)
+            return GuiResponse(
+                request_id=request.request_id,
+                ok=True,
+                payload=payload,
+            )
+
+    server = GuiRpcServer(
+        handler=BackgroundHandler(),
+        port=0,
+        response_timeout=0.5,
+    )
     host, port = server.start()
     stop_processing = threading.Event()
 
@@ -118,14 +131,25 @@ def test_background_operation_keeps_same_socket_usable_with_normal_timeout() -> 
 
     thread = threading.Thread(target=process)
     thread.start()
+
     try:
-        with GuiSocketClient(host=host, port=port, timeout=0.01) as client:
+        with GuiSocketClient(host=host, port=port, timeout=0.5) as client:
             started = client.request(GuiCommandType.SOFTWARE_FOCUS_RUN)
+
+            assert operation_started.wait(timeout=1)
+            assert not operation_finished.is_set()
+
             ping = client.request(GuiCommandType.PING)
-        assert started.payload["operation"]["state"] == "running"
-        assert ping.payload == {"command": "ping"}
-        assert operation_finished.wait(timeout=1)
+
+            assert started.payload["operation"]["state"] == "running"
+            assert ping.payload == {"command": "ping"}
+            assert not operation_finished.is_set()
+
+            allow_operation_to_finish.set()
+            assert operation_finished.wait(timeout=1)
+
     finally:
+        allow_operation_to_finish.set()
         stop_processing.set()
         thread.join(timeout=1)
         server.stop()
