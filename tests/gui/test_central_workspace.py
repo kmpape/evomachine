@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
 from evomachine.config import DMD_WIDTH_HEIGHT
 from evomachine.gui.central_workspace import (
     DMD_DISPLAY_SHAPE,
+    CENTRAL_VIEW_ZOOM,
     DMD_RECT,
     HISTOGRAM_BINS,
     MAIN_RECT,
     SPECTRUM_RECT,
     WORKSPACE_SHAPE,
     dmd_array_to_display,
+    fit_central_viewer,
     make_brightness_histogram,
     make_dmd_placeholder,
     make_visual_workspace_stack,
@@ -68,6 +71,24 @@ def test_visual_workspace_is_one_rgb_dashboard_image() -> None:
 
     assert workspace.shape == (*WORKSPACE_SHAPE, 3)
     assert workspace.dtype == np.uint8
+
+
+def test_central_viewer_fit_reduces_default_outer_margin() -> None:
+    viewer = SimpleNamespace(
+        camera=SimpleNamespace(zoom=1.0),
+        reset_count=0,
+    )
+
+    def reset_view():
+        viewer.reset_count += 1
+        viewer.camera.zoom = 2.0
+
+    viewer.reset_view = reset_view
+
+    fit_central_viewer(viewer)
+
+    assert viewer.reset_count == 1
+    assert viewer.camera.zoom == 2.0 * CENTRAL_VIEW_ZOOM
 
 
 def test_visual_workspace_magnifies_small_camera_image_to_dmd_width() -> None:

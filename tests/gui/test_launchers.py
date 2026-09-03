@@ -8,6 +8,7 @@ import pytest
 from evomachine.bindings.binding_types import BindingType
 from evomachine.gui import launchers
 from evomachine.gui import napari_app
+from evomachine.gui.central_workspace import CENTRAL_VIEW_ZOOM
 from evomachine.gui.image_payloads import IMAGE_TRANSPORT_ENV, IMAGE_TRANSPORT_SOCKET_TIFF
 
 
@@ -89,9 +90,14 @@ def test_napari_app_adapts_two_column_controls_to_window_width(
     controls_dock = object()
     viewer = SimpleNamespace(
         reset_count=0,
+        camera=SimpleNamespace(zoom=1.0),
         window=SimpleNamespace(_qt_window=qt_window),
     )
-    viewer.reset_view = lambda: setattr(viewer, "reset_count", viewer.reset_count + 1)
+    def reset_view():
+        viewer.reset_count += 1
+        viewer.camera.zoom = 2.0
+
+    viewer.reset_view = reset_view
 
     napari_app._resize_controls_dock(
         viewer,
@@ -102,6 +108,7 @@ def test_napari_app_adapts_two_column_controls_to_window_width(
     assert docks == [controls_dock]
     assert sizes == [expected_width]
     assert viewer.reset_count == 1
+    assert viewer.camera.zoom == 2.0 * CENTRAL_VIEW_ZOOM
 
 
 def test_napari_app_hides_layer_list_and_tabifies_status_with_layer_controls() -> None:

@@ -4,6 +4,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from evomachine.gui.central_workspace import fit_central_viewer
+
 REFERENCE_WINDOW_WIDTH = 1280
 REFERENCE_WINDOW_HEIGHT = 800
 REFERENCE_CONTROLS_DOCK_WIDTH = 610
@@ -166,7 +168,7 @@ def _widget_extent(widget, name: str, fallback: int) -> int:
 def _reset_view(viewer) -> None:
     reset_view = getattr(viewer, "reset_view", None)
     if callable(reset_view):
-        reset_view()
+        fit_central_viewer(viewer)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
