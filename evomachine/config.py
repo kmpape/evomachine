@@ -5,6 +5,8 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from evomachine.gui.log_buffer import GuiLogBufferHandler
+
 # Path to large data storage to store logs and files
 EVOMACHINE_DIR: Path = Path(__file__).resolve().parents[1]
 DATA_DIR = EVOMACHINE_DIR / "images"
@@ -368,6 +370,8 @@ file_handler.setLevel(
         DEFAULT_LOGGING_CONFIG.binding_level,
     )
 )
+gui_log_handler = GuiLogBufferHandler(capacity=200, level=logging.INFO)
+gui_log_handler.setFormatter(EVO_FORMATTER)
 
 
 def get_logger(
@@ -421,6 +425,7 @@ def get_logger(
         time_config=logging_config.time_config,
     )
     file_handler.setFormatter(formatter)
+    gui_log_handler.setFormatter(formatter)
     file_handler.setLevel(
         min(
             logging_config.level,
@@ -433,6 +438,7 @@ def get_logger(
     stream_handler.setFormatter(formatter)
     logger.addHandler(stream_handler)
     logger.addHandler(file_handler)
+    logger.addHandler(gui_log_handler)
 
     logger.propagate = False
     return logger

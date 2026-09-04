@@ -187,6 +187,7 @@ def test_get_logger_uses_binding_level() -> None:
 
     assert logger.level == logging.DEBUG
     assert config_module.file_handler.level == logging.DEBUG
+    assert config_module.gui_log_handler in logger.handlers
 
 
 def test_configure_binding_loggers_configures_external_packages() -> None:
@@ -355,6 +356,19 @@ def test_file_manager_creates_directory_and_updates_config(tmp_path) -> None:
     assert manager.config.filename_pattern == "{frame_id}"
     with pytest.raises(FileNotFoundError):
         FileManager(FileNameConfig(directory=tmp_path / "missing", create_directory=False))
+
+
+def test_file_manager_selects_an_existing_local_output_directory(tmp_path) -> None:
+    initial = tmp_path / "initial"
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    manager = FileManager(FileNameConfig(directory=initial))
+
+    assert manager.set_output_directory(selected) == selected
+    assert manager.config.directory == selected
+
+    with pytest.raises(FileNotFoundError):
+        manager.set_output_directory(tmp_path / "missing")
 
 
 def test_frame_metadata_fields_and_factory_counter() -> None:

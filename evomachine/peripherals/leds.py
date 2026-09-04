@@ -6,6 +6,8 @@ import threading
 import time
 from typing import Any
 
+from pydantic import field_validator
+
 from evomachine.bindings.binding_types import BindingType
 from evomachine.config import get_logger
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
@@ -25,14 +27,20 @@ class LedState:
     stop_time: float | None = None
 
 
-@dataclass(kw_only=True)
 class LedConfig(PeripheralConfig):
     """Configuration object used by LedFactory to create LED sources."""
 
     available_leds: list[LEDType]
     led_to_internal: dict[LEDType, Any] | None = None
 
-    def __post_init__(self) -> None:
+    @field_validator("available_leds", mode="before")
+    @classmethod
+    def _validate_available_leds_type(cls, value: object) -> object:
+        if not isinstance(value, list):
+            raise TypeError(f"LedConfig: available_leds must be list, received {type(value)}.")
+        return value
+
+    def model_post_init(self, __context) -> None:
         """
         Validate LED source configuration after dataclass construction.
 
@@ -46,7 +54,7 @@ class LedConfig(PeripheralConfig):
             The dataclass fields are validated in place. available_leds is
             normalised to a copied list.
         """
-        super().__post_init__()
+        super().model_post_init(__context)
         self.available_leds = LedSource.validate_available_leds(self.available_leds)
         if self.led_to_internal is not None:
             if not isinstance(self.led_to_internal, dict):
@@ -254,10 +262,12 @@ class LedSource(Peripheral):
         None
         """
         logger.debug("LedSource.finalise: finalising %s with force=%s.", self.name, force)
-        self._cancel_all_timers()
-        if self._is_initialised or not self.check_initialised:
-            self.disable_led()
-        self._is_initialised = False
+        try:
+            self._cancel_all_timers()
+            if self._is_initialised or not self.check_initialised:
+                self.disable_led()
+        finally:
+            self._is_initialised = False
 
     def get_available_leds(self) -> list[LEDType]:
         """
@@ -304,6 +314,7 @@ class LedSource(Peripheral):
         if led_type not in self.available_leds:
             raise ValueError(f"LedSource.set_led: {led_type} is not available for {self.name}.")
         brightness = self._validate_brightness(brightness=brightness)
+        duration = self._normalise_duration(led_type=led_type, brightness=brightness, duration=duration)
         if duration is not None and duration < 0:
             raise ValueError(f"LedSource: duration must be non-negative, received {duration}.")
 
@@ -360,6 +371,7 @@ class LedSource(Peripheral):
         """
         if led_type not in self.available_leds:
             raise ValueError(f"LedSource.get_led_state: {led_type} is not available for {self.name}.")
+        self._expire_timed_state_if_needed(led_type=led_type)
         state = self._states[led_type]
         return LedState(
             led_type=state.led_type,
@@ -425,6 +437,25 @@ class LedSource(Peripheral):
         if not 0 <= brightness <= 100:
             raise ValueError(f"LedSource: brightness must be in [0, 100], received {brightness}.")
         return brightness
+
+    def _normalise_duration(
+            self,
+            led_type: LEDType,
+            brightness: BrightnessType,
+            duration: float | None,
+    ) -> float | None:
+        """
+        Return the effective duration for one LED set command.
+
+        Bindings can override this when hardware implicitly changes continuous
+        illumination into timed illumination.
+        """
+        return duration
+
+    def _expire_timed_state_if_needed(self, led_type: LEDType) -> None:
+        state = self._states[led_type]
+        if state.stop_time is not None and time.time() >= state.stop_time:
+            self._states[led_type] = LedState(led_type=led_type)
 
     def _update_state(
             self,
@@ -677,8 +708,15 @@ class LedManager(Peripheral):
         None
         """
         logger.debug("LedManager.finalise: finalising %s with force=%s.", self.name, force)
+        errors: list[str] = []
         for source in self.led_sources:
-            source.finalise(force=force)
+            try:
+                source.finalise(force=force)
+            except Exception as error:
+                logger.exception("LedManager.finalise: failed to finalise %s.", source.name)
+                errors.append(f"{source.name}: {type(error).__name__}: {error}")
+        if errors:
+            raise RuntimeError("LED finalisation completed with errors: " + "; ".join(errors))
 
     def get_available_leds(self) -> list[LEDType]:
         """
@@ -748,8 +786,17 @@ class LedManager(Peripheral):
         """
         if led_type is None or led_type == LEDType.NO_LED:
             logger.debug("LedManager.disable_led: disabling all LEDs for %s.", self.name)
+            errors: list[str] = []
             for source in self.led_sources:
-                source.disable_led()
+                if source.check_initialised and not source.is_initialised():
+                    continue
+                try:
+                    source.disable_led()
+                except Exception as error:
+                    logger.exception("LedManager.disable_led: failed to disable %s.", source.name)
+                    errors.append(f"{source.name}: {type(error).__name__}: {error}")
+            if errors:
+                raise RuntimeError("LED disable completed with errors: " + "; ".join(errors))
             return
         logger.debug("LedManager.disable_led: disabling %s through %s.", led_type, self.name)
         self._get_source(led_type=led_type).disable_led(led_type=led_type)

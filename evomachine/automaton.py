@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable
 import copy
 from multiprocessing import Event
 from pathlib import Path
@@ -979,6 +980,7 @@ class Automaton:
             self,
             cfg: DmdCalibrationConfig,
             filename: str | Path | None = None,
+            progress_callback: Callable[[float, str], None] | None = None,
     ) -> None:
         """
         Calibrate DMD projection through ProjectionManager.
@@ -998,7 +1000,11 @@ class Automaton:
         """
         if self.proj_mngr is None:
             raise RuntimeError("Automaton.dmd_calibrate: proj_mngr is required.")
-        self.proj_mngr.dmd_calibrate(cfg=cfg, filename=filename)
+        self.proj_mngr.dmd_calibrate(
+            cfg=cfg,
+            filename=filename,
+            progress_callback=progress_callback,
+        )
 
     def sleep(
             self,
@@ -1065,11 +1071,21 @@ class Automaton:
         -------
         None
         """
-        self.acq_mngr.stop()
+        actions = [("acquisition manager", self.acq_mngr.stop)]
         if self._swfocus is not None and callable(getattr(self._swfocus, "stop", None)):
-            self._swfocus.stop()
+            actions.append(("software focus", self._swfocus.stop))
         if self._autofocus is not None and callable(getattr(self._autofocus, "unlock", None)):
-            self._autofocus.unlock()
+            actions.append(("autofocus", self._autofocus.unlock))
+
+        errors: list[str] = []
+        for name, action in actions:
+            try:
+                action()
+            except Exception as error:
+                logger.exception("Automaton.act_on_halt: failed to halt %s.", name)
+                errors.append(f"{name}: {type(error).__name__}: {error}")
+        if errors:
+            raise RuntimeError("Automaton halt completed with errors: " + "; ".join(errors))
 
     def shutdown(self) -> None:
         """
@@ -1083,15 +1099,29 @@ class Automaton:
         -------
         None
         """
-        self.act_on_halt()
-        for device in reversed(self._iter_peripherals()):
-            finalise = getattr(device, "finalise", None)
-            if callable(finalise):
-                finalise()
-        self._stop_strategy_event.set()
-        self._start_strategy_event.set()
-        self._stop_event.set()
-        self._shutdown_event.set()
+        errors: list[str] = []
+        try:
+            try:
+                self.act_on_halt()
+            except Exception as error:
+                errors.append(f"halt: {type(error).__name__}: {error}")
+            for device in reversed(self._iter_peripherals()):
+                finalise = getattr(device, "finalise", None)
+                if not callable(finalise):
+                    continue
+                device_name = getattr(device, "name", type(device).__name__)
+                try:
+                    finalise()
+                except Exception as error:
+                    logger.exception("Automaton.shutdown: failed to finalise %s.", device_name)
+                    errors.append(f"{device_name}: {type(error).__name__}: {error}")
+        finally:
+            self._stop_strategy_event.set()
+            self._start_strategy_event.set()
+            self._stop_event.set()
+            self._shutdown_event.set()
+        if errors:
+            raise RuntimeError("Automaton shutdown completed with errors: " + "; ".join(errors))
 
     def start_strategy(self) -> None:
         """
@@ -1158,7 +1188,7 @@ class Automaton:
 
     def stop(self) -> None:
         """
-        Set the stop event.
+        Set the stop event and immediately halt active peripherals.
 
         Parameters
         ----------
@@ -1169,6 +1199,8 @@ class Automaton:
         None
         """
         self._stop_event.set()
+        if self.devices_is_initialised():
+            self.act_on_halt()
 
     def stopped(self) -> bool:
         """

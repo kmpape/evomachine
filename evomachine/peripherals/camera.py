@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
 import numpy as np
+from pydantic import field_validator
 
 from evomachine.bindings.binding_types import BindingType
+from evomachine.config_models import EvoConfig
 from evomachine.config import get_logger
 from evomachine.exceptions import ConfigError, ErrorCode
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
@@ -16,32 +17,30 @@ from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
 logger = get_logger(name=__name__, is_peripheral=True)
 
 
-@dataclass
-class ImageConfigType:
+class ImageConfigType(EvoConfig):
     pxl_horiz: int
     pxl_vert: int
-    pxl_dtype: np.dtype
+    pxl_dtype: Any
 
     @property
     def shape(self) -> tuple[int, int]:
         return self.pxl_vert, self.pxl_horiz
 
-    def __post_init__(self) -> None:
+    @field_validator("pxl_dtype", mode="before")
+    @classmethod
+    def _normalise_dtype(cls, value: object) -> np.dtype:
+        try:
+            return np.dtype(value)
+        except (TypeError, ValueError) as exc:
+            raise ConfigError(error_code=ErrorCode.ERROR_IMAGE_CONFIG, message=f"Invalid pxl_dtype: {value}") from exc
+
+    def model_post_init(self, __context) -> None:
         if not isinstance(self.pxl_horiz, int) or not self.pxl_horiz > 0:
             raise ConfigError(error_code=ErrorCode.ERROR_IMAGE_CONFIG, message=f"Invalid pxl_horiz: {self.pxl_horiz}")
         if not isinstance(self.pxl_vert, int) or not self.pxl_vert > 0:
             raise ConfigError(error_code=ErrorCode.ERROR_IMAGE_CONFIG, message=f"Invalid pxl_vert: {self.pxl_vert}")
         if not isinstance(self.pxl_dtype, np.dtype):
             raise ConfigError(error_code=ErrorCode.ERROR_IMAGE_CONFIG, message=f"Invalid pxl_dtype: {self.pxl_dtype}")
-
-    def copy(self) -> "ImageConfigType":
-        return ImageConfigType(**self.__dict__)
-
-    def __str__(self) -> str:
-        lines = ["ImageConfigType"]
-        for index, (key, value) in enumerate(self.__dict__.items()):
-            lines.append(f"{' └─ ' if index == len(self.__dict__) - 1 else ' ├─ '}{key}: {value}")
-        return "\n".join(lines)
 
 
 class ImageConfigTypeFactory:
@@ -54,26 +53,30 @@ class ImageConfigTypeFactory:
         return ImageConfigType(pxl_horiz=696, pxl_vert=520, pxl_dtype=np.dtype("float32"))
 
 
-@dataclass
-class ObjectiveConfigType:
+class ObjectiveConfigType(EvoConfig):
     na: float
     mag: int
     descr: str | None = "UNKNOWN OBJECTIVE"
 
-    def __post_init__(self) -> None:
+    @field_validator("na", mode="before")
+    @classmethod
+    def _validate_na_type(cls, value: object) -> object:
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            raise ConfigError(error_code=ErrorCode.ERROR, message=f"Invalid numerical_aperture: {value}")
+        return value
+
+    @field_validator("mag", mode="before")
+    @classmethod
+    def _validate_mag_type(cls, value: object) -> object:
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ConfigError(error_code=ErrorCode.ERROR, message=f"Invalid magnification: {value}")
+        return value
+
+    def model_post_init(self, __context) -> None:
         if not isinstance(self.na, float) or not 0 < self.na:
             raise ConfigError(error_code=ErrorCode.ERROR, message=f"Invalid numerical_aperture: {self.na}")
         if not isinstance(self.mag, int) or not self.mag > 0:
             raise ConfigError(error_code=ErrorCode.ERROR, message=f"Invalid magnification: {self.mag}")
-
-    def copy(self) -> "ObjectiveConfigType":
-        return ObjectiveConfigType(**self.__dict__)
-
-    def __str__(self) -> str:
-        lines = ["ObjectiveConfigType"]
-        for index, (key, value) in enumerate(self.__dict__.items()):
-            lines.append(f"{' └─ ' if index == len(self.__dict__) - 1 else ' ├─ '}{key}: {value}")
-        return "\n".join(lines)
 
 
 class ObjectiveConfigTypeFactory:
@@ -120,7 +123,6 @@ class CameraReadoutMode(str, Enum):
     SUB_ELECTRON = "Sub-Electron"
 
 
-@dataclass(kw_only=True)
 class CameraConfig(PeripheralConfig):
     """Configuration object used by CameraFactory to create camera devices."""
 
@@ -128,9 +130,40 @@ class CameraConfig(PeripheralConfig):
     default_exposure_time: float | int = 200
     sensor_pixel_size_um: float = 6.5
     readout_mode: CameraReadoutMode | None = None
+    objective_config: ObjectiveConfigType | None = None
 
-    def __post_init__(self) -> None:
-        super().__post_init__()
+    @field_validator("default_exposure_time", "sensor_pixel_size_um", mode="before")
+    @classmethod
+    def _validate_numeric_field(cls, value: object, info) -> object:
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            raise TypeError(f"CameraConfig: {info.field_name} must be numeric, received {type(value)}.")
+        return value
+
+    @field_validator("image", mode="before")
+    @classmethod
+    def _validate_image_type(cls, value: object) -> object:
+        if not isinstance(value, ImageConfigType | dict):
+            raise TypeError(f"CameraConfig: image must be ImageConfigType, received {type(value)}.")
+        return value
+
+    @field_validator("objective_config", mode="before")
+    @classmethod
+    def _validate_objective_config_type(cls, value: object) -> object:
+        if value is not None and not isinstance(value, ObjectiveConfigType | dict):
+            raise TypeError(
+                f"CameraConfig: objective_config must be ObjectiveConfigType or None, received {type(value)}."
+            )
+        return value
+
+    @field_validator("readout_mode", mode="before")
+    @classmethod
+    def _validate_readout_mode_type(cls, value: object) -> object:
+        if value is not None and not isinstance(value, CameraReadoutMode | str):
+            raise TypeError(f"CameraConfig: readout_mode must be CameraReadoutMode or None, received {type(value)}.")
+        return value
+
+    def model_post_init(self, __context) -> None:
+        super().model_post_init(__context)
         if not isinstance(self.image, ImageConfigType):
             raise TypeError(f"CameraConfig: image must be ImageConfigType, received {type(self.image)}.")
         if not isinstance(self.default_exposure_time, int | float) or isinstance(self.default_exposure_time, bool):
@@ -154,6 +187,11 @@ class CameraConfig(PeripheralConfig):
             raise TypeError(
                 f"CameraConfig: readout_mode must be CameraReadoutMode or None, "
                 f"received {type(self.readout_mode)}."
+            )
+        if self.objective_config is not None and not isinstance(self.objective_config, ObjectiveConfigType):
+            raise TypeError(
+                f"CameraConfig: objective_config must be ObjectiveConfigType or None, "
+                f"received {type(self.objective_config)}."
             )
 
 
@@ -429,6 +467,25 @@ class Camera(Peripheral):
             Cached exposure time in milliseconds, or None before it is set.
         """
         return self._current_exposure
+
+    def fov_size(self) -> float:
+        """
+        Return the vertical camera field-of-view size in micrometres.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        float
+            Vertical field-of-view size in micrometres.
+        """
+        if self.config is None:
+            raise RuntimeError("Camera.fov_size: camera config is not available.")
+        if self.config.objective_config is None:
+            raise RuntimeError("Camera.fov_size: objective config is not available.")
+        return calculate_fov_size(camera_config=self.config, objective_config=self.config.objective_config)
 
     def set_readout_mode(self, readout_mode: CameraReadoutMode) -> None:
         """

@@ -332,9 +332,16 @@ class FakeProjectionManager(ProjectionManager):
         self.photodiode = photodiode
         self.calls: list[tuple[DmdCalibrationConfig, str | Path | None]] = []
 
-    def dmd_calibrate(self, cfg: DmdCalibrationConfig, filename: str | Path | None = None):
+    def dmd_calibrate(
+            self,
+            cfg: DmdCalibrationConfig,
+            filename: str | Path | None = None,
+            progress_callback=None,
+    ):
         """Record one calibration request."""
         self.calls.append((cfg, filename))
+        if progress_callback is not None:
+            progress_callback(1.0, "complete")
         return None
 
 
@@ -710,7 +717,7 @@ def test_automaton_dmd_free_basic_strategy_initialises_and_starts() -> None:
     automaton = Automaton(
         acq_mngr=FakeAcquisitionManager(camera=camera, led_manager=led_manager, stage=stage, dmd=None),
         focus_nav=FakeFocusNavigator(stage=stage),
-        strategy=BasicStrategy(cfg=cfg, save_path="."),
+        strategy=BasicStrategy(cfg=cfg),
         cfg_processor=cfg,
         start_strategy_event=Event(),
         stop_strategy_event=Event(),
@@ -1455,6 +1462,15 @@ def test_automaton_act_on_halt_uses_manager_paths() -> None:
     assert autofocus.unlock_count == 1
 
 
+def test_automaton_stop_sets_event_and_halts_initialised_devices() -> None:
+    automaton, acquisition_manager, *_deps = make_automaton()
+
+    automaton.stop()
+
+    assert automaton.stopped()
+    assert acquisition_manager.stop_count == 1
+
+
 def test_automaton_shutdown_stops_and_finalises_peripherals() -> None:
     """
     Check shutdown uses current peripheral stop/finalise APIs.
@@ -1476,6 +1492,30 @@ def test_automaton_shutdown_stops_and_finalises_peripherals() -> None:
     assert focus_navigator.stage.finalise_count == 1
     assert led_manager.finalise_count == 1
     assert dmd.finalise_count == 1
+    assert projection_manager.photodiode.finalise_count == 1
+    assert automaton.has_shutdown()
+
+
+def test_automaton_shutdown_attempts_all_cleanup_after_partial_failures(monkeypatch) -> None:
+    automaton, acquisition_manager, focus_navigator, projection_manager, led_manager, dmd = make_automaton()
+
+    def fail_stop():
+        raise RuntimeError("stop failed")
+
+    def fail_dmd_finalise(force=False):
+        dmd.finalise_count += 1
+        raise RuntimeError("DMD finalise failed")
+
+    monkeypatch.setattr(acquisition_manager, "stop", fail_stop)
+    monkeypatch.setattr(dmd, "finalise", fail_dmd_finalise)
+
+    with pytest.raises(RuntimeError, match="stop failed.*DMD finalise failed"):
+        automaton.shutdown()
+
+    assert dmd.finalise_count == 1
+    assert acquisition_manager.camera.finalise_count == 1
+    assert focus_navigator.stage.finalise_count == 1
+    assert led_manager.finalise_count == 1
     assert projection_manager.photodiode.finalise_count == 1
     assert automaton.has_shutdown()
 

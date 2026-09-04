@@ -271,7 +271,7 @@ class FakeAutofocus(Autofocus):
         """
         return True
 
-    def _configure(self, config=None) -> bool:
+    def _apply_config(self, config=None) -> bool:
         """
         Record a fake configure command.
 
@@ -288,7 +288,13 @@ class FakeAutofocus(Autofocus):
         self.history.append("configure")
         return True
 
-    def _initialise_autofocus(self, config=None, lock_after_initialise: bool = False) -> bool:
+    def _run_calibration(
+            self,
+            config=None,
+            lock_after_calibration: bool = False,
+            stop_event=None,
+            progress_callback=None,
+    ) -> bool:
         """
         Record a fake autofocus initialisation command.
 
@@ -296,7 +302,7 @@ class FakeAutofocus(Autofocus):
         ----------
         config
             Optional config passed by the navigator.
-        lock_after_initialise
+        lock_after_calibration
             If True and initialisation succeeds, set locked to True.
 
         Returns
@@ -306,7 +312,7 @@ class FakeAutofocus(Autofocus):
         """
         self.history.append(f"initialise:{config}")
         self.configs.append(config)
-        if self.initialise_success and lock_after_initialise:
+        if self.initialise_success and lock_after_calibration:
             self.locked = True
         return self.initialise_success
 

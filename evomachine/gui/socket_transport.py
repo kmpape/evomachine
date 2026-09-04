@@ -12,7 +12,7 @@ from evomachine.gui.protocol import GuiRequest, GuiResponse, response_from_excep
 
 
 HEADER_SIZE = 4
-MAX_PACKET_SIZE = 10 * 1024 * 1024
+MAX_PACKET_SIZE = 512 * 1024 * 1024
 
 
 class GuiRequestHandler(Protocol):
@@ -198,8 +198,16 @@ class GuiSocketClient:
     def request_object(self, request: GuiRequest) -> GuiResponse:
         self.connect()
         assert self._socket is not None
-        send_packet(self._socket, request.to_dict())
-        response = GuiResponse.from_dict(receive_packet(self._socket))
+        self._socket.settimeout(self.timeout)
+        try:
+            send_packet(self._socket, request.to_dict())
+            response = GuiResponse.from_dict(receive_packet(self._socket))
+        except Exception:
+            self.close()
+            raise
+        finally:
+            if self._socket is not None:
+                self._socket.settimeout(self.timeout)
         if response.request_id != request.request_id:
             raise RuntimeError(
                 f"GuiSocketClient: response ID {response.request_id} does not match request ID {request.request_id}."
@@ -212,4 +220,3 @@ class GuiSocketClient:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
-

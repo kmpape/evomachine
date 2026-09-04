@@ -28,8 +28,7 @@ class SimpleImagingStrategy(AbstractStrategy):
 
     def __init__(self, cfg: ImageProcessorConfig):
         super().__init__(cfg=cfg)
-        self.imaging_channels: list[LEDType] = [LEDType.LED_565_NM]
-        self.initial_segment: bool = True
+        self.imaging_channels: list[LEDType] = [LEDType.LED_450_NM]
         self.exposure_ms: int = 100
         self.brightness: int = 10
         self.period_s: float = 180.0
@@ -42,7 +41,7 @@ class SimpleImagingStrategy(AbstractStrategy):
             AutomatonCommandType.WAIT,
         }
 
-    def _imaging_commands(self, segment: bool) -> list[AutomatonCommand]:
+    def _imaging_commands(self, segment: bool=False) -> list[AutomatonCommand]:
         """
         Build one full-FoV imaging cycle.
 
@@ -81,7 +80,7 @@ class SimpleImagingStrategy(AbstractStrategy):
 
     def _initialise(self) -> list[AutomatonCommand]:
         """Return the first imaging cycle."""
-        return self._imaging_commands(segment=self.initial_segment)
+        return self._imaging_commands()
 
     def _callback(
             self,

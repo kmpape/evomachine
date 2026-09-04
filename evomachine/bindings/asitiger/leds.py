@@ -78,6 +78,13 @@ class TigerLedSource(LedSource):
     def peripheral_ctrl(self, peripheral_ctrl: TigerPeripheralController) -> None:
         self._peripheral_ctrl = peripheral_ctrl
 
+    def _initialise(self, force: bool = False) -> None:
+        """Explicitly place every configured Tiger LED channel in the off state."""
+        self.peripheral_ctrl.tiger.led(
+            led_brightnesses={internal: 0 for internal in self.led_to_internal.values()},
+            card_address=self.peripheral_ctrl.card_address_led,
+        )
+
     def _set_led(
             self,
             led_type: LEDType,

@@ -136,3 +136,4 @@ logs/
 
 # Editor / IDE
 .vscode/
+.DS_Store

@@ -49,9 +49,15 @@ def test_coordinate_axis_value_returns_selected_axis():
 
 
 def test_coordinate_from_axis_builds_partial_coordinate():
-    assert Coordinate.from_axis(AxisType.X, 5, channel_id=9) == Coordinate(5, None, None, channel_id=9)
-    assert Coordinate.from_axis(AxisType.Y, 6, channel_id=9) == Coordinate(None, 6, None, channel_id=9)
-    assert Coordinate.from_axis(AxisType.Z, 7, channel_id=9) == Coordinate(None, None, 7, channel_id=9)
+    assert Coordinate.from_axis(AxisType.X, 5, channel_id=9) == Coordinate(
+        5, None, None, channel_id=9
+    )
+    assert Coordinate.from_axis(AxisType.Y, 6, channel_id=9) == Coordinate(
+        None, 6, None, channel_id=9
+    )
+    assert Coordinate.from_axis(AxisType.Z, 7, channel_id=9) == Coordinate(
+        None, None, 7, channel_id=9
+    )
 
 
 def test_coordinate_has_axis_value_checks_all_axes():
@@ -80,7 +86,9 @@ def test_coordinate_merge_preserves_base_axes_for_none_updates():
 def test_coordinate_merge_updates_channel_when_update_has_channel():
     base = Coordinate(1, 2, 3, channel_id=4)
 
-    assert base.merge(Coordinate(None, None, None, channel_id=8)) == Coordinate(1, 2, 3, channel_id=8)
+    assert base.merge(Coordinate(None, None, None, channel_id=8)) == Coordinate(
+        1, 2, 3, channel_id=8
+    )
 
 
 def test_coordinate_sign_preserves_channel_and_none_z():
@@ -169,3 +177,36 @@ def test_coordinate_factory_make_grid_steps_along_longer_axis():
         Coordinate(10, 5, 2, channel_id=2),
         Coordinate(20, 10, 4, channel_id=2),
     ]
+
+
+def test_coordinate_factory_keeps_overshooting_diagonal_grid_collinear():
+    grid = CoordinateFactory(dfov=10).make_grid(
+        start=Coordinate(0, 0, 0),
+        stop=Coordinate(15, 15, 3),
+    )
+
+    assert grid == [
+        Coordinate(0, 0, 0),
+        Coordinate(10, 10, 2),
+        Coordinate(20, 20, 4),
+    ]
+
+
+def test_coordinate_factory_supports_reverse_paths_and_validates_inputs():
+    grid = CoordinateFactory(dfov=10).make_grid(
+        start=Coordinate(20, 10, 2),
+        stop=Coordinate(5, 2.5, 0.5),
+    )
+
+    assert grid == [
+        Coordinate(20, 10, 2),
+        Coordinate(10, 5, 1),
+        Coordinate(0, 0, 0),
+    ]
+    with pytest.raises(ValueError, match="positive finite"):
+        CoordinateFactory(dfov=0)
+    with pytest.raises(ValueError, match="both contain Z"):
+        CoordinateFactory(dfov=10).make_grid(
+            start=Coordinate(0, 0, 0),
+            stop=Coordinate(10, 0, None),
+        )

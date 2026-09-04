@@ -1,5 +1,5 @@
 from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
-from evomachine.coordinates import Coordinate
+from evomachine.coordinates import Coordinate, CoordinateBounds
 from evomachine.peripherals.stage import Stage
 
 
@@ -36,7 +36,11 @@ class FakeTigerStageController:
 
     def get_stage_limits(self) -> dict[str, tuple[float | int, float | int]]:
         """Return broad fake stage limits for X, Y, and Z."""
-        return {"X": (-1000, 1000), "Y": (-1000, 1000), "Z": (-1000, 1000)}
+        return {
+            "X": (-80000, 80000),
+            "Y": (-190000, 190000),
+            "Z": (-10000, 10000),
+        }
 
     def move(self, coordinates: dict[str, float | int]) -> None:
         """Record and apply a fake move command."""
@@ -70,11 +74,15 @@ class TigerStage(Stage):
     for all hardware access. It does not create serial connections itself.
     """
 
+    TIGER_UNITS_PER_MICROMETRE = 10.0
+
     def __init__(
             self,
             peripheral_ctrl: TigerPeripheralController,
             fov_step_size: float,
             name: str = "ASI Tiger Stage",
+            coordinate_bounds: CoordinateBounds | None = None,
+            zero_on_initialise: bool = False,
             check_initialised: bool = True,
             check_alive: bool = True,
     ):
@@ -107,6 +115,8 @@ class TigerStage(Stage):
         super().__init__(
             name=name,
             fov_step_size=fov_step_size,
+            coordinate_bounds=coordinate_bounds,
+            zero_on_initialise=zero_on_initialise,
             check_initialised=check_initialised,
             check_alive=check_alive,
         )
@@ -126,7 +136,10 @@ class TigerStage(Stage):
         Coordinate
             Coordinate containing any axes present in the dictionary.
         """
-        return Coordinate.from_dict(coordinates)
+        return Coordinate.from_dict({
+            axis: value / TigerStage.TIGER_UNITS_PER_MICROMETRE
+            for axis, value in coordinates.items()
+        })
 
     @staticmethod
     def _coordinate_to_tiger_dict(coordinate: Coordinate) -> dict[str, float | int]:
@@ -143,7 +156,10 @@ class TigerStage(Stage):
         dict[str, float | int]
             Dictionary containing only axes that are not None.
         """
-        return coordinate.to_dict()
+        return {
+            axis: value * TigerStage.TIGER_UNITS_PER_MICROMETRE
+            for axis, value in coordinate.to_dict().items()
+        }
 
     def _wait_until_idle(self) -> None:
         """
@@ -237,8 +253,16 @@ class TigerStage(Stage):
         """
         limits = self.tiger.get_stage_limits()
         return (
-            Coordinate(limits["X"][0], limits["Y"][0], limits["Z"][0]),
-            Coordinate(limits["X"][1], limits["Y"][1], limits["Z"][1]),
+            Coordinate(
+                limits["X"][0] / self.TIGER_UNITS_PER_MICROMETRE,
+                limits["Y"][0] / self.TIGER_UNITS_PER_MICROMETRE,
+                limits["Z"][0] / self.TIGER_UNITS_PER_MICROMETRE,
+            ),
+            Coordinate(
+                limits["X"][1] / self.TIGER_UNITS_PER_MICROMETRE,
+                limits["Y"][1] / self.TIGER_UNITS_PER_MICROMETRE,
+                limits["Z"][1] / self.TIGER_UNITS_PER_MICROMETRE,
+            ),
         )
 
     def _move(self, coordinate: Coordinate, block: bool = True) -> Coordinate:

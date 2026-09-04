@@ -40,6 +40,23 @@ def test_stage_initialises_and_reports_coordinates(make_stage):
     assert stage.get_coordinates(query_hardware=False) == Coordinate(0, 0, 0)
 
 
+def test_tiger_stage_converts_between_micrometres_and_tiger_units():
+    stage = make_tiger_stage()
+
+    stage.move(Coordinate(346.7, -12.5, 3.2))
+
+    assert stage.peripheral_ctrl.tiger.move_calls[-1] == {
+        "X": pytest.approx(3467),
+        "Y": pytest.approx(-125),
+        "Z": pytest.approx(32),
+    }
+    assert stage.get_coordinates(query_hardware=True) == Coordinate(
+        pytest.approx(346.7),
+        pytest.approx(-12.5),
+        pytest.approx(3.2),
+    )
+
+
 @pytest.mark.parametrize("make_stage", STAGE_FACTORIES)
 def test_stage_old_registered_position_api_is_removed(make_stage):
     """
@@ -214,6 +231,12 @@ def test_stage_home_zero_and_halt(make_stage):
     assert stage.get_coordinates(query_hardware=False) == Coordinate(0, 0, 0)
     assert stage.get_fov_id() == stage.UNKNOWN_FOV_ID
 
+    stage.move(Coordinate(5, 6, 7))
+    assert stage.get_coordinates(query_hardware=False) == Coordinate(5, 6, 7)
+
+    stage.zero_coordinates()
+    assert stage.get_coordinates(query_hardware=False) == Coordinate(0, 0, 0)
+
     stage.halt()
     if isinstance(stage, VirtualStage):
         assert stage.halt_was_called()
@@ -228,6 +251,8 @@ def test_stage_config_validates_inputs():
         StageConfig(binding=BindingType.VIRTUAL, fov_step_size=0)
     with pytest.raises(TypeError):
         StageConfig(binding=BindingType.VIRTUAL, fov_step_size=1, check_alive="yes")
+    with pytest.raises(TypeError):
+        StageConfig(binding=BindingType.VIRTUAL, fov_step_size=1, zero_on_initialise="yes")
     with pytest.raises(TypeError):
         StageConfig(
             binding=BindingType.VIRTUAL,
@@ -330,3 +355,48 @@ def test_stage_factory_creates_asitiger_stage_with_fake_controller():
 
     assert isinstance(stage, TigerStage)
     assert stage.name == "Fake Tiger Stage"
+
+
+def test_stage_zeroes_hardware_at_initialisation_and_enforces_configured_bounds() -> None:
+    tiger = FakeTigerStageController()
+    tiger.coordinates = {"X": 100, "Y": 200, "Z": 300}
+    peripheral_ctrl = TigerPeripheralController(tiger=tiger)
+    peripheral_ctrl.initialise()
+    bounds = CoordinateBounds(
+        low=Coordinate(-5, -6, -7),
+        high=Coordinate(5, 6, 7),
+    )
+    stage = StageFactory.create(
+        StageConfig(
+            binding=BindingType.ASI_TIGER,
+            fov_step_size=10,
+            coordinate_bounds=bounds,
+            zero_on_initialise=True,
+        ),
+        peripheral_controllers=peripheral_ctrl,
+    )
+
+    stage.initialise()
+
+    assert tiger.zero_was_called
+    assert stage.get_coordinates(query_hardware=False) == Coordinate(0, 0, 0)
+    assert stage.get_coordinate_bounds() == bounds
+    with pytest.raises(ValueError, match="out of bounds"):
+        stage.move(Coordinate(6, 0, 0))
+
+
+def test_stage_rejects_relative_fov_move_beyond_configured_bounds() -> None:
+    peripheral_ctrl = VirtualPeripheralController()
+    peripheral_ctrl.initialise()
+    stage = VirtualStage(
+        peripheral_ctrl=peripheral_ctrl,
+        fov_step_size=2,
+        coordinate_bounds=CoordinateBounds(
+            low=Coordinate(-1, -1, -1),
+            high=Coordinate(1, 1, 1),
+        ),
+    )
+    stage.initialise()
+
+    with pytest.raises(ValueError, match="out of bounds"):
+        stage.move((FovDirectionType.RIGHT, 1))

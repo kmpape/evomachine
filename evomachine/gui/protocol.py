@@ -17,30 +17,94 @@ class GuiCommandType(str, Enum):
     """Allowlisted commands accepted by the automaton GUI facade."""
 
     PING = "ping"
+    IMAGE_TRANSPORT_PROBE = "image_transport.probe"
     INITIALISE_DEVICES = "initialise_devices"
     STOP = "stop"
     SHUTDOWN = "shutdown"
+    CONTROLLER_STATUS = "controllers.status"
+    LOGS_RECENT = "logs.recent"
+    FOV_INITIALISE = "fov.initialise"
     STAGE_STATUS = "stage.status"
     STAGE_GET_COORDINATES = "stage.get_coordinates"
-    STAGE_MOVE_ABSOLUTE = "stage.move_absolute"
     STAGE_MOVE_RELATIVE = "stage.move_relative"
+    STAGE_MOVE_FOV = "stage.move_fov"
     STAGE_STOP = "stage.stop"
+    STAGE_RETURN_ORIGIN = "stage.return_origin"
+    CAMERA_STATUS = "camera.status"
+    CAMERA_SET_EXPOSURE = "camera.set_exposure"
+    ACQUISITION_SET_DIRECTORY = "acquisition.set_directory"
+    ACQUISITION_LIST_FILES = "acquisition.list_files"
+    ACQUISITION_LOAD_FRAME = "acquisition.load_frame"
+    ACQUISITION_TAKE_FRAME = "acquisition.take_frame"
+    ACQUISITION_TAKE_Z_STACK = "acquisition.take_z_stack"
+    ACQUISITION_Z_STACK_STATUS = "acquisition.z_stack_status"
+    FILTER_WHEEL_STATUS = "filter_wheel.status"
+    FILTER_WHEEL_SET = "filter_wheel.set"
     LED_LIST = "led.list"
     LED_SET = "led.set"
     LED_DISABLE = "led.disable"
     LED_DISABLE_ALL = "led.disable_all"
     LED_GET_STATE = "led.get_state"
+    DMD_STATUS = "dmd.status"
+    DMD_DISPLAY_PATTERN = "dmd.display_pattern"
+    DMD_LOAD_PATTERN = "dmd.load_pattern"
+    DMD_DISPLAY_LOADED_PATTERN = "dmd.display_loaded_pattern"
+    DMD_LOAD_CALIBRATION = "dmd.load_calibration"
+    DMD_CALIBRATION_POINTS = "dmd.calibration_points"
+    DMD_CALIBRATE = "dmd.calibrate"
+    DMD_CALIBRATION_STATUS = "dmd.calibration_status"
+    DMD_CANCEL_CALIBRATION = "dmd.cancel_calibration"
+    AUTOFOCUS_STATUS = "autofocus.status"
+    AUTOFOCUS_CONFIGURE = "autofocus.configure"
+    AUTOFOCUS_INITIALISE = "autofocus.initialise_autofocus"
+    AUTOFOCUS_CALIBRATION_STATUS = "autofocus.calibration_status"
+    AUTOFOCUS_CANCEL_CALIBRATION = "autofocus.cancel_calibration"
+    AUTOFOCUS_LOCK = "autofocus.lock"
+    AUTOFOCUS_UNLOCK = "autofocus.unlock"
+    AUTOFOCUS_DISABLE = "autofocus.disable"
+    SOFTWARE_FOCUS_STATUS = "software_focus.status"
+    SOFTWARE_FOCUS_RUN = "software_focus.run"
+    SOFTWARE_FOCUS_OPERATION_STATUS = "software_focus.operation_status"
+    STAGE_MOVEMENT_STATUS = "stage.movement_status"
+    STRATEGY_STATUS = "strategy.status"
+    STRATEGY_LIST = "strategy.list"
+    STRATEGY_SET = "strategy.set"
+    STRATEGY_START = "strategy.start"
+    STRATEGY_STOP = "strategy.stop"
 
 
 MUTATING_COMMANDS = frozenset(
     {
         GuiCommandType.INITIALISE_DEVICES,
-        GuiCommandType.STAGE_MOVE_ABSOLUTE,
+        GuiCommandType.FOV_INITIALISE,
         GuiCommandType.STAGE_MOVE_RELATIVE,
+        GuiCommandType.STAGE_MOVE_FOV,
         GuiCommandType.STAGE_STOP,
+        GuiCommandType.STAGE_RETURN_ORIGIN,
+        GuiCommandType.CAMERA_SET_EXPOSURE,
+        GuiCommandType.ACQUISITION_SET_DIRECTORY,
+        GuiCommandType.ACQUISITION_TAKE_FRAME,
+        GuiCommandType.ACQUISITION_TAKE_Z_STACK,
+        GuiCommandType.FILTER_WHEEL_SET,
         GuiCommandType.LED_SET,
         GuiCommandType.LED_DISABLE,
         GuiCommandType.LED_DISABLE_ALL,
+        GuiCommandType.DMD_DISPLAY_PATTERN,
+        GuiCommandType.DMD_LOAD_PATTERN,
+        GuiCommandType.DMD_DISPLAY_LOADED_PATTERN,
+        GuiCommandType.DMD_LOAD_CALIBRATION,
+        GuiCommandType.DMD_CALIBRATE,
+        GuiCommandType.DMD_CANCEL_CALIBRATION,
+        GuiCommandType.AUTOFOCUS_CONFIGURE,
+        GuiCommandType.AUTOFOCUS_INITIALISE,
+        GuiCommandType.AUTOFOCUS_CANCEL_CALIBRATION,
+        GuiCommandType.AUTOFOCUS_LOCK,
+        GuiCommandType.AUTOFOCUS_UNLOCK,
+        GuiCommandType.AUTOFOCUS_DISABLE,
+        GuiCommandType.SOFTWARE_FOCUS_RUN,
+        GuiCommandType.STRATEGY_SET,
+        GuiCommandType.STRATEGY_START,
+        GuiCommandType.STRATEGY_STOP,
     }
 )
 
@@ -50,9 +114,9 @@ ALWAYS_ALLOWED_MUTATING_COMMANDS = frozenset(
         GuiCommandType.SHUTDOWN,
         GuiCommandType.STAGE_STOP,
         GuiCommandType.LED_DISABLE_ALL,
+        GuiCommandType.STRATEGY_STOP,
     }
 )
-
 
 @dataclass(kw_only=True)
 class GuiRequest:

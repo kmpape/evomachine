@@ -78,7 +78,7 @@ uv run pytest
 
 Anything can be run inside the virtual environment via `uv run ...`, such as:
 ```bash
-uv run python scripts/launch_gui.py
+uv run python scripts/launch_virtual_gui.py
 ```
 
 ## Release workflow
@@ -154,19 +154,75 @@ Other useful top-level folders in the main repository:
   runtime inputs, outputs, models, calibration data, and strategy files.  
   Note: some folders are only created when starting the software.
 
-## GUI Demo
+## Running the GUI
 
-After activating the `delta_evomachine` environment, launch the Napari GUI demo
-with virtual peripherals from the repository root:
+### Hardware GUI on the microscope computer
+
+Start Micro-Manager with the microscope configuration loaded. Then run:
 
 ```bash
-cd /home/idris/workspace_python/conda_evomachine3.9/evomachine_repo
-conda activate delta_evomachine
-python scripts/launch_gui.py --port 0
+cd /home/hslab/workspace_python/evomachine_refactor/evomachine
+.venv/bin/python scripts/launch_hardware_gui.py
+```
+
+For an IDE Run button:
+
+- Working directory: `/home/hslab/workspace_python/evomachine_refactor/evomachine`
+- Interpreter: `.venv/bin/python`
+- Script: `scripts/launch_hardware_gui.py`
+- Run it as a Python file, not as a module.
+
+The hardware runtime uses the Micro-Manager camera, SyncBoard LEDs, ASI Tiger
+stage/filter/autofocus and overhead LED, KWR103 overhead light, and EM DMD
+window. Serial ports are detected from their USB hardware IDs.
+
+The hardware GUI zeroes the ASI Tiger stage at its startup position. Relative
+and field-of-view movements then use that Tiger coordinate system and are
+checked against the configured software limits. The deployment defaults can be
+overridden before launch with:
+
+```bash
+export EVOMACHINE_GUI_STAGE_MIN_X_UM=-8000
+export EVOMACHINE_GUI_STAGE_MAX_X_UM=8000
+export EVOMACHINE_GUI_STAGE_MIN_Y_UM=-19000
+export EVOMACHINE_GUI_STAGE_MAX_Y_UM=19000
+export EVOMACHINE_GUI_STAGE_MIN_Z_UM=-1000
+export EVOMACHINE_GUI_STAGE_MAX_Z_UM=1000
+```
+
+These values are in micrometres relative to the startup zero and must be set to
+the microscope's confirmed safe travel region before hardware use.
+
+#### Acquisition output folder
+
+Manual images, z-stacks, and strategy images use one local output folder. In
+the GUI, select **Choose Output Folder** in the separate **Output Folder**
+panel. The same panel is shown in the Strategy tab so the destination is
+explicit before starting a strategy. Enable **Save** in Acquisition
+Configuration when TIFF output is required. Strategies request that an image
+is saved but do not choose a path; they use this shared folder through
+`FrameAcquisitionManager`.
+
+The default hardware folder is `images/` and can be changed at startup with
+`EVOMACHINE_GUI_OUTPUT_DIR`. The **Load Saved Images** panel has its own
+**Choose Loading Folder** control. Browsing a different folder does not change
+where new images are saved. Select **Load Selected** to display a listed TIFF.
+
+The `images/` directory is intentionally excluded from Git because microscope
+images are generally too large for source control. Notebook `.pkl` image
+stacks may be organised locally but should remain uncommitted; the current example stacks are
+approximately 801 MiB each.
+
+### Virtual GUI
+
+From the `evomachine` repository root, launch the GUI with virtual peripherals:
+
+```bash
+uv run python scripts/launch_virtual_gui.py --port 0
 ```
 
 To smoke-test the automaton/socket startup without opening Napari:
 
 ```bash
-python scripts/launch_gui.py --port 0 --no-napari
+uv run python scripts/launch_virtual_gui.py --port 0 --no-napari
 ```

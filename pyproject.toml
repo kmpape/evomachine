@@ -21,7 +21,8 @@ dependencies = [
     "pygame>=2.6",
     "PyQt5>=5.15",
     "napari>=0.5.5",
-    
+    "pydantic>=2",
+
     # GPU stack for the Linux + CUDA microscope. TensorFlow is pulled in by the
     # `delta` sibling repo (it only requires `tensorflow >= 2.12`); we pin it here
     # to 2.15 to control the version.

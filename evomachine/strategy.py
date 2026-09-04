@@ -71,8 +71,6 @@ class AbstractStrategy(ABC):
         "Optional per-FoV focus policies requested by this strategy."
         self.fov_processors: dict[int, PositionRT] = {}
         "Processors for FoV data, ROI boxes, and cell lineages keyed by FoV ID. Treat as read-only."
-        self.path_to_save: Path | None = None
-        "Optional path to save images."
         self.command_factory: CommandFactory = CommandFactory(cfg=cfg)
         "Factory object used to create AutomatonCommand objects."
         self.dmd: Dmd | None = None
@@ -349,7 +347,7 @@ class NoStrategy(AbstractStrategy):
 class BasicStrategy(AbstractStrategy):
     """Simple built-in imaging strategy for tests and minimal acquisitions."""
 
-    def __init__(self, cfg: ImageProcessorConfig, save_path: str):
+    def __init__(self, cfg: ImageProcessorConfig):
         """
         Initialise the basic strategy.
 
@@ -357,15 +355,11 @@ class BasicStrategy(AbstractStrategy):
         ----------
         cfg
             Image processor configuration.
-        save_path
-            Directory path where images should be saved.
-
         Returns
         -------
         None
         """
         super().__init__(cfg=cfg)
-        self.path_to_save = Path(save_path)
         self.imaging_interval: int = 60 * 3
         self.imaging_channels: list[LEDType] = [LEDType.LED_565_NM]
         self.exposure_time: int = 100
