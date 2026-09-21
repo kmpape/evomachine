@@ -739,14 +739,13 @@ class Automaton:
                     if not finalise:
                         self._process_commands(finalise=True)
                     self.stop_strategy()
-                    self.stop()
+                    self._stop_event.set()
                     command.command_execution_time = time.time()
                     command.fov_id = self.get_fov_id()
                     return
                 elif command.command_type == AutomatonCommandType.ABORT_STRATEGY:
                     self.stop_strategy()
                     self.stop()
-                    self.act_on_halt()
                     command.command_execution_time = time.time()
                     command.fov_id = self.get_fov_id()
                     return
@@ -1171,7 +1170,7 @@ class Automaton:
             actions.append(("software focus", self._swfocus.stop))
         if self._autofocus is not None and callable(getattr(self._autofocus, "unlock", None)):
             actions.append(("autofocus", self._autofocus.unlock))
-        
+
         errors: list[str] = []
         for name, action in actions:
             try:
@@ -1181,7 +1180,7 @@ class Automaton:
                 errors.append(f"{name}: {type(error).__name__}: {error}")
         if errors:
             raise RuntimeError(
-            "Automaton halt completed with errors: " + "; ".join(errors)
+                "Automaton halt completed with errors: " + "; ".join(errors)
             )
 
     def _fail_safe_abort(
@@ -1209,11 +1208,10 @@ class Automaton:
 
         already_stopped = self.strategy_has_stopped() and self.stopped()
         self.stop_strategy()
-        self.stop()
         if already_stopped:
             return
         try:
-            self.act_on_halt()
+            self.stop()
         except Exception as halt_error:
             self._runtime_failure_history.append(
                 UnexpectedRuntimeError(

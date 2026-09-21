@@ -719,13 +719,8 @@ def test_failed_strategy_finalisation_falls_back_to_abort_semantics() -> None:
 
 def test_termination_failure_retains_originating_lifecycle_section() -> None:
     automaton, *_deps = make_automaton()
-    strategy = LifecycleStrategy(cfg=make_cfg(), action="terminate")
+    strategy = LifecycleStrategy(cfg=make_cfg(), action="terminate", fail_finalise=True)
     automaton.set_strategy(strategy)
-
-    def fail_stop() -> None:
-        raise RuntimeError("stop failed")
-
-    automaton.stop = fail_stop
 
     with pytest.raises(CommandExecutionError) as captured:
         automaton._process_commands()
