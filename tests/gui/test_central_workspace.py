@@ -73,7 +73,7 @@ def test_visual_workspace_is_one_rgb_dashboard_image() -> None:
     assert workspace.dtype == np.uint8
 
 
-def test_central_viewer_fit_reduces_default_outer_margin() -> None:
+def test_central_viewer_fit_keeps_complete_workspace_visible() -> None:
     viewer = SimpleNamespace(
         camera=SimpleNamespace(zoom=1.0),
         reset_count=0,
@@ -88,6 +88,7 @@ def test_central_viewer_fit_reduces_default_outer_margin() -> None:
     fit_central_viewer(viewer)
 
     assert viewer.reset_count == 1
+    assert CENTRAL_VIEW_ZOOM <= 1.0
     assert viewer.camera.zoom == 2.0 * CENTRAL_VIEW_ZOOM
 
 
