@@ -55,12 +55,14 @@ HIGH_BRIGHTNESS_THRESHOLD = 29.0
 DEFAULT_HIGH_BRIGHTNESS_DURATION_S = 3.0
 TIMED_LED_REFRESH_GRACE_MS = 100
 
-WAVELENGTH_INDICATOR_COLOURS = {
-    LEDType.LED_385_NM: "#74608f",
-    LEDType.LED_450_NM: "#4f7197",
-    LEDType.LED_515_NM: "#5f8468",
-    LEDType.LED_565_NM: "#a1844f",
-    LEDType.LED_645_NM: "#9a5d62",
+SYNCBOARD_WAVELENGTH_COLOURS = {
+    # Spectral colours are approximated in sRGB; 385 nm uses visible violet
+    # because a standard display cannot reproduce ultraviolet light.
+    LEDType.LED_385_NM: "#8f00ff",
+    LEDType.LED_450_NM: "#004cff",
+    LEDType.LED_515_NM: "#00e65c",
+    LEDType.LED_565_NM: "#d6e600",
+    LEDType.LED_645_NM: "#ff3030",
 }
 
 
@@ -71,7 +73,6 @@ class LedManagerPanel(QGroupBox):
         super().__init__("LEDManager", parent)
         self.controller = controller
         self.led_buttons: dict[LEDType, QPushButton] = {}
-        self.wavelength_indicators: dict[LEDType, QLabel] = {}
         self.brightness_inputs: dict[LEDType, QDoubleSpinBox] = {}
         self.available_leds: set[LEDType] = set()
         self._timed_led_stop_times: dict[LEDType, float] = {}
@@ -127,19 +128,25 @@ class LedManagerPanel(QGroupBox):
 
     def _build_led_button_grid(self, led_types: tuple[LEDType, ...]) -> QGridLayout:
         grid = QGridLayout()
-        grid.addWidget(QLabel("LED"), 0, 0, 1, 2)
-        grid.addWidget(QLabel("Brightness"), 0, 2)
+        grid.addWidget(QLabel("LED"), 0, 0)
+        grid.addWidget(QLabel("Brightness"), 0, 1)
         for index, led_type in enumerate(led_types):
             button = QPushButton(LED_BUTTON_LABELS.get(led_type, led_type.name))
             button.setCheckable(True)
             button.setEnabled(False)
             button.setToolTip(LED_LABELS.get(led_type, led_type.name))
+            wavelength_colour = SYNCBOARD_WAVELENGTH_COLOURS.get(led_type)
+            if wavelength_colour is not None:
+                button.setStyleSheet(
+                    "QPushButton {"
+                    f" border: 2px solid {wavelength_colour};"
+                    " border-radius: 4px;"
+                    "}"
+                )
+                button.setToolTip(f"{LED_LABELS[led_type]} nm wavelength")
             button.toggled.connect(
                 lambda checked, selected=led_type: self._toggle_led(selected, checked)
             )
-
-            indicator = self._wavelength_indicator(led_type)
-            self.wavelength_indicators[led_type] = indicator
 
             brightness_input = self._brightness_input()
             brightness_input.setEnabled(False)
@@ -151,9 +158,8 @@ class LedManagerPanel(QGroupBox):
             self.brightness_inputs[led_type] = brightness_input
 
             row = index + 1
-            grid.addWidget(indicator, row, 0)
-            grid.addWidget(button, row, 1)
-            grid.addWidget(brightness_input, row, 2)
+            grid.addWidget(button, row, 0)
+            grid.addWidget(brightness_input, row, 1)
         return grid
 
     @staticmethod
@@ -193,7 +199,7 @@ class LedManagerPanel(QGroupBox):
             brightness: float,
     ) -> float | None:
         if (
-            led_type not in WAVELENGTH_INDICATOR_COLOURS
+            led_type not in SYNCBOARD_WAVELENGTH_COLOURS
             or brightness <= HIGH_BRIGHTNESS_THRESHOLD
             or not self.custom_duration_checkbox.isChecked()
         ):
@@ -348,15 +354,3 @@ class LedManagerPanel(QGroupBox):
     @staticmethod
     def _format_led(led_type: LEDType) -> str:
         return LED_LABELS.get(led_type, led_type.name)
-
-    @staticmethod
-    def _wavelength_indicator(led_type: LEDType) -> QLabel:
-        indicator = QLabel()
-        indicator.setFixedSize(12, 12)
-        colour = WAVELENGTH_INDICATOR_COLOURS.get(led_type)
-        if colour is not None:
-            indicator.setStyleSheet(
-                f"background-color: {colour}; border-radius: 6px;"
-            )
-            indicator.setToolTip(f"{LED_LABELS[led_type]} nm wavelength")
-        return indicator

@@ -640,17 +640,26 @@ def test_led_panel_omits_custom_duration_at_safe_continuous_brightness() -> None
     assert controller.calls == [("set_led", "LED_450_NM", 29.0, None)]
 
 
-def test_led_panel_shows_timed_state_and_muted_wavelength_indicators() -> None:
+def test_led_panel_shows_timed_state_and_syncboard_wavelength_outlines() -> None:
     _app()
     panel = LedManagerPanel(controller=FakeController())
 
     panel.update_state({"led": "LED_450_NM", "brightness": 50, "is_on": True, "stop_time": 1003.0})
 
     assert "timed illumination active" in panel.state_label.text()
-    assert panel.led_buttons[LEDType.LED_450_NM].styleSheet() == ""
-    assert "#4f7197" in panel.wavelength_indicators[LEDType.LED_450_NM].styleSheet()
+    expected_styles = {
+        LEDType.LED_385_NM: ("#8f00ff", "385 nm wavelength"),
+        LEDType.LED_450_NM: ("#004cff", "450 nm wavelength"),
+        LEDType.LED_515_NM: ("#00e65c", "515 nm wavelength"),
+        LEDType.LED_565_NM: ("#d6e600", "565 nm wavelength"),
+        LEDType.LED_645_NM: ("#ff3030", "645 nm wavelength"),
+    }
+    for led_type, (colour, tooltip) in expected_styles.items():
+        assert f"border: 2px solid {colour}" in panel.led_buttons[led_type].styleSheet()
+        assert panel.led_buttons[led_type].toolTip() == tooltip
+
+    assert panel.led_buttons[LEDType.LED_OVERHEAD_TIGER].styleSheet() == ""
     assert panel.led_buttons[LEDType.LED_OVERHEAD].styleSheet() == ""
-    assert panel.wavelength_indicators[LEDType.LED_OVERHEAD].styleSheet() == ""
 
 
 def test_led_panel_allows_full_backend_brightness_range() -> None:
