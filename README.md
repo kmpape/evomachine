@@ -201,6 +201,12 @@ The hardware runtime uses the Micro-Manager camera, SyncBoard LEDs, ASI Tiger
 stage/filter/autofocus and overhead LED, KWR103 overhead light, and EM DMD
 window. Serial ports are detected from their USB hardware IDs.
 
+The default RAMM optical setup uses a Nikon Plan Apo lambda D 40x/0.95
+objective (MRD70470) and a Teledyne Kinetix 3200 x 3200 sensor with 6.5 um
+pixels. This gives 0.1625 um per sample pixel and a 520 um square camera field
+of view. The separate 60x/1.4 oil-objective preset remains available for other
+setups.
+
 The hardware GUI zeroes the ASI Tiger stage at its startup position. Relative
 and field-of-view movements then use that Tiger coordinate system and are
 checked against the configured software limits. The deployment defaults can be
