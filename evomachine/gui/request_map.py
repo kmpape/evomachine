@@ -505,9 +505,16 @@ def _start_stage_movement(facade: Any, target: Coordinate) -> dict[str, Any]:
         del cancel_event
         report(0.0, "Moving stage.")
         facade.gui_stage().move(target=target, block=True)
-        return facade.gui_stage_coordinates_payload(query_hardware=False)
+        return facade.gui_stage_coordinates_payload(query_hardware=True)
 
     return {"operation": facade.gui_operations.start("stage_movement", run)}
+
+
+def gui_stage_move_absolute(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    gui_require_devices_initialised(facade, "stage")
+    target = gui_coordinate_from_payload(payload)
+    gui_bool_from_payload(payload, "block", True)
+    return _start_stage_movement(facade, target)
 
 
 def gui_stage_move_relative(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1036,6 +1043,7 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.FOV_INITIALISE: gui_fov_initialise,
     GuiCommandType.STAGE_STATUS: gui_stage_status,
     GuiCommandType.STAGE_GET_COORDINATES: gui_stage_get_coordinates,
+    GuiCommandType.STAGE_MOVE_ABSOLUTE: gui_stage_move_absolute,
     GuiCommandType.STAGE_MOVE_RELATIVE: gui_stage_move_relative,
     GuiCommandType.STAGE_MOVE_FOV: gui_stage_move_fov,
     GuiCommandType.STAGE_STOP: gui_stage_stop,

@@ -163,6 +163,12 @@ class EvoMachineGuiController(QObject):
     def refresh_stage(self) -> None:
         self._send(GuiCommandType.STAGE_GET_COORDINATES)
 
+    def move_stage_absolute(self, x: float, y: float, z: float) -> None:
+        self._send(
+            GuiCommandType.STAGE_MOVE_ABSOLUTE,
+            {"x": x, "y": y, "z": z, "block": False},
+        )
+
     def move_stage_relative(self, dx: float | None, dy: float | None, dz: float | None) -> None:
         self._send(GuiCommandType.STAGE_MOVE_RELATIVE, {"dx": dx, "dy": dy, "dz": dz, "block": False})
 
@@ -389,6 +395,8 @@ class EvoMachineGuiController(QObject):
             self.operation_status_received.emit(operation)
             result = operation.get("result") if isinstance(operation, dict) else None
             if isinstance(result, dict):
+                if "coordinate" in result:
+                    self.stage_coordinates_received.emit(result)
                 if "frame" in result:
                     self.frame_received.emit(result["frame"])
                 if "software_focus" in result:

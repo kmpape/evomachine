@@ -26,6 +26,7 @@ class GuiCommandType(str, Enum):
     FOV_INITIALISE = "fov.initialise"
     STAGE_STATUS = "stage.status"
     STAGE_GET_COORDINATES = "stage.get_coordinates"
+    STAGE_MOVE_ABSOLUTE = "stage.move_absolute"
     STAGE_MOVE_RELATIVE = "stage.move_relative"
     STAGE_MOVE_FOV = "stage.move_fov"
     STAGE_STOP = "stage.stop"
@@ -77,6 +78,7 @@ MUTATING_COMMANDS = frozenset(
     {
         GuiCommandType.INITIALISE_DEVICES,
         GuiCommandType.FOV_INITIALISE,
+        GuiCommandType.STAGE_MOVE_ABSOLUTE,
         GuiCommandType.STAGE_MOVE_RELATIVE,
         GuiCommandType.STAGE_MOVE_FOV,
         GuiCommandType.STAGE_STOP,

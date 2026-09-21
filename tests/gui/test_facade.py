@@ -658,6 +658,16 @@ def test_facade_handles_stage_and_led_requests() -> None:
     operation = wait_for_operation(facade, "stage_movement")
     assert operation["result"]["coordinate"] == {"x": 5.0, "y": 6.0, "z": 7, "channel_id": 0}
 
+    response = facade.handle(
+        GuiRequest(
+            command=GuiCommandType.STAGE_MOVE_ABSOLUTE,
+            payload={"x": 10, "y": 20, "z": 30},
+        )
+    )
+    assert response.ok
+    operation = wait_for_operation(facade, "stage_movement")
+    assert operation["result"]["coordinate"] == {"x": 10, "y": 20, "z": 30, "channel_id": 0}
+
     response = facade.handle(GuiRequest(command=GuiCommandType.LED_SET, payload={"led": "LED_450_NM", "brightness": 22}))
     assert response.ok
     assert response.payload["state"]["brightness"] == 22
@@ -1171,6 +1181,7 @@ def test_second_stage_movement_is_rejected_until_first_stops() -> None:
         (GuiCommandType.ACQUISITION_TAKE_FRAME, {"use_current_main_controls": "false"}),
         (GuiCommandType.FOV_INITIALISE, {"fovs": [{"fov_id": 0, "x": 1, "y": 2, "z": 3}], "use_autofocus": "false"}),
         (GuiCommandType.STAGE_GET_COORDINATES, {"query_hardware": "false"}),
+        (GuiCommandType.STAGE_MOVE_ABSOLUTE, {"x": 1, "y": 0, "z": 0, "block": "false"}),
         (GuiCommandType.STAGE_MOVE_RELATIVE, {"dx": 1, "dy": 0, "dz": 0, "block": "false"}),
         (GuiCommandType.AUTOFOCUS_INITIALISE, {"lock_after_initialise": "false"}),
         (GuiCommandType.DMD_DISPLAY_PATTERN, {"pattern": "full", "warp": "false"}),

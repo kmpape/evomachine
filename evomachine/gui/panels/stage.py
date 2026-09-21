@@ -30,7 +30,7 @@ class StagePanel(QGroupBox):
         self.controller = controller
         self._latest_coordinate: dict = {}
         self._latest_status: dict = {}
-        self.coordinate_label = QLabel("x: -, y: -, z: -")
+        self.coordinate_label = QLabel("Current absolute position: x: -, y: -, z: -")
         self.limits_label = QLabel("active limits: -")
         self.limits_label.setWordWrap(True)
         self.fov_step_label = QLabel("camera FoV step: -")
@@ -42,10 +42,15 @@ class StagePanel(QGroupBox):
         self.x_input = self._axis_input()
         self.y_input = self._axis_input()
         self.z_input = self._axis_input()
+        self.absolute_x_input = self._axis_input()
+        self.absolute_y_input = self._axis_input()
+        self.absolute_z_input = self._axis_input()
 
         self.refresh_button = QPushButton("Refresh")
-        self.move_button = QPushButton("Move")
-        self.move_button.setToolTip("Move relative to the current zeroed Tiger coordinates.")
+        self.move_button = QPushButton("Move Relative")
+        self.move_button.setToolTip("Apply ΔX, ΔY, and ΔZ as offsets from the current position.")
+        self.absolute_move_button = QPushButton("Move Absolute")
+        self.absolute_move_button.setToolTip("Move to the target X, Y, and Z stage coordinates.")
         self.stop_button = QPushButton("Stop")
         self.origin_button = QPushButton("Return to Origin")
         self.origin_button.setToolTip("Move the stage to Tiger coordinates XYZ = 0.")
@@ -53,17 +58,29 @@ class StagePanel(QGroupBox):
         self.movement_poll_timer = QTimer(self)
         self.movement_poll_timer.setInterval(250)
 
-        form = QFormLayout()
-        form.addRow("ΔX (µm)", self.x_input)
-        form.addRow("ΔY (µm)", self.y_input)
-        form.addRow("ΔZ (µm)", self.z_input)
+        relative_form = QFormLayout()
+        relative_form.addRow("ΔX (µm)", self.x_input)
+        relative_form.addRow("ΔY (µm)", self.y_input)
+        relative_form.addRow("ΔZ (µm)", self.z_input)
+        relative_form.addRow(self.move_button)
+        self.relative_movement_group = QGroupBox("Relative movement")
+        self.relative_movement_group.setToolTip("Offsets are applied from the current stage position.")
+        self.relative_movement_group.setLayout(relative_form)
+
+        absolute_form = QFormLayout()
+        absolute_form.addRow("Target X (µm)", self.absolute_x_input)
+        absolute_form.addRow("Target Y (µm)", self.absolute_y_input)
+        absolute_form.addRow("Target Z (µm)", self.absolute_z_input)
+        absolute_form.addRow(self.absolute_move_button)
+        absolute_form.addRow(self.origin_button)
+        self.absolute_movement_group = QGroupBox("Absolute movement")
+        self.absolute_movement_group.setToolTip("Targets use absolute zeroed Tiger coordinates.")
+        self.absolute_movement_group.setLayout(absolute_form)
 
         buttons = QGridLayout()
         buttons.addWidget(self.refresh_button, 0, 0)
-        buttons.addWidget(self.move_button, 0, 1)
-        buttons.addWidget(self.stop_button, 0, 2)
-        buttons.addWidget(self.origin_button, 1, 0, 1, 3)
-        buttons.addWidget(self.configure_button, 2, 0, 1, 3)
+        buttons.addWidget(self.stop_button, 0, 1)
+        buttons.addWidget(self.configure_button, 1, 0, 1, 2)
 
         fov_buttons = QGridLayout()
         for label, direction, row, column in self.FOV_DIRECTIONS:
@@ -80,14 +97,16 @@ class StagePanel(QGroupBox):
         layout.addWidget(self.limits_label)
         layout.addWidget(self.fov_step_label)
         layout.addWidget(self.status_label)
-        layout.addLayout(form)
+        layout.addWidget(self.relative_movement_group)
+        layout.addWidget(self.absolute_movement_group)
         layout.addLayout(buttons)
-        layout.addWidget(QLabel("Move by one camera FoV"))
+        layout.addWidget(QLabel("Relative movement by one camera FoV"))
         layout.addLayout(fov_buttons)
         self.setLayout(layout)
 
         self.refresh_button.clicked.connect(self.controller.refresh_stage)
         self.move_button.clicked.connect(self._move_delta)
+        self.absolute_move_button.clicked.connect(self._move_absolute)
         self.stop_button.clicked.connect(self.controller.stop_stage)
         self.origin_button.clicked.connect(self._return_to_origin)
         self.configure_button.clicked.connect(self._open_config_dialog)
@@ -119,6 +138,18 @@ class StagePanel(QGroupBox):
             dx=self.x_input.value(),
             dy=self.y_input.value(),
             dz=self.z_input.value(),
+        )
+
+    def _move_absolute(self) -> None:
+        if not self.devices_initialised or self.movement_running:
+            self.status_label.setText("Run Initialise Devices before using stage controls.")
+            return
+        self.status_label.setText("Moving stage to absolute target XYZ.")
+        self._start_movement()
+        self.controller.move_stage_absolute(
+            x=self.absolute_x_input.value(),
+            y=self.absolute_y_input.value(),
+            z=self.absolute_z_input.value(),
         )
 
     def _move_camera_fov(self, direction: str) -> None:
@@ -170,8 +201,17 @@ class StagePanel(QGroupBox):
         coordinate = payload.get("coordinate", {})
         self._latest_coordinate = dict(coordinate)
         self.coordinate_label.setText(
+            "Current absolute position: "
             f"x: {coordinate.get('x')}, y: {coordinate.get('y')}, z: {coordinate.get('z')}"
         )
+        for axis, target_input in (
+            ("x", self.absolute_x_input),
+            ("y", self.absolute_y_input),
+            ("z", self.absolute_z_input),
+        ):
+            value = coordinate.get(axis)
+            if isinstance(value, int | float) and not isinstance(value, bool):
+                target_input.setValue(float(value))
         if "stage" in payload:
             self.update_status(payload["stage"])
 
@@ -226,7 +266,11 @@ class StagePanel(QGroupBox):
             self.x_input,
             self.y_input,
             self.z_input,
+            self.absolute_x_input,
+            self.absolute_y_input,
+            self.absolute_z_input,
             self.move_button,
+            self.absolute_move_button,
             self.origin_button,
             *self.fov_buttons,
         ):
