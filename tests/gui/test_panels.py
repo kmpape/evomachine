@@ -343,9 +343,9 @@ def test_stage_movement_sections_align_coordinate_fields_with_equal_spacing() ->
         "ΔZ (µm): ",
     ]
     assert [field.prefix() for field in absolute_inputs] == [
-        "Target X (µm): ",
-        "Target Y (µm): ",
-        "Target Z (µm): ",
+        "X (µm): ",
+        "Y (µm): ",
+        "Z (µm): ",
     ]
     assert all(field.alignment() == Qt.AlignCenter for field in (*relative_inputs, *absolute_inputs))
     assert panel.relative_movement_group.layout().spacing() == 8

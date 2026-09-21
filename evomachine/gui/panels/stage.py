@@ -41,9 +41,9 @@ class StagePanel(QGroupBox):
         self.x_input = self._axis_input("ΔX (µm): ")
         self.y_input = self._axis_input("ΔY (µm): ")
         self.z_input = self._axis_input("ΔZ (µm): ")
-        self.absolute_x_input = self._axis_input("Target X (µm): ")
-        self.absolute_y_input = self._axis_input("Target Y (µm): ")
-        self.absolute_z_input = self._axis_input("Target Z (µm): ")
+        self.absolute_x_input = self._axis_input("X (µm): ")
+        self.absolute_y_input = self._axis_input("Y (µm): ")
+        self.absolute_z_input = self._axis_input("Z (µm): ")
 
         self.refresh_button = QPushButton("Refresh")
         self.move_button = QPushButton("Move Relative")
