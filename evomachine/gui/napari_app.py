@@ -15,7 +15,6 @@ LOG_DOCK_HEIGHT_RATIO = REFERENCE_LOG_DOCK_HEIGHT / REFERENCE_WINDOW_HEIGHT
 MINIMUM_CONTROLS_DOCK_WIDTH = 480
 MINIMUM_LOG_DOCK_HEIGHT = 72
 MAXIMUM_LOG_DOCK_HEIGHT_RATIO = 0.2
-FINAL_VIEW_FIT_DELAY_MS = 1000
 
 
 def _configure_left_docks(viewer, *, status_dock_widget) -> None:
@@ -50,27 +49,11 @@ def _configure_left_docks(viewer, *, status_dock_widget) -> None:
     status_dock_widget.raise_()
 
 
-def _schedule_startup_central_viewer_fit(
-    viewer,
-    *,
-    controls_dock_widget,
-    logs_dock_widget=None,
-    status_dock_widget=None,
-) -> None:
-    """Fit the central viewer to the workspace aspect ratio once Qt has laid out the docks."""
+def _schedule_startup_central_viewer_fit(viewer) -> None:
+    """Queue one fit after the preconfigured window has received its final geometry."""
     from PyQt5.QtCore import QTimer
 
-    QTimer.singleShot(
-        500,
-        lambda viewer=viewer, controls_dock_widget=controls_dock_widget, logs_dock_widget=logs_dock_widget, status_dock_widget=status_dock_widget: (
-            _apply_startup_dock_layout(
-                viewer,
-                controls_dock_widget=controls_dock_widget,
-                logs_dock_widget=logs_dock_widget,
-                status_dock_widget=status_dock_widget,
-            )
-        ),
-    )
+    QTimer.singleShot(0, lambda viewer=viewer: _reset_view(viewer))
 
 
 def _apply_startup_dock_layout(
@@ -146,19 +129,12 @@ def _resize_controls_dock(viewer, *, controls_dock_widget) -> None:
         round(window_width * CONTROLS_DOCK_WIDTH_RATIO),
     )
 
-    from PyQt5.QtCore import Qt, QTimer
+    from PyQt5.QtCore import Qt
 
     resize_docks(
         [controls_dock_widget],
         [target_width],
         Qt.Horizontal,
-    )
-    _reset_view(viewer)
-    # QMainWindow animates dock resizing. Refit after that animation so Napari
-    # uses the final canvas dimensions instead of leaving the workspace small.
-    QTimer.singleShot(
-        FINAL_VIEW_FIT_DELAY_MS,
-        lambda viewer=viewer: _reset_view(viewer),
     )
 
 
@@ -195,7 +171,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         PeripheralControllerStatusDock,
     )
 
-    viewer = napari.Viewer()
+    viewer = napari.Viewer(show=False)
     _configure_bottom_dock_corners(viewer)
     controls_dock = EvoMachineControlsDock(napari_viewer=viewer)
     controls_dock_widget = viewer.window.add_dock_widget(
@@ -214,7 +190,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         area="bottom",
         tabify=True,
     )
-    _schedule_startup_central_viewer_fit(
+    _apply_startup_dock_layout(
         viewer,
         controls_dock_widget=controls_dock_widget,
         logs_dock_widget=logs_dock_widget,
@@ -222,6 +198,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     for path in args:
         viewer.open(str(Path(path)))
+    viewer.show()
+    _schedule_startup_central_viewer_fit(viewer)
     napari.run()
     return 0
 

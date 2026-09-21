@@ -265,7 +265,6 @@ class CentralVisualWorkspace:
         if layer is not None:
             self.viewer.layers.remove(layer)
         self.viewer.grid.enabled = False
-        fit_central_viewer(self.viewer)
 
     def _connect_controller(self) -> None:
         self.controller.camera_status_received.connect(self.update_camera_status)
