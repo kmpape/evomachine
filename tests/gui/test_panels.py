@@ -82,6 +82,9 @@ class FakeController(QObject):
     def move_stage_relative(self, dx, dy, dz):
         self.calls.append(("move_stage_relative", dx, dy, dz))
 
+    def move_stage_absolute(self, x, y, z):
+        self.calls.append(("move_stage_absolute", x, y, z))
+
     def move_stage_fov(self, direction, multiplier=1.0):
         self.calls.append(("move_stage_fov", direction, multiplier))
 
@@ -304,6 +307,76 @@ def test_stage_panel_sends_relative_delta_move_request() -> None:
     assert controller.calls == [("move_stage_relative", 1.0, 2.0, 3.0)]
 
 
+def test_stage_panel_sends_absolute_target_move_request() -> None:
+    _app()
+    controller = FakeController()
+    panel = StagePanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+    panel.absolute_x_input.setValue(10)
+    panel.absolute_y_input.setValue(20)
+    panel.absolute_z_input.setValue(30)
+
+    panel._move_absolute()
+
+    assert controller.calls == [("move_stage_absolute", 10.0, 20.0, 30.0)]
+    assert panel.relative_movement_group.title() == "Relative movement"
+    assert panel.absolute_movement_group.title() == "Absolute movement"
+
+
+def test_stage_movement_sections_align_coordinate_fields_with_equal_spacing() -> None:
+    _app()
+    panel = StagePanel(controller=FakeController())
+    panel.resize(360, 900)
+    panel.show()
+    QApplication.processEvents()
+
+    relative_inputs = (panel.x_input, panel.y_input, panel.z_input)
+    absolute_inputs = (
+        panel.absolute_x_input,
+        panel.absolute_y_input,
+        panel.absolute_z_input,
+    )
+
+    assert [field.prefix() for field in relative_inputs] == [
+        "ΔX (µm): ",
+        "ΔY (µm): ",
+        "ΔZ (µm): ",
+    ]
+    assert [field.prefix() for field in absolute_inputs] == [
+        "X (µm): ",
+        "Y (µm): ",
+        "Z (µm): ",
+    ]
+    assert all(field.alignment() == Qt.AlignCenter for field in (*relative_inputs, *absolute_inputs))
+    assert panel.relative_movement_group.layout().spacing() == 8
+    assert panel.absolute_movement_group.layout().spacing() == 8
+    assert len({field.geometry().center().x() for field in relative_inputs}) == 1
+    assert len({field.geometry().center().x() for field in absolute_inputs}) == 1
+    assert relative_inputs[1].y() - relative_inputs[0].y() == (
+        absolute_inputs[1].y() - absolute_inputs[0].y()
+    )
+    assert relative_inputs[2].y() - relative_inputs[1].y() == (
+        absolute_inputs[2].y() - absolute_inputs[1].y()
+    )
+
+
+def test_stage_panel_updates_absolute_position_and_targets_from_movement_result() -> None:
+    _app()
+    controller = FakeController()
+    panel = StagePanel(controller=controller)
+
+    controller.stage_coordinates_received.emit(
+        {"coordinate": {"x": 10.5, "y": -20.25, "z": 30.0}}
+    )
+
+    assert panel.coordinate_label.text() == (
+        "Current absolute position: x: 10.5, y: -20.25, z: 30.0"
+    )
+    assert panel.absolute_x_input.value() == 10.5
+    assert panel.absolute_y_input.value() == -20.25
+    assert panel.absolute_z_input.value() == 30.0
+
+
 def test_stage_panel_disables_all_movement_controls_until_operation_finishes() -> None:
     _app()
     controller = FakeController()
@@ -316,12 +389,14 @@ def test_stage_panel_disables_all_movement_controls_until_operation_finishes() -
 
     assert controller.calls == [("move_stage_relative", 0.0, 0.0, 0.0)]
     assert not panel.move_button.isEnabled()
+    assert not panel.absolute_move_button.isEnabled()
     assert not panel.origin_button.isEnabled()
     assert all(not button.isEnabled() for button in panel.fov_buttons)
     assert panel.stop_button.isEnabled()
 
     panel.update_operation_status({"kind": "stage_movement", "state": "completed"})
     assert panel.move_button.isEnabled()
+    assert panel.absolute_move_button.isEnabled()
     assert panel.origin_button.isEnabled()
     assert all(button.isEnabled() for button in panel.fov_buttons)
 
@@ -334,7 +409,8 @@ def test_narrow_control_columns_use_compact_action_labels() -> None:
     autofocus = AutofocusPanel(controller=controller)
     fovs = FovSetupPanel(controller=controller)
 
-    assert stage.move_button.text() == "Move"
+    assert stage.move_button.text() == "Move Relative"
+    assert stage.absolute_move_button.text() == "Move Absolute"
     assert dmd.select_custom_pattern_button.text() == "Choose File…"
     assert dmd.display_custom_pattern_button.text() == "Display"
     assert dmd.calibration_buttons["calibrate"].text() == "Calibrate"

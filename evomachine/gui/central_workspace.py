@@ -18,7 +18,8 @@ DEFAULT_CAMERA_DISPLAY_SHAPE = (512, 512)
 DMD_DISPLAY_SHAPE = (DMD_WIDTH_HEIGHT[1], DMD_WIDTH_HEIGHT[0])
 HISTOGRAM_BINS = 256
 AUTO_CONTRAST_PERCENTILES = (0.5, 99.5)
-CENTRAL_VIEW_ZOOM = 1.20
+CENTRAL_VIEW_MARGIN = 0.00
+CENTRAL_VIEW_ZOOM = 1.00
 
 BACKGROUND = np.array([9, 11, 14], dtype=np.uint8)
 PANEL = np.array([21, 24, 29], dtype=np.uint8)
@@ -40,8 +41,8 @@ MIN_CONTENT_WIDTH = PANEL_WIDTH - 2 * PANEL_PAD
 
 
 def fit_central_viewer(viewer: Any) -> None:
-    """Fit the workspace, then scale it to closely fill the central canvas."""
-    viewer.reset_view()
+    """Fit the complete workspace within the central canvas without cropping."""
+    viewer.reset_view(margin=CENTRAL_VIEW_MARGIN)
     viewer.camera.zoom *= CENTRAL_VIEW_ZOOM
 
 
@@ -264,7 +265,6 @@ class CentralVisualWorkspace:
         if layer is not None:
             self.viewer.layers.remove(layer)
         self.viewer.grid.enabled = False
-        fit_central_viewer(self.viewer)
 
     def _connect_controller(self) -> None:
         self.controller.camera_status_received.connect(self.update_camera_status)

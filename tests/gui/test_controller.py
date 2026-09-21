@@ -19,16 +19,44 @@ def test_gui_stage_moves_are_non_blocking_so_stop_can_be_processed() -> None:
     client = RecordingClient()
     controller = EvoMachineGuiController(client=client, start_worker=False)
 
+    controller.move_stage_absolute(1, 2, 3)
     controller.move_stage_relative(4, 5, 6)
     controller.move_stage_fov("RIGHT")
     controller.return_stage_to_origin()
 
     assert [request.command for request in client.requests] == [
+        GuiCommandType.STAGE_MOVE_ABSOLUTE,
         GuiCommandType.STAGE_MOVE_RELATIVE,
         GuiCommandType.STAGE_MOVE_FOV,
         GuiCommandType.STAGE_RETURN_ORIGIN,
     ]
-    assert all(request.payload["block"] is False for request in client.requests[:2])
+    assert all(request.payload["block"] is False for request in client.requests[:3])
+
+
+def test_gui_controller_dispatches_completed_stage_movement_coordinates() -> None:
+    controller = EvoMachineGuiController(client=RecordingClient(), start_worker=False)
+    received = []
+    controller.stage_coordinates_received.connect(received.append)
+    result = {
+        "coordinate": {"x": 1, "y": 2, "z": 3, "channel_id": 0},
+        "stage": {"is_initialised": True},
+    }
+
+    controller._handle_response(
+        GuiResponse(
+            request_id="stage-movement",
+            ok=True,
+            payload={
+                "operation": {
+                    "kind": "stage_movement",
+                    "state": "completed",
+                    "result": result,
+                }
+            },
+        )
+    )
+
+    assert received == [result]
 
 
 def test_gui_controller_sends_output_directory_request() -> None:

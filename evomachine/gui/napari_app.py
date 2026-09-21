@@ -49,27 +49,29 @@ def _configure_left_docks(viewer, *, status_dock_widget) -> None:
     status_dock_widget.raise_()
 
 
-def _schedule_startup_central_viewer_fit(
+def _schedule_startup_central_viewer_fit(viewer) -> None:
+    """Queue one fit after the preconfigured window has received its final geometry."""
+    from PyQt5.QtCore import QTimer
+
+    QTimer.singleShot(0, lambda viewer=viewer: _reset_view(viewer))
+
+
+def _show_with_startup_layout(
     viewer,
     *,
     controls_dock_widget,
     logs_dock_widget=None,
     status_dock_widget=None,
 ) -> None:
-    """Fit the central viewer to the workspace aspect ratio once Qt has laid out the docks."""
-    from PyQt5.QtCore import QTimer
-
-    QTimer.singleShot(
-        500,
-        lambda viewer=viewer, controls_dock_widget=controls_dock_widget, logs_dock_widget=logs_dock_widget, status_dock_widget=status_dock_widget: (
-            _apply_startup_dock_layout(
-                viewer,
-                controls_dock_widget=controls_dock_widget,
-                logs_dock_widget=logs_dock_widget,
-                status_dock_widget=status_dock_widget,
-            )
-        ),
+    """Restore window geometry, configure docks, then queue the sole viewer fit."""
+    viewer.show()
+    _apply_startup_dock_layout(
+        viewer,
+        controls_dock_widget=controls_dock_widget,
+        logs_dock_widget=logs_dock_widget,
+        status_dock_widget=status_dock_widget,
     )
+    _schedule_startup_central_viewer_fit(viewer)
 
 
 def _apply_startup_dock_layout(
@@ -145,15 +147,13 @@ def _resize_controls_dock(viewer, *, controls_dock_widget) -> None:
         round(window_width * CONTROLS_DOCK_WIDTH_RATIO),
     )
 
-    from PyQt5.QtCore import Qt, QTimer
+    from PyQt5.QtCore import Qt
 
     resize_docks(
         [controls_dock_widget],
         [target_width],
         Qt.Horizontal,
     )
-    _reset_view(viewer)
-    QTimer.singleShot(0, lambda viewer=viewer: _reset_view(viewer))
 
 
 def _widget_extent(widget, name: str, fallback: int) -> int:
@@ -189,7 +189,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         PeripheralControllerStatusDock,
     )
 
-    viewer = napari.Viewer()
+    viewer = napari.Viewer(show=False)
     _configure_bottom_dock_corners(viewer)
     controls_dock = EvoMachineControlsDock(napari_viewer=viewer)
     controls_dock_widget = viewer.window.add_dock_widget(
@@ -208,14 +208,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         area="bottom",
         tabify=True,
     )
-    _schedule_startup_central_viewer_fit(
+    for path in args:
+        viewer.open(str(Path(path)))
+    # Napari restores the saved window geometry in show(). Size the docks now,
+    # before the event loop paints the window, so their proportions use the
+    # real window dimensions without producing visible intermediate layouts.
+    _show_with_startup_layout(
         viewer,
         controls_dock_widget=controls_dock_widget,
         logs_dock_widget=logs_dock_widget,
         status_dock_widget=status_dock_widget,
     )
-    for path in args:
-        viewer.open(str(Path(path)))
     napari.run()
     return 0
 

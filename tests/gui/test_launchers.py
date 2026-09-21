@@ -90,15 +90,16 @@ def test_napari_app_adapts_two_column_controls_to_window_width(
     controls_dock = object()
     viewer = SimpleNamespace(
         reset_count=0,
+        reset_margin=None,
         camera=SimpleNamespace(zoom=1.0),
         window=SimpleNamespace(_qt_window=qt_window),
     )
-    def reset_view():
+    def reset_view(*, margin):
         viewer.reset_count += 1
+        viewer.reset_margin = margin
         viewer.camera.zoom = 2.0
 
     viewer.reset_view = reset_view
-
     napari_app._resize_controls_dock(
         viewer,
         controls_dock_widget=controls_dock,
@@ -107,8 +108,61 @@ def test_napari_app_adapts_two_column_controls_to_window_width(
     docks, sizes, _orientation = qt_window.calls[0]
     assert docks == [controls_dock]
     assert sizes == [expected_width]
+    assert viewer.reset_count == 0
+
+
+def test_napari_app_schedules_one_startup_view_fit(monkeypatch) -> None:
+    viewer = SimpleNamespace(
+        reset_count=0,
+        camera=SimpleNamespace(zoom=1.0),
+    )
+
+    def reset_view(*, margin):
+        viewer.reset_count += 1
+        viewer.camera.zoom = 2.0
+
+    viewer.reset_view = reset_view
+    scheduled_fits = []
+    monkeypatch.setattr(
+        "PyQt5.QtCore.QTimer.singleShot",
+        lambda delay, callback: scheduled_fits.append((delay, callback)),
+    )
+
+    napari_app._schedule_startup_central_viewer_fit(viewer)
+
+    assert len(scheduled_fits) == 1
+    delay, startup_fit = scheduled_fits[0]
+    assert delay == 0
+    assert viewer.reset_count == 0
+
+    startup_fit()
+
     assert viewer.reset_count == 1
     assert viewer.camera.zoom == 2.0 * CENTRAL_VIEW_ZOOM
+
+
+def test_napari_app_restores_window_geometry_before_sizing_docks(monkeypatch) -> None:
+    calls = []
+    viewer = SimpleNamespace(show=lambda: calls.append("show"))
+    monkeypatch.setattr(
+        napari_app,
+        "_apply_startup_dock_layout",
+        lambda *args, **kwargs: calls.append("layout"),
+    )
+    monkeypatch.setattr(
+        napari_app,
+        "_schedule_startup_central_viewer_fit",
+        lambda *args, **kwargs: calls.append("fit"),
+    )
+
+    napari_app._show_with_startup_layout(
+        viewer,
+        controls_dock_widget=object(),
+        logs_dock_widget=object(),
+        status_dock_widget=object(),
+    )
+
+    assert calls == ["show", "layout", "fit"]
 
 
 def test_napari_app_hides_layer_list_and_tabifies_status_with_layer_controls() -> None:
