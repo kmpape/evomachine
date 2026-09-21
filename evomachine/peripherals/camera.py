@@ -81,6 +81,15 @@ class ObjectiveConfigType(EvoConfig):
 
 class ObjectiveConfigTypeFactory:
     @staticmethod
+    def default_hardware() -> ObjectiveConfigType:
+        """Return the objective installed on the default RAMM microscope."""
+        return ObjectiveConfigType(
+            na=0.95,
+            mag=40,
+            descr="Nikon Plan Apo lambda D 40x/0.95 (MRD70470)",
+        )
+
+    @staticmethod
     def default_oil() -> ObjectiveConfigType:
         return ObjectiveConfigType(na=1.4, mag=60, descr="Nikon Plan Apo lambda 60x/1.4 Oil")
 

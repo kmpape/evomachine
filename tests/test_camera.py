@@ -10,8 +10,15 @@ import pytest
 from evomachine.bindings.binding_types import BindingType
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
 from evomachine.peripherals import camera as camera_module
-from evomachine.peripherals.camera import CameraConfig, CameraFactory, CameraReadoutMode, ObjectiveConfigType
-from evomachine.peripherals.camera import ImageConfigType
+from evomachine.peripherals.camera import (
+    CameraConfig,
+    CameraFactory,
+    CameraReadoutMode,
+    ImageConfigType,
+    ObjectiveConfigType,
+    ObjectiveConfigTypeFactory,
+    calculate_fov_size,
+)
 
 
 def _image_config() -> ImageConfigType:
@@ -115,6 +122,22 @@ def test_camera_fov_size_uses_camera_and_objective_config() -> None:
     )
 
     assert camera.fov_size() == pytest.approx(0.975)
+
+
+def test_default_hardware_objective_matches_ramm_microscope() -> None:
+    objective = ObjectiveConfigTypeFactory.default_hardware()
+    camera_config = CameraConfig(
+        binding=BindingType.VIRTUAL,
+        image=ImageConfigType(pxl_horiz=3200, pxl_vert=3200, pxl_dtype=np.dtype("uint16")),
+        sensor_pixel_size_um=6.5,
+        objective_config=objective,
+    )
+
+    assert objective.na == pytest.approx(0.95)
+    assert objective.mag == 40
+    assert objective.descr == "Nikon Plan Apo lambda D 40x/0.95 (MRD70470)"
+    assert camera_config.sensor_pixel_size_um / objective.mag == pytest.approx(0.1625)
+    assert calculate_fov_size(camera_config, objective) == pytest.approx(520.0)
 
 
 def test_camera_fov_size_requires_objective_config() -> None:
