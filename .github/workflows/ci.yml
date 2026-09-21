@@ -38,13 +38,16 @@ jobs:
         env:
           SYNCBOARD_DEPLOY_KEY: ${{ secrets.SYNCBOARD_DEPLOY_KEY }}
           DELTA2_DEPLOY_KEY: ${{ secrets.DELTA2_DEPLOY_KEY }}
+          AUTOSTRAT_DEPLOY_KEY: ${{ secrets.AUTOSTRAT_DEPLOY_KEY }}
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "$SYNCBOARD_DEPLOY_KEY" > ~/.ssh/syncboard
           printf '%s\n' "$DELTA2_DEPLOY_KEY"    > ~/.ssh/delta2
-          chmod 600 ~/.ssh/syncboard ~/.ssh/delta2
+          printf '%s\n' "$AUTOSTRAT_DEPLOY_KEY" > ~/.ssh/autostrat
+          chmod 600 ~/.ssh/syncboard ~/.ssh/delta2 ~/.ssh/autostrat
           printf 'Host github.com\n  IdentityFile ~/.ssh/syncboard\n  IdentitiesOnly yes\n  StrictHostKeyChecking accept-new\n' >> ~/.ssh/config
           printf 'Host gitlab.com\n  IdentityFile ~/.ssh/delta2\n  IdentitiesOnly yes\n  StrictHostKeyChecking accept-new\n'    >> ~/.ssh/config
+          printf 'Host github-autostrat\n  HostName github.com\n  User git\n  IdentityFile ~/.ssh/autostrat\n  IdentitiesOnly yes\n  StrictHostKeyChecking accept-new\n' >> ~/.ssh/config
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5

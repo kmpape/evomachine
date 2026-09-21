@@ -1,0 +1,55 @@
+runtime_errors:
+  device_not_ready:
+    description: A device required by the strategy is unavailable or not initialised.
+    allowed_actions:
+      - abort
+    default_action: abort
+    max_retries: 0
+
+  movement_failed:
+    description: A requested field-of-view movement could not be completed reliably.
+    allowed_actions:
+      - retry
+      - terminate
+      - abort
+    default_action: retry
+    max_retries: 2
+    retry_exhausted_action: terminate
+
+  image_acquisition_failed:
+    description: An image could not be acquired or saved.
+    allowed_actions:
+      - retry
+      - continue
+      - terminate
+      - abort
+    default_action: retry
+    max_retries: 2
+    retry_exhausted_action: continue
+
+  projection_failed:
+    description: A requested DMD projection could not be completed.
+    allowed_actions:
+      - retry
+      - continue
+      - terminate
+      - abort
+    default_action: retry
+    max_retries: 2
+    retry_exhausted_action: continue
+
+  communication_failed:
+    description: Communication with a hardware device failed.
+    allowed_actions:
+      - retry
+      - abort
+    default_action: retry
+    max_retries: 2
+    retry_exhausted_action: abort
+
+  runtime_failure:
+    description: An unexpected internal strategy execution failure occurred.
+    allowed_actions:
+      - abort
+    default_action: abort
+    max_retries: 0

@@ -123,6 +123,11 @@ class AutomatonCommandType(EvoType):
     SEG_DATA = auto()
     AUTOFOCUS_DATA = auto()
 
+    # Strategy lifecycle controls. These remain distinct from STOP, which is a
+    # generic execution halt and does not itself define finalisation semantics.
+    TERMINATE_STRATEGY = auto()
+    ABORT_STRATEGY = auto()
+
 
 # TODO(Codex): rename as SoftwareFocusStatusType
 class FocusStatusType(EvoType):

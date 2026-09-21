@@ -1,0 +1,25 @@
+global_rules:
+  - Field-of-view collections and iteration counts are supplied by the application.
+  - "`current_fov_id` is unavailable during initialisation because no field of view has yet been established."
+  - "`step_count` is zero during the first step and counts previously completed steps."
+  - Image-derived observations are unavailable until an image has completed and then retain the most recent measured value.
+  - Focus-management observations are unavailable until a field-of-view movement has completed and then retain the most recent outcome.
+  - Runtime errors describe a failure in the previous command batch and must be inspected at the start of each step.
+
+command_rules:
+  move_fov:
+    - "`first_fov` selects the first field of view in the collection supplied by the application."
+    - "`next_fov` selects the next supplied field of view and is normally used during steps."
+    - Field-of-view coordinates are application-owned and must not be invented by a strategy.
+
+  image:
+    - Exposure, LED wavelength, LED brightness, and filter-wheel position must all be stated explicitly.
+    - Image-derived observations describe the most recently completed image acquisition.
+
+  project:
+    - Projects a full-field DMD pattern and does not acquire an image.
+    - Use a separate image command when projection and image acquisition are both required.
+    - The DMD pattern is application-owned and is not represented as a DSL array argument.
+
+  wait:
+    - Use a single wait command when the requested duration is within the permitted range.

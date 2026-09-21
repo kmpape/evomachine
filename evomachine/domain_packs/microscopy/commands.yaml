@@ -1,0 +1,96 @@
+commands:
+  move_fov:
+    description: Move to a field of view selected from the collection supplied by the application.
+    runtime_errors:
+      - device_not_ready
+      - movement_failed
+      - communication_failed
+    arguments:
+      target:
+        description: Select the first or next field of view in the supplied collection.
+        type: enum
+        values:
+          - first_fov
+          - next_fov
+
+  image:
+    description: Capture an image using explicit acquisition and illumination settings.
+    runtime_errors:
+      - device_not_ready
+      - image_acquisition_failed
+      - communication_failed
+    arguments:
+      exposure:
+        description: Camera exposure duration.
+        type: quantity
+        unit: ms
+        minimum_inclusive: 1
+        maximum_inclusive: 1000
+
+      led:
+        description: Illumination wavelength.
+        type: enum
+        values:
+          - 385nm
+          - 450nm
+          - 515nm
+          - 565nm
+          - 645nm
+
+      led_brightness:
+        description: Illumination brightness as a percentage of the available LED output.
+        type: number
+        minimum_inclusive: 0
+        maximum_inclusive: 100
+
+      filter:
+        description: Filter-wheel position used for the acquisition.
+        type: enum
+        values:
+          - filter
+          - 465nm
+          - 527nm
+          - 592nm
+          - no_filter
+          - blocking
+
+  project:
+    description: Project a full-field DMD pattern using explicit illumination settings.
+    runtime_errors:
+      - device_not_ready
+      - projection_failed
+      - communication_failed
+    arguments:
+      illumination_led:
+        description: LED wavelength used to illuminate the DMD projection.
+        type: enum
+        values:
+          - 385nm
+          - 450nm
+          - 515nm
+          - 565nm
+          - 645nm
+
+      illumination_brightness:
+        description: Projection illumination brightness as a percentage of available LED output.
+        type: number
+        minimum_inclusive: 0
+        maximum_inclusive: 100
+
+      duration:
+        description: Length of the full-field projection.
+        type: quantity
+        unit: s
+        minimum_exclusive: 0
+        maximum_exclusive: 3600
+
+  wait:
+    description: Pause strategy execution for a bounded duration.
+    runtime_errors: []
+    arguments:
+      duration:
+        description: Length of the pause.
+        type: quantity
+        unit: s
+        minimum_exclusive: 0
+        maximum_inclusive: 10
