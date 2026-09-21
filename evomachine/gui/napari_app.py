@@ -56,6 +56,24 @@ def _schedule_startup_central_viewer_fit(viewer) -> None:
     QTimer.singleShot(0, lambda viewer=viewer: _reset_view(viewer))
 
 
+def _show_with_startup_layout(
+    viewer,
+    *,
+    controls_dock_widget,
+    logs_dock_widget=None,
+    status_dock_widget=None,
+) -> None:
+    """Restore window geometry, configure docks, then queue the sole viewer fit."""
+    viewer.show()
+    _apply_startup_dock_layout(
+        viewer,
+        controls_dock_widget=controls_dock_widget,
+        logs_dock_widget=logs_dock_widget,
+        status_dock_widget=status_dock_widget,
+    )
+    _schedule_startup_central_viewer_fit(viewer)
+
+
 def _apply_startup_dock_layout(
     viewer,
     *,
@@ -190,16 +208,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         area="bottom",
         tabify=True,
     )
-    _apply_startup_dock_layout(
+    for path in args:
+        viewer.open(str(Path(path)))
+    # Napari restores the saved window geometry in show(). Size the docks now,
+    # before the event loop paints the window, so their proportions use the
+    # real window dimensions without producing visible intermediate layouts.
+    _show_with_startup_layout(
         viewer,
         controls_dock_widget=controls_dock_widget,
         logs_dock_widget=logs_dock_widget,
         status_dock_widget=status_dock_widget,
     )
-    for path in args:
-        viewer.open(str(Path(path)))
-    viewer.show()
-    _schedule_startup_central_viewer_fit(viewer)
     napari.run()
     return 0
 

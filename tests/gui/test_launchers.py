@@ -141,6 +141,30 @@ def test_napari_app_schedules_one_startup_view_fit(monkeypatch) -> None:
     assert viewer.camera.zoom == 2.0 * CENTRAL_VIEW_ZOOM
 
 
+def test_napari_app_restores_window_geometry_before_sizing_docks(monkeypatch) -> None:
+    calls = []
+    viewer = SimpleNamespace(show=lambda: calls.append("show"))
+    monkeypatch.setattr(
+        napari_app,
+        "_apply_startup_dock_layout",
+        lambda *args, **kwargs: calls.append("layout"),
+    )
+    monkeypatch.setattr(
+        napari_app,
+        "_schedule_startup_central_viewer_fit",
+        lambda *args, **kwargs: calls.append("fit"),
+    )
+
+    napari_app._show_with_startup_layout(
+        viewer,
+        controls_dock_widget=object(),
+        logs_dock_widget=object(),
+        status_dock_widget=object(),
+    )
+
+    assert calls == ["show", "layout", "fit"]
+
+
 def test_napari_app_hides_layer_list_and_tabifies_status_with_layer_controls() -> None:
     class FakeDock:
         def __init__(self):
