@@ -90,11 +90,13 @@ def test_napari_app_adapts_two_column_controls_to_window_width(
     controls_dock = object()
     viewer = SimpleNamespace(
         reset_count=0,
+        reset_margin=None,
         camera=SimpleNamespace(zoom=1.0),
         window=SimpleNamespace(_qt_window=qt_window),
     )
-    def reset_view():
+    def reset_view(*, margin):
         viewer.reset_count += 1
+        viewer.reset_margin = margin
         viewer.camera.zoom = 2.0
 
     viewer.reset_view = reset_view

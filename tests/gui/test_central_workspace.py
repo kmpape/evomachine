@@ -8,6 +8,7 @@ import numpy as np
 from evomachine.config import DMD_WIDTH_HEIGHT
 from evomachine.gui.central_workspace import (
     DMD_DISPLAY_SHAPE,
+    CENTRAL_VIEW_MARGIN,
     CENTRAL_VIEW_ZOOM,
     DMD_RECT,
     HISTOGRAM_BINS,
@@ -77,10 +78,12 @@ def test_central_viewer_fit_keeps_complete_workspace_visible() -> None:
     viewer = SimpleNamespace(
         camera=SimpleNamespace(zoom=1.0),
         reset_count=0,
+        reset_margin=None,
     )
 
-    def reset_view():
+    def reset_view(*, margin):
         viewer.reset_count += 1
+        viewer.reset_margin = margin
         viewer.camera.zoom = 2.0
 
     viewer.reset_view = reset_view
@@ -88,6 +91,7 @@ def test_central_viewer_fit_keeps_complete_workspace_visible() -> None:
     fit_central_viewer(viewer)
 
     assert viewer.reset_count == 1
+    assert viewer.reset_margin == CENTRAL_VIEW_MARGIN == 0.0
     assert CENTRAL_VIEW_ZOOM <= 1.0
     assert viewer.camera.zoom == 2.0 * CENTRAL_VIEW_ZOOM
 
