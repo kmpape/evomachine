@@ -15,6 +15,7 @@ LOG_DOCK_HEIGHT_RATIO = REFERENCE_LOG_DOCK_HEIGHT / REFERENCE_WINDOW_HEIGHT
 MINIMUM_CONTROLS_DOCK_WIDTH = 480
 MINIMUM_LOG_DOCK_HEIGHT = 72
 MAXIMUM_LOG_DOCK_HEIGHT_RATIO = 0.2
+FINAL_VIEW_FIT_DELAY_MS = 250
 
 
 def _configure_left_docks(viewer, *, status_dock_widget) -> None:
@@ -153,7 +154,12 @@ def _resize_controls_dock(viewer, *, controls_dock_widget) -> None:
         Qt.Horizontal,
     )
     _reset_view(viewer)
-    QTimer.singleShot(0, lambda viewer=viewer: _reset_view(viewer))
+    # QMainWindow animates dock resizing. Refit after that animation so Napari
+    # uses the final canvas dimensions instead of leaving the workspace small.
+    QTimer.singleShot(
+        FINAL_VIEW_FIT_DELAY_MS,
+        lambda viewer=viewer: _reset_view(viewer),
+    )
 
 
 def _widget_extent(widget, name: str, fallback: int) -> int:

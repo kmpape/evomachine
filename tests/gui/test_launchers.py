@@ -73,7 +73,7 @@ def test_run_napari_passes_forced_image_transport_to_child_environment(monkeypat
     [(1280, 610), (1920, 915), (800, napari_app.MINIMUM_CONTROLS_DOCK_WIDTH)],
 )
 def test_napari_app_adapts_two_column_controls_to_window_width(
-    window_width, expected_width
+    window_width, expected_width, monkeypatch
 ) -> None:
     class FakeQtWindow:
         def __init__(self, width):
@@ -98,6 +98,11 @@ def test_napari_app_adapts_two_column_controls_to_window_width(
         viewer.camera.zoom = 2.0
 
     viewer.reset_view = reset_view
+    scheduled_fits = []
+    monkeypatch.setattr(
+        "PyQt5.QtCore.QTimer.singleShot",
+        lambda delay, callback: scheduled_fits.append((delay, callback)),
+    )
 
     napari_app._resize_controls_dock(
         viewer,
@@ -108,6 +113,14 @@ def test_napari_app_adapts_two_column_controls_to_window_width(
     assert docks == [controls_dock]
     assert sizes == [expected_width]
     assert viewer.reset_count == 1
+    assert viewer.camera.zoom == 2.0 * CENTRAL_VIEW_ZOOM
+    assert len(scheduled_fits) == 1
+    delay, final_fit = scheduled_fits[0]
+    assert delay == napari_app.FINAL_VIEW_FIT_DELAY_MS
+
+    final_fit()
+
+    assert viewer.reset_count == 2
     assert viewer.camera.zoom == 2.0 * CENTRAL_VIEW_ZOOM
 
 
