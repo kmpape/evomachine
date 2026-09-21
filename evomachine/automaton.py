@@ -1166,23 +1166,23 @@ class Automaton:
         -------
         None
         """
-      actions = [("acquisition manager", self.acq_mngr.stop)]
-      if self._swfocus is not None and callable(getattr(self._swfocus, "stop", None)):
-          actions.append(("software focus", self._swfocus.stop))
-      if self._autofocus is not None and callable(getattr(self._autofocus, "unlock", None)):
-          actions.append(("autofocus", self._autofocus.unlock))
-
-      errors: list[str] = []
-      for name, action in actions:
-          try:
-              action()
-          except Exception as error:
-              logger.exception("Automaton.act_on_halt: failed to halt %s.", name)
-              errors.append(f"{name}: {type(error).__name__}: {error}")
-      if errors:
-          raise RuntimeError(
-              "Automaton halt completed with errors: " + "; ".join(errors)
-          )
+        actions = [("acquisition manager", self.acq_mngr.stop)]
+        if self._swfocus is not None and callable(getattr(self._swfocus, "stop", None)):
+            actions.append(("software focus", self._swfocus.stop))
+        if self._autofocus is not None and callable(getattr(self._autofocus, "unlock", None)):
+            actions.append(("autofocus", self._autofocus.unlock))
+        
+        errors: list[str] = []
+        for name, action in actions:
+            try:
+                action()
+            except Exception as error:
+                logger.exception("Automaton.act_on_halt: failed to halt %s.", name)
+                errors.append(f"{name}: {type(error).__name__}: {error}")
+        if errors:
+            raise RuntimeError(
+            "Automaton halt completed with errors: " + "; ".join(errors)
+            )
 
     def _fail_safe_abort(
         self,
