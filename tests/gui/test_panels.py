@@ -323,6 +323,43 @@ def test_stage_panel_sends_absolute_target_move_request() -> None:
     assert panel.absolute_movement_group.title() == "Absolute movement"
 
 
+def test_stage_movement_sections_align_coordinate_fields_with_equal_spacing() -> None:
+    _app()
+    panel = StagePanel(controller=FakeController())
+    panel.resize(360, 900)
+    panel.show()
+    QApplication.processEvents()
+
+    relative_inputs = (panel.x_input, panel.y_input, panel.z_input)
+    absolute_inputs = (
+        panel.absolute_x_input,
+        panel.absolute_y_input,
+        panel.absolute_z_input,
+    )
+
+    assert [field.prefix() for field in relative_inputs] == [
+        "ΔX (µm): ",
+        "ΔY (µm): ",
+        "ΔZ (µm): ",
+    ]
+    assert [field.prefix() for field in absolute_inputs] == [
+        "Target X (µm): ",
+        "Target Y (µm): ",
+        "Target Z (µm): ",
+    ]
+    assert all(field.alignment() == Qt.AlignCenter for field in (*relative_inputs, *absolute_inputs))
+    assert panel.relative_movement_group.layout().spacing() == 8
+    assert panel.absolute_movement_group.layout().spacing() == 8
+    assert len({field.geometry().center().x() for field in relative_inputs}) == 1
+    assert len({field.geometry().center().x() for field in absolute_inputs}) == 1
+    assert relative_inputs[1].y() - relative_inputs[0].y() == (
+        absolute_inputs[1].y() - absolute_inputs[0].y()
+    )
+    assert relative_inputs[2].y() - relative_inputs[1].y() == (
+        absolute_inputs[2].y() - absolute_inputs[1].y()
+    )
+
+
 def test_stage_panel_updates_absolute_position_and_targets_from_movement_result() -> None:
     _app()
     controller = FakeController()

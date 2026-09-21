@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from PyQt5.QtCore import QTimer
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
     QDoubleSpinBox,
-    QFormLayout,
     QGridLayout,
     QGroupBox,
     QLabel,
@@ -39,12 +38,12 @@ class StagePanel(QGroupBox):
         self.strategy_running = False
         self.movement_running = False
         self.fov_buttons: list[QPushButton] = []
-        self.x_input = self._axis_input()
-        self.y_input = self._axis_input()
-        self.z_input = self._axis_input()
-        self.absolute_x_input = self._axis_input()
-        self.absolute_y_input = self._axis_input()
-        self.absolute_z_input = self._axis_input()
+        self.x_input = self._axis_input("ΔX (µm): ")
+        self.y_input = self._axis_input("ΔY (µm): ")
+        self.z_input = self._axis_input("ΔZ (µm): ")
+        self.absolute_x_input = self._axis_input("Target X (µm): ")
+        self.absolute_y_input = self._axis_input("Target Y (µm): ")
+        self.absolute_z_input = self._axis_input("Target Z (µm): ")
 
         self.refresh_button = QPushButton("Refresh")
         self.move_button = QPushButton("Move Relative")
@@ -58,21 +57,23 @@ class StagePanel(QGroupBox):
         self.movement_poll_timer = QTimer(self)
         self.movement_poll_timer.setInterval(250)
 
-        relative_form = QFormLayout()
-        relative_form.addRow("ΔX (µm)", self.x_input)
-        relative_form.addRow("ΔY (µm)", self.y_input)
-        relative_form.addRow("ΔZ (µm)", self.z_input)
-        relative_form.addRow(self.move_button)
+        relative_form = self._movement_layout(
+            self.x_input,
+            self.y_input,
+            self.z_input,
+            self.move_button,
+        )
         self.relative_movement_group = QGroupBox("Relative movement")
         self.relative_movement_group.setToolTip("Offsets are applied from the current stage position.")
         self.relative_movement_group.setLayout(relative_form)
 
-        absolute_form = QFormLayout()
-        absolute_form.addRow("Target X (µm)", self.absolute_x_input)
-        absolute_form.addRow("Target Y (µm)", self.absolute_y_input)
-        absolute_form.addRow("Target Z (µm)", self.absolute_z_input)
-        absolute_form.addRow(self.absolute_move_button)
-        absolute_form.addRow(self.origin_button)
+        absolute_form = self._movement_layout(
+            self.absolute_x_input,
+            self.absolute_y_input,
+            self.absolute_z_input,
+            self.absolute_move_button,
+            self.origin_button,
+        )
         self.absolute_movement_group = QGroupBox("Absolute movement")
         self.absolute_movement_group.setToolTip("Targets use absolute zeroed Tiger coordinates.")
         self.absolute_movement_group.setLayout(absolute_form)
@@ -121,12 +122,22 @@ class StagePanel(QGroupBox):
         self._sync_controls_enabled()
 
     @staticmethod
-    def _axis_input() -> QDoubleSpinBox:
+    def _axis_input(prefix: str) -> QDoubleSpinBox:
         box = QDoubleSpinBox()
         box.setRange(-1e7, 1e7)
         box.setDecimals(3)
         box.setSingleStep(1.0)
+        box.setPrefix(prefix)
+        box.setAlignment(Qt.AlignCenter)
         return box
+
+    @staticmethod
+    def _movement_layout(*widgets: QWidget) -> QVBoxLayout:
+        layout = QVBoxLayout()
+        layout.setSpacing(8)
+        for widget in widgets:
+            layout.addWidget(widget)
+        return layout
 
     def _move_delta(self) -> None:
         if not self.devices_initialised or self.movement_running:
