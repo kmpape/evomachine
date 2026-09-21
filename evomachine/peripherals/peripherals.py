@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 
+from pydantic import field_validator
+
+from evomachine.config_models import EvoConfig
 from evomachine.bindings.binding_types import BindingType
 
 
-@dataclass(kw_only=True)
-class PeripheralConfig:
+class PeripheralConfig(EvoConfig):
     """Common binding-neutral fields shared by peripheral factory configs."""
 
     binding: BindingType
@@ -15,7 +16,28 @@ class PeripheralConfig:
     check_initialised: bool = True
     check_alive: bool = True
 
-    def __post_init__(self) -> None:
+    @field_validator("binding", mode="before")
+    @classmethod
+    def _validate_binding(cls, value: object) -> object:
+        if not isinstance(value, BindingType):
+            raise TypeError(f"{cls.__name__}: binding must be BindingType, received {type(value)}.")
+        return value
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def _validate_name(cls, value: object) -> object:
+        if value is not None and not isinstance(value, str):
+            raise TypeError(f"{cls.__name__}: name must be str or None, received {type(value)}.")
+        return value
+
+    @field_validator("check_initialised", "check_alive", mode="before")
+    @classmethod
+    def _validate_check_flag(cls, value: object, info) -> object:
+        if not isinstance(value, bool):
+            raise TypeError(f"{cls.__name__}: {info.field_name} must be bool, received {type(value)}.")
+        return value
+
+    def model_post_init(self, __context) -> None:
         if not isinstance(self.binding, BindingType):
             raise TypeError(f"{type(self).__name__}: binding must be BindingType, received {type(self.binding)}.")
         if self.name is not None and not isinstance(self.name, str):
@@ -26,10 +48,6 @@ class PeripheralConfig:
             )
         if not isinstance(self.check_alive, bool):
             raise TypeError(f"{type(self).__name__}: check_alive must be bool, received {type(self.check_alive)}.")
-
-    def copy(self):
-        """Return a validated shallow copy of this config."""
-        return type(self)(**self.__dict__)
 
 
 class Peripheral(ABC):
@@ -99,7 +117,7 @@ class Peripheral(ABC):
         raise NotImplementedError
 
 
-from evomachine.peripherals.peripheralcontrollers import (  # noqa: E402
+from evomachine.peripherals.peripheralcontrollers import (  # noqa: E402, F401
     PeripheralController,
     PeripheralControllerConfig,
     PeripheralControllerFactory,

@@ -7,8 +7,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from evomachine.gui.launchers import demo_main
+from evomachine.gui.launchers import virtual_main  # noqa: E402
 
 
 if __name__ == "__main__":
-    raise SystemExit(demo_main(sys.argv[1:]))
+    raise SystemExit(virtual_main(sys.argv[1:]))

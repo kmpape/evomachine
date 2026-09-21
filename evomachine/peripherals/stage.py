@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass
+from pydantic import field_validator
+
 from evomachine.config import get_logger
 from evomachine.coordinates import Coordinate, CoordinateBounds
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
@@ -12,7 +13,6 @@ from evomachine.types import AxisType, FovDirectionType, PositiveScalingType, UN
 logger = get_logger(name=__name__, is_peripheral=True)
 
 
-@dataclass(kw_only=True)
 class StageConfig(PeripheralConfig):
     """
     Configuration object used by StageFactory to create Stage instances.
@@ -43,8 +43,43 @@ class StageConfig(PeripheralConfig):
     fov_step_size: float
     initial_coordinate: Coordinate | None = None
     coordinate_bounds: CoordinateBounds | None = None
+    zero_on_initialise: bool = False
 
-    def __post_init__(self) -> None:
+    @field_validator("fov_step_size", mode="before")
+    @classmethod
+    def _validate_fov_step_size_type(cls, value: object) -> object:
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            raise TypeError(f"StageConfig: fov_step_size must be numeric, received {type(value)}.")
+        return value
+
+    @field_validator("initial_coordinate", mode="before")
+    @classmethod
+    def _validate_initial_coordinate_type(cls, value: object) -> object:
+        if value is not None and not isinstance(value, Coordinate | dict):
+            raise TypeError(
+                f"StageConfig: initial_coordinate must be Coordinate or None, received {type(value)}."
+            )
+        return value
+
+    @field_validator("coordinate_bounds", mode="before")
+    @classmethod
+    def _validate_coordinate_bounds_type(cls, value: object) -> object:
+        if value is not None and not isinstance(value, CoordinateBounds | dict):
+            raise TypeError(
+                f"StageConfig: coordinate_bounds must be CoordinateBounds or None, received {type(value)}."
+            )
+        return value
+
+    @field_validator("zero_on_initialise", mode="before")
+    @classmethod
+    def _validate_zero_on_initialise_type(cls, value: object) -> object:
+        if not isinstance(value, bool):
+            raise TypeError(
+                f"StageConfig: zero_on_initialise must be bool, received {type(value)}."
+            )
+        return value
+
+    def model_post_init(self, __context) -> None:
         """
         Validate stage factory configuration after construction.
 
@@ -57,7 +92,7 @@ class StageConfig(PeripheralConfig):
         None
             The dataclass fields are validated in place.
         """
-        super().__post_init__()
+        super().model_post_init(__context)
         if not isinstance(self.fov_step_size, int | float):
             raise TypeError(f"StageConfig: fov_step_size must be numeric, received {type(self.fov_step_size)}.")
         if self.fov_step_size <= 0:
@@ -72,6 +107,10 @@ class StageConfig(PeripheralConfig):
             raise TypeError(
                 f"StageConfig: coordinate_bounds must be CoordinateBounds or None, "
                 f"received {type(self.coordinate_bounds)}."
+            )
+        if not isinstance(self.zero_on_initialise, bool):
+            raise TypeError(
+                f"StageConfig: zero_on_initialise must be bool, received {type(self.zero_on_initialise)}."
             )
 
 
@@ -92,6 +131,7 @@ class Stage(Peripheral):
             name: str,
             fov_step_size: float,
             coordinate_bounds: CoordinateBounds | None = None,
+            zero_on_initialise: bool = False,
             check_initialised: bool = True,
             check_alive: bool = True,
     ):
@@ -107,6 +147,9 @@ class Stage(Peripheral):
         coordinate_bounds
             Optional software movement bounds. If None, hardware-reported limits
             are used when validating moves.
+        zero_on_initialise
+            If True, make the hardware's current position XYZ zero after the
+            stage has successfully initialised.
         check_initialised
             If True, public hardware-querying methods raise RuntimeError when the
             stage has not been initialised.
@@ -120,6 +163,10 @@ class Stage(Peripheral):
         """
         if fov_step_size <= 0:
             raise ValueError(f"Stage.__init__: fov_step_size must be positive, received {fov_step_size}.")
+        if not isinstance(zero_on_initialise, bool):
+            raise TypeError(
+                f"Stage.__init__: zero_on_initialise must be bool, received {type(zero_on_initialise)}."
+            )
         self.name: str = name
         "Name displayed in logs and error messages to identify the stage."
         self._is_initialised: bool = False
@@ -140,6 +187,8 @@ class Stage(Peripheral):
         "Field-of-view step size in stage coordinate units. Used for FoV movement targets."
         self._coordinate_bounds: CoordinateBounds | None = coordinate_bounds.copy() if coordinate_bounds else None
         "Software movement bounds. Set via constructor."
+        self._zero_on_initialise: bool = zero_on_initialise
+        "Whether initialisation establishes the current hardware position as XYZ zero."
         self.config: StageConfig | None = None
         "Validated factory configuration used to create or update this stage."
         self._fov_direction_to_axis_sign: dict[FovDirectionType, tuple[AxisType, int]] = {
@@ -240,6 +289,10 @@ class Stage(Peripheral):
             raise RuntimeError("Stage.initialise: stage is not alive after initialisation.")
         if self._is_alive:
             self._current_coordinate = self._get_coordinates()
+            if self._zero_on_initialise:
+                logger.info("Stage.initialise: zeroing %s at its startup position.", self.name)
+                self._current_coordinate = self._zero_coordinates()
+                self._current_fov_id = self.UNKNOWN_FOV_ID
         logger.debug("Stage.initialise: %s initialised at %s.", self.name, self._current_coordinate)
 
     def finalise(self, force: bool = False) -> None:
@@ -667,7 +720,7 @@ class Stage(Peripheral):
 
     def zero_coordinates(self) -> None:
         """
-        Zero the hardware coordinate system and cache the resulting coordinate.
+        Make the current hardware position the stage coordinate origin.
 
         Parameters
         ----------
@@ -678,8 +731,10 @@ class Stage(Peripheral):
         None
         """
         self._require_ready(action="zero_coordinates")
+        self.get_coordinates(query_hardware=True)
         logger.debug("Stage.zero_coordinates: zeroing %s.", self.name)
-        self._current_coordinate = self._zero_coordinates()
+        zeroed_coordinate = self._zero_coordinates()
+        self._current_coordinate = zeroed_coordinate
         self._current_fov_id = self.UNKNOWN_FOV_ID
 
     @abstractmethod
@@ -892,6 +947,7 @@ class StageFactory:
                 name=config.name or "Virtual Stage",
                 initial_coordinate=config.initial_coordinate,
                 coordinate_bounds=config.coordinate_bounds,
+                zero_on_initialise=config.zero_on_initialise,
                 check_initialised=config.check_initialised,
                 check_alive=config.check_alive,
             )
@@ -911,6 +967,8 @@ class StageFactory:
                 peripheral_ctrl=peripheral_ctrl,
                 fov_step_size=config.fov_step_size,
                 name=config.name or "ASI Tiger Stage",
+                coordinate_bounds=config.coordinate_bounds,
+                zero_on_initialise=config.zero_on_initialise,
                 check_initialised=config.check_initialised,
                 check_alive=config.check_alive,
             )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from asitiger.tigercontroller import TigerController
@@ -24,6 +25,7 @@ class TigerPeripheralController(SerialPeripheralController):
 
     DEFAULT_NAME = "ASI Tiger Peripheral Controller"
     DEFAULT_HWID = "10C4:EA60"
+    DEFAULT_HEALTH_CHECK_TIMEOUT_S = 1.0
 
     def __init__(
             self,
@@ -33,6 +35,7 @@ class TigerPeripheralController(SerialPeripheralController):
             card_address_crisp: int = CARD_ADDRESS_CRISP,
             card_address_led: int = CARD_ADDRESS_LED,
             card_address_filter_wheel: int = CARD_ADDRESS_FILTER_WHEEL,
+            health_check_timeout_s: float = DEFAULT_HEALTH_CHECK_TIMEOUT_S,
     ):
         configure_binding_loggers()
         self.tiger: TigerController = tiger
@@ -48,6 +51,16 @@ class TigerPeripheralController(SerialPeripheralController):
             card_address=card_address_filter_wheel,
             name="card_address_filter_wheel",
         )
+        if (
+            not isinstance(health_check_timeout_s, int | float)
+            or isinstance(health_check_timeout_s, bool)
+            or not math.isfinite(health_check_timeout_s)
+            or health_check_timeout_s <= 0
+        ):
+            raise ValueError(
+                "TigerPeripheralController: health_check_timeout_s must be a positive finite number."
+            )
+        self.health_check_timeout_s = float(health_check_timeout_s)
         super().__init__(name=name or self.DEFAULT_NAME, close_on_shutdown=close_on_shutdown)
 
     @staticmethod
@@ -91,6 +104,7 @@ class TigerPeripheralController(SerialPeripheralController):
             card_address_crisp: int = CARD_ADDRESS_CRISP,
             card_address_led: int = CARD_ADDRESS_LED,
             card_address_filter_wheel: int = CARD_ADDRESS_FILTER_WHEEL,
+            health_check_timeout_s: float = DEFAULT_HEALTH_CHECK_TIMEOUT_S,
             **tiger_options: Any,
     ) -> "TigerPeripheralController":
         if use_thread:
@@ -106,6 +120,7 @@ class TigerPeripheralController(SerialPeripheralController):
             card_address_crisp=card_address_crisp,
             card_address_led=card_address_led,
             card_address_filter_wheel=card_address_filter_wheel,
+            health_check_timeout_s=health_check_timeout_s,
         )
 
     def _get_serial_controller(self) -> TigerController:
@@ -115,11 +130,19 @@ class TigerPeripheralController(SerialPeripheralController):
         return self._check_is_alive()
 
     def _check_is_alive(self) -> bool:
+        serial_connection = getattr(getattr(self.tiger, "connection", None), "connection", None)
+        original_timeout = getattr(serial_connection, "timeout", None)
+        timeout_is_configurable = serial_connection is not None and hasattr(serial_connection, "timeout")
         try:
+            if timeout_is_configurable:
+                serial_connection.timeout = self.health_check_timeout_s
             self.tiger.status()
             return True
         except Exception:
             return False
+        finally:
+            if timeout_is_configurable:
+                serial_connection.timeout = original_timeout
 
     def _stop(self) -> None:
         self.tiger.halt()

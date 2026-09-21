@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import Field, field_validator
+
 from evomachine.bindings.binding_types import BindingType
+from evomachine.config_models import EvoConfig
 from evomachine.config import get_logger
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, get_peripheral_controller
 from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
@@ -12,14 +14,29 @@ from evomachine.peripherals.peripherals import Peripheral, PeripheralConfig
 logger = get_logger(name=__name__, is_peripheral=True)
 
 
-@dataclass
-class PhotodiodeReadingRange:
+class PhotodiodeReadingRange(EvoConfig):
     """Raw reading bounds used to scale photodiode readings to percentages."""
 
     minimum_reading: float
     maximum_reading: float
 
-    def __post_init__(self) -> None:
+    def __init__(self, *args: object, **data: object) -> None:
+        if args:
+            if len(args) != 2 or data:
+                raise TypeError("PhotodiodeReadingRange expects minimum_reading and maximum_reading.")
+            data = {"minimum_reading": args[0], "maximum_reading": args[1]}
+        super().__init__(**data)
+
+    @field_validator("minimum_reading", "maximum_reading", mode="before")
+    @classmethod
+    def _validate_reading_type(cls, value: object, info) -> object:
+        if not isinstance(value, int | float) or isinstance(value, bool):
+            raise TypeError(
+                f"PhotodiodeReadingRange: {info.field_name} must be numeric, received {type(value)}."
+            )
+        return value
+
+    def model_post_init(self, __context) -> None:
         """
         Validate raw photodiode reading bounds after construction.
 
@@ -69,16 +86,32 @@ class PhotodiodeReadingRange:
         return float(reading)
 
 
-@dataclass(kw_only=True)
 class PhotodiodeConfig(PeripheralConfig):
     """Configuration object used by PhotodiodeFactory to create photodiodes."""
 
     channel: int = 8
-    reading_range: PhotodiodeReadingRange = field(
-        default_factory=lambda: PhotodiodeReadingRange(0.0, 1.0)
+    reading_range: PhotodiodeReadingRange = Field(
+        default_factory=lambda: PhotodiodeReadingRange(minimum_reading=0.0, maximum_reading=1.0)
     )
 
-    def __post_init__(self) -> None:
+    @field_validator("channel", mode="before")
+    @classmethod
+    def _validate_channel_type(cls, value: object) -> object:
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise TypeError(f"PhotodiodeConfig: channel must be int, received {type(value)}.")
+        return value
+
+    @field_validator("reading_range", mode="before")
+    @classmethod
+    def _validate_reading_range_type(cls, value: object) -> object:
+        if not isinstance(value, PhotodiodeReadingRange | dict):
+            raise TypeError(
+                "PhotodiodeConfig: reading_range must be PhotodiodeReadingRange, "
+                f"received {type(value)}."
+            )
+        return value
+
+    def model_post_init(self, __context) -> None:
         """
         Validate photodiode configuration after construction.
 
@@ -91,7 +124,7 @@ class PhotodiodeConfig(PeripheralConfig):
         None
             The dataclass fields are validated in place.
         """
-        super().__post_init__()
+        super().model_post_init(__context)
         self.channel = Photodiode.validate_channel(channel=self.channel)
         if not isinstance(self.reading_range, PhotodiodeReadingRange):
             raise TypeError(

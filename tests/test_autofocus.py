@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import threading
+
 import pytest
 
-from evomachine.peripherals.autofocus import AutofocusConfig, AutofocusFactory
+from evomachine.peripherals.autofocus import AutofocusCalibrationConfig, AutofocusConfig, AutofocusFactory
 from evomachine.bindings.asitiger.autofocus import (
     CRISPSetState,
     FakeTigerAutofocusController,
@@ -122,7 +124,9 @@ def test_tiger_autofocus_config_validation_and_factory_defaults() -> None:
     -------
     None
     """
-    assert TigerAutofocusConfigFactory.default_config().objective_na == 0.9
+    default_config = TigerAutofocusConfigFactory.default_config()
+    assert isinstance(default_config, AutofocusCalibrationConfig)
+    assert default_config.objective_na == 0.9
     assert TigerAutofocusConfigFactory.default_oil_config().objective_na == 1.4
 
     with pytest.raises(TypeError):
@@ -161,10 +165,13 @@ def test_virtual_autofocus_lifecycle_and_state_transitions() -> None:
         autofocus.get_status()
 
     autofocus.initialise()
-    assert autofocus.configure()
-    assert autofocus.initialise_autofocus()
+    assert autofocus.apply_config()
+    result = autofocus.run_calibration()
+    assert result
+    assert result.measurements == {}
     assert autofocus.get_status() == AutoFocusStatusType.READY
     assert not autofocus.is_locked()
+    assert autofocus.initialise_autofocus() is True
 
     autofocus.lock()
     assert autofocus.get_status() == AutoFocusStatusType.IN_FOCUS
@@ -178,6 +185,7 @@ def test_virtual_autofocus_lifecycle_and_state_transitions() -> None:
     assert autofocus.get_status() == AutoFocusStatusType.IDLE
     assert autofocus.command_history == [
         "configure",
+        "initialise_autofocus",
         "initialise_autofocus",
         "lock",
         "unlock",
@@ -223,7 +231,7 @@ def test_tiger_autofocus_configure_sends_expected_commands() -> None:
     )
 
     autofocus.initialise()
-    assert autofocus.configure()
+    assert autofocus.apply_config()
 
     assert controller.tiger.commands == [
         ("state", CRISPSetState.UNLOCK),
@@ -259,7 +267,10 @@ def test_tiger_autofocus_initialise_command_sequence_and_lock() -> None:
     )
 
     autofocus.initialise()
-    assert autofocus.initialise_autofocus(lock_after_initialise=True)
+    result = autofocus.run_calibration(lock_after_calibration=True)
+    assert result
+    assert result.measurements == {"snr": 10.0, "error": 200.0}
+    assert result.failure_reason is None
 
     assert controller.tiger.commands == [
         ("state", CRISPSetState.UNLOCK),
@@ -295,7 +306,11 @@ def test_tiger_autofocus_initialise_returns_false_for_low_snr_or_error() -> None
     -------
     None
     """
-    for controller in [_tiger_controller(snr=1, error=200), _tiger_controller(snr=10, error=50)]:
+    cases = (
+        (_tiger_controller(snr=1, error=200), "SNR 1 is below"),
+        (_tiger_controller(snr=10, error=50), "Absolute error 50 is below"),
+    )
+    for controller, expected_reason in cases:
         autofocus = TigerAutofocus(
             peripheral_ctrl=controller,
             tiger_config=_tiger_config(),
@@ -305,8 +320,32 @@ def test_tiger_autofocus_initialise_returns_false_for_low_snr_or_error() -> None
         )
         autofocus.initialise()
 
-        assert not autofocus.initialise_autofocus(lock_after_initialise=True)
+        result = autofocus.run_calibration(lock_after_calibration=True)
+        assert not result
+        assert expected_reason in (result.failure_reason or "")
+        assert set(result.measurements) == {"snr", "error"}
         assert ("state", CRISPSetState.LOCK) not in controller.tiger.commands
+
+
+def test_tiger_autofocus_cancellation_stops_at_safe_idle_boundary() -> None:
+    controller = _tiger_controller()
+    autofocus = TigerAutofocus(
+        peripheral_ctrl=controller,
+        tiger_config=_tiger_config(),
+        pause_long=0,
+        pause_short=0,
+        sleep=lambda seconds: None,
+    )
+    autofocus.initialise()
+    stop_event = threading.Event()
+    stop_event.set()
+
+    result = autofocus.run_calibration(stop_event=stop_event)
+    assert not result
+    assert result.cancelled
+    assert result.failure_reason == "Calibration cancelled."
+    assert controller.tiger.commands[-1] == ("state", CRISPSetState.IDLE)
+    assert ("state", CRISPSetState.SET_OFFSET) not in controller.tiger.commands
 
 
 def test_tiger_autofocus_disable_unlock_and_status() -> None:

@@ -1,7 +1,6 @@
 from dataclasses import dataclass
-from math import ceil
+from math import ceil, isfinite
 
-from evomachine.exceptions import ConfigError, ErrorCode
 from evomachine.types import AxisType
 
 COORD_PRINT_PRECISION = 1
@@ -470,14 +469,12 @@ class CoordinateBounds:
 
 
 class CoordinateFactory:
-    def __init__(
-            self,
-            dfov: float,
-    ):
+    def __init__(self, dfov: float):
         self.dfov: float = float(dfov)
         "Size of (square) field of view > 0."
 
-        assert dfov > 0
+        if not isfinite(self.dfov) or self.dfov <= 0:
+            raise ValueError("CoordinateFactory: dfov must be a positive finite value.")
 
     def make_grid(
             self,
@@ -485,8 +482,12 @@ class CoordinateFactory:
             stop: Coordinate,
     ) -> list[Coordinate]:
         """
-        Creates a grid of field of views from start to stop coordinate. Moves in steps of dfov in either x or y
-        direction, and linearly in the other and the z direction (if not None).
+        Create non-overlapping field-of-view positions along a straight line.
+
+        The dominant XY axis advances by ``dfov`` for every position. When the
+        selected end point is not an exact multiple of ``dfov`` away, the last
+        position continues beyond it along the same line rather than reducing
+        the spacing and causing overlap.
 
         Parameters
         ----------
@@ -495,25 +496,35 @@ class CoordinateFactory:
 
         Returns
         -------
-
+        list[Coordinate]
+            Generated positions, including the start position.
         """
-        diff = stop - start
-        num_pos_x = ceil(abs(diff.x) / self.dfov) + 1
-        num_pos_y = ceil(abs(diff.y) / self.dfov) + 1
-        if (num_pos_x == 1) and (num_pos_y == 1):
-            return [Coordinate.from_coordinate(start)]
-        elif num_pos_x > num_pos_y:
-            delta = Coordinate(
-                x=diff.sign().x * self.dfov,
-                y=diff.y / (float(num_pos_x) - 1),
-                z=diff.z / (float(num_pos_x) - 1),
+        if not isinstance(start, Coordinate) or not isinstance(stop, Coordinate):
+            raise TypeError("CoordinateFactory.make_grid: start and stop must be Coordinate values.")
+        if start.x is None or start.y is None or stop.x is None or stop.y is None:
+            raise ValueError("CoordinateFactory.make_grid: start and stop must contain X and Y.")
+        if (start.z is None) != (stop.z is None):
+            raise ValueError(
+                "CoordinateFactory.make_grid: start and stop must either both contain Z or both omit it."
+            )
+
+        delta_x = float(stop.x) - float(start.x)
+        delta_y = float(stop.y) - float(start.y)
+        dominant_distance = max(abs(delta_x), abs(delta_y))
+        if dominant_distance == 0:
+            return [start.copy()]
+
+        scale = self.dfov / dominant_distance
+        step_x = delta_x * scale
+        step_y = delta_y * scale
+        step_z = None if start.z is None else (float(stop.z) - float(start.z)) * scale
+        position_count = ceil(dominant_distance / self.dfov) + 1
+        return [
+            Coordinate(
+                x=float(start.x) + step_x * index,
+                y=float(start.y) + step_y * index,
+                z=None if start.z is None else float(start.z) + step_z * index,
                 channel_id=start.get_channel_id(),
             )
-        else:
-            delta = Coordinate(
-                x=diff.x / (float(num_pos_y) - 1),
-                y=diff.sign().y * self.dfov,
-                z=diff.z / (float(num_pos_y) - 1),
-                channel_id=start.get_channel_id(),
-            )
-        return [start + (delta * i) for i in range(max(num_pos_x, num_pos_y))]
+            for index in range(position_count)
+        ]

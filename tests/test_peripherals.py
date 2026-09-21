@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from evomachine.bindings.asitiger.peripheralcontroller import TigerPeripheralController
@@ -107,6 +109,7 @@ class TrackingPeripheral(Peripheral):
 class FakeInnerConnection:
     def __init__(self):
         self.is_open = True
+        self.timeout = 10.0
 
 
 class FakeConnection:
@@ -155,6 +158,12 @@ class FakeTigerController:
 
     def halt(self):
         self.halt_was_called = True
+
+
+class UnresponsiveTigerController(FakeTigerController):
+    def status(self):
+        time.sleep(self.connection.connection.timeout)
+        raise TimeoutError("Tiger did not respond")
 
 
 class FakeControllerWithoutDisconnect:
@@ -328,6 +337,18 @@ def test_tiger_peripheral_controller_owns_card_addresses():
     assert custom.card_address_crisp == 3
     assert custom.card_address_led == 4
     assert custom.card_address_filter_wheel == 5
+
+
+def test_tiger_health_check_uses_bounded_serial_timeout_and_restores_it():
+    tiger = UnresponsiveTigerController()
+    controller = TigerPeripheralController(tiger=tiger, health_check_timeout_s=0.01)
+
+    started_at = time.perf_counter()
+    alive = controller.is_alive()
+
+    assert not alive
+    assert time.perf_counter() - started_at < 0.1
+    assert tiger.connection.connection.timeout == 10.0
 
 
 def test_peripheral_controller_factory_creates_virtual_controller():

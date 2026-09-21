@@ -206,7 +206,10 @@ class PeripheralController(ABC):
 
     def is_alive(self) -> bool:
         """
-        Return whether the controller reports an active connection.
+        Return whether the controller reports an active connection promptly.
+
+        Binding implementations that perform I/O must enforce a transport-level
+        timeout so a missing device cannot block application status reporting.
 
         Parameters
         ----------
@@ -297,7 +300,7 @@ class PeripheralController(ABC):
     @abstractmethod
     def _check_is_alive(self) -> bool:
         """
-        Run a binding-specific health check.
+        Run a binding-specific, bounded health check.
 
         Parameters
         ----------

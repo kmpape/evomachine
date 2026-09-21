@@ -13,7 +13,7 @@ class KWR103PeripheralController(SerialPeripheralController):
     """
 
     DEFAULT_NAME = "KWR103 Peripheral Controller"
-    DEFAULT_HWID = "16C0:0483"
+    DEFAULT_HWID = "0416:5011"
 
     def __init__(
             self,

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
-
-from evomachine.peripherals.autofocus import Autofocus
+from collections.abc import Callable
+import threading
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
+from evomachine.peripherals.autofocus import Autofocus, AutofocusCalibrationConfig, AutofocusCalibrationResult
 from evomachine.types import AutoFocusStatusType
 
 
@@ -106,7 +106,7 @@ class VirtualAutofocus(Autofocus):
         """
         return self.peripheral_ctrl.is_alive()
 
-    def _configure(self, config: Any | None = None) -> bool:
+    def _apply_config(self, config: AutofocusCalibrationConfig | None = None) -> bool:
         """
         Record a virtual configuration command.
 
@@ -117,18 +117,21 @@ class VirtualAutofocus(Autofocus):
 
         Returns
         -------
-        bool
-            Always True.
+        AutofocusCalibrationResult
+            Successful result, or a cancelled result when requested before the
+            calibration begins.
         """
         self.command_history.append("configure")
         self.is_configured = True
         return True
 
-    def _initialise_autofocus(
+    def _run_calibration(
             self,
-            config: Any | None = None,
-            lock_after_initialise: bool = False,
-    ) -> bool:
+            config: AutofocusCalibrationConfig | None = None,
+            lock_after_calibration: bool = False,
+            stop_event: threading.Event | None = None,
+            progress_callback: Callable[[float, str], None] | None = None,
+    ) -> AutofocusCalibrationResult:
         """
         Record a virtual autofocus setup command.
 
@@ -136,21 +139,32 @@ class VirtualAutofocus(Autofocus):
         ----------
         config
             Ignored optional configuration object.
-        lock_after_initialise
+        lock_after_calibration
             If True, lock the virtual autofocus after setup.
 
         Returns
         -------
-        bool
-            Always True.
+        AutofocusCalibrationResult
+            Successful result, or a cancelled result when requested before the
+            calibration begins.
         """
+        if stop_event is not None and stop_event.is_set():
+            return AutofocusCalibrationResult(
+                success=False,
+                failure_reason="Calibration cancelled.",
+                cancelled=True,
+            )
+        if progress_callback is not None:
+            progress_callback(0.5, "Calibrating virtual autofocus.")
         self.command_history.append("initialise_autofocus")
         self.is_configured = True
-        if lock_after_initialise:
+        if lock_after_calibration:
             self._lock()
         else:
             self._status = AutoFocusStatusType.READY
-        return True
+        if progress_callback is not None:
+            progress_callback(1.0, "Autofocus calibration complete.")
+        return AutofocusCalibrationResult(success=True)
 
     def _lock(self) -> None:
         """

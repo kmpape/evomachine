@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
+import threading
 
 import numpy as np
+from pydantic import field_validator
 
+from evomachine.config_models import EvoConfig
 from evomachine.config import get_logger, now
 from evomachine.peripherals.camera import Camera
 from evomachine.coordinates import Coordinate
@@ -19,8 +22,7 @@ from evomachine.types import LEDType
 logger = get_logger(name=__name__)
 
 
-@dataclass
-class FrameAcquisitionSettings:
+class FrameAcquisitionSettings(EvoConfig):
     """Runtime options controlling how frame acquisition uses peripherals."""
 
     save: bool = False
@@ -36,11 +38,20 @@ class FrameAcquisitionSettings:
     disable_leds_after: bool = False
     "Disable all LEDs after the acquisition call completes."
 
-    def __post_init__(self) -> None:
-        for field_name in ("save", "normalise", "illuminate_dmd", "clear_dmd_after", "restore_leds_after", "disable_leds_after"):
-            value = getattr(self, field_name)
-            if not isinstance(value, bool):
-                raise TypeError(f"FrameAcquisitionSettings: {field_name} must be bool, received {type(value)}.")
+    @field_validator(
+        "save",
+        "normalise",
+        "illuminate_dmd",
+        "clear_dmd_after",
+        "restore_leds_after",
+        "disable_leds_after",
+        mode="before",
+    )
+    @classmethod
+    def _validate_bool_field(cls, value: object, info) -> object:
+        if not isinstance(value, bool):
+            raise TypeError(f"FrameAcquisitionSettings: {info.field_name} must be bool, received {type(value)}.")
+        return value
 
 
 class FrameAcquisitionManager:
@@ -116,7 +127,7 @@ class FrameAcquisitionManager:
             self.default_settings = self._validate_settings(settings=settings)
             return self.default_settings
         try:
-            self.default_settings = replace(self.default_settings, **updates)
+            self.default_settings = self.default_settings.updated(**updates)
         except TypeError as error:
             raise ValueError("FrameAcquisitionManager.update_settings: unknown settings field.") from error
         return self.default_settings
@@ -200,6 +211,7 @@ class FrameAcquisitionManager:
             frame_metadata: FrameMetaData | list[FrameMetaData],
             z_coordinates: list[Coordinate],
             settings: FrameAcquisitionSettings | None = None,
+            stop_event: threading.Event | None = None,
     ) -> Frame:
         """
         Acquire frames at a sequence of Z coordinates and restore the original Z.
@@ -214,6 +226,9 @@ class FrameAcquisitionManager:
             Optional runtime acquisition settings. When omitted, the manager's
             default settings are used. When supplied, settings replace defaults
             for this call only.
+        stop_event
+            Optional cancellation event checked at safe boundaries between stage
+            movement and frame acquisition.
 
         Returns
         -------
@@ -234,7 +249,11 @@ class FrameAcquisitionManager:
         saved_paths: list[Path | None] = []
         try:
             for z_coordinate in z_coordinates:
+                if stop_event is not None and stop_event.is_set():
+                    break
                 self.stage.move(target=z_coordinate, block=True)
+                if stop_event is not None and stop_event.is_set():
+                    break
                 stack_coordinate = previous_coordinate.copy()
                 stack_coordinate.z = z_coordinate.z
                 stack_metadata = [
@@ -246,7 +265,8 @@ class FrameAcquisitionManager:
                 frames.extend(frame.array[index] for index in range(frame.array.shape[0]))
                 saved_paths.extend(frame.saved_paths)
         finally:
-            self.stage.move(target=Coordinate(None, None, previous_coordinate.z), block=True)
+            if stop_event is None or not stop_event.is_set():
+                self.stage.move(target=Coordinate(None, None, previous_coordinate.z), block=True)
         if not frames:
             raise RuntimeError("FrameAcquisitionManager.take_z_stack: no frames were acquired.")
         return Frame(
@@ -267,12 +287,33 @@ class FrameAcquisitionManager:
         -------
         None
         """
-        self.led_manager.disable_led()
-        if self.dmd is not None:
-            self.dmd.display_none()
-        self.camera.stop()
-        if self.stage is not None:
-            self.stage.stop()
+        actions = [("LED manager", self.led_manager.disable_led)]
+        if self.dmd is not None and self._device_is_initialised(self.dmd):
+            actions.append(("DMD", self.dmd.display_none))
+        if self._device_is_initialised(self.camera):
+            actions.append(("camera", self.camera.stop))
+        if self.stage is not None and self._device_is_initialised(self.stage):
+            actions.append(("stage", self.stage.stop))
+
+        errors: list[str] = []
+        for name, action in actions:
+            try:
+                action()
+            except Exception as error:
+                logger.exception("FrameAcquisitionManager.stop: failed to stop %s.", name)
+                errors.append(f"{name}: {type(error).__name__}: {error}")
+        if errors:
+            raise RuntimeError("Acquisition shutdown completed with errors: " + "; ".join(errors))
+
+    @staticmethod
+    def _device_is_initialised(device: object) -> bool:
+        is_initialised = getattr(device, "is_initialised", None)
+        if not callable(is_initialised):
+            return True
+        try:
+            return bool(is_initialised())
+        except Exception:
+            return True
 
     @staticmethod
     def _normalise_frame_metadata(frame_metadata: FrameMetaData | list[FrameMetaData]) -> list[FrameMetaData]:

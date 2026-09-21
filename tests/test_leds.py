@@ -234,7 +234,39 @@ def test_tiger_led_source_sends_full_brightness_mapping():
 
     source.set_led(LEDType.TIGER_LED_2, brightness=42.8)
 
-    assert tiger.led_calls == [({"X": 0, "Y": 42}, 7)]
+    assert tiger.led_calls == [
+        ({"X": 0, "Y": 0}, 7),
+        ({"X": 0, "Y": 42}, 7),
+    ]
+
+
+def test_led_manager_finalise_attempts_every_source_after_failure(monkeypatch) -> None:
+    first_controller = VirtualPeripheralController()
+    second_controller = VirtualPeripheralController()
+    first_controller.initialise()
+    second_controller.initialise()
+    first = VirtualLedSource(
+        peripheral_ctrl=first_controller,
+        available_leds=[LEDType.LED_450_NM],
+        name="first source",
+    )
+    second = VirtualLedSource(
+        peripheral_ctrl=second_controller,
+        available_leds=[LEDType.LED_515_NM],
+        name="second source",
+    )
+    first.initialise()
+    second.initialise()
+
+    def fail_finalise(force=False):
+        raise RuntimeError("failed to disable")
+
+    monkeypatch.setattr(first, "finalise", fail_finalise)
+
+    with pytest.raises(RuntimeError, match="first source.*failed to disable"):
+        LedManager([first, second]).finalise()
+
+    assert not second.is_initialised()
 
 
 def test_syncboard_led_source_uses_native_duration_and_intensity(monkeypatch):
@@ -259,6 +291,30 @@ def test_syncboard_led_source_uses_native_duration_and_intensity(monkeypatch):
                                       (SyncBoardLedSource.DEFAULT_LED_TO_INTERNAL[LEDType.LED_515_NM], 0.01, 60)]
     
     assert FakeTimer.instances == []
+
+
+def test_syncboard_high_brightness_uses_default_timed_duration(monkeypatch):
+    now = 1000.0
+    monkeypatch.setattr("evomachine.peripherals.leds.time.time", lambda: now)
+    syncboard = FakeSyncBoardController()
+    peripheral_ctrl = SyncBoardPeripheralController(syncboard=syncboard)
+    peripheral_ctrl.initialise()
+    source = SyncBoardLedSource(
+        peripheral_ctrl=peripheral_ctrl,
+        available_leds=[LEDType.LED_450_NM],
+    )
+    source.initialise()
+
+    source.set_led(LEDType.LED_450_NM, brightness=50)
+
+    assert syncboard.enabled_leds == [(SyncBoardLedSource.DEFAULT_LED_TO_INTERNAL[LEDType.LED_450_NM], 0.5, 3000.0)]
+    state = source.get_led_state(LEDType.LED_450_NM)
+    assert state.is_on
+    assert state.stop_time == 1003.0
+
+    now = 1003.1
+
+    assert not source.get_led_state(LEDType.LED_450_NM).is_on
 
 
 def test_kwr103_led_source_initialises_and_maps_brightness_to_voltage():

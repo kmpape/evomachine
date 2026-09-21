@@ -196,7 +196,6 @@ class CommandFactory:
             frame_metadata: FrameMetaData | list[FrameMetaData],
             segment: bool,
             save: bool = False,
-            filename_suffix: str | None = None,
     ) -> AutomatonCommand:
         """
         Create a command for taking an image.
@@ -206,8 +205,7 @@ class CommandFactory:
         frame_metadata  : One FrameMetaData object or a list of FrameMetaData objects used by FrameAcquisitionManager.
         segment         : Segments image and tracks cells if True. See channels for channel requirements. If segment is
                           True, and ImageProcessorConfig.preproc_enabled is False, this function throws an exception.
-        save            : Save image(s). Uses ConfigDevice.path_to_save passed to Automaton.
-        filename_suffix : Suffix to append to filenames.
+        save            : Save image(s) through the acquisition manager's configured FileManager.
 
         Returns in AbstractStrategy.callback
         ------------------------------------
@@ -252,13 +250,10 @@ class CommandFactory:
                 )
         if segment and not self._cfg.preproc_enabled:
             raise TypeError(f"AutomatonCommandFactory.image: segment=True but preproc_enabled=False.")
-        if not (isinstance(filename_suffix, str) or filename_suffix is None):
-            raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument filename_suffix ({type(filename_suffix)}).")
         command_args = {
             'frame_metadata': frame_metadata,
             'segment': segment,
             'save': save,
-            'filename_suffix': filename_suffix,
         }
         return AutomatonCommand(
             command_type=AutomatonCommandType.IMAGE,

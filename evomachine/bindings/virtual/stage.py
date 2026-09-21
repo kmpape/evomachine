@@ -18,6 +18,7 @@ class VirtualStage(Stage):
             name: str = "Virtual Stage",
             initial_coordinate: Coordinate | None = None,
             coordinate_bounds: CoordinateBounds | None = None,
+            zero_on_initialise: bool = False,
             check_initialised: bool = True,
             check_alive: bool = True,
     ):
@@ -61,6 +62,7 @@ class VirtualStage(Stage):
             name=name,
             fov_step_size=fov_step_size,
             coordinate_bounds=coordinate_bounds,
+            zero_on_initialise=zero_on_initialise,
             check_initialised=check_initialised,
             check_alive=check_alive,
         )
