@@ -1,10 +1,13 @@
 global_rules:
+  - Numeric units are implicit. Exposure is in milliseconds; projection duration, wait duration, and elapsed_time are in seconds. Do not include units in numeric literals.
   - Field-of-view collections and iteration counts are supplied by the application.
   - "`current_fov_id` is unavailable during initialisation because no field of view has yet been established."
   - "`step_count` is zero during the first step and counts previously completed steps."
   - Image-derived observations are unavailable until an image has completed and then retain the most recent measured value.
   - Focus-management observations are unavailable until a field-of-view movement has completed and then retain the most recent outcome.
-  - Runtime errors describe a failure in the previous command batch and must be inspected at the start of each step.
+  - Command failures follow runtime_errors.yaml automatically; never emit DSL error handlers.
+  - Check the requested acquisition stopping condition before selecting further imaging, projection, movement, or wait commands. Use terminate for normal completion.
+  - Requested end-of-run return to the first field of view belongs in finalise. Returning to the first field of view does not itself stop the acquisition loop.
 
 command_rules:
   move_fov:

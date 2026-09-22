@@ -21,9 +21,8 @@ commands:
       - communication_failed
     arguments:
       exposure:
-        description: Camera exposure duration.
-        type: quantity
-        unit: ms
+        description: Camera exposure duration. Unit is ms.
+        type: number
         minimum_inclusive: 1
         maximum_inclusive: 1000
 
@@ -78,9 +77,8 @@ commands:
         maximum_inclusive: 100
 
       duration:
-        description: Length of the full-field projection.
-        type: quantity
-        unit: s
+        description: Length of the full-field projection. Unit is s.
+        type: number
         minimum_exclusive: 0
         maximum_exclusive: 3600
 
@@ -89,8 +87,7 @@ commands:
     runtime_errors: []
     arguments:
       duration:
-        description: Length of the pause.
-        type: quantity
-        unit: s
+        description: Length of the pause. Unit is s.
+        type: number
         minimum_exclusive: 0
         maximum_inclusive: 10

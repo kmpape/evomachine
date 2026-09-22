@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Mapping
 
-from autostrat.language.model import ValidatedCommandCall, ValidatedValue
+from autostrat.language.model import ValidatedCommandCall, ValidatedCommandTemplate, ValidatedValue
 
 from evomachine.commands import AutomatonCommand, CommandFactory
 from evomachine.coordinates import Coordinate
@@ -27,7 +27,9 @@ class CommandAdapter(ABC):
     """Translate validated domain calls into application-owned commands."""
 
     @abstractmethod
-    def command_type(self, call: ValidatedCommandCall) -> AutomatonCommandType:
+    def command_type(
+        self, call: ValidatedCommandCall | ValidatedCommandTemplate
+    ) -> AutomatonCommandType:
         """Return the Automaton command type produced for a validated call."""
 
     @abstractmethod

@@ -6,9 +6,11 @@ from collections.abc import Iterable, Mapping
 from dataclasses import replace
 
 from autostrat.domain import DomainPack, RecoveryAction
+from autostrat.language.evaluator import ObservationEvaluationError
 from autostrat.language.model import (
     ControlAction,
     ValidatedCommandCall,
+    ValidatedCommandTemplate,
     ValidatedIfStatement,
     ValidatedStrategyProgram,
     ValidatedStatement,
@@ -53,7 +55,10 @@ class AutoStratStrategy(AbstractStrategy):
             raise TypeError("verified must be a VerifiedStrategy.")
         if not isinstance(domain, DomainPack):
             raise TypeError("domain must be a DomainPack.")
-        if verified.domain_id != domain.metadata.id or verified.domain_version != domain.metadata.version:
+        if (
+            verified.domain_id != domain.metadata.id
+            or verified.domain_version != domain.metadata.version
+        ):
             raise ValueError("Verified strategy and domain pack metadata do not match.")
         if not isinstance(command_adapter, CommandAdapter):
             raise TypeError("command_adapter must be a CommandAdapter.")
@@ -63,7 +68,7 @@ class AutoStratStrategy(AbstractStrategy):
         self.command_adapter = command_adapter
         self.observation_provider = observation_provider or EmptyObservationProvider()
         self.runtime_error_provider = runtime_error_provider or EmptyRuntimeErrorProvider()
-        self._interpreter = ConditionalInterpreter()
+        self._interpreter = ConditionalInterpreter(domain)
         if not isinstance(self.observation_provider, ObservationProvider):
             raise TypeError("observation_provider must be an ObservationProvider.")
         if not isinstance(self.runtime_error_provider, RuntimeErrorProvider):
@@ -112,7 +117,7 @@ class AutoStratStrategy(AbstractStrategy):
         policy_actions = {
             action
             for definition in self.domain.runtime_errors.values()
-            for action in (definition.default_action, definition.retry_exhausted_action)
+            for action in (definition.action, definition.exhausted_action)
             if action is not None
         }
         if "terminate" in policy_actions:
@@ -122,12 +127,16 @@ class AutoStratStrategy(AbstractStrategy):
         return command_types
 
     def _initialise(self) -> list[AutomatonCommand]:
+        self._discard_pending_batch()
+        self._retry_counts.clear()
+        self._failure_history.clear()
+        self._current_fov_id = -1
         self._runtime_context = self._build_runtime_context(
             fov_id=-1,
             completed_commands=[],
             errors=[],
         )
-        return self._commands_for(self.program.initialise, current_fov_id=-1)
+        return self._commands_for(self.program.initialise, current_fov_id=-1, section="initialise")
 
     def _callback(
         self,
@@ -151,6 +160,7 @@ class AutoStratStrategy(AbstractStrategy):
         return self._commands_for(
             self.program.finalise,
             current_fov_id=self._current_fov_id,
+            section="finalise",
         )
 
     def _build_runtime_context(
@@ -175,7 +185,7 @@ class AutoStratStrategy(AbstractStrategy):
         )
         unknown_observations = set(observations) - set(self.domain.observations)
         if unknown_observations:
-            raise StrategyInterpretationError(
+            raise ObservationEvaluationError(
                 f"Observation provider returned undeclared values: {sorted(unknown_observations)!r}."
             )
         unknown_errors = set(active_errors) - set(self.domain.runtime_errors)
@@ -207,32 +217,27 @@ class AutoStratStrategy(AbstractStrategy):
         statements: tuple[ValidatedStatement, ...],
         *,
         current_fov_id: int,
+        section: str = "step",
     ) -> list[AutomatonCommand]:
-        interpreted = self._interpreter.interpret(statements, self._runtime_context)
-        calls = list(interpreted.calls)
-        action = interpreted.action
-        action_error = interpreted.action_error
-        if self._runtime_context.errors and action is None:
-            error_name = next(iter(self._runtime_context.errors))
-            raise StrategyInterpretationError(
-                f"Active runtime error {error_name!r} was not handled by the validated strategy."
-            )
+        # Recover a previous resolved batch before evaluating any new DSL statements.
+        calls: list[ValidatedCommandCall] = []
         if self._runtime_context.errors:
-            calls = []
-
-        if action == "retry":
-            if action_error is None or action_error.failed_call is None:
-                raise StrategyInterpretationError(
-                    "Retry requires an active error associated with a failed command."
-                )
-            calls = []
-            action = self._apply_retry_policy(action_error, calls)
-        elif action == "continue" and action_error is not None:
-            self._retry_counts.pop(self._retry_key(action_error), None)
-            calls = list(action_error.remaining_calls)
-            action = action_error.remaining_action or "continue"
-        elif action is not None:
-            self._clear_active_retry_counts()
+            action_error = next(iter(self._runtime_context.errors.values()))
+            action = self.domain.runtime_errors[action_error.name].action
+            if action == "retry":
+                action = self._apply_retry_policy(action_error, calls)
+            elif action == "continue":
+                self._retry_counts.pop(self._retry_key(action_error), None)
+                calls = list(action_error.remaining_calls)
+                action = action_error.remaining_action or "continue"
+            else:
+                self._clear_active_retry_counts()
+        else:
+            interpreted = self._interpreter.interpret(
+                statements, self._runtime_context, section=section
+            )
+            calls = list(interpreted.calls)
+            action = interpreted.action
 
         context = CommandBuildContext(
             command_factory=self.command_factory,
@@ -255,7 +260,7 @@ class AutoStratStrategy(AbstractStrategy):
         commands = [command for _, command in built_commands]
         for index, (call, command) in enumerate(built_commands):
             self._command_origins[command.command_id] = call
-            self._command_tails[command.command_id] = tuple(calls[index + 1:])
+            self._command_tails[command.command_id] = tuple(calls[index + 1 :])
             self._command_tail_actions[command.command_id] = action if action != "retry" else None
 
         if action == "terminate":
@@ -271,7 +276,7 @@ class AutoStratStrategy(AbstractStrategy):
     ) -> RecoveryAction:
         """Retry one failed call or return its automatic exhaustion action."""
         definition = self.domain.runtime_errors[error.name]
-        if "retry" not in definition.allowed_actions:
+        if definition.action != "retry":
             raise StrategyInterpretationError(
                 f"Runtime error {error.name!r} does not permit retry."
             )
@@ -286,7 +291,7 @@ class AutoStratStrategy(AbstractStrategy):
             calls.append(error.failed_call)
             calls.extend(error.remaining_calls)
             return error.remaining_action or "retry"
-        exhausted_action = definition.retry_exhausted_action
+        exhausted_action = definition.exhausted_action
         if exhausted_action is None:
             raise StrategyInterpretationError(
                 f"Retryable runtime error {error.name!r} has no exhaustion action."
@@ -317,11 +322,7 @@ class AutoStratStrategy(AbstractStrategy):
         completed_commands: list[AutomatonCommand],
         errors: list[Exception],
     ) -> None:
-        failed_ids = {
-            error.command_id
-            for error in errors
-            if hasattr(error, "command_id")
-        }
+        failed_ids = {error.command_id for error in errors if hasattr(error, "command_id")}
         completed_call_ids = {
             id(self._command_origins[command.command_id])
             for command in completed_commands
@@ -350,10 +351,10 @@ class AutoStratStrategy(AbstractStrategy):
     def _all_command_calls(
         cls,
         statements: Iterable[ValidatedStatement],
-    ) -> tuple[ValidatedCommandCall, ...]:
+    ) -> tuple[ValidatedCommandTemplate, ...]:
         calls = []
         for statement in statements:
-            if isinstance(statement, ValidatedCommandCall):
+            if isinstance(statement, ValidatedCommandTemplate):
                 calls.append(statement)
             elif isinstance(statement, ValidatedIfStatement):
                 calls.extend(cls._all_command_calls(statement.body))

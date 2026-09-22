@@ -10,9 +10,8 @@ observations:
     minimum_inclusive: 0
 
   elapsed_time:
-    description: Time elapsed since this strategy began initialisation.
-    type: quantity
-    unit: s
+    description: Time elapsed since this strategy began initialisation. Unit is s.
+    type: number
     minimum_inclusive: 0
 
   mean_intensity:

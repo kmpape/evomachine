@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 import time
 from typing import Mapping
 
-from autostrat.language.model import ControlActionName, ValidatedCommandCall, ValidatedValue
+from autostrat.domain import RecoveryAction
+from autostrat.language.model import ValidatedCommandCall, ValidatedValue
 
 
 class StrategyInterpretationError(RuntimeError):
@@ -24,7 +25,7 @@ class ActiveRuntimeError:
     occurred_at: float = field(default_factory=time.time)
     retry_attempt: int = 0
     remaining_calls: tuple[ValidatedCommandCall, ...] = ()
-    remaining_action: ControlActionName | None = None
+    remaining_action: RecoveryAction | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
@@ -68,24 +69,8 @@ class StrategyRuntimeContext:
                 )
 
 
-@dataclass(frozen=True, slots=True)
-class InterpretationResult:
-    """Return command calls selected by the interpreter and optional control flow."""
-
-    calls: tuple[ValidatedCommandCall, ...] = ()
-    action: ControlActionName | None = None
-    action_error: ActiveRuntimeError | None = None
-
-    def __post_init__(self) -> None:
-        if self.action not in {None, "continue", "retry", "terminate", "abort"}:
-            raise ValueError(f"Unsupported interpretation action {self.action!r}.")
-        if self.action == "retry" and self.action_error is None:
-            raise ValueError("A retry result requires the active runtime error being retried.")
-
-
 __all__ = [
     "ActiveRuntimeError",
-    "InterpretationResult",
     "StrategyInterpretationError",
     "StrategyRuntimeContext",
 ]
