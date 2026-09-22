@@ -18,6 +18,7 @@ from evomachine.frame import FrameMetaDataFactory
 from evomachine.navigation import FocusNavigatorFovRecord
 from evomachine.strategy_generation.interfaces import (
     CommandAdapter,
+    CollectionProvider,
     CommandBuildContext,
     ObservationProvider,
     RuntimeErrorProvider,
@@ -108,6 +109,13 @@ class MicroscopyCommandAdapter(CommandAdapter):
             )
         if target == "first_fov":
             fov_id = next(iter(context.fovs))
+        elif target == "current_fov":
+            selected = next(
+                (item.item_id for item in context.selections if item.collection == "fovs"), None
+            )
+            if selected is None or selected not in context.fovs:
+                raise StrategyInterpretationError("current_fov requires an active fovs loop")
+            fov_id = selected
         elif target == "next_fov":
             if context.current_fov_id < 0:
                 raise StrategyInterpretationError(
@@ -209,9 +217,6 @@ class MicroscopyObservationProvider(ObservationProvider):
         if not isinstance(fov_id, int) or isinstance(fov_id, bool) or fov_id < -1:
             raise StrategyInterpretationError("fov_id must be -1 or a non-negative integer.")
 
-        if fov_id == -1 and step_count == 0 and not completed_commands:
-            self._started_at = time.monotonic()
-            self._latest.clear()
         if self._started_at is None:
             self._started_at = time.monotonic()
 
@@ -227,6 +232,13 @@ class MicroscopyObservationProvider(ObservationProvider):
         if fov_id >= 0:
             observations["current_fov_id"] = fov_id
         return observations
+
+    def invalidate(self) -> None:
+        self._latest.clear()
+
+    def reset(self) -> None:
+        self._started_at = time.monotonic()
+        self._latest.clear()
 
     def _observe_move(self, command: AutomatonCommand) -> None:
         result = command.command_data
@@ -384,7 +396,36 @@ class MicroscopyRuntimeErrorProvider(RuntimeErrorProvider):
 
 
 __all__ = [
+    "MicroscopyCollectionProvider",
     "MicroscopyCommandAdapter",
     "MicroscopyObservationProvider",
     "MicroscopyRuntimeErrorProvider",
 ]
+
+
+class MicroscopyCollectionProvider(CollectionProvider):
+    """Expose registered FOVs/ROIs without detecting or inventing biological measurements."""
+
+    def __init__(self):
+        self._fovs = {}
+        self._rois = {}
+
+    def bind(self, *, fovs, region_of_interests, fov_processors):
+        self._fovs = fovs
+        self._rois = region_of_interests
+
+    def items(self, collection, context):
+        if collection == "fovs" and not context:
+            return tuple(self._fovs)
+        if collection == "rois" and context and context[-1].collection == "fovs":
+            return tuple(self._rois.get(context[-1].item_id, ()))
+        return super().items(collection, context)
+
+    def observe(self, context):
+        values = {}
+        for item in context:
+            if item.collection == "fovs":
+                values["selected_fov_id"] = item.item_id
+            elif item.collection == "rois":
+                values["selected_roi_id"] = item.item_id
+        return values

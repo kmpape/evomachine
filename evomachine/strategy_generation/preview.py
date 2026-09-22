@@ -13,6 +13,7 @@ from evomachine.strategy_generation.service import StrategyPipelineRunner
 PYTHON_WRAPPER = """from evomachine.strategy_generation import (
     AutoStratStrategy,
     MicroscopyCommandAdapter,
+    MicroscopyCollectionProvider,
     MicroscopyObservationProvider,
     MicroscopyRuntimeErrorProvider,
 )
@@ -28,6 +29,7 @@ def build_strategy(verified, domain, cfg):
         command_adapter=MicroscopyCommandAdapter(
             segment_images=False, save_images=False,
         ),
+        collection_provider=MicroscopyCollectionProvider(),
         observation_provider=MicroscopyObservationProvider(),
         runtime_error_provider=MicroscopyRuntimeErrorProvider(),
     )

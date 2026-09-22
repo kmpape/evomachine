@@ -255,6 +255,10 @@ class AbstractStrategy(ABC):
         self.callback_counter += 1
         return command_list
 
+    def resume_finalise(self, fov_id: int, data: list[AutomatonCommand]) -> list[AutomatonCommand]:
+        """Optional continuation for interpreters; ordinary Python strategies finalise in one batch."""
+        return []
+
     @abstractmethod
     def finalise(self) -> list[AutomatonCommand]:
         """

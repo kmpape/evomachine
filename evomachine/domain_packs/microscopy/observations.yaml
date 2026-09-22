@@ -63,3 +63,20 @@ observations:
   focus_recovery_exhausted:
     description: Whether the configured maximum number of focus-recovery attempts was reached.
     type: boolean
+
+collections:
+  fovs:
+    description: Configured fields of view in application order. Iteration does not move the stage.
+    observations:
+      selected_fov_id:
+        description: Identifier of the selected FOV, not necessarily the actual stage position.
+        type: integer
+        minimum_inclusive: 0
+  rois:
+    description: Registered ROI identifiers for the selected FOV. No detection or biological measurements are added by this collection.
+    parent: fovs
+    observations:
+      selected_roi_id:
+        description: Identifier of the current registered ROI within the selected FOV.
+        type: integer
+        minimum_inclusive: 0

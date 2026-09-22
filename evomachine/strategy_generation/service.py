@@ -12,6 +12,7 @@ from autostrat.pipeline import VerifiedStrategy
 from evomachine.image_processing_config import ImageProcessorConfig
 from evomachine.strategy_generation.interfaces import (
     CommandAdapter,
+    CollectionProvider,
     EmptyObservationProvider,
     EmptyRuntimeErrorProvider,
     ObservationProvider,
@@ -38,6 +39,7 @@ class StrategyGenerationService:
         command_adapter: CommandAdapter,
         observation_provider: ObservationProvider | None = None,
         runtime_error_provider: RuntimeErrorProvider | None = None,
+        collection_provider: CollectionProvider | None = None,
     ) -> None:
         if not callable(getattr(pipeline, "run", None)):
             raise TypeError("pipeline must expose a callable run(request) method.")
@@ -45,6 +47,7 @@ class StrategyGenerationService:
             raise TypeError("domain must be a DomainPack.")
         if not isinstance(command_adapter, CommandAdapter):
             raise TypeError("command_adapter must be a CommandAdapter.")
+        self._collection_provider = collection_provider
         self._pipeline = pipeline
         self._domain = domain
         self._command_adapter = command_adapter
@@ -70,6 +73,7 @@ class StrategyGenerationService:
             command_adapter=self._command_adapter,
             observation_provider=self._observation_provider,
             runtime_error_provider=self._runtime_error_provider,
+            collection_provider=self._collection_provider,
         )
 
     def submit(self, request: str, cfg: ImageProcessorConfig) -> Future[AutoStratStrategy]:

@@ -710,6 +710,16 @@ class Automaton:
             self._validate_commands_are_registered(commands=self.next_commands, source="finalise")
         else:
             self._validate_commands_are_registered(commands=self.next_commands, source="next_commands")
+        while True:
+            self._execute_strategy_batch(finalise=finalise)
+            if not finalise or self.stopped():
+                return
+            self.next_commands = self._strategy.resume_finalise(self.get_fov_id(), self.last_commands)
+            self._validate_commands_are_registered(commands=self.next_commands, source="finalise")
+            if not self.next_commands:
+                return
+
+    def _execute_strategy_batch(self, finalise: bool = False) -> None:
         completed_commands: list[AutomatonCommand] = []
         command_errors: list[Exception] = []
         for command in self.next_commands:
@@ -778,14 +788,14 @@ class Automaton:
             command.command_execution_time = time.time()
             command.fov_id = self.get_fov_id()
             completed_commands.append(command)
+        self.last_commands = completed_commands
         if not finalise:
-            self.last_commands = completed_commands
             self.next_commands = self._strategy.callback(
                 fov_id=self.get_fov_id(),
                 data=self.last_commands,
                 errors=command_errors,
             )
-            self._command_section = "step"
+            self._command_section = getattr(self._strategy, "pending_section", "step")
             self._validate_commands_are_registered(commands=self.next_commands, source="callback")
 
     @staticmethod

@@ -258,31 +258,69 @@ To smoke-test the automaton/socket startup without opening Napari:
 uv run python scripts/launch_virtual_gui.py --port 0 --no-napari
 ```
 
-### AutoStrat schema 8 integration
+### AutoStrat schema 9 integration
 
 For a lean prompt → DSL test, open
-[`notebooks/quick_autostrat.ipynb`](notebooks/quick_autostrat.ipynb) with the EvoMachine `.venv`
-kernel. Run setup once, edit the prompt, and run Generate. It uses the same Robin endpoint as the
-original notebook and reuses `OPENAI_API_KEY` (or asks privately). Diagnostics are collapsed below
-the DSL output. Nothing executes on the microscope. The original
-[`explore_autostrat_pipeline.ipynb`](notebooks/explore_autostrat_pipeline.ipynb) remains available
-for detailed virtual-hardware testing.
+[`notebooks/quick_autostrat.ipynb`](notebooks/quick_autostrat.ipynb) with the EvoMachine
+`.venv` kernel. Run setup once, edit the prompt, and run Generate. It reuses the existing
+Robin endpoint and privately supplied API key. Optional diagnostics appear below the DSL.
+Nothing executes on the microscope.
 
-This branch requires the matching AutoStrat `typed-strategy-expressions` branch. The existing
-`uv` editable source points to `../AutoStrat`; switch that checkout to the matching branch before
-syncing. The previously released v0.1.1 API is incompatible with these validated programs.
+Use the matching `collection-loops-state` branch in both repositories. The editable
+`../AutoStrat` source supplies the new runtime during development. Production and CI
+installs pin AutoStrat commit `c0693bd59155fc4c49f7dfa9b04754938d3bed07`, which supplies
+the matching schema-9 API.
 
-The microscopy pack uses boolean, integer, number, and enum. Exposure numbers are milliseconds;
-projection and wait durations and elapsed_time are seconds, as documented in the pack. No numeric
-literal unit suffixes are accepted. Each lifecycle section uses one observation snapshot.
+Schema 9 replaces `const TYPE name = expression` with `name = expression` and
+`observation.NAME` with `observations.NAME`. Revalidate old DSL/programs.
+Types are inferred and checked; a variable cannot change its inferred type.
+Use `total = 0.0` for a number accumulator. Command arguments remain literals or variables.
 
-Use one-line immutable declarations such as `const number pause = max(1, min(10, observation.elapsed_time))`,
-then `wait(duration=pause)`. Inline command calculations and direct observation arguments are
-invalid. Constants can also be used in conditions. Only terminate and abort are DSL control actions.
-Recovery belongs in runtime_errors.yaml using action, max_retries, and exhausted_action.
+Top-level initialise variables persist throughout a run. Other variables are section-local,
+reset on each invocation; assignments within branches and loops update the same scope.
+A variable must be assigned on every possible path before it is read.
+Put persistent counters/defaults before hardware commands if finalisation needs them
+after a hardware failure.
 
-The evaluator resolves and validates a complete batch before adapters build commands. Evaluation
-failures propagate directly to Automaton's fail-safe boundary. They never enter command recovery.
-Retries reuse exact resolved values and the unexecuted batch tail. Failures during finalisation
-retain the existing immediate fail-safe behaviour. New experiment-specific observations, ROI
-selection, DeLTA integration, and scheduling policies are not introduced by this capability update.
+Collections are declared in the domain pack. Inject `MicroscopyCollectionProvider()`
+alongside the existing command, observation and runtime-error providers:
+
+```text
+initialise
+    rounds = 0
+step
+    loop fovs:
+        move_fov(target=current_fov)
+        image(exposure=100, led=450nm, led_brightness=10, filter=465nm)
+        count = 0
+        loop rois:
+            count = count + 1
+        pause = max(1, min(10, count))
+        wait(duration=pause)
+    rounds = rounds + 1
+    if rounds >= 2:
+        terminate
+finalise
+    move_fov(target=first_fov)
+```
+
+Each loop snapshots the registered IDs on entry and starts from the beginning. Empty
+collections do nothing. Entering a loop only selects context: explicit commands move or image.
+`observations.selected_fov_id` is scoped to the FOV loop; `selected_roi_id` to its ROI loop.
+`current_fov_id` remains the actual physical position. Existing image metrics describe the
+latest acquisition, not biological measurements attached to each ROI. The ROI collection
+contains registered ROI IDs; this does not add detection, DeLTA, targeting or growth tracking.
+
+Each command is resolved and range-checked just before it is emitted. Successful completion
+refreshes observations before execution resumes. Step count measures completed DSL steps,
+not hardware callbacks. Retries preserve the failed command's resolved arguments, variables
+and loop position; they do not replay completed commands. Runtime policies are handled before
+observation refresh or resumed DSL evaluation. Continue invalidates cached global measurements.
+Calculation/adapter failures go directly to Automaton's fail-safe boundary; previous physical
+effects are not rolled back. Terminate exits all loops and runs finalisation sequentially;
+abort skips finalisation. Finalisation failures remain fail-safe.
+
+The generic host interface is `CollectionProvider.items(name, context)` plus
+`observe(context)`; providers supply unique stable integer/string IDs and current scoped
+values. Missing values fail when read, and invalid supplied values fail on refresh. There are
+no DSL lists or implicit hardware actions. Iteration/statement budgets bound each section.

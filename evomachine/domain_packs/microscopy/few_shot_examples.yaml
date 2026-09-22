@@ -12,7 +12,7 @@ examples:
           wait(duration=3)
 
       step
-          if observation.step_count >= 8:
+          if observations.step_count >= 8:
               terminate
           else:
               move_fov(target=next_fov)
@@ -34,14 +34,14 @@ examples:
           move_fov(target=first_fov)
           image(exposure=100, led=450nm, led_brightness=10, filter=465nm)
       step
-          const boolean exhausted = observation.focus_recovery_exhausted
+          exhausted = observations.focus_recovery_exhausted
           if exhausted:
               abort
           else:
-              if observation.step_count >= 20:
+              if observations.step_count >= 20:
                   terminate
               else:
-                  const number pause = max(1, min(10 * (1 - observation.saturation_fraction), 10))
+                  pause = max(1, min(10 * (1 - observations.saturation_fraction), 10))
                   wait(duration=pause)
                   image(exposure=100, led=450nm, led_brightness=10, filter=465nm)
       finalise
@@ -56,9 +56,32 @@ examples:
           move_fov(target=first_fov)
 
       step
-          if observation.step_count >= 5:
+          if observations.step_count >= 5:
               terminate
           else:
               image(exposure=25, led=515nm, led_brightness=12, filter=527nm)
 
       finalise
+  - name: Two passes over configured FOVs and registered ROIs
+    user_request: >-
+      Perform two imaging rounds over every configured FOV using a 100 ms exposure,
+      the 450 nm LED at 10 percent brightness, and the 465 nm filter. After each image,
+      count that FOV's registered ROIs and wait that many seconds, bounded between 1 and 10.
+      Then finish and return to the first FOV. Do not detect new ROIs.
+    strategy: |
+      initialise
+          rounds = 0
+      step
+          loop fovs:
+              move_fov(target=current_fov)
+              image(exposure=100, led=450nm, led_brightness=10, filter=465nm)
+              count = 0
+              loop rois:
+                  count = count + 1
+              pause = max(1, min(10, count))
+              wait(duration=pause)
+          rounds = rounds + 1
+          if rounds >= 2:
+              terminate
+      finalise
+          move_fov(target=first_fov)

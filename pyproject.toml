@@ -44,8 +44,8 @@ dependencies = [
     "delta2 @ git+ssh://git@gitlab.com/kmpape/de-lta-rt.git@v2.1.0.dev1",  # tag created of the `dev_main` branch
     "asitiger @ git+https://github.com/kmpape/asitiger.git@v0.1.0",  # public repo: HTTPS needs no auth
     "syncboard @ git+ssh://git@github.com/kmpape/sync_board.git@v0.1.1-signals",
-    # Schema 8 is not tagged yet; pin its merged commit for reproducible CI installs.
-    "autostrat @ git+ssh://git@github-autostrat/Liam-Metcalf/AutoStrat.git@251964ce53541b9044cfcc5b8f24a37f4356a2db",
+    # Pin the schema-9 collection/runtime API for reproducible CI installs.
+    "autostrat @ git+ssh://git@github-autostrat/Liam-Metcalf/AutoStrat.git@c0693bd59155fc4c49f7dfa9b04754938d3bed07",
 ]
 
 [project.optional-dependencies]

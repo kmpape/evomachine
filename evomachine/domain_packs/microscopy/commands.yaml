@@ -7,11 +7,12 @@ commands:
       - communication_failed
     arguments:
       target:
-        description: Select the first or next field of view in the supplied collection.
+        description: Select the first or next physical field of view, or current_fov from an active fovs loop.
         type: enum
         values:
           - first_fov
           - next_fov
+          - current_fov
 
   image:
     description: Capture an image using explicit acquisition and illumination settings.

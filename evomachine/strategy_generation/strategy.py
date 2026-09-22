@@ -1,17 +1,18 @@
-"""An AbstractStrategy implementation backed by a validated AutoStrat program."""
+"""Sequential AutoStrat execution through the existing Automaton command boundary."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from dataclasses import replace
 
-from autostrat.domain import DomainPack, RecoveryAction
-from autostrat.language.evaluator import ObservationEvaluationError
+from autostrat.domain import DomainPack
+from autostrat.language.evaluator import StrategyExecution
 from autostrat.language.model import (
     ControlAction,
     ValidatedCommandCall,
     ValidatedCommandTemplate,
     ValidatedIfStatement,
+    ValidatedLoopStatement,
     ValidatedStrategyProgram,
     ValidatedStatement,
 )
@@ -23,22 +24,36 @@ from evomachine.strategy import AbstractStrategy
 from evomachine.strategy_generation.interfaces import (
     CommandAdapter,
     CommandBuildContext,
+    CollectionProvider,
     EmptyObservationProvider,
     EmptyRuntimeErrorProvider,
     ObservationProvider,
     RuntimeErrorProvider,
 )
-from evomachine.strategy_generation.interpreter import ConditionalInterpreter
-from evomachine.strategy_generation.runtime import (
-    ActiveRuntimeError,
-    StrategyInterpretationError,
-    StrategyRuntimeContext,
-)
+from evomachine.strategy_generation.runtime import ActiveRuntimeError, StrategyInterpretationError
 from evomachine.types import AutomatonCommandType
 
 
+class _Host:
+    def __init__(self, strategy):
+        self.strategy = strategy
+
+    def items(self, collection, context):
+        return self.strategy.collection_provider.items(collection, context)
+
+    def observe(self, context):
+        global_values = self.strategy._observations
+        scoped = self.strategy.collection_provider.observe(context)
+        overlap = set(global_values) & set(scoped)
+        if overlap:
+            raise StrategyInterpretationError(
+                f"Duplicate global/scoped observations: {sorted(overlap)}"
+            )
+        return {**global_values, **scoped}
+
+
 class AutoStratStrategy(AbstractStrategy):
-    """Execute one immutable, validated AutoStrat program through injected adapters."""
+    """One interpreter run; each hardware callback resumes, rather than restarts, its section."""
 
     def __init__(
         self,
@@ -49,6 +64,7 @@ class AutoStratStrategy(AbstractStrategy):
         command_adapter: CommandAdapter,
         observation_provider: ObservationProvider | None = None,
         runtime_error_provider: RuntimeErrorProvider | None = None,
+        collection_provider: CollectionProvider | None = None,
     ) -> None:
         super().__init__(cfg=cfg)
         if not isinstance(verified, VerifiedStrategy):
@@ -68,18 +84,25 @@ class AutoStratStrategy(AbstractStrategy):
         self.command_adapter = command_adapter
         self.observation_provider = observation_provider or EmptyObservationProvider()
         self.runtime_error_provider = runtime_error_provider or EmptyRuntimeErrorProvider()
-        self._interpreter = ConditionalInterpreter(domain)
+        self.collection_provider = collection_provider or CollectionProvider()
+        self._execution = StrategyExecution(domain, verified.program)
+        self._host = _Host(self)
         if not isinstance(self.observation_provider, ObservationProvider):
             raise TypeError("observation_provider must be an ObservationProvider.")
         if not isinstance(self.runtime_error_provider, RuntimeErrorProvider):
             raise TypeError("runtime_error_provider must be a RuntimeErrorProvider.")
+        if not isinstance(self.collection_provider, CollectionProvider):
+            raise TypeError("collection_provider must be a CollectionProvider.")
         self._command_origins: dict[int, ValidatedCommandCall] = {}
-        self._command_tails: dict[int, tuple[ValidatedCommandCall, ...]] = {}
-        self._command_tail_actions: dict[int, RecoveryAction | None] = {}
         self._retry_counts: dict[tuple[str, int], int] = {}
         self._failure_history: list[ActiveRuntimeError] = []
-        self._runtime_context = StrategyRuntimeContext()
+        self._observations = {}
+        self._pending_event = None
+        self._pending_id = None
+        self._steps_completed = 0
+        self._next_section = "initialise"
         self._current_fov_id = -1
+        self._stopped = False
 
     @property
     def source(self) -> str:
@@ -126,226 +149,175 @@ class AutoStratStrategy(AbstractStrategy):
             command_types.add(AutomatonCommandType.ABORT_STRATEGY)
         return command_types
 
-    def _initialise(self) -> list[AutomatonCommand]:
-        self._discard_pending_batch()
+    @property
+    def pending_section(self):
+        return self._execution.section
+
+    def _initialise(self):
+        self._stopped = False
+        self._execution.reset()
+        self._command_origins.clear()
         self._retry_counts.clear()
         self._failure_history.clear()
+        self._pending_event = None
+        self._pending_id = None
+        self._steps_completed = 0
         self._current_fov_id = -1
-        self._runtime_context = self._build_runtime_context(
-            fov_id=-1,
-            completed_commands=[],
-            errors=[],
-        )
-        return self._commands_for(self.program.initialise, current_fov_id=-1, section="initialise")
-
-    def _callback(
-        self,
-        fov_id: int,
-        data: list[AutomatonCommand],
-        errors: list[Exception],
-    ) -> list[AutomatonCommand]:
-        self._current_fov_id = fov_id
-        self._runtime_context = self._build_runtime_context(
-            fov_id=fov_id,
-            completed_commands=data,
-            errors=errors,
-        )
-        return self._commands_for(self.program.step, current_fov_id=fov_id)
-
-    def finalise(self) -> list[AutomatonCommand]:
-        self._discard_pending_batch()
-        self._runtime_context = StrategyRuntimeContext(
-            observations=self._runtime_context.observations,
-        )
-        return self._commands_for(
-            self.program.finalise,
-            current_fov_id=self._current_fov_id,
-            section="finalise",
-        )
-
-    def _build_runtime_context(
-        self,
-        *,
-        fov_id: int,
-        completed_commands: list[AutomatonCommand],
-        errors: list[Exception],
-    ) -> StrategyRuntimeContext:
-        if len(errors) > 1:
-            raise StrategyInterpretationError(
-                "A stopped Automaton command batch cannot report more than one execution error."
-            )
-        observations = self.observation_provider.observe(
-            fov_id=fov_id,
-            completed_commands=completed_commands,
-            step_count=self.callback_counter,
-        )
-        active_errors = self.runtime_error_provider.classify(
-            errors=errors,
-            command_origins=self._command_origins,
-        )
-        unknown_observations = set(observations) - set(self.domain.observations)
-        if unknown_observations:
-            raise ObservationEvaluationError(
-                f"Observation provider returned undeclared values: {sorted(unknown_observations)!r}."
-            )
-        unknown_errors = set(active_errors) - set(self.domain.runtime_errors)
-        if unknown_errors:
-            raise StrategyInterpretationError(
-                f"Runtime error provider returned undeclared errors: {sorted(unknown_errors)!r}."
-            )
-        if len(active_errors) > 1:
-            raise StrategyInterpretationError(
-                "Runtime error provider returned more than one active error for one execution error."
-            )
-        self._validate_error_origins(active_errors)
-        self._clear_successful_retries(completed_commands, errors)
-        active_with_attempts = {
-            name: replace(
-                error,
-                retry_attempt=self._retry_counts.get(self._retry_key(error), 0),
-                remaining_calls=self._command_tails.get(error.command_id, ()),
-                remaining_action=self._command_tail_actions.get(error.command_id),
-            )
-            for name, error in active_errors.items()
-        }
-        self._failure_history.extend(active_with_attempts.values())
-        self._discard_pending_batch()
-        return StrategyRuntimeContext(observations=observations, errors=active_with_attempts)
-
-    def _commands_for(
-        self,
-        statements: tuple[ValidatedStatement, ...],
-        *,
-        current_fov_id: int,
-        section: str = "step",
-    ) -> list[AutomatonCommand]:
-        # Recover a previous resolved batch before evaluating any new DSL statements.
-        calls: list[ValidatedCommandCall] = []
-        if self._runtime_context.errors:
-            action_error = next(iter(self._runtime_context.errors.values()))
-            action = self.domain.runtime_errors[action_error.name].action
-            if action == "retry":
-                action = self._apply_retry_policy(action_error, calls)
-            elif action == "continue":
-                self._retry_counts.pop(self._retry_key(action_error), None)
-                calls = list(action_error.remaining_calls)
-                action = action_error.remaining_action or "continue"
-            else:
-                self._clear_active_retry_counts()
-        else:
-            interpreted = self._interpreter.interpret(
-                statements, self._runtime_context, section=section
-            )
-            calls = list(interpreted.calls)
-            action = interpreted.action
-
-        context = CommandBuildContext(
-            command_factory=self.command_factory,
+        self.collection_provider.bind(
             fovs=self.fovs,
-            current_fov_id=current_fov_id,
+            region_of_interests=self.region_of_interests,
+            fov_processors=self.fov_processors,
         )
-        built_commands: list[tuple[ValidatedCommandCall, AutomatonCommand]] = []
-        for call in calls:
-            expected_type = self.command_adapter.command_type(call)
-            command = self.command_adapter.build(call, context)
-            if not isinstance(command, AutomatonCommand):
-                raise TypeError("CommandAdapter.build() must return an AutomatonCommand.")
-            if command.command_type is not expected_type:
-                raise ValueError(
-                    f"Command adapter declared {expected_type.name} for {call.name!r} "
-                    f"but built {command.command_type.name}."
-                )
-            built_commands.append((call, command))
+        self.observation_provider.reset()
+        self._refresh([])
+        self._execution.start("initialise")
+        return self._advance()
 
-        commands = [command for _, command in built_commands]
-        for index, (call, command) in enumerate(built_commands):
-            self._command_origins[command.command_id] = call
-            self._command_tails[command.command_id] = tuple(calls[index + 1 :])
-            self._command_tail_actions[command.command_id] = action if action != "retry" else None
-
-        if action == "terminate":
-            commands.append(self.command_factory.command_terminate_strategy())
-        elif action == "abort":
-            commands.append(self.command_factory.command_abort_strategy())
+    def callback(self, fov_id, data, errors):
+        commands = self._callback(fov_id, data, errors)
+        if not self.is_valid_command_list(commands):
+            raise RuntimeError("AutoStrat callback returned invalid commands")
+        self.callback_counter = self._steps_completed
         return commands
 
-    def _apply_retry_policy(
-        self,
-        error: ActiveRuntimeError,
-        calls: list[ValidatedCommandCall],
-    ) -> RecoveryAction:
-        """Retry one failed call or return its automatic exhaustion action."""
-        definition = self.domain.runtime_errors[error.name]
-        if definition.action != "retry":
-            raise StrategyInterpretationError(
-                f"Runtime error {error.name!r} does not permit retry."
-            )
-        if error.failed_call is None:
-            raise StrategyInterpretationError(
-                f"Runtime error {error.name!r} has no failed command to retry."
-            )
-        key = self._retry_key(error)
-        attempts = self._retry_counts.get(key, 0)
-        if attempts < definition.max_retries:
-            self._retry_counts[key] = attempts + 1
-            calls.append(error.failed_call)
-            calls.extend(error.remaining_calls)
-            return error.remaining_action or "retry"
-        exhausted_action = definition.exhausted_action
-        if exhausted_action is None:
-            raise StrategyInterpretationError(
-                f"Retryable runtime error {error.name!r} has no exhaustion action."
-            )
-        self._retry_counts.pop(key, None)
-        if exhausted_action == "continue":
-            calls.extend(error.remaining_calls)
-            return error.remaining_action or "continue"
-        return exhausted_action
+    def _callback(self, fov_id, data, errors):
+        if self._stopped:
+            return []
+        self._current_fov_id = fov_id
+        # Recovery precedes all observation collection and resumed DSL evaluation.
+        if errors:
+            return self._recover(errors)
+        self._complete(data)
+        self._refresh(data)
+        if not self._execution.active:
+            self._execution.start(self._next_section)
+        return self._advance()
 
-    def _validate_error_origins(
-        self,
-        active_errors: Mapping[str, ActiveRuntimeError],
-    ) -> None:
-        """Require command-linked classifications to match the failed call's declaration."""
-        for name, error in active_errors.items():
-            if error.failed_call is None:
-                continue
-            command = self.domain.commands.get(error.failed_call.name)
-            if command is None or name not in command.runtime_errors:
-                raise StrategyInterpretationError(
-                    f"Runtime error {name!r} is not declared for failed command "
-                    f"{error.failed_call.name!r}."
-                )
+    def _refresh(self, data):
+        self._observations = self.observation_provider.observe(
+            fov_id=self._current_fov_id, completed_commands=data, step_count=self._steps_completed
+        )
 
-    def _clear_successful_retries(
-        self,
-        completed_commands: list[AutomatonCommand],
-        errors: list[Exception],
-    ) -> None:
-        failed_ids = {error.command_id for error in errors if hasattr(error, "command_id")}
-        completed_call_ids = {
-            id(self._command_origins[command.command_id])
-            for command in completed_commands
-            if command.command_id not in failed_ids and command.command_id in self._command_origins
-        }
+    def _complete(self, data):
+        if self._pending_event is None:
+            if data:
+                raise StrategyInterpretationError("Unexpected completed commands")
+            return
+        if len(data) != 1 or data[0].command_id != self._pending_id:
+            raise StrategyInterpretationError("Pending command completion is missing or mismatched")
+        call = self._pending_event.call
         for key in tuple(self._retry_counts):
-            if key[1] in completed_call_ids:
-                self._retry_counts.pop(key, None)
-
-    def _discard_pending_batch(self) -> None:
-        """Discard bookkeeping for the one batch whose callback is now being handled."""
+            if key[1] == id(call):
+                self._retry_counts.pop(key)
+        self._execution.acknowledge()
+        self._pending_event = None
+        self._pending_id = None
         self._command_origins.clear()
-        self._command_tails.clear()
-        self._command_tail_actions.clear()
 
-    def _clear_active_retry_counts(self) -> None:
-        for error in self._runtime_context.errors.values():
-            self._retry_counts.pop(self._retry_key(error), None)
+    def _advance(self):
+        event = self._execution.resume(self._host)
+        if event.call is not None:
+            self._pending_event = event
+            return self._build_pending()
+        if event.action is not None:
+            return self._control(event.action)
+        if event.section == "step":
+            self._steps_completed += 1
+            self.callback_counter = self._steps_completed
+        self._next_section = "step"
+        return []
 
-    @staticmethod
-    def _retry_key(error: ActiveRuntimeError) -> tuple[str, int]:
-        failed_call_id = id(error.failed_call) if error.failed_call is not None else -1
-        return error.name, failed_call_id
+    def _build_pending(self):
+        event = self._pending_event
+        call = event.call
+        context = CommandBuildContext(
+            self.command_factory, self.fovs, self._current_fov_id, event.context
+        )
+        expected = self.command_adapter.command_type(call)
+        command = self.command_adapter.build(call, context)
+        if not isinstance(command, AutomatonCommand) or command.command_type is not expected:
+            raise StrategyInterpretationError("Adapter returned the wrong command type")
+        self._command_origins.clear()
+        self._command_origins[command.command_id] = call
+        self._pending_id = command.command_id
+        return [command]
+
+    def _control(self, action):
+        self._stopped = True
+        self._execution.cancel()
+        self._pending_event = None
+        self._pending_id = None
+        self._command_origins.clear()
+        if action == "terminate":
+            return [self.command_factory.command_terminate_strategy()]
+        return [self.command_factory.command_abort_strategy()]
+
+    def _recover(self, errors):
+        if len(errors) != 1:
+            raise StrategyInterpretationError(
+                "A stopped command can report only one execution error"
+            )
+        active = self.runtime_error_provider.classify(
+            errors=errors, command_origins=self._command_origins
+        )
+        if len(active) != 1:
+            raise StrategyInterpretationError("Expected one active error classification")
+        name, error = next(iter(active.items()))
+        if name not in self.domain.runtime_errors or name != error.name:
+            raise StrategyInterpretationError("Undeclared or mismatched runtime error")
+        if error.failed_call is not None:
+            if self._pending_event is None or error.failed_call is not self._pending_event.call:
+                raise StrategyInterpretationError("Error does not belong to the pending command")
+            if name not in self.domain.commands[error.failed_call.name].runtime_errors:
+                raise StrategyInterpretationError("Error is not declared for the failed command")
+        key = (name, id(error.failed_call))
+        attempts = self._retry_counts.get(key, 0)
+        self._failure_history.append(
+            replace(
+                error,
+                retry_attempt=attempts,
+                statement_path=self._pending_event.path if self._pending_event else "",
+                collection_context=self._pending_event.context if self._pending_event else (),
+            )
+        )
+        policy = self.domain.runtime_errors[name]
+        action = policy.action
+        if action == "retry":
+            if self._pending_event is None or error.failed_call is None:
+                raise StrategyInterpretationError("Cannot retry without a pending command")
+            if attempts < policy.max_retries:
+                self._retry_counts[key] = attempts + 1
+                return self._build_pending()
+            action = policy.exhausted_action
+        self._retry_counts.pop(key, None)
+        if action in {"terminate", "abort"}:
+            return self._control(action)
+        if self._pending_event is None:
+            raise StrategyInterpretationError("Cannot continue without a pending command")
+        self.observation_provider.invalidate()
+        self.collection_provider.invalidate(self._pending_event.context)
+        self._observations = {}
+        self._execution.acknowledge()
+        self._pending_event = None
+        self._pending_id = None
+        self._command_origins.clear()
+        self._refresh([])
+        return self._advance()
+
+    def finalise(self):
+        self._execution.cancel()
+        self._pending_event = None
+        self._pending_id = None
+        self._command_origins.clear()
+        self._refresh([])
+        self._execution.start("finalise")
+        return self._advance()
+
+    def resume_finalise(self, fov_id, data):
+        self._current_fov_id = fov_id
+        self._complete(data)
+        self._refresh(data)
+        return self._advance() if self._execution.active else []
 
     @classmethod
     def _all_command_calls(
@@ -356,6 +328,8 @@ class AutoStratStrategy(AbstractStrategy):
         for statement in statements:
             if isinstance(statement, ValidatedCommandTemplate):
                 calls.append(statement)
+            elif isinstance(statement, ValidatedLoopStatement):
+                calls.extend(cls._all_command_calls(statement.body))
             elif isinstance(statement, ValidatedIfStatement):
                 calls.extend(cls._all_command_calls(statement.body))
                 calls.extend(cls._all_command_calls(statement.else_body))
@@ -369,6 +343,10 @@ class AutoStratStrategy(AbstractStrategy):
     ) -> bool:
         for statement in statements:
             if isinstance(statement, ControlAction) and statement.action == action:
+                return True
+            if isinstance(statement, ValidatedLoopStatement) and cls._contains_action(
+                statement.body, action
+            ):
                 return True
             if isinstance(statement, ValidatedIfStatement):
                 if cls._contains_action(statement.body, action) or cls._contains_action(
