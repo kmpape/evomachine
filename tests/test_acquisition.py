@@ -505,6 +505,24 @@ def test_take_frame_uses_constructor_default_settings() -> None:
     assert dmd.full_count == 0
 
 
+def test_capture_timestamp_precedes_saving(monkeypatch) -> None:
+    from evomachine import acquisition
+    clock = [10.0]
+    monkeypatch.setattr(acquisition.time, "monotonic", lambda: clock[0])
+    file_manager = FakeFileManager()
+    save = file_manager.save_frame
+
+    def delayed_save(frame, frame_metadata):
+        clock[0] = 30.0
+        return save(frame, frame_metadata)
+
+    file_manager.save_frame = delayed_save
+    manager = _manager(file_manager=file_manager)
+    frame = manager.take_frame(_metadata(), settings=FrameAcquisitionSettings(save=True))
+    assert frame.frame_metadata[0].acquisition_monotonic == 10.0
+    assert clock[0] == 30.0
+
+
 def test_per_call_settings_replace_defaults_for_one_call() -> None:
     """
     Check per-call settings replace defaults without changing later calls.

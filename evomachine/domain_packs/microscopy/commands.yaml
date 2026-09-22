@@ -19,8 +19,13 @@ commands:
     runtime_errors:
       - device_not_ready
       - image_acquisition_failed
+      - processing_failed
       - communication_failed
     arguments:
+      process:
+        description: If true, detect trenches on the first image of this FOV, then segment and track mother cells on every processed image. Requires a configured segmentation channel. Processing finishes before the next DSL statement.
+        type: boolean
+
       exposure:
         description: Camera exposure duration. Unit is ms.
         type: number
@@ -92,3 +97,41 @@ commands:
         type: number
         minimum_exclusive: 0
         maximum_inclusive: 10
+  project_selected:
+    description: Expose all buffered targets in the selected FOV simultaneously in one combined DMD pattern. Call after the ROI loop. Requires movement to that FOV and valid processing for nonempty selections. Empty selection is a no-op. Successful projection clears the buffer and records treatment for every included trench.
+    runtime_errors:
+      - targeted_projection_failed
+    arguments:
+      illumination_led:
+        description: LED wavelength used to illuminate the DMD projection.
+        type: enum
+        values:
+          - 385nm
+          - 450nm
+          - 515nm
+          - 565nm
+          - 645nm
+
+      illumination_brightness:
+        description: Projection illumination brightness as a percentage of available LED output.
+        type: number
+        minimum_inclusive: 0
+        maximum_inclusive: 100
+
+      duration:
+        description: Exposure duration shared by all selected trench ROIs. Unit is s.
+        type: number
+        minimum_exclusive: 0
+        maximum_inclusive: 100
+
+  clear_projection_targets:
+    description: Clear the selected FOV's pending projection targets. Requires loop fovs. Does not expose or move.
+    runtime_errors:
+      - runtime_failure
+    arguments: {}
+
+  select_roi:
+    description: Add the current authorised ROI to its FOV's pending projection targets. Requires loop rois and valid processing. Duplicate additions are harmless. Does not expose or move.
+    runtime_errors:
+      - runtime_failure
+    arguments: {}

@@ -12,6 +12,10 @@ import numpy as np
 
 from evomachine.acquisition import FrameAcquisitionManager, FrameAcquisitionSettings
 from evomachine.commands import AutomatonCommand
+from evomachine.delta_processing import (
+    DeltaProcessor, DeltaProcessingError, FovMeasurements, MicroscopyState,
+    TargetedProjectionError,
+)
 from evomachine.config import get_logger
 from evomachine.coordinates import Coordinate
 from evomachine.frame import Frame, FrameMetaData
@@ -50,6 +54,8 @@ class Automaton:
         AutomatonCommandType.PROJECT: ("_dmd", "_led_mngr"),
         AutomatonCommandType.PROJECT_ROI: ("_dmd", "_led_mngr"),
         AutomatonCommandType.WAIT: (),
+        AutomatonCommandType.CLEAR_PROJECTION_TARGETS: (),
+        AutomatonCommandType.SELECT_PROJECTION_ROI: (),
         AutomatonCommandType.STOP: (),
         AutomatonCommandType.TERMINATE_STRATEGY: (),
         AutomatonCommandType.ABORT_STRATEGY: (),
@@ -79,6 +85,7 @@ class Automaton:
             frame_history_limit: int | None = 2,
             gui_request_processor: GuiRequestProcessor | None = None,
             gui_request_budget: int = 16,
+            delta_processor: DeltaProcessor | None = None,
     ):
         """
         Initialise the automaton with runtime manager objects.
@@ -116,6 +123,8 @@ class Automaton:
             bounded number of pending GUI jobs on the automaton thread.
         gui_request_budget
             Maximum number of typed GUI jobs processed per automaton loop tick.
+        delta_processor
+            Optional DeLTA processor/target selection. Models load only for processed imaging.
 
         Returns
         -------
@@ -155,6 +164,8 @@ class Automaton:
         self._strategy: AbstractStrategy | None = strategy
         "Strategy currently installed on the automaton, or None for device-only startup."
         self._cfg: ImageProcessorConfig = cfg_processor
+        self._delta_processor = delta_processor or DeltaProcessor(cfg_processor)
+        self.processing_state = MicroscopyState()
         "Image-processing configuration used by strategy commands and frame channel lookup."
         self._channel_to_index: dict[LEDType, int] = self._cfg.channel_to_index
         "Mapping from LED channel type to image channel index."
@@ -507,6 +518,8 @@ class Automaton:
         self._cropping_boxes = {} if cropping_boxes is None else copy.copy(cropping_boxes)
         self._fov_to_roi = {fov_id: [] for fov_id in self._fovs}
         self._fov_processors = {}
+        self.processing_state = MicroscopyState()
+        self._delta_processor.reset()
         self._fov_processors_is_initialised = {fov_id: True for fov_id in self._fovs}
         self._fov_list_is_initialised = True
         self._skip_image_fov_id = None
@@ -640,12 +653,20 @@ class Automaton:
         self._validate_strategy_command_requirements()
         self._strategy_is_finalised = False
         self._command_section = "initialise"
+        # A replacement strategy starts a new experiment, not a continuation of
+        # the previous run's lineage, treatment records or scheduling clock.
+        self.processing_state = MicroscopyState()
+        self._delta_processor.reset()
+        self._fov_processors.clear()
+        for roi_ids in self._fov_to_roi.values():
+            roi_ids.clear()
         self._strategy.command_factory.update_region_of_interests(region_of_interests=self._fov_to_roi)
         self.next_commands = self._strategy.initialise(
             fovs=self._fovs,
             region_of_interests=self._fov_to_roi,
             fov_processors=self._fov_processors,
             dmd=self._dmd,
+            processing_state=self.processing_state,
         )
         self._validate_commands_are_registered(commands=self.next_commands, source="initialise")
         self._strategy_is_initialised = True
@@ -738,6 +759,19 @@ class Automaton:
                     command.command_data = self._execute_project(command=command)
                 elif command.command_type == AutomatonCommandType.PROJECT_ROI:
                     command.command_data = self._execute_project_roi(command=command)
+                elif command.command_type in {
+                    AutomatonCommandType.CLEAR_PROJECTION_TARGETS,
+                    AutomatonCommandType.SELECT_PROJECTION_ROI,
+                }:
+                    args = command.command_args
+                    fov = self.processing_state.fovs.setdefault(args["fov_id"], FovMeasurements())
+                    if command.command_type is AutomatonCommandType.CLEAR_PROJECTION_TARGETS:
+                        fov.projection_targets.clear()
+                    else:
+                        trench = fov.rois.get(args["roi_id"])
+                        if not fov.valid or trench is None or not trench.selected:
+                            raise ValueError("Cannot select an invalid or unauthorised projection target")
+                        fov.projection_targets.add(args["roi_id"])
                 elif command.command_type == AutomatonCommandType.WAIT:
                     self.sleep(**command.command_args)
                 elif command.command_type == AutomatonCommandType.STOP:
@@ -880,18 +914,28 @@ class Automaton:
             metadata.callback_id = self._strategy.callback_counter
             if metadata.fov_id < 0:
                 metadata.fov_id = self.get_fov_id()
+        if command.command_args["segment"]:
+            if self.get_fov_id() not in self._fovs or any(
+                    metadata.fov_id != self.get_fov_id() for metadata in metadata_items):
+                raise DeltaProcessingError("Processed acquisition must match the occupied, registered FOV")
         if any(metadata.fov_id == self._skip_image_fov_id for metadata in metadata_items):
+            self.processing_state.invalidate(self.get_fov_id())
             return {
                 "skipped": True,
                 "skip_reason": self._skip_image_reason,
                 "frame_metadata": metadata_items,
                 "saved_paths": [None for _ in metadata_items],
             }
+        self.processing_state.invalidate(self.get_fov_id())
         frame = self.acq_mngr.take_frame(
             frame_metadata=frame_metadata,
             settings=FrameAcquisitionSettings(save=command.command_args["save"]),
         )
         self._store_frame(frame=frame)
+        acquired_at = self.processing_state.elapsed()
+        capture_clock = frame.frame_metadata[0].acquisition_monotonic
+        if capture_clock is not None:
+            acquired_at = max(0.0, capture_clock - self.processing_state.started_at)
         channel_indices = [
             self._metadata_channel_index(metadata)
             for metadata in frame.frame_metadata
@@ -902,8 +946,15 @@ class Automaton:
             "frame_metadata": frame.frame_metadata,
             "saved_paths": frame.saved_paths,
         }
-        if command.command_args["segment"] and channel_indices:
-            command_data["seg"] = {}
+        if command.command_args["segment"]:
+            if (len(frame.frame_metadata) != 1 or len(channel_indices) != 1
+                    or self._cfg.channels[channel_indices[0]] not in self._cfg.channels_seg):
+                raise DeltaProcessingError("Processed images require one configured segmentation channel")
+            command_data["seg"] = self._delta_processor.process(
+                fov_id=self.get_fov_id(), image=frame.array, acquired_at=acquired_at,
+                processors=self._fov_processors, roi_ids=self._fov_to_roi,
+                state=self.processing_state, roi_boxes=self._cropping_boxes.get(self.get_fov_id()),
+            )
         return command_data
 
     def _store_frame(self, frame: Frame) -> None:
@@ -997,7 +1048,40 @@ class Automaton:
         self._led_mngr.disable_led()
         return True
 
-    def _execute_project_roi(self, command: AutomatonCommand) -> np.ndarray:
+    def _execute_project_roi(self, command: AutomatonCommand) -> np.ndarray | None:
+        if not command.command_args.get("record_treatment", False):
+            return self._project_roi_pattern(command)
+        args = command.command_args
+        if not args["roi_ids"]:
+            return None  # Empty selection: no illumination and no treatment bookkeeping.
+        try:
+            if self.stopped() or self.has_shutdown():
+                raise RuntimeError("Experiment stopped before targeted exposure")
+            fov = self.processing_state.fovs.get(args["fov_id"])
+            if args["fov_id"] != self.get_fov_id() or fov is None or not fov.valid:
+                raise ValueError("Targeted projection requires the selected FOV and valid processing")
+            if any(roi_id not in fov.rois or not fov.rois[roi_id].selected for roi_id in args["roi_ids"]):
+                raise ValueError("Projection target is not an authorised trench")
+            try:
+                pattern = self._project_roi_pattern(command)
+            finally:
+                try:
+                    if self._led_mngr is not None:
+                        self._led_mngr.disable_led()
+                finally:
+                    if self._dmd is not None:
+                        self._dmd.display_none()
+            if self.stopped() or self.has_shutdown():
+                raise RuntimeError("Targeted exposure was interrupted")
+            completed_at = self.processing_state.elapsed()
+            for roi_id in args["roi_ids"]:
+                fov.rois[roi_id].treated(completed_at)
+            fov.projection_targets.difference_update(args["roi_ids"])
+            return pattern
+        except Exception as error:
+            raise TargetedProjectionError(f"Targeted exposure not confirmed: {error}") from error
+
+    def _project_roi_pattern(self, command: AutomatonCommand) -> np.ndarray:
         """
         Execute one PROJECT_ROI command.
 

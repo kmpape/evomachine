@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 import threading
+import time
 
 import numpy as np
 from pydantic import field_validator
@@ -476,6 +477,7 @@ class FrameAcquisitionManager:
             for led_type, brightness in frame_metadata.leds.items():
                 self.led_manager.set_led(led_type=led_type, brightness=brightness)
         frame_metadata.execution_time = now()
+        frame_metadata.acquisition_monotonic = time.monotonic()
         frame = self.camera.get_frame(normalise=settings.normalise)
         if not settings.save:
             return frame, None

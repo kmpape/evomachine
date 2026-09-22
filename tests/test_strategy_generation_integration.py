@@ -415,12 +415,12 @@ def test_image_retry_exhaustion_automatically_continues() -> None:
         cfg=_cfg(),
         verified=_verified(
             "initialise\n"
-            "    image(exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
+            "    image(process=false, exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
             "    wait(duration=1)\n"
             "step\n"
             "    if observations.step_count >= 8:\n"
             "        terminate\n"
-            "    image(exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
+            "    image(process=false, exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
             "    wait(duration=1)\n"
             "finalise\n"
         ),
@@ -463,7 +463,7 @@ def test_retry_preserves_interrupted_batch_tail_and_discards_old_tracking() -> N
             "initialise\n"
             "    delay = observations.step_count + 2\n"
             "    wait(duration=1)\n"
-            "    image(exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
+            "    image(process=false, exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
             "    wait(duration=delay)\n"
             "    if observations.step_count == 0:\n"
             "        terminate\n"
@@ -636,7 +636,15 @@ def test_generation_service_distinguishes_blocking_build_from_worker_submission(
 def test_microscopy_domain_exposes_runtime_error_policies() -> None:
     domain = _domain()
 
-    assert set(domain.commands) == {"move_fov", "image", "project", "wait"}
+    assert set(domain.commands) == {
+        "move_fov",
+        "image",
+        "project",
+        "wait",
+        "project_selected",
+        "clear_projection_targets",
+        "select_roi",
+    }
     assert set(domain.observations) == {
         "current_fov_id",
         "step_count",
@@ -658,10 +666,13 @@ def test_microscopy_domain_exposes_runtime_error_policies() -> None:
         "projection_failed",
         "communication_failed",
         "runtime_failure",
+        "processing_failed",
+        "targeted_projection_failed",
     }
     assert domain.commands["image"].runtime_errors == (
         "device_not_ready",
         "image_acquisition_failed",
+        "processing_failed",
         "communication_failed",
     )
     assert domain.runtime_errors["image_acquisition_failed"].exhausted_action == "continue"
@@ -695,7 +706,7 @@ def test_microscopy_adapter_builds_existing_automaton_commands() -> None:
     verified = _verified(
         "initialise\n"
         "    move_fov(target=first_fov)\n"
-        "    image(exposure=25, led=515nm, led_brightness=12, filter=filter)\n"
+        "    image(process=false, exposure=25, led=515nm, led_brightness=12, filter=filter)\n"
         "    project(illumination_led=385nm, illumination_brightness=20, duration=2)\n"
         "    wait(duration=3)\n"
         "step\n"

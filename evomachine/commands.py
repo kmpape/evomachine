@@ -212,10 +212,9 @@ class CommandFactory:
         command_data: Dictionary
         # TODO
         command_data['img']: 3D int16 numpy array (normalised & rotated images) with 1st dimension = len(channels)
-        command_data['seg']: Provided if segment is True. A dictionary with ROI IDs as keys and a delta.Lineage object
-                             as values. In case of a mothermachine experiment, the ROIs will be the trenches in
-                             the corresponding FoV. Otherwise, the single key will be 0 and the Lineage object will
-                             correspond to all cells in the current FoV.
+        command_data['seg']: Provided if segment is True. Maps stable trench IDs to segmentation masks.
+                             Mother-cell lineage remains in the FOV's PositionRT processor and its scalar
+                             measurements are exposed through the shared microscopy processing state.
 
         Returns
         -------
@@ -283,6 +282,19 @@ class CommandFactory:
             command_args=status,
             command_id=self.get_next_id(),
             command_creation_time=time(),
+        )
+
+    def command_projection_selection(self, fov_id: int, roi_id: int | None = None) -> AutomatonCommand:
+        """Clear a FOV's pending targets, or add one ROI without exposing it."""
+        if type(fov_id) is not int or fov_id not in self._fov_to_roi:
+            raise ValueError("Unknown projection FOV")
+        if roi_id is not None and (type(roi_id) is not int or roi_id not in self._fov_to_roi[fov_id]):
+            raise ValueError("Unknown projection ROI")
+        return AutomatonCommand(
+            command_type=(AutomatonCommandType.CLEAR_PROJECTION_TARGETS if roi_id is None
+                          else AutomatonCommandType.SELECT_PROJECTION_ROI),
+            command_args={"fov_id": fov_id, "roi_id": roi_id},
+            command_id=self.get_next_id(), command_creation_time=time(),
         )
 
     def command_move(self, fov_id: int | None) -> AutomatonCommand:
@@ -434,7 +446,7 @@ class CommandFactory:
             raise TypeError(f"AutomatonCommandFactory.command_project_roi: fov_id={fov_id} does not exist.")
         if not (all(isinstance(r, int) and (r in self._fov_to_roi[fov_id]) for r in roi_ids)):
             raise TypeError(f"AutomatonCommandFactory.command_project_roi: roi_ids do not exist for fov_id={fov_id}.")
-        if not (isinstance(brightness, int) or not isinstance(brightness, float)) or not (0 <= brightness <= 100):
+        if type(brightness) not in (int, float) or not (0 <= brightness <= 100):
             raise TypeError(f"AutomatonCommandFactory.project: Wrong type or range for argument brightness.")
         max_duration = 60*60 if brightness > 29 else 3600
         if not (isinstance(duration, float) or isinstance(duration, int)) or not (0 < duration < max_duration):

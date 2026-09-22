@@ -8,7 +8,7 @@ examples:
     strategy: |
       initialise
           move_fov(target=first_fov)
-          image(exposure=100, led=450nm, led_brightness=10, filter=465nm)
+          image(process=false, exposure=100, led=450nm, led_brightness=10, filter=465nm)
           wait(duration=3)
 
       step
@@ -16,7 +16,7 @@ examples:
               terminate
           else:
               move_fov(target=next_fov)
-              image(exposure=100, led=450nm, led_brightness=10, filter=465nm)
+              image(process=false, exposure=100, led=450nm, led_brightness=10, filter=465nm)
               wait(duration=3)
 
       finalise
@@ -32,7 +32,7 @@ examples:
     strategy: |
       initialise
           move_fov(target=first_fov)
-          image(exposure=100, led=450nm, led_brightness=10, filter=465nm)
+          image(process=false, exposure=100, led=450nm, led_brightness=10, filter=465nm)
       step
           exhausted = observations.focus_recovery_exhausted
           if exhausted:
@@ -43,7 +43,7 @@ examples:
               else:
                   pause = max(1, min(10 * (1 - observations.saturation_fraction), 10))
                   wait(duration=pause)
-                  image(exposure=100, led=450nm, led_brightness=10, filter=465nm)
+                  image(process=false, exposure=100, led=450nm, led_brightness=10, filter=465nm)
       finalise
 
   - name: Explicit LED imaging loop
@@ -59,7 +59,7 @@ examples:
           if observations.step_count >= 5:
               terminate
           else:
-              image(exposure=25, led=515nm, led_brightness=12, filter=527nm)
+              image(process=false, exposure=25, led=515nm, led_brightness=12, filter=527nm)
 
       finalise
   - name: Two passes over configured FOVs and registered ROIs
@@ -74,7 +74,7 @@ examples:
       step
           loop fovs:
               move_fov(target=current_fov)
-              image(exposure=100, led=450nm, led_brightness=10, filter=465nm)
+              image(process=false, exposure=100, led=450nm, led_brightness=10, filter=465nm)
               count = 0
               loop rois:
                   count = count + 1
@@ -85,3 +85,24 @@ examples:
               terminate
       finalise
           move_fov(target=first_fov)
+  - name: Combined projection after a target-selection pass
+    user_request: >-
+      Make one pass over the FOVs. At each FOV acquire a processed 25 ms image using
+      450 nm at 10 percent brightness with the 465 nm filter. Select all application-authorised
+      trenches with valid measurements and expose them together, once per FOV, using
+      385 nm at 10 percent brightness for 0.5 seconds. Finish after the pass.
+      These illumination values are example inputs, not recommended experimental settings.
+    strategy: |
+      initialise
+      step
+          loop fovs:
+              move_fov(target=current_fov)
+              image(process=true, exposure=25, led=450nm, led_brightness=10, filter=465nm)
+              clear_projection_targets()
+              loop rois:
+                  if observations.target_selected:
+                      if observations.measurement_valid:
+                          select_roi()
+              project_selected(illumination_led=385nm, illumination_brightness=10, duration=0.5)
+          terminate
+      finalise

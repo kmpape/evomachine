@@ -11,6 +11,7 @@ from autostrat.language.model import ValidatedCommandCall, ValidatedCommandTempl
 
 from evomachine.commands import AutomatonCommand, CommandFactory
 from evomachine.coordinates import Coordinate
+from evomachine.delta_processing import MicroscopyState
 from evomachine.strategy_generation.runtime import ActiveRuntimeError, StrategyInterpretationError
 from evomachine.types import AutomatonCommandType
 
@@ -23,6 +24,7 @@ class CommandBuildContext:
     fovs: Mapping[int, Coordinate]
     current_fov_id: int
     selections: ExecutionContext = ()
+    processing_state: MicroscopyState | None = None
 
 
 class CommandAdapter(ABC):
@@ -62,6 +64,9 @@ class ObservationProvider(ABC):
     def reset(self) -> None:
         """Begin a new experiment without carrying observations from an earlier run."""
         self.invalidate()
+
+    def bind_processing_state(self, state) -> None:
+        """Optionally bind the application's shared measurement state."""
 
 
 class RuntimeErrorProvider(ABC):
@@ -133,3 +138,6 @@ class CollectionProvider:
 
     def invalidate(self, context: ExecutionContext) -> None:
         """Discard measurements affected by a failed command in this selected context."""
+
+    def bind_processing_state(self, state) -> None:
+        """Optionally bind the application's shared measurement state."""

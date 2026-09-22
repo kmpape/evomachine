@@ -127,6 +127,8 @@ class AutomatonCommandType(EvoType):
     # generic execution halt and does not itself define finalisation semantics.
     TERMINATE_STRATEGY = auto()
     ABORT_STRATEGY = auto()
+    CLEAR_PROJECTION_TARGETS = auto()
+    SELECT_PROJECTION_ROI = auto()
 
 
 # TODO(Codex): rename as SoftwareFocusStatusType

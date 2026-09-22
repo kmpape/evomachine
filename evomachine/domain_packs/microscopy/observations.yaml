@@ -5,7 +5,7 @@ observations:
     minimum_inclusive: 0
 
   step_count:
-    description: Number of strategy step callbacks completed before the current step.
+    description: Number of complete DSL step invocations, not hardware command callbacks.
     type: integer
     minimum_inclusive: 0
 
@@ -68,15 +68,73 @@ collections:
   fovs:
     description: Configured fields of view in application order. Iteration does not move the stage.
     observations:
+      processing_valid:
+        description: The selected FOV has a successfully processed latest acquisition.
+        type: boolean
+      roi_count:
+        description: Number of stable registered trenches in this FOV.
+        type: integer
+        minimum_inclusive: 0
+      projection_target_count:
+        description: Number of unique ROIs buffered for the selected FOV's next combined projection.
+        type: integer
+        minimum_inclusive: 0
       selected_fov_id:
         description: Identifier of the selected FOV, not necessarily the actual stage position.
         type: integer
         minimum_inclusive: 0
   rois:
-    description: Registered ROI identifiers for the selected FOV. No detection or biological measurements are added by this collection.
+    description: Stable trench identifiers for the selected FOV, detected on its first processed image. Each trench follows its mother cell, not an arbitrary single bacterium.
     parent: fovs
     observations:
       selected_roi_id:
         description: Identifier of the current registered ROI within the selected FOV.
+        type: integer
+        minimum_inclusive: 0
+      target_selected:
+        description: Whether this trench belongs to the application-supplied treatment selection. Defaults to all detected trenches.
+        type: boolean
+      measurement_valid:
+        description: A mother cell with a finite positive length was measured in the latest processed acquisition of this FOV.
+        type: boolean
+      growth_rate_valid:
+        description: The latest valid mother-cell measurement also contains a finite DeLTA growth rate.
+        type: boolean
+      previous_measurement_valid:
+        description: Both the current and immediately preceding processed measurements contain valid lengths.
+        type: boolean
+      length:
+        description: Latest mother-cell length in pixels. Read only when measurement_valid.
+        type: number
+        minimum_exclusive: 0
+      measurement_time:
+        description: Acquisition time of the current measurement on the shared experiment clock. Unit is s. Read only when measurement_valid.
+        type: number
+        minimum_inclusive: 0
+      previous_length:
+        description: Mother-cell length in the preceding processed image, in pixels. Read only when previous_measurement_valid.
+        type: number
+        minimum_exclusive: 0
+      previous_measurement_time:
+        description: Acquisition time of the preceding processed image on the shared clock. Unit is s. Read only when previous_measurement_valid.
+        type: number
+        minimum_inclusive: 0
+      growth_rate:
+        description: DeLTA's mother-only length growth estimate in inverse frames, NOT inverse seconds. Read only when growth_rate_valid. It assumes equal frame spacing and must not be treated as time-normalised under adaptive imaging.
+        type: number
+      treatment_count:
+        description: Number of confirmed successful targeted exposures of this trench in this experiment.
+        type: integer
+        minimum_inclusive: 0
+      last_treatment_time:
+        description: Completion time of the latest confirmed targeted exposure on the shared experiment clock. Unit is s. Read only when treatment_count is positive.
+        type: number
+        minimum_inclusive: 0
+      comparison_count:
+        description: Number of valid adjacent processed length comparisons with both acquisitions after the most recent treatment. Reset by successful treatment.
+        type: integer
+        minimum_inclusive: 0
+      length_increase_count:
+        description: Number of those post-treatment comparisons whose length increased. This is not a motion or viability measurement; the DSL supplies any retreatment threshold.
         type: integer
         minimum_inclusive: 0

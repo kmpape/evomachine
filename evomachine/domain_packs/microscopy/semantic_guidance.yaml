@@ -3,7 +3,11 @@ global_rules:
   - Field-of-view collections and iteration counts are supplied by the application.
   - "`current_fov_id` is unavailable until the first movement has completed, including during initialisation."
   - Loops select context only; moving to a selected FOV requires move_fov(target=current_fov). Iterating rois does not segment, detect, project or acquire images.
-  - Collections expose registered FOV and ROI IDs. No growth, DeLTA or mother-cell measurements are declared yet.
+  - Each ROI is a stable detected trench with a mother-cell measurement. Missing or lost cells are invalid measurements, not zero growth or proof of death.
+  - DeLTA growth_rate is in inverse frames and assumes equal frame spacing. It is not time-normalised for unequal acquisition intervals, and mother-only tracking does not provide daughter-aware division correction.
+  - After treatment, comparison_count and length_increase_count accumulate valid adjacent post-treatment length comparisons. Any decisions based on these values belong to the user's strategy request.
+  - MicroscopyState uses one monotonic experiment clock for elapsed_time, measurement times and treatment completion.
+  - This first integration requires horizontal, stationary, registered trenches and calibrated camera-to-DMD coordinates. Automatic rotation and drift correction are disabled so projection boxes remain in camera coordinates.
   - Initialise persistent counters before issuing commands; finalise can be entered early on a hardware failure.
   - "`step_count` is zero during the first step and counts previously completed steps."
   - Image-derived observations are unavailable until an image has completed and then retain the most recent measured value.
@@ -20,7 +24,9 @@ command_rules:
     - Field-of-view coordinates are application-owned and must not be invented by a strategy.
 
   image:
-    - Exposure, LED wavelength, LED brightness, and filter-wheel position must all be stated explicitly.
+    - Exposure, LED wavelength, LED brightness, filter-wheel position and the process boolean must all be stated explicitly.
+    - Set process=true to detect trenches once, then segment and track mother cells on each subsequent processed image. Uses one configured segmentation channel and an application configuration with preprocessing enabled. Set process=false for acquisition only.
+    - A new unprocessed, failed or skipped acquisition invalidates the FOV's biological measurements until another processed image succeeds.
     - Image-derived observations describe the most recently completed image acquisition.
 
   project:
@@ -30,3 +36,15 @@ command_rules:
 
   wait:
     - Use a single wait command when the requested duration is within the permitted range.
+  clear_projection_targets:
+    - Start a target-selection pass by clearing that FOV's buffer. Buffers are separate for each FOV; selecting an ROI does not perform exposure.
+
+  select_roi:
+    - Within loop rois, use observations.target_selected and any requested measurement conditions to decide whether to add that ROI. The host refuses unauthorised or invalid targets.
+    - No DSL lists are required. The host stores the selected ROI identifiers; repeated additions do not duplicate a target.
+
+  project_selected:
+    - Call after the ROI loop, within loop fovs and after explicit movement to that FOV. All buffered ROI boxes are combined into one calibrated DMD pattern with one exposure duration.
+    - Empty selection does nothing. A successful projection clears the buffer, updates treatment_count and last_treatment_time for every included ROI, and resets their post-treatment comparison counters.
+    - New acquisitions clear that FOV's pending targets. Any uncertain exposure failure aborts without automatic retry.
+    - Read last_treatment_time only when treatment_count is positive. Measurements and projection do not themselves prove viability.
