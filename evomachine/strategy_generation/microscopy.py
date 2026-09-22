@@ -7,7 +7,7 @@ import time
 
 import numpy as np
 
-from autostrat.language.model import QuantityValue, ValidatedCommandCall, ValidatedValue
+from autostrat.language.model import ValidatedCommandCall, ValidatedCommandTemplate, ValidatedValue
 
 from evomachine.commands import AutomatonCommand
 from evomachine.config import DMD_WIDTH_HEIGHT
@@ -71,7 +71,9 @@ class MicroscopyCommandAdapter(CommandAdapter):
         self._segment_images = segment_images
         self._save_images = save_images
 
-    def command_type(self, call: ValidatedCommandCall) -> AutomatonCommandType:
+    def command_type(
+        self, call: ValidatedCommandCall | ValidatedCommandTemplate
+    ) -> AutomatonCommandType:
         try:
             return _COMMAND_TYPES[call.name]
         except KeyError as error:
@@ -101,7 +103,9 @@ class MicroscopyCommandAdapter(CommandAdapter):
     ) -> AutomatonCommand:
         target = call.arguments["target"]
         if not context.fovs:
-            raise StrategyInterpretationError("move_fov requires at least one application-supplied FOV.")
+            raise StrategyInterpretationError(
+                "move_fov requires at least one application-supplied FOV."
+            )
         if target == "first_fov":
             fov_id = next(iter(context.fovs))
         elif target == "next_fov":
@@ -123,8 +127,8 @@ class MicroscopyCommandAdapter(CommandAdapter):
         led = call.arguments["led"]
         led_brightness = call.arguments["led_brightness"]
         filter_value = call.arguments["filter"]
-        if not isinstance(exposure, QuantityValue) or exposure.unit != "ms":
-            raise StrategyInterpretationError("image exposure must be a quantity in ms.")
+        if type(exposure) not in (int, float):
+            raise StrategyInterpretationError("image exposure must be a number in ms.")
         if not isinstance(led, str) or led not in _LED_BY_DOMAIN_VALUE:
             raise StrategyInterpretationError(f"Unsupported image LED {led!r}.")
         brightness = self._brightness(led_brightness, argument="image led_brightness")
@@ -133,7 +137,7 @@ class MicroscopyCommandAdapter(CommandAdapter):
         metadata = FrameMetaDataFactory.default(
             leds={_LED_BY_DOMAIN_VALUE[led]: brightness},
             filter_wheel=_FILTER_BY_DOMAIN_VALUE[filter_value],
-            exposure=exposure.magnitude,
+            exposure=exposure,
         )
         return context.command_factory.command_image(
             frame_metadata=metadata,
@@ -155,13 +159,13 @@ class MicroscopyCommandAdapter(CommandAdapter):
             brightness_value,
             argument="project illumination_brightness",
         )
-        if not isinstance(duration, QuantityValue) or duration.unit != "s":
-            raise StrategyInterpretationError("project duration must be a quantity in s.")
+        if type(duration) not in (int, float):
+            raise StrategyInterpretationError("project duration must be a number in s.")
         full_field_pattern = np.full(DMD_WIDTH_HEIGHT, 255, dtype=np.uint8)
         return context.command_factory.command_project(
             channel=_LED_BY_DOMAIN_VALUE[led],
             image=full_field_pattern,
-            duration=duration.magnitude,
+            duration=duration,
             brightness=brightness,
         )
 
@@ -177,10 +181,10 @@ class MicroscopyCommandAdapter(CommandAdapter):
         context: CommandBuildContext,
     ) -> AutomatonCommand:
         duration = call.arguments["duration"]
-        if not isinstance(duration, QuantityValue) or duration.unit != "s":
-            raise StrategyInterpretationError("wait duration must be a quantity in s.")
+        if type(duration) not in (int, float):
+            raise StrategyInterpretationError("wait duration must be a number in s.")
         return context.command_factory.command_wait(
-            duration=duration.magnitude,
+            duration=duration,
             set_live_mode=False,
         )
 
@@ -219,10 +223,7 @@ class MicroscopyObservationProvider(ObservationProvider):
 
         observations: dict[str, ValidatedValue] = dict(self._latest)
         observations["step_count"] = step_count
-        observations["elapsed_time"] = QuantityValue(
-            magnitude=max(0.0, time.monotonic() - self._started_at),
-            unit="s",
-        )
+        observations["elapsed_time"] = max(0.0, time.monotonic() - self._started_at)
         if fov_id >= 0:
             observations["current_fov_id"] = fov_id
         return observations
@@ -252,12 +253,16 @@ class MicroscopyObservationProvider(ObservationProvider):
             return
         images = result.get("img")
         if not isinstance(images, list) or not images:
-            raise StrategyInterpretationError("Completed image command did not contain an image array.")
+            raise StrategyInterpretationError(
+                "Completed image command did not contain an image array."
+            )
         image = np.asarray(images[-1])
         while image.ndim > 2:
             image = image[-1]
         if image.ndim != 2 or not np.issubdtype(image.dtype, np.number):
-            raise StrategyInterpretationError("Completed image data must be a numeric two-dimensional array.")
+            raise StrategyInterpretationError(
+                "Completed image data must be a numeric two-dimensional array."
+            )
 
         camera_max = self._camera_max(image)
         image_float = image.astype(np.float64)

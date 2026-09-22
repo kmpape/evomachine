@@ -9,13 +9,9 @@ import pytest
 
 from autostrat import load_domain_pack
 from autostrat.generation import GeneratedStrategy, Prompt
+from autostrat.language.evaluator import ArithmeticEvaluationError
 from autostrat.language.model import (
-    ControlAction,
-    QuantityValue,
-    ReferenceExpression,
     ValidatedCommandCall,
-    ValidatedComparisonExpression,
-    ValidatedIfStatement,
 )
 from autostrat.language.parser import parse_strategy
 from autostrat.language.validator import validate_strategy
@@ -40,6 +36,7 @@ from evomachine.strategy_generation import (
 )
 from evomachine.strategy_generation.interfaces import EmptyRuntimeErrorProvider
 from evomachine.strategy_generation.interpreter import ConditionalInterpreter
+from evomachine.strategy_generation.preview import generate_preview
 from evomachine.strategy_generation.runtime import (
     ActiveRuntimeError,
     StrategyInterpretationError,
@@ -65,29 +62,12 @@ class FakeCommandAdapter(CommandAdapter):
         return context.command_factory.command_wait(duration=0)
 
 
-ERROR_HANDLERS = (
-    "    if error.device_not_ready:\n"
-    "        abort\n"
-    "    if error.movement_failed:\n"
-    "        retry\n"
-    "    if error.image_acquisition_failed:\n"
-    "        retry\n"
-    "    if error.projection_failed:\n"
-    "        retry\n"
-    "    if error.communication_failed:\n"
-    "        retry\n"
-    "    if error.runtime_failure:\n"
-    "        abort\n"
-)
-
-
 def _domain():
     return load_domain_pack("evomachine/domain_packs/microscopy")
 
 
 def _verified(source: str) -> VerifiedStrategy:
     domain = _domain()
-    source = source.replace("step\n", f"step\n{ERROR_HANDLERS}", 1)
     program = validate_strategy(parse_strategy(source), domain)
     generated = GeneratedStrategy(
         source=source,
@@ -116,51 +96,18 @@ def _cfg():
 
 
 def test_interpreter_selects_nested_branch_from_runtime_snapshot() -> None:
-    capture = ValidatedCommandCall(name="capture")
-    statements = (
-        ValidatedIfStatement(
-            condition=ValidatedComparisonExpression(
-                left=ReferenceExpression(namespace="observation", name="focus_score"),
-                operator="<",
-                right=0.5,
-            ),
-            body=(
-                ValidatedIfStatement(
-                    condition=ReferenceExpression(namespace="observation", name="recovery_enabled"),
-                    body=(capture,),
-                ),
-            ),
-        ),
+    verified = _verified(
+        "initialise\nstep\n    if observation.focus_score < 0.5:\n        if observation.hardware_autofocus_locked:\n            wait(duration=1)\n    else:\n        terminate\nfinalise\n"
     )
-
-    result = ConditionalInterpreter().interpret(
-        statements,
+    result = ConditionalInterpreter(_domain()).interpret(
+        verified.program.step,
         StrategyRuntimeContext(
-            observations={"focus_score": 0.2, "recovery_enabled": True},
+            observations={"focus_score": 0.2, "hardware_autofocus_locked": True}
         ),
     )
-
-    assert result.calls == (capture,)
+    assert len(result.calls) == 1
+    assert result.calls[0].arguments["duration"] == 1
     assert result.action is None
-
-
-def test_interpreter_retries_the_call_owned_by_the_active_error() -> None:
-    failed_call = ValidatedCommandCall(name="capture")
-    active_error = ActiveRuntimeError(name="camera_failed", failed_call=failed_call)
-    statements = (
-        ValidatedIfStatement(
-            condition=ReferenceExpression(namespace="error", name="camera_failed"),
-            body=(ControlAction(action="retry"),),
-        ),
-    )
-
-    result = ConditionalInterpreter().interpret(
-        statements,
-        StrategyRuntimeContext(errors={"camera_failed": active_error}),
-    )
-
-    assert result.action == "retry"
-    assert result.action_error is active_error
 
 
 def test_unconfigured_error_provider_does_not_silently_discard_errors() -> None:
@@ -168,6 +115,140 @@ def test_unconfigured_error_provider_does_not_silently_discard_errors() -> None:
 
     with pytest.raises(StrategyInterpretationError, match="no RuntimeErrorProvider"):
         provider.classify(errors=[RuntimeError("camera failed")], command_origins={})
+
+
+def test_lean_preview_exposes_accepted_dsl_and_executable_wrapper() -> None:
+    verified = _verified("initialise\nstep\n    wait(duration=1)\n    terminate\nfinalise\n")
+
+    class Pipeline:
+        def run(self, request):
+            assert request == "wait please"
+            return verified
+
+    preview = generate_preview(Pipeline(), "wait please")
+    assert preview.dsl == verified.source
+    namespace = {}
+    exec(compile(preview.python, "<preview>", "exec"), namespace)
+    strategy = namespace["build_strategy"](preview.verified, _domain(), _cfg())
+    assert isinstance(strategy, AutoStratStrategy)
+    assert strategy.source == preview.dsl
+    assert "Semantic revisions: 0" in preview.diagnostics()
+    assert "not exposed" in preview.diagnostics()
+    assert "Hardware execution: not run" in preview.diagnostics()
+
+
+def test_lean_preview_failure_has_no_accepted_outputs() -> None:
+    class Pipeline:
+        def run(self, request):
+            raise RuntimeError("endpoint unavailable")
+
+    preview = generate_preview(Pipeline(), "wait please")
+    assert preview.verified is None
+    assert preview.dsl is None
+    assert preview.python is None
+    assert preview.attempts == ()
+    assert "endpoint unavailable" in preview.diagnostics()
+
+
+def test_lean_preview_preserves_rejected_semantic_candidates() -> None:
+    from autostrat.exceptions import SemanticRevisionExhaustedError
+    from autostrat.verification import SemanticIssue
+
+    generated = _verified("initialise\nstep\n    terminate\nfinalise\n").accepted.generated
+    rejected = StrategyAttempt(
+        number=1,
+        generated=generated,
+        verdict=SemanticVerdict(
+            accepted=False,
+            issues=(SemanticIssue(category="missing_requested_behavior", message="Missing wait"),),
+        ),
+    )
+
+    class Pipeline:
+        def run(self, request):
+            raise SemanticRevisionExhaustedError((rejected,))
+
+    preview = generate_preview(Pipeline(), "wait please")
+    assert preview.dsl is None
+    assert preview.attempts == (rejected,)
+    assert "Candidate 1: accepted=False" in preview.diagnostics()
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_lean_notebook_generation_cell_runs_without_hardware(fail) -> None:
+    import ast
+    import asyncio
+    import json
+    from html import escape
+    from pathlib import Path
+
+    notebook = json.loads(
+        (Path(__file__).parents[1] / "notebooks/quick_autostrat.ipynb").read_text()
+    )
+    code = next("".join(c["source"]) for c in notebook["cells"] if c["id"] == "generate")
+    verified = _verified("initialise\nstep\n    wait(duration=1)\n    terminate\nfinalise\n")
+
+    class Pipeline:
+        def run(self, request):
+            if fail:
+                raise RuntimeError("<endpoint unavailable>")
+            return verified
+
+    displayed = []
+    namespace = {
+        "asyncio": asyncio,
+        "generate_preview": generate_preview,
+        "pipeline": Pipeline(),
+        "prompt": "wait please",
+        "display": displayed.append,
+        "HTML": str,
+        "Code": lambda text, language: text,
+        "escape": escape,
+        "preview": "stale result",
+    }
+    asyncio.run(
+        eval(compile(code, "<notebook>", "exec", ast.PyCF_ALLOW_TOP_LEVEL_AWAIT), namespace)
+    )
+    if fail:
+        assert namespace["preview"].verified is None
+        assert "&lt;endpoint unavailable&gt;" in displayed[0]
+        assert verified.source not in displayed
+    else:
+        assert verified.source in displayed
+        assert namespace["preview"].python not in displayed
+    assert "<details>" in displayed[-1]
+
+
+def test_calculation_failure_builds_no_partial_batch_or_hardware_retry() -> None:
+    class RecordingAdapter(FakeCommandAdapter):
+        built = False
+
+        def build(self, call, context):
+            self.built = True
+            return super().build(call, context)
+
+    adapter = RecordingAdapter()
+    strategy = AutoStratStrategy(
+        cfg=_cfg(),
+        verified=_verified(
+            "initialise\n"
+            "    wait(duration=1)\n"
+            "    const number invalid = 1 / 0\n"
+            "    wait(duration=invalid)\n"
+            "step\n    terminate\nfinalise\n"
+        ),
+        domain=_domain(),
+        command_adapter=adapter,
+    )
+    with pytest.raises(ArithmeticEvaluationError, match="initialise"):
+        strategy.initialise(
+            fovs={0: Coordinate(0, 0, 0)},
+            region_of_interests={0: []},
+            fov_processors={},
+            dmd=None,
+        )
+    assert not adapter.built
+    assert strategy.failure_history == ()
 
 
 def test_strategy_rejects_multiple_errors_for_one_stopped_batch() -> None:
@@ -183,7 +264,7 @@ def test_strategy_rejects_multiple_errors_for_one_stopped_batch() -> None:
 
     strategy = AutoStratStrategy(
         cfg=_cfg(),
-        verified=_verified("initialise\nstep\nfinalise\n"),
+        verified=_verified("initialise\nstep\n    terminate\nfinalise\n"),
         domain=_domain(),
         command_adapter=FakeCommandAdapter(),
         runtime_error_provider=MultipleRuntimeErrorProvider(),
@@ -244,11 +325,13 @@ def test_image_retry_exhaustion_automatically_continues() -> None:
         cfg=_cfg(),
         verified=_verified(
             "initialise\n"
-            "    image(exposure=25ms, led=450nm, led_brightness=10, filter=465nm)\n"
-            "    wait(duration=1s)\n"
+            "    image(exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
+            "    wait(duration=1)\n"
             "step\n"
-            "    image(exposure=25ms, led=450nm, led_brightness=10, filter=465nm)\n"
-            "    wait(duration=1s)\n"
+            "    if observation.step_count >= 8:\n"
+            "        terminate\n"
+            "    image(exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
+            "    wait(duration=1)\n"
             "finalise\n"
         ),
         domain=_domain(),
@@ -279,9 +362,7 @@ def test_image_retry_exhaustion_automatically_continues() -> None:
         if returned_commands:
             command = returned_commands[0]
 
-    assert [command.command_type for command in returned_commands] == [
-        AutomatonCommandType.WAIT
-    ]
+    assert [command.command_type for command in returned_commands] == [AutomatonCommandType.WAIT]
     assert [failure.retry_attempt for failure in strategy.failure_history] == [0, 1, 2]
 
 
@@ -290,9 +371,10 @@ def test_retry_preserves_interrupted_batch_tail_and_discards_old_tracking() -> N
         cfg=_cfg(),
         verified=_verified(
             "initialise\n"
-            "    wait(duration=1s)\n"
-            "    image(exposure=25ms, led=450nm, led_brightness=10, filter=465nm)\n"
-            "    wait(duration=2s)\n"
+            "    const number delay = observation.step_count + 2\n"
+            "    wait(duration=1)\n"
+            "    image(exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
+            "    wait(duration=delay)\n"
             "    if observation.step_count == 0:\n"
             "        terminate\n"
             "step\n"
@@ -340,11 +422,7 @@ def test_movement_retry_exhaustion_terminates_without_leaking_into_finalise() ->
     strategy = AutoStratStrategy(
         cfg=_cfg(),
         verified=_verified(
-            "initialise\n"
-            "    move_fov(target=first_fov)\n"
-            "step\n"
-            "finalise\n"
-            "    wait(duration=1s)\n"
+            "initialise\n    move_fov(target=first_fov)\nstep\n    terminate\nfinalise\n    wait(duration=1)\n"
         ),
         domain=_domain(),
         command_adapter=MicroscopyCommandAdapter(
@@ -377,15 +455,13 @@ def test_movement_retry_exhaustion_terminates_without_leaking_into_finalise() ->
     assert [command.command_type for command in returned_commands] == [
         AutomatonCommandType.TERMINATE_STRATEGY
     ]
-    assert [command.command_type for command in strategy.finalise()] == [
-        AutomatonCommandType.WAIT
-    ]
+    assert [command.command_type for command in strategy.finalise()] == [AutomatonCommandType.WAIT]
 
 
 def test_unclassified_runtime_failure_preserves_diagnostics_and_aborts() -> None:
     strategy = AutoStratStrategy(
         cfg=_cfg(),
-        verified=_verified("initialise\nstep\nfinalise\n"),
+        verified=_verified("initialise\nstep\n    terminate\nfinalise\n"),
         domain=_domain(),
         command_adapter=MicroscopyCommandAdapter(
             segment_images=False,
@@ -407,9 +483,7 @@ def test_unclassified_runtime_failure_preserves_diagnostics_and_aborts() -> None
         errors=[RuntimeError("unexpected adapter failure")],
     )
 
-    assert [command.command_type for command in commands] == [
-        AutomatonCommandType.ABORT_STRATEGY
-    ]
+    assert [command.command_type for command in commands] == [AutomatonCommandType.ABORT_STRATEGY]
     failure = strategy.failure_history[-1]
     assert failure.name == "runtime_failure"
     assert failure.failed_call is None
@@ -418,12 +492,7 @@ def test_unclassified_runtime_failure_preserves_diagnostics_and_aborts() -> None
 
 
 def test_verified_program_is_wrapped_as_an_abstract_strategy() -> None:
-    verified = _verified(
-        "initialise\n"
-        "    wait(duration=1s)\n"
-        "step\n"
-        "finalise\n"
-    )
+    verified = _verified("initialise\n    wait(duration=1)\nstep\n    terminate\nfinalise\n")
     strategy = AutoStratStrategy(
         cfg=_cfg(),
         verified=verified,
@@ -450,7 +519,7 @@ def test_verified_program_is_wrapped_as_an_abstract_strategy() -> None:
 
 
 def test_generation_service_distinguishes_blocking_build_from_worker_submission() -> None:
-    verified = _verified("initialise\nstep\nfinalise\n")
+    verified = _verified("initialise\nstep\n    terminate\nfinalise\n")
 
     class FakePipeline:
         thread_names: list[str] = []
@@ -509,19 +578,42 @@ def test_microscopy_domain_exposes_runtime_error_policies() -> None:
         "image_acquisition_failed",
         "communication_failed",
     )
-    assert domain.runtime_errors["image_acquisition_failed"].retry_exhausted_action == "continue"
-    assert domain.runtime_errors["projection_failed"].retry_exhausted_action == "continue"
+    assert domain.runtime_errors["image_acquisition_failed"].exhausted_action == "continue"
+    assert domain.runtime_errors["projection_failed"].exhausted_action == "continue"
     assert "filter" in domain.commands["image"].arguments["filter"].values
+
+
+def test_microscopy_examples_define_completion_and_stop_before_more_acquisition() -> None:
+    from autostrat.language.evaluator import StrategyEvaluator
+
+    domain = _domain()
+    for example in domain.few_shot_examples:
+        validate_strategy(parse_strategy(example.strategy), domain)
+    example = domain.few_shot_examples[0]
+    program = validate_strategy(parse_strategy(example.strategy), domain)
+    evaluator = StrategyEvaluator(domain)
+    for count in range(8):
+        result = evaluator.evaluate(program.step, {"step_count": count})
+        assert result.action is None
+        assert [call.name for call in result.calls] == ["move_fov", "image", "wait"]
+    for count in (8, 9, 100):
+        result = evaluator.evaluate(program.step, {"step_count": count})
+        assert result.action == "terminate"
+        assert result.calls == ()
+    final = evaluator.evaluate(program.finalise, {})
+    assert final.calls[0].name == "move_fov"
+    assert final.calls[0].arguments["target"] == "first_fov"
 
 
 def test_microscopy_adapter_builds_existing_automaton_commands() -> None:
     verified = _verified(
         "initialise\n"
         "    move_fov(target=first_fov)\n"
-        "    image(exposure=25ms, led=515nm, led_brightness=12, filter=filter)\n"
-        "    project(illumination_led=385nm, illumination_brightness=20, duration=2s)\n"
-        "    wait(duration=3s)\n"
+        "    image(exposure=25, led=515nm, led_brightness=12, filter=filter)\n"
+        "    project(illumination_led=385nm, illumination_brightness=20, duration=2)\n"
+        "    wait(duration=3)\n"
         "step\n"
+        "    terminate\n"
         "finalise\n"
     )
     strategy = AutoStratStrategy(
@@ -615,18 +707,20 @@ def test_microscopy_provider_exposes_latest_image_and_focus_results() -> None:
     assert 0 <= observations["contrast_score"] <= 1
     assert observations["saturation_fraction"] == pytest.approx(1 / image_array.size)
     assert observations["focus_score"] >= 0
-    assert isinstance(observations["elapsed_time"], QuantityValue)
-    assert observations["elapsed_time"].unit == "s"
+    assert isinstance(observations["elapsed_time"], float)
+    assert observations["elapsed_time"] >= 0
 
 
 def test_microscopy_observations_drive_step_conditionals() -> None:
     verified = _verified(
         "initialise\n"
         "step\n"
+        "    if observation.step_count >= 8:\n"
+        "        terminate\n"
         "    if observation.current_fov_id == 4:\n"
         "        move_fov(target=next_fov)\n"
         "    if observation.step_count == 0:\n"
-        "        wait(duration=1s)\n"
+        "        wait(duration=1)\n"
         "finalise\n"
     )
     strategy = AutoStratStrategy(
@@ -693,10 +787,7 @@ def test_autostrat_maps_terminate_and_abort_to_distinct_lifecycle_commands() -> 
 
 def test_move_fov_requires_valid_application_context() -> None:
     verified = _verified(
-        "initialise\n"
-        "    move_fov(target=first_fov)\n"
-        "step\n"
-        "finalise\n"
+        "initialise\n    move_fov(target=first_fov)\nstep\n    terminate\nfinalise\n"
     )
     strategy = AutoStratStrategy(
         cfg=_cfg(),
@@ -719,10 +810,7 @@ def test_move_fov_requires_valid_application_context() -> None:
     next_fov_strategy = AutoStratStrategy(
         cfg=_cfg(),
         verified=_verified(
-            "initialise\n"
-            "    move_fov(target=next_fov)\n"
-            "step\n"
-            "finalise\n"
+            "initialise\n    move_fov(target=next_fov)\nstep\n    terminate\nfinalise\n"
         ),
         domain=_domain(),
         command_adapter=MicroscopyCommandAdapter(

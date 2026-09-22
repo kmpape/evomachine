@@ -144,17 +144,17 @@ The main Python package is `evomachine/evomachine`.
 - `commands.py`, `strategy.py`, and `automaton.py` describe command objects,
   strategy execution, and high-level experiment orchestration.
 - `strategy_generation/` contains the application-side AutoStrat integration. It provides a
-  validated-program interpreter, injected command/observation/error interfaces, an
+  bridge to AutoStrat's typed expression evaluator, injected command/observation/error interfaces, an
   `AbstractStrategy` wrapper, and a single-worker service. `StrategyGenerationService.build()` is
   explicitly blocking; GUI and event-loop callers must use `submit()` and consume its future
   without blocking their thread. Concrete microscopy command mappings,
   observation calculations, and runtime-error classifications are owned by EvoMachine. Command
-  failures stop the remainder of their batch and are exposed on the next strategy step with their
-  original exception and command context. A retry re-emits the failed command followed by the
+  failures stop the remainder of their batch. Before the next strategy step, the host applies the
+  domain's authoritative recovery policy using the original exception and command context. A retry re-emits the failed command followed by the
   unexecuted batch tail; `continue` skips the failed command and resumes that tail. Retries are
   bounded by the domain pack, and exhaustion continues, terminates, or aborts according to the
   declared policy. Unexpected
-  interpreter or integration failures enter a host-owned fail-safe abort path. Normal strategy
+  calculation, observation-contract, or integration failures enter a host-owned fail-safe abort path. Normal strategy
   termination runs finalisation exactly once; abort halts active peripherals and exits without
   running strategy finalisation. The initial microscopy adapter maps `move_fov`, explicit `image`,
   full-field `project`, and `wait` calls onto existing Automaton commands. It exposes lifecycle and
@@ -257,3 +257,32 @@ To smoke-test the automaton/socket startup without opening Napari:
 ```bash
 uv run python scripts/launch_virtual_gui.py --port 0 --no-napari
 ```
+
+### AutoStrat schema 8 integration
+
+For a lean prompt → DSL test, open
+[`notebooks/quick_autostrat.ipynb`](notebooks/quick_autostrat.ipynb) with the EvoMachine `.venv`
+kernel. Run setup once, edit the prompt, and run Generate. It uses the same Robin endpoint as the
+original notebook and reuses `OPENAI_API_KEY` (or asks privately). Diagnostics are collapsed below
+the DSL output. Nothing executes on the microscope. The original
+[`explore_autostrat_pipeline.ipynb`](notebooks/explore_autostrat_pipeline.ipynb) remains available
+for detailed virtual-hardware testing.
+
+This branch requires the matching AutoStrat `typed-strategy-expressions` branch. The existing
+`uv` editable source points to `../AutoStrat`; switch that checkout to the matching branch before
+syncing. The previously released v0.1.1 API is incompatible with these validated programs.
+
+The microscopy pack uses boolean, integer, number, and enum. Exposure numbers are milliseconds;
+projection and wait durations and elapsed_time are seconds, as documented in the pack. No numeric
+literal unit suffixes are accepted. Each lifecycle section uses one observation snapshot.
+
+Use one-line immutable declarations such as `const number pause = max(1, min(10, observation.elapsed_time))`,
+then `wait(duration=pause)`. Inline command calculations and direct observation arguments are
+invalid. Constants can also be used in conditions. Only terminate and abort are DSL control actions.
+Recovery belongs in runtime_errors.yaml using action, max_retries, and exhausted_action.
+
+The evaluator resolves and validates a complete batch before adapters build commands. Evaluation
+failures propagate directly to Automaton's fail-safe boundary. They never enter command recovery.
+Retries reuse exact resolved values and the unexecuted batch tail. Failures during finalisation
+retain the existing immediate fail-safe behaviour. New experiment-specific observations, ROI
+selection, DeLTA integration, and scheduling policies are not introduced by this capability update.
