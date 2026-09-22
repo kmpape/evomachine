@@ -215,7 +215,7 @@ def test_lean_notebook_generation_cell_runs_without_hardware(fail) -> None:
         assert verified.source not in displayed
     else:
         assert verified.source in displayed
-        assert namespace["preview"].python in displayed
+        assert namespace["preview"].python not in displayed
     assert "<details>" in displayed[-1]
 
 

@@ -260,14 +260,13 @@ uv run python scripts/launch_virtual_gui.py --port 0 --no-napari
 
 ### AutoStrat schema 8 integration
 
-For a lean prompt → DSL + Python-wrapper test, open
+For a lean prompt → DSL test, open
 [`notebooks/quick_autostrat.ipynb`](notebooks/quick_autostrat.ipynb) with the EvoMachine `.venv`
 kernel. Run setup once, edit the prompt, and run Generate. It uses the same Robin endpoint as the
 original notebook and reuses `OPENAI_API_KEY` (or asks privately). Diagnostics are collapsed below
-the two outputs. Nothing executes on the microscope. The original
+the DSL output. Nothing executes on the microscope. The original
 [`explore_autostrat_pipeline.ipynb`](notebooks/explore_autostrat_pipeline.ipynb) remains available
-for detailed virtual-hardware testing. The Python output is the actual EvoMachine execution
-wrapper, not an independent DSL-to-Python translation.
+for detailed virtual-hardware testing.
 
 This branch requires the matching AutoStrat `typed-strategy-expressions` branch. The existing
 `uv` editable source points to `../AutoStrat`; switch that checkout to the matching branch before
