@@ -7,6 +7,7 @@ import time
 from typing import Mapping
 
 from autostrat.domain import RecoveryAction
+from autostrat.language.evaluator import ExecutionContext
 from autostrat.language.model import ValidatedCommandCall, ValidatedValue
 
 
@@ -24,6 +25,8 @@ class ActiveRuntimeError:
     command_id: int | None = None
     occurred_at: float = field(default_factory=time.time)
     retry_attempt: int = 0
+    statement_path: str = ""
+    collection_context: ExecutionContext = ()
     remaining_calls: tuple[ValidatedCommandCall, ...] = ()
     remaining_action: RecoveryAction | None = None
 

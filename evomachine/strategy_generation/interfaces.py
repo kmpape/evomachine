@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Mapping
 
+from autostrat.language.evaluator import ExecutionContext
 from autostrat.language.model import ValidatedCommandCall, ValidatedCommandTemplate, ValidatedValue
 
 from evomachine.commands import AutomatonCommand, CommandFactory
@@ -21,6 +22,7 @@ class CommandBuildContext:
     command_factory: CommandFactory
     fovs: Mapping[int, Coordinate]
     current_fov_id: int
+    selections: ExecutionContext = ()
 
 
 class CommandAdapter(ABC):
@@ -42,7 +44,7 @@ class CommandAdapter(ABC):
 
 
 class ObservationProvider(ABC):
-    """Produce strategy-visible values from the previously completed step."""
+    """Produce global values at section entry and after each completed command."""
 
     @abstractmethod
     def observe(
@@ -52,7 +54,14 @@ class ObservationProvider(ABC):
         completed_commands: list[AutomatonCommand],
         step_count: int,
     ) -> Mapping[str, ValidatedValue]:
-        """Return the observation snapshot for one lifecycle invocation."""
+        """Refresh global values; step_count counts completed DSL steps, not commands."""
+
+    def invalidate(self) -> None:
+        """Discard cached measurements after an abandoned failed command."""
+
+    def reset(self) -> None:
+        """Begin a new experiment without carrying observations from an earlier run."""
+        self.invalidate()
 
 
 class RuntimeErrorProvider(ABC):
@@ -102,8 +111,25 @@ class EmptyRuntimeErrorProvider(RuntimeErrorProvider):
 __all__ = [
     "CommandAdapter",
     "CommandBuildContext",
+    "CollectionProvider",
     "EmptyObservationProvider",
     "EmptyRuntimeErrorProvider",
     "ObservationProvider",
     "RuntimeErrorProvider",
 ]
+
+
+class CollectionProvider:
+    """Application-owned records. Iteration order and scopes are interpreted by AutoStrat."""
+
+    def bind(self, *, fovs, region_of_interests, fov_processors) -> None:
+        pass
+
+    def items(self, collection: str, context: ExecutionContext) -> tuple[int | str, ...]:
+        raise StrategyInterpretationError(f"No provider for collection {collection!r}")
+
+    def observe(self, context: ExecutionContext) -> Mapping[str, ValidatedValue]:
+        return {}
+
+    def invalidate(self, context: ExecutionContext) -> None:
+        """Discard measurements affected by a failed command in this selected context."""

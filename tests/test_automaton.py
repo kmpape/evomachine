@@ -717,6 +717,57 @@ def test_failed_strategy_finalisation_falls_back_to_abort_semantics() -> None:
     assert automaton.stopped()
 
 
+def test_autostrat_resumes_multiple_initial_and_final_commands() -> None:
+    from tests.test_strategy_generation_integration import _domain, _verified
+    from evomachine.strategy_generation import AutoStratStrategy, MicroscopyCommandAdapter
+
+    automaton, *_ = make_automaton()
+    strategy = AutoStratStrategy(
+        cfg=make_cfg(), domain=_domain(),
+        verified=_verified(
+            "initialise\n    count = 1\n    wait(duration=1)\n    wait(duration=2)\n"
+            "step\n    count = count + 1\n    terminate\n"
+            "finalise\n    wait(duration=count)\n    wait(duration=3)\n"
+        ),
+        command_adapter=MicroscopyCommandAdapter(segment_images=False, save_images=False),
+    )
+    waits = []
+    automaton.sleep = lambda **kwargs: waits.append(kwargs["duration"])
+    automaton.set_strategy(strategy)
+    for _ in range(10):
+        automaton._process()
+        if automaton.stopped():
+            break
+    assert waits == [1, 2, 2, 3]
+    assert automaton.strategy_has_stopped()
+    assert strategy.failure_history == ()
+
+
+def test_autostrat_arithmetic_failure_after_command_aborts_without_finalise() -> None:
+    from tests.test_strategy_generation_integration import _domain, _verified
+    from autostrat.language.evaluator import ArithmeticEvaluationError
+    from evomachine.strategy_generation import AutoStratStrategy, MicroscopyCommandAdapter
+
+    automaton, acquisition, *_ = make_automaton()
+    strategy = AutoStratStrategy(
+        cfg=make_cfg(), domain=_domain(),
+        verified=_verified(
+            "initialise\n    wait(duration=1)\n    invalid = 1 / 0\n"
+            "step\n    terminate\nfinalise\n    wait(duration=2)\n"
+        ),
+        command_adapter=MicroscopyCommandAdapter(segment_images=False, save_images=False),
+    )
+    waits = []
+    automaton.sleep = lambda **kwargs: waits.append(kwargs["duration"])
+    automaton.set_strategy(strategy)
+    with pytest.raises(ArithmeticEvaluationError):
+        automaton._process()
+    assert waits == [1]
+    assert automaton.stopped()
+    assert acquisition.stop_count == 1
+    assert strategy.failure_history == ()
+
+
 def test_termination_failure_retains_originating_lifecycle_section() -> None:
     automaton, *_deps = make_automaton()
     strategy = LifecycleStrategy(cfg=make_cfg(), action="terminate", fail_finalise=True)

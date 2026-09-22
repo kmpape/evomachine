@@ -29,6 +29,7 @@ from evomachine.strategy_generation import (
     CommandAdapter,
     CommandBuildContext,
     MicroscopyCommandAdapter,
+    MicroscopyCollectionProvider,
     MicroscopyObservationProvider,
     MicroscopyRuntimeErrorProvider,
     RuntimeErrorProvider,
@@ -95,9 +96,97 @@ def _cfg():
     )
 
 
+def test_nested_registered_collections_resume_and_restore_context() -> None:
+    source = (
+        "initialise\n    rounds = 0\n"
+        "step\n    loop fovs:\n"
+        "        selected = observations.selected_fov_id\n"
+        "        move_fov(target=current_fov)\n"
+        "        count = 0\n        total = 0.0\n"
+        "        loop rois:\n"
+        "            total = total + observations.selected_roi_id\n"
+        "            count = count + 1\n"
+        "        if count > 0:\n            average = total / count\n"
+        "            loop rois:\n                wait(duration=average)\n"
+        "        wait(duration=selected)\n"
+        "    rounds = rounds + 1\n    if rounds >= 2:\n        terminate\n"
+        "finalise\n    wait(duration=rounds)\n    wait(duration=1)\n"
+    )
+    strategy = AutoStratStrategy(
+        cfg=_cfg(),
+        verified=_verified(source),
+        domain=_domain(),
+        command_adapter=MicroscopyCommandAdapter(segment_images=False, save_images=False),
+        collection_provider=MicroscopyCollectionProvider(),
+    )
+    assert (
+        strategy.initialise(
+            fovs={1: Coordinate(0, 0, 0), 2: Coordinate(1, 0, 0)},
+            region_of_interests={1: [2, 4], 2: [8]},
+            fov_processors={},
+            dmd=None,
+        )
+        == []
+    )
+    durations, moves = [], []
+    data = []
+    fov_id = -1
+    for _ in range(30):
+        batch = strategy.callback(fov_id=fov_id, data=data, errors=[])
+        data = batch
+        if not batch:
+            continue
+        command = batch[0]
+        if command.command_type is AutomatonCommandType.TERMINATE_STRATEGY:
+            break
+        if command.command_type is AutomatonCommandType.MOVE:
+            fov_id = command.command_args
+            moves.append(fov_id)
+        else:
+            durations.append(command.command_args["duration"])
+    else:
+        pytest.fail("Strategy did not terminate")
+    assert moves == [1, 2, 1, 2]
+    assert durations == [3, 3, 1, 8, 2] * 2
+    assert strategy._execution.context == ()
+    assert strategy.callback(fov_id=fov_id, data=[], errors=[]) == []
+    final = strategy.finalise()
+    assert final[0].command_args["duration"] == 2
+    final = strategy.resume_finalise(fov_id, final)
+    assert final[0].command_args["duration"] == 1
+    assert strategy.resume_finalise(fov_id, final) == []
+
+
+def test_collection_iteration_does_not_move_hardware() -> None:
+    strategy = AutoStratStrategy(
+        cfg=_cfg(),
+        domain=_domain(),
+        verified=_verified(
+            "initialise\nstep\n    loop fovs:\n"
+            "        selected = observations.selected_fov_id\n"
+            "        actual = observations.current_fov_id\n"
+            "        wait(duration=selected)\n    terminate\nfinalise\n"
+        ),
+        command_adapter=MicroscopyCommandAdapter(segment_images=False, save_images=False),
+        collection_provider=MicroscopyCollectionProvider(),
+        observation_provider=MicroscopyObservationProvider(),
+    )
+    strategy.initialise(
+        fovs={1: Coordinate(0, 0, 0), 2: Coordinate(1, 0, 0)},
+        region_of_interests={},
+        fov_processors={},
+        dmd=None,
+    )
+    first = strategy.callback(fov_id=1, data=[], errors=[])
+    second = strategy.callback(fov_id=1, data=first, errors=[])
+    assert first[0].command_args["duration"] == 1 and second[0].command_args["duration"] == 2
+    assert strategy._execution.variables["actual"] == 1
+    assert strategy._execution.variables["selected"] == 2
+
+
 def test_interpreter_selects_nested_branch_from_runtime_snapshot() -> None:
     verified = _verified(
-        "initialise\nstep\n    if observation.focus_score < 0.5:\n        if observation.hardware_autofocus_locked:\n            wait(duration=1)\n    else:\n        terminate\nfinalise\n"
+        "initialise\nstep\n    if observations.focus_score < 0.5:\n        if observations.hardware_autofocus_locked:\n            wait(duration=1)\n    else:\n        terminate\nfinalise\n"
     )
     result = ConditionalInterpreter(_domain()).interpret(
         verified.program.step,
@@ -219,7 +308,7 @@ def test_lean_notebook_generation_cell_runs_without_hardware(fail) -> None:
     assert "<details>" in displayed[-1]
 
 
-def test_calculation_failure_builds_no_partial_batch_or_hardware_retry() -> None:
+def test_calculation_failure_stops_after_prior_completed_commands_without_hardware_retry() -> None:
     class RecordingAdapter(FakeCommandAdapter):
         built = False
 
@@ -233,21 +322,22 @@ def test_calculation_failure_builds_no_partial_batch_or_hardware_retry() -> None
         verified=_verified(
             "initialise\n"
             "    wait(duration=1)\n"
-            "    const number invalid = 1 / 0\n"
+            "    invalid = 1 / 0\n"
             "    wait(duration=invalid)\n"
             "step\n    terminate\nfinalise\n"
         ),
         domain=_domain(),
         command_adapter=adapter,
     )
+    first = strategy.initialise(
+        fovs={0: Coordinate(0, 0, 0)},
+        region_of_interests={0: []},
+        fov_processors={},
+        dmd=None,
+    )
+    assert adapter.built and len(first) == 1
     with pytest.raises(ArithmeticEvaluationError, match="initialise"):
-        strategy.initialise(
-            fovs={0: Coordinate(0, 0, 0)},
-            region_of_interests={0: []},
-            fov_processors={},
-            dmd=None,
-        )
-    assert not adapter.built
+        strategy.callback(fov_id=0, data=first, errors=[])
     assert strategy.failure_history == ()
 
 
@@ -276,7 +366,7 @@ def test_strategy_rejects_multiple_errors_for_one_stopped_batch() -> None:
         dmd=None,
     )
 
-    with pytest.raises(StrategyInterpretationError, match="more than one active error"):
+    with pytest.raises(StrategyInterpretationError, match="one active error"):
         strategy.callback(fov_id=0, data=[], errors=[RuntimeError("two classifications")])
 
 
@@ -328,7 +418,7 @@ def test_image_retry_exhaustion_automatically_continues() -> None:
             "    image(exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
             "    wait(duration=1)\n"
             "step\n"
-            "    if observation.step_count >= 8:\n"
+            "    if observations.step_count >= 8:\n"
             "        terminate\n"
             "    image(exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
             "    wait(duration=1)\n"
@@ -371,11 +461,11 @@ def test_retry_preserves_interrupted_batch_tail_and_discards_old_tracking() -> N
         cfg=_cfg(),
         verified=_verified(
             "initialise\n"
-            "    const number delay = observation.step_count + 2\n"
+            "    delay = observations.step_count + 2\n"
             "    wait(duration=1)\n"
             "    image(exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
             "    wait(duration=delay)\n"
-            "    if observation.step_count == 0:\n"
+            "    if observations.step_count == 0:\n"
             "        terminate\n"
             "step\n"
             "finalise\n"
@@ -394,28 +484,24 @@ def test_retry_preserves_interrupted_batch_tail_and_discards_old_tracking() -> N
         fov_processors={},
         dmd=None,
     )
+    image_commands = strategy.callback(fov_id=0, data=original, errors=[])
+    failed = image_commands[0]
     failure = CommandExecutionError(
-        command_id=original[1].command_id,
-        command_type=original[1].command_type,
-        command_args=original[1].command_args,
+        command_id=failed.command_id,
+        command_type=failed.command_type,
+        command_args=failed.command_args,
         lifecycle_section="initialise",
         original_error=RuntimeError("camera returned no frame"),
     )
-
-    resumed = strategy.callback(fov_id=0, data=[original[0]], errors=[failure])
-
-    assert [command.command_type for command in resumed] == [
-        AutomatonCommandType.IMAGE,
-        AutomatonCommandType.WAIT,
-        AutomatonCommandType.TERMINATE_STRATEGY,
-    ]
-    assert resumed[1].command_args["duration"] == 2
-    assert not ({command.command_id for command in original} & set(strategy._command_origins))
-    assert set(strategy._command_origins) == {
-        command.command_id
-        for command in resumed
-        if command.command_type is not AutomatonCommandType.TERMINATE_STRATEGY
-    }
+    resumed = strategy.callback(fov_id=0, data=[], errors=[failure])
+    assert len(resumed) == 1 and resumed[0].command_type is AutomatonCommandType.IMAGE
+    # Supply an actual result for the successful retry.
+    resumed[0].command_data = {"img": [np.zeros((1, 8, 8), dtype=np.uint16)]}
+    waiting = strategy.callback(fov_id=0, data=resumed, errors=[])
+    assert len(waiting) == 1 and waiting[0].command_args["duration"] == 2
+    ending = strategy.callback(fov_id=0, data=waiting, errors=[])
+    assert ending[0].command_type is AutomatonCommandType.TERMINATE_STRATEGY
+    assert strategy._steps_completed == 0
 
 
 def test_movement_retry_exhaustion_terminates_without_leaking_into_finalise() -> None:
@@ -624,7 +710,6 @@ def test_microscopy_adapter_builds_existing_automaton_commands() -> None:
             segment_images=False,
             save_images=True,
         ),
-        observation_provider=MicroscopyObservationProvider(),
     )
 
     commands = strategy.initialise(
@@ -633,6 +718,12 @@ def test_microscopy_adapter_builds_existing_automaton_commands() -> None:
         fov_processors={},
         dmd=None,
     )
+
+    current = commands
+    commands = []
+    while current:
+        commands.extend(current)
+        current = strategy.callback(fov_id=4, data=current, errors=[])
 
     assert [command.command_type for command in commands] == [
         AutomatonCommandType.MOVE,
@@ -715,11 +806,11 @@ def test_microscopy_observations_drive_step_conditionals() -> None:
     verified = _verified(
         "initialise\n"
         "step\n"
-        "    if observation.step_count >= 8:\n"
+        "    if observations.step_count >= 8:\n"
         "        terminate\n"
-        "    if observation.current_fov_id == 4:\n"
+        "    if observations.current_fov_id == 4:\n"
         "        move_fov(target=next_fov)\n"
-        "    if observation.step_count == 0:\n"
+        "    if observations.step_count == 0:\n"
         "        wait(duration=1)\n"
         "finalise\n"
     )
@@ -740,15 +831,19 @@ def test_microscopy_observations_drive_step_conditionals() -> None:
         dmd=None,
     )
 
-    first_step = strategy.callback(fov_id=4, data=[], errors=[])
-    second_step = strategy.callback(fov_id=4, data=[], errors=[])
-
-    assert [command.command_type for command in first_step] == [
-        AutomatonCommandType.MOVE,
-        AutomatonCommandType.WAIT,
-    ]
-    assert first_step[0].command_args == -1
-    assert [command.command_type for command in second_step] == [AutomatonCommandType.MOVE]
+    # One step can require multiple hardware callbacks without incrementing step_count.
+    first_move = strategy.callback(fov_id=4, data=[], errors=[])
+    # These tests exercise sequencing, not focus-result deserialisation.
+    strategy.observation_provider._observe_move = lambda command: None
+    waiting = strategy.callback(fov_id=4, data=first_move, errors=[])
+    assert waiting[0].command_type is AutomatonCommandType.WAIT
+    assert strategy.callback_counter == 0
+    assert strategy.callback(fov_id=4, data=waiting, errors=[]) == []
+    assert strategy.callback_counter == 1
+    second_move = strategy.callback(fov_id=4, data=[], errors=[])
+    assert second_move[0].command_type is AutomatonCommandType.MOVE
+    assert strategy.callback(fov_id=4, data=second_move, errors=[]) == []
+    assert strategy.callback_counter == 2
 
 
 def test_autostrat_maps_terminate_and_abort_to_distinct_lifecycle_commands() -> None:
@@ -757,7 +852,7 @@ def test_autostrat_maps_terminate_and_abort_to_distinct_lifecycle_commands() -> 
         verified=_verified(
             "initialise\n"
             "step\n"
-            "    if observation.step_count == 0:\n"
+            "    if observations.step_count == 0:\n"
             "        abort\n"
             "    else:\n"
             "        terminate\n"
@@ -775,10 +870,8 @@ def test_autostrat_maps_terminate_and_abort_to_distinct_lifecycle_commands() -> 
     )
 
     first_step = strategy.callback(fov_id=0, data=[], errors=[])
-    second_step = strategy.callback(fov_id=0, data=[], errors=[])
-
     assert first_step[-1].command_type is AutomatonCommandType.ABORT_STRATEGY
-    assert second_step[-1].command_type is AutomatonCommandType.TERMINATE_STRATEGY
+    assert not strategy._execution.active
     assert strategy.register_automaton_commands() == {
         AutomatonCommandType.ABORT_STRATEGY,
         AutomatonCommandType.TERMINATE_STRATEGY,

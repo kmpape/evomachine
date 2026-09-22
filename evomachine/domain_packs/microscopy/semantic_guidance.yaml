@@ -1,7 +1,10 @@
 global_rules:
   - Numeric units are implicit. Exposure is in milliseconds; projection duration, wait duration, and elapsed_time are in seconds. Do not include units in numeric literals.
   - Field-of-view collections and iteration counts are supplied by the application.
-  - "`current_fov_id` is unavailable during initialisation because no field of view has yet been established."
+  - "`current_fov_id` is unavailable until the first movement has completed, including during initialisation."
+  - Loops select context only; moving to a selected FOV requires move_fov(target=current_fov). Iterating rois does not segment, detect, project or acquire images.
+  - Collections expose registered FOV and ROI IDs. No growth, DeLTA or mother-cell measurements are declared yet.
+  - Initialise persistent counters before issuing commands; finalise can be entered early on a hardware failure.
   - "`step_count` is zero during the first step and counts previously completed steps."
   - Image-derived observations are unavailable until an image has completed and then retain the most recent measured value.
   - Focus-management observations are unavailable until a field-of-view movement has completed and then retain the most recent outcome.
@@ -11,6 +14,7 @@ global_rules:
 
 command_rules:
   move_fov:
+    - "`current_fov` targets the selected FOV and is only valid inside loop fovs. This is distinct from observations.current_fov_id, the actual physical position."
     - "`first_fov` selects the first field of view in the collection supplied by the application."
     - "`next_fov` selects the next supplied field of view and is normally used during steps."
     - Field-of-view coordinates are application-owned and must not be invented by a strategy.
