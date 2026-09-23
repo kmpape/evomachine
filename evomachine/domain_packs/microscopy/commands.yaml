@@ -22,8 +22,12 @@ commands:
       - processing_failed
       - communication_failed
     arguments:
-      process:
-        description: If true, detect trenches on the first image of this FOV, then segment and track mother cells on every processed image. Requires a configured segmentation channel. Processing finishes before the next DSL statement.
+      detect_rois:
+        description: Detect and replace this FOV's trench ROIs. Resets tracking, measurements, treatment history and pending projection selection. Old external target IDs are not reused on redetection. Requires a configured segmentation channel. Do not call inside loop rois.
+        type: boolean
+
+      segment:
+        description: Segment bacteria in detected trenches and update mother-cell tracking and measurements before the next DSL statement. Requires existing ROIs or detect_rois=true in this image. With both flags false, acquire only.
         type: boolean
 
       exposure:

@@ -24,8 +24,8 @@ command_rules:
     - Field-of-view coordinates are application-owned and must not be invented by a strategy.
 
   image:
-    - Exposure, LED wavelength, LED brightness, filter-wheel position and the process boolean must all be stated explicitly.
-    - Set process=true to detect trenches once, then segment and track mother cells on each subsequent processed image. Uses one configured segmentation channel and an application configuration with preprocessing enabled. Set process=false for acquisition only.
+    - Exposure, LED wavelength, LED brightness, filter-wheel position and the detect_rois and segment booleans must all be stated explicitly.
+    - Set detect_rois=true to detect or replace trenches; this resets their tracking, measurements, treatment history and pending projection selection. Externally supplied target IDs are not reused on redetection; the all-targets policy still permits all new trenches. Never redetect inside loop rois. Set segment=true to segment bacteria and update tracking and measurements. Segmentation requires existing ROIs or detection in the same image. Use detect_rois=false, segment=true for repeated measurements with preserved identities. Both flags false means acquisition only. Either operation requires one configured segmentation channel and preprocessing enabled.
     - A new unprocessed, failed or skipped acquisition invalidates the FOV's biological measurements until another processed image succeeds.
     - Image-derived observations describe the most recently completed image acquisition.
 

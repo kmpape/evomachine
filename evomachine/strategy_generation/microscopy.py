@@ -174,6 +174,10 @@ class MicroscopyCommandAdapter(CommandAdapter):
         call: ValidatedCommandCall,
         context: CommandBuildContext,
     ) -> AutomatonCommand:
+        if call.arguments.get("detect_rois", False) and any(
+            item.collection == "rois" for item in context.selections
+        ):
+            raise StrategyInterpretationError("Cannot replace ROI identities inside loop rois")
         exposure = call.arguments["exposure"]
         led = call.arguments["led"]
         led_brightness = call.arguments["led_brightness"]
@@ -192,7 +196,8 @@ class MicroscopyCommandAdapter(CommandAdapter):
         )
         return context.command_factory.command_image(
             frame_metadata=metadata,
-            segment=call.arguments.get("process", self._segment_images),
+            segment=call.arguments.get("segment", self._segment_images),
+            detect_rois=call.arguments.get("detect_rois", False),
             save=self._save_images,
         )
 

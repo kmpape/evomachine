@@ -415,12 +415,12 @@ def test_image_retry_exhaustion_automatically_continues() -> None:
         cfg=_cfg(),
         verified=_verified(
             "initialise\n"
-            "    image(process=false, exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
+            "    image(detect_rois=false, segment=false, exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
             "    wait(duration=1)\n"
             "step\n"
             "    if observations.step_count >= 8:\n"
             "        terminate\n"
-            "    image(process=false, exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
+            "    image(detect_rois=false, segment=false, exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
             "    wait(duration=1)\n"
             "finalise\n"
         ),
@@ -463,7 +463,7 @@ def test_retry_preserves_interrupted_batch_tail_and_discards_old_tracking() -> N
             "initialise\n"
             "    delay = observations.step_count + 2\n"
             "    wait(duration=1)\n"
-            "    image(process=false, exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
+            "    image(detect_rois=false, segment=false, exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
             "    wait(duration=delay)\n"
             "    if observations.step_count == 0:\n"
             "        terminate\n"
@@ -706,7 +706,7 @@ def test_microscopy_adapter_builds_existing_automaton_commands() -> None:
     verified = _verified(
         "initialise\n"
         "    move_fov(target=first_fov)\n"
-        "    image(process=false, exposure=25, led=515nm, led_brightness=12, filter=filter)\n"
+        "    image(detect_rois=false, segment=false, exposure=25, led=515nm, led_brightness=12, filter=filter)\n"
         "    project(illumination_led=385nm, illumination_brightness=20, duration=2)\n"
         "    wait(duration=3)\n"
         "step\n"

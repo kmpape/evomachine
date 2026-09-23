@@ -1,6 +1,6 @@
 """Synchronous DeLTA processing and experiment-owned, per-trench measurement state.
 
-The backend detects trenches once per FOV. It never chooses a treatment threshold or
+The backend detects trenches explicitly. It never chooses a treatment threshold or
 an imaging interval; those decisions belong to the strategy.
 """
 
@@ -144,11 +144,23 @@ class DeltaProcessor:
         roi_ids: dict[int, list[int]],
         state: MicroscopyState,
         roi_boxes=None,
+        detect_rois: bool = False,
+        segment: bool = True,
     ) -> dict[int, np.ndarray]:
+        if not detect_rois and not segment:
+            state.invalidate(fov_id)
+            return {}
         state.invalidate(fov_id)
         if fov_id in self._failed:
             raise DeltaProcessingError("DeLTA state is invalid; start a new experiment")
         try:
+            redetection = detect_rois and fov_id in processors
+            if detect_rois:
+                processors.pop(fov_id, None)
+                roi_ids[fov_id] = []
+                state.fovs[fov_id] = FovMeasurements()
+            elif fov_id not in processors:
+                raise ValueError("Segmentation requires existing ROIs; use detect_rois=true first")
             if image.ndim != 3 or image.shape[0] != 1:
                 raise ValueError("Processed imaging requires one segmentation-channel plane")
             if self.cfg.chamber_orientation is not ChamberOrientationType.HORIZONTAL:
@@ -161,7 +173,7 @@ class DeltaProcessor:
             config.whole_frame_drift = False
             config.drift_correction = False
             loader = self._model_loader or config.model
-            if self._seg_model is None:
+            if segment and self._seg_model is None:
                 self._seg_model = loader("seg")
             if fov_id not in processors:
                 if roi_boxes is None and self._roi_model is None:
@@ -175,18 +187,18 @@ class DeltaProcessor:
                 )
                 position.initialise(
                     reference=image,
-                    seg_model=self._seg_model,
+                    seg_model=self._seg_model if segment else None,
                     tracking_model=None,
                     roi_model=self._roi_model,
                     roi_boxes=roi_boxes,
-                    lineage_enabled=True,
+                    lineage_enabled=segment,
                     roi_min_area=self.cfg.roi_min_area,
                     roi_max_area=self.cfg.roi_max_area,
                     roi_max_height=self.cfg.roi_max_height,
                 )
                 processors[fov_id] = position
                 ids = list(range(len(position.rois)))
-                if self.selected_targets is not None:
+                if self.selected_targets is not None and not redetection:
                     unknown = self.selected_targets.get(fov_id, frozenset()) - set(ids)
                     if unknown:
                         raise ValueError(
@@ -196,7 +208,7 @@ class DeltaProcessor:
                 state.fovs.setdefault(fov_id, FovMeasurements()).rois = {
                     roi_id: TrenchState(
                         selected=self.selected_targets is None
-                        or roi_id in self.selected_targets.get(fov_id, set())
+                        or (not redetection and roi_id in self.selected_targets.get(fov_id, set()))
                     )
                     for roi_id in ids
                 }
@@ -210,8 +222,11 @@ class DeltaProcessor:
                         tracking_model=None,
                         lineage_enabled=True,
                     )
-            frame_id = position.get_frame_id()
             fov = state.fovs[fov_id]
+            if not segment:
+                fov.valid = True
+                return {}
+            frame_id = position.get_frame_id()
             for roi_id, trench in fov.rois.items():
                 cell = position.rois[roi_id].lineage.cells.get(1)
                 length = growth = None

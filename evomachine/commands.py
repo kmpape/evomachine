@@ -196,6 +196,7 @@ class CommandFactory:
             frame_metadata: FrameMetaData | list[FrameMetaData],
             segment: bool,
             save: bool = False,
+            detect_rois: bool | None = None,
     ) -> AutomatonCommand:
         """
         Create a command for taking an image.
@@ -206,6 +207,7 @@ class CommandFactory:
         segment         : Segments image and tracks cells if True. See channels for channel requirements. If segment is
                           True, and ImageProcessorConfig.preproc_enabled is False, this function throws an exception.
         save            : Save image(s) through the acquisition manager's configured FileManager.
+        detect_rois     : Replace trench ROIs when True. None preserves legacy first-image detection.
 
         Returns in AbstractStrategy.callback
         ------------------------------------
@@ -229,9 +231,11 @@ class CommandFactory:
             raise TypeError("AutomatonCommandFactory.image: every frame_metadata entry must be FrameMetaData.")
         if not isinstance(segment, bool):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument segment ({type(segment)}).")
+        if detect_rois is not None and not isinstance(detect_rois, bool):
+            raise TypeError("detect_rois must be a bool or None")
         if not isinstance(save, bool):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument save ({type(save)}).")
-        if segment:
+        if segment or detect_rois:
             metadata_leds = [
                 metadata.leds
                 for metadata in metadata_items
@@ -247,11 +251,12 @@ class CommandFactory:
                     f"AutomatonCommandFactory.image: channels_seg={self._cfg.channels_seg} not in "
                     f"FrameMetaData LED channels={metadata_channels} for segment=True."
                 )
-        if segment and not self._cfg.preproc_enabled:
+        if (segment or detect_rois) and not self._cfg.preproc_enabled:
             raise TypeError(f"AutomatonCommandFactory.image: segment=True but preproc_enabled=False.")
         command_args = {
             'frame_metadata': frame_metadata,
             'segment': segment,
+            'detect_rois': detect_rois,
             'save': save,
         }
         return AutomatonCommand(

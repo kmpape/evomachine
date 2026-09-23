@@ -51,9 +51,9 @@ class FakePosition:
             )
 
     def initialise(self, **kwargs):
-        assert kwargs["lineage_enabled"] is True
         self.initialisations += 1
-        self._measure()
+        if kwargs["seg_model"] is not None:
+            self._measure()
 
     def process_new_frame(self, **kwargs):
         assert kwargs["lineage_enabled"] is True
@@ -81,6 +81,7 @@ def process(processor, state, positions, ids, when, fov_id=0):
         processors=positions,
         roi_ids=ids,
         state=state,
+        detect_rois=fov_id not in positions,
     )
 
 
@@ -184,7 +185,8 @@ def test_treatment_comparisons_exclude_baseline_and_invalid_gaps():
     assert trench.comparison_count == trench.length_increase_count == 0
 
 
-def test_real_positionrt_with_synthetic_segmentation_outputs():
+@pytest.mark.parametrize("segment_first", [True, False])
+def test_real_positionrt_with_synthetic_segmentation_outputs(segment_first):
     """Exercise real ROI/lineage API without model files or learned predictions."""
     from delta.imgops import CroppingBox
 
@@ -211,12 +213,69 @@ def test_real_positionrt_with_synthetic_segmentation_outputs():
             processors=positions,
             roi_ids=ids,
             state=state,
+            detect_rois=acquired_at == 1,
+            segment=segment_first or acquired_at != 1,
             roi_boxes=[CroppingBox(xtl=200, xbr=400, ytl=20, ybr=36)],
         )
     assert ids[0] == [0]
     assert state.fovs[0].rois[0].measurement.valid
     assert state.fovs[0].rois[0].measurement.growth_rate is not None
     assert state.fovs[0].rois[0].measurement.time == 17
+
+
+def test_detection_only_then_segmentation_and_redetection_reset():
+    loaded = []
+    processor = backend(selected_targets={0: {1}})
+    processor._model_loader = lambda name: loaded.append(name) or object()
+    state, positions, ids = MicroscopyState(), {}, {}
+
+    def acquire(detect_rois, segment):
+        return processor.process(
+            fov_id=0, image=np.ones((1, 8, 8)), acquired_at=1,
+            processors=positions, roi_ids=ids, state=state,
+            detect_rois=detect_rois, segment=segment,
+        )
+
+    assert acquire(True, False) == {}
+    assert loaded == ["rois"]
+    assert ids[0] == [0, 1]
+    assert state.fovs[0].valid
+    assert state.fovs[0].rois[1].measurement is None
+    first_position = positions[0]
+    acquire(False, True)
+    assert positions[0] is first_position
+    assert state.fovs[0].rois[1].measurement.valid
+    state.fovs[0].rois[1].treated(1)
+    state.fovs[0].projection_targets.add(1)
+    acquire(True, False)
+    assert positions[0] is not first_position
+    assert not state.fovs[0].projection_targets
+    assert state.fovs[0].measurement_time is None
+    for trench in state.fovs[0].rois.values():
+        assert trench.treatment_count == 0
+        assert trench.last_treatment_time is None
+        assert trench.measurement is None and trench.previous is None
+        assert trench.comparison_count == trench.length_increase_count == 0
+        assert not trench.selected
+
+
+def test_segmentation_does_not_silently_detect_rois():
+    processor, state, positions, ids = backend(), MicroscopyState(), {}, {}
+    with pytest.raises(DeltaProcessingError, match="requires existing ROIs"):
+        processor.process(
+            fov_id=0, image=np.ones((1, 8, 8)), acquired_at=1,
+            processors=positions, roi_ids=ids, state=state, segment=True,
+        )
+    assert not positions and not ids
+
+
+def test_acquisition_only_loads_no_models():
+    processor, state = backend(), MicroscopyState()
+    processor._model_loader = lambda name: pytest.fail("Unexpected model load")
+    assert processor.process(
+        fov_id=0, image=np.ones((1, 8, 8)), acquired_at=1,
+        processors={}, roi_ids={}, state=state, detect_rois=False, segment=False,
+    ) == {}
 
 
 def targeted_command(automaton):
@@ -272,7 +331,8 @@ def test_failed_or_wrong_fov_projection_does_not_record_or_retry():
     assert _domain().runtime_errors["targeted_projection_failed"].action == "abort"
 
 
-def test_processed_image_populates_collections_and_projects_one_pattern_per_fov():
+@pytest.mark.parametrize("separate_detection", [False, True])
+def test_processed_image_populates_collections_and_projects_one_pattern_per_fov(separate_detection):
     automaton, *_ = make_automaton(delta_processor=backend())
 
     def move(fov_id, manage_focus=True):
@@ -285,6 +345,12 @@ def test_processed_image_populates_collections_and_projects_one_pattern_per_fov(
         )
 
     automaton.focus_nav.move = move
+    image_commands = (
+        "        image(detect_rois=true, segment=false, exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
+        "        image(detect_rois=false, segment=true, exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
+        if separate_detection else
+        "        image(detect_rois=true, segment=true, exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
+    )
     strategy = AutoStratStrategy(
         cfg=make_cfg().updated(
             preproc_enabled=True, seg_enabled=True, track_enabled=True, lineage_enabled=True
@@ -292,7 +358,7 @@ def test_processed_image_populates_collections_and_projects_one_pattern_per_fov(
         domain=_domain(),
         verified=_verified(
             "initialise\nstep\n    loop fovs:\n        move_fov(target=current_fov)\n"
-            "        image(process=true, exposure=25, led=450nm, led_brightness=10, filter=465nm)\n"
+            f"{image_commands}"
             "        clear_projection_targets()\n        loop rois:\n"
             "            if observations.measurement_valid:\n                select_roi()\n                select_roi()\n"
             "        project_selected(illumination_led=385nm, illumination_brightness=10, duration=0.001)\n"

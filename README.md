@@ -291,7 +291,7 @@ initialise
 step
     loop fovs:
         move_fov(target=current_fov)
-        image(process=false, exposure=100, led=450nm, led_brightness=10, filter=465nm)
+        image(detect_rois=false, segment=false, exposure=100, led=450nm, led_brightness=10, filter=465nm)
         count = 0
         loop rois:
             count = count + 1
@@ -325,11 +325,11 @@ The generic host interface is `CollectionProvider.items(name, context)` plus
 values. Missing values fail when read, and invalid supplied values fail on refresh. There are
 no DSL lists or implicit hardware actions. Iteration/statement budgets bound each section.
 
-### DeLTA integration (microscopy pack 0.6.0)
+### DeLTA integration (microscopy pack 0.7.0)
 
-AutoStrat itself is unchanged. The microscopy pack adds required `image(process=true|false, ...)`,
+AutoStrat itself is unchanged. The microscopy pack adds required `image(detect_rois=..., segment=..., ...)`,
 `clear_projection_targets()`, `select_roi()` and `project_selected(...)` for combined ROI projection.
-Revalidate older generated strategies after adding `process=false` to acquisition-only images.
+Revalidate older generated strategies after adding `detect_rois=false, segment=false` to acquisition-only images.
 Waits remain bounded by the domain pack and interruptible by stop/shutdown events.
 
 For processed imaging, construct the strategy and Automaton with the same explicit configuration:
@@ -353,9 +353,12 @@ processor = DeltaProcessor(cfg, selected_targets={0: {1, 3}, 1: {2}})
 # and MicroscopyRuntimeErrorProvider() when constructing AutoStratStrategy.
 ```
 
-The first processed image of each FOV lazily loads the configured ROI/segmentation models,
-detects and registers trenches, and creates a mother-only PositionRT lineage. Subsequent processed
-images reuse those boxes and segment/track again. Models and supported input channels must be
+Set `detect_rois=true` to detect trenches and `segment=true` to segment bacteria and update
+mother-cell tracking. Detection alone does not load the segmentation model. Segmentation alone
+requires existing ROIs. Repeat measurements with `detect_rois=false, segment=true`.
+Redetection replaces the FOV's ROIs and resets tracking, measurements, treatment history and
+pending projection targets. External target IDs are cleared rather than reassigned to new trenches;
+the default all-targets policy continues to permit all detected trenches. Models and supported input channels must be
 configured locally; no model loading, imaging or projection happens in the quick notebook.
 The current integration accepts one segmentation-channel plane per processed image.
 

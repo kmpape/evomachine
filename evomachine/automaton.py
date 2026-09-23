@@ -905,6 +905,10 @@ class Automaton:
             Acquired image data and metadata for strategy callbacks and GUI queues.
         """
         frame_metadata = command.command_args["frame_metadata"]
+        segment = command.command_args["segment"]
+        detect_rois = command.command_args.get("detect_rois")
+        if detect_rois is None:
+            detect_rois = segment and self.get_fov_id() not in self._fov_processors
         metadata_items = frame_metadata if isinstance(frame_metadata, list) else [frame_metadata]
         if self._strategy is None:
             raise RuntimeError("Automaton._execute_image: strategy is required.")
@@ -914,7 +918,7 @@ class Automaton:
             metadata.callback_id = self._strategy.callback_counter
             if metadata.fov_id < 0:
                 metadata.fov_id = self.get_fov_id()
-        if command.command_args["segment"]:
+        if segment or detect_rois:
             if self.get_fov_id() not in self._fovs or any(
                     metadata.fov_id != self.get_fov_id() for metadata in metadata_items):
                 raise DeltaProcessingError("Processed acquisition must match the occupied, registered FOV")
@@ -946,7 +950,7 @@ class Automaton:
             "frame_metadata": frame.frame_metadata,
             "saved_paths": frame.saved_paths,
         }
-        if command.command_args["segment"]:
+        if segment or detect_rois:
             if (len(frame.frame_metadata) != 1 or len(channel_indices) != 1
                     or self._cfg.channels[channel_indices[0]] not in self._cfg.channels_seg):
                 raise DeltaProcessingError("Processed images require one configured segmentation channel")
@@ -954,6 +958,7 @@ class Automaton:
                 fov_id=self.get_fov_id(), image=frame.array, acquired_at=acquired_at,
                 processors=self._fov_processors, roi_ids=self._fov_to_roi,
                 state=self.processing_state, roi_boxes=self._cropping_boxes.get(self.get_fov_id()),
+                detect_rois=detect_rois, segment=segment,
             )
         return command_data
 

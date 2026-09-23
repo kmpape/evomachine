@@ -84,7 +84,7 @@ collections:
         type: integer
         minimum_inclusive: 0
   rois:
-    description: Stable trench identifiers for the selected FOV, detected on its first processed image. Each trench follows its mother cell, not an arbitrary single bacterium.
+    description: Stable trench identifiers for the selected FOV, replaced whenever detect_rois=true. Each trench follows its mother cell, not an arbitrary single bacterium.
     parent: fovs
     observations:
       selected_roi_id:
@@ -92,7 +92,7 @@ collections:
         type: integer
         minimum_inclusive: 0
       target_selected:
-        description: Whether this trench belongs to the application-supplied treatment selection. Defaults to all detected trenches.
+        description: Whether this trench belongs to the application-supplied treatment selection. Defaults to all detected trenches. Redetection clears externally supplied selections; old target IDs must not be reused.
         type: boolean
       measurement_valid:
         description: A mother cell with a finite positive length was measured in the latest processed acquisition of this FOV.
