@@ -10,37 +10,6 @@ from autostrat.pipeline import StrategyAttempt, VerifiedStrategy
 from evomachine.strategy_generation.service import StrategyPipelineRunner
 
 
-PYTHON_WRAPPER = """from evomachine.strategy_generation import (
-    AutoStratStrategy,
-    MicroscopyCommandAdapter,
-    MicroscopyCollectionProvider,
-    MicroscopyObservationProvider,
-    MicroscopyRuntimeErrorProvider,
-)
-
-
-def build_strategy(verified, domain, cfg):
-    # verified is the accepted DSL result displayed above.
-    # The shared evaluator handles expressions, conditions and recovery.
-    return AutoStratStrategy(
-        cfg=cfg,
-        verified=verified,
-        domain=domain,
-        command_adapter=MicroscopyCommandAdapter(
-            segment_images=False, save_images=False,
-        ),
-        collection_provider=MicroscopyCollectionProvider(),
-        observation_provider=MicroscopyObservationProvider(),
-        runtime_error_provider=MicroscopyRuntimeErrorProvider(),
-    )
-
-
-# When ready, supply your application configuration:
-# strategy = build_strategy(preview.verified, domain, cfg)
-# Constructing a strategy does not start the microscope.
-"""
-
-
 @dataclass(frozen=True, slots=True)
 class GenerationPreview:
     """One run, with no stale accepted output carried over from earlier requests."""
@@ -52,10 +21,6 @@ class GenerationPreview:
     @property
     def dsl(self) -> str | None:
         return self.verified.source if self.verified is not None else None
-
-    @property
-    def python(self) -> str | None:
-        return PYTHON_WRAPPER if self.verified is not None else None
 
     @property
     def attempts(self) -> tuple[StrategyAttempt, ...]:

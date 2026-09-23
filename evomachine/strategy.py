@@ -12,6 +12,7 @@ from delta.rt import PositionRT
 from evomachine.commands import AutomatonCommand, CommandFactory
 from evomachine.config import get_logger
 from evomachine.coordinates import Coordinate
+from evomachine.delta_processing import MicroscopyState
 from evomachine.frame import FrameMetaDataFactory
 from evomachine.image_processing_config import ImageProcessorConfig
 from evomachine.navigation import FovConfig
@@ -133,6 +134,7 @@ class AbstractStrategy(ABC):
             region_of_interests: dict[int, list[int]],
             fov_processors: dict[int, PositionRT],
             dmd: Dmd | None,
+            processing_state: MicroscopyState | None = None,
     ) -> list[AutomatonCommand]:
         """
         Reset runtime state and initialise the strategy.
@@ -147,6 +149,8 @@ class AbstractStrategy(ABC):
             FoV processors keyed by FoV ID.
         dmd
             Optional DMD object available for pattern construction.
+        processing_state
+            Shared experiment clock and per-FOV/trench measurements, when provided by Automaton.
 
         Returns
         -------
@@ -171,6 +175,7 @@ class AbstractStrategy(ABC):
         self.command_factory.update_region_of_interests(region_of_interests=region_of_interests)
         self.fov_processors = fov_processors
         self.dmd = dmd
+        self.processing_state = processing_state
         command_list = self._initialise()
         if not self.is_valid_command_list(command_list):
             raise RuntimeError(f"AbstractStrategy.initialise: invalid command list ({command_list}).")

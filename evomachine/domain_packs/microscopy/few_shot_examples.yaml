@@ -3,85 +3,195 @@ examples:
     user_request: >-
       Start at the first field of view, capture a 100 ms image using LED wavelength 450 nm at 10
       percent brightness with the 465 nm filter, and wait for 3 seconds. At each step, move to the
-      next field of view and repeat the same image and wait. Finish after 8 completed steps,
-      then return to the first field of view.
+      next field of view and repeat the same image and wait. Do not detect ROIs or segment.
+      Finish after 8 completed steps, then return to the first field of view.
     strategy: |
       initialise
           move_fov(target=first_fov)
-          image(exposure=100, led=450nm, led_brightness=10, filter=465nm)
+          image(detect_rois=false, segment=false, exposure=100, led=450nm, led_brightness=10, filter=465nm)
           wait(duration=3)
-
       step
           if observations.step_count >= 8:
               terminate
           else:
               move_fov(target=next_fov)
-              image(exposure=100, led=450nm, led_brightness=10, filter=465nm)
+              image(detect_rois=false, segment=false, exposure=100, led=450nm, led_brightness=10, filter=465nm)
               wait(duration=3)
-
       finalise
           move_fov(target=first_fov)
 
-  - name: Bounded calculations from completed observations
+  - name: Two timed imaging phases with a resettable clock
     user_request: >-
-      During initialisation move to the first FOV and take a 100 ms image with the 450 nm LED
-      at 10 percent brightness and the 465 nm filter. During each step, if focus recovery was
-      exhausted, abort. Otherwise terminate after 20 completed steps. Before that limit, calculate
-      a pause in seconds as ten times one minus the latest saturation fraction, bounded between
-      one and ten seconds. Wait for that duration and acquire another image with the same settings.
+      Move to the first FOV, then start timing. At each step, stop the current phase if at least
+      30 seconds have elapsed. After the first phase reset the timer and start the second;
+      after the second terminate and return to the first FOV. Otherwise acquire an unprocessed
+      image with a 25 ms exposure, 450 nm LED at 10 percent brightness and 465 nm filter, then
+      wait 2 seconds. Check phase deadlines at step boundaries, not by interrupting an exposure.
     strategy: |
       initialise
+          phase = 0
+          started_at = 0.0
           move_fov(target=first_fov)
-          image(exposure=100, led=450nm, led_brightness=10, filter=465nm)
+          started_at = observations.elapsed_time
       step
-          exhausted = observations.focus_recovery_exhausted
-          if exhausted:
-              abort
-          else:
-              if observations.step_count >= 20:
+          elapsed = observations.elapsed_time - started_at
+          if elapsed >= 30:
+              phase = phase + 1
+              if phase >= 2:
                   terminate
               else:
-                  pause = max(1, min(10 * (1 - observations.saturation_fraction), 10))
-                  wait(duration=pause)
-                  image(exposure=100, led=450nm, led_brightness=10, filter=465nm)
+                  started_at = observations.elapsed_time
+          else:
+              image(detect_rois=false, segment=false, exposure=25, led=450nm, led_brightness=10, filter=465nm)
+              wait(duration=2)
       finalise
+          move_fov(target=first_fov)
 
-  - name: Explicit LED imaging loop
+  - name: Periodic full survey with ROI-filtered intermediate rounds
     user_request: >-
-      Move to the first field of view during setup. During each step, take a 25 ms image at LED
-      wavelength 515 nm at 12 percent brightness with the 527 nm filter. Finish after 5 completed
-      steps. No finalisation action is required.
+      During initialisation detect trenches in every FOV without segmenting bacteria.
+      During each step image only FOVs with more than 10 registered ROIs, except every fifth
+      step image all FOVs. These subsequent images must neither redetect nor segment.
+      Use a 50 ms exposure, 450 nm LED at 50 percent brightness and 465 nm filter throughout.
+      Terminate after 30 completed steps and return to the first FOV.
+    strategy: |
+      initialise
+          loop fovs:
+              move_fov(target=current_fov)
+              image(detect_rois=true, segment=false, exposure=50, led=450nm, led_brightness=50, filter=465nm)
+      step
+          if observations.step_count >= 30:
+              terminate
+          else:
+              round_number = observations.step_count + 1
+              remainder = round_number % 5
+              loop fovs:
+                  if remainder == 0:
+                      move_fov(target=current_fov)
+                      image(detect_rois=false, segment=false, exposure=50, led=450nm, led_brightness=50, filter=465nm)
+                  else:
+                      if observations.roi_count > 10:
+                          move_fov(target=current_fov)
+                          image(detect_rois=false, segment=false, exposure=50, led=450nm, led_brightness=50, filter=465nm)
+      finalise
+          move_fov(target=first_fov)
+
+  - name: Aggregate time-normalised elongation to choose a pause
+    user_request: >-
+      Initially detect trenches and segment bacteria in every FOV. Then run 12 rounds.
+      Each round image and segment all FOVs without redetection. Across all ROIs with valid
+      consecutive length measurements and positive time separation, compute the mean of
+      (length - previous length) / previous length / elapsed measurement seconds.
+      After each round wait 1 / max(0.01, mean) seconds bounded between 1 and 10;
+      if no valid comparisons exist wait 10 seconds. This is an illustrative elongation proxy,
+      not DeLTA's inverse-frame growth estimate or a validated growth estimator.
+      All images use 50 ms exposure, 450 nm LED at 10 percent brightness and 465 nm filter.
+      Finish after the 12 rounds and return to the first FOV.
+    strategy: |
+      initialise
+          loop fovs:
+              move_fov(target=current_fov)
+              image(detect_rois=true, segment=true, exposure=50, led=450nm, led_brightness=10, filter=465nm)
+      step
+          if observations.step_count >= 12:
+              terminate
+          else:
+              total = 0.0
+              count = 0
+              loop fovs:
+                  move_fov(target=current_fov)
+                  image(detect_rois=false, segment=true, exposure=50, led=450nm, led_brightness=10, filter=465nm)
+                  loop rois:
+                      if observations.previous_measurement_valid:
+                          interval = observations.measurement_time - observations.previous_measurement_time
+                          if interval > 0:
+                              rate = (observations.length - observations.previous_length) / observations.previous_length / interval
+                              total = total + rate
+                              count = count + 1
+              pause = 10.0
+              if count > 0:
+                  mean = total / count
+                  pause = max(1, min(10, 1 / max(0.01, mean)))
+              wait(duration=pause)
+      finalise
+          move_fov(target=first_fov)
+
+  - name: Per-trench feedback with one combined exposure per FOV
+    user_request: >-
+      During initialisation detect and segment every FOV, then expose all authorised trenches
+      with valid measurements together, once per FOV. During each step image and segment each
+      FOV without redetection. Select an authorised trench for another exposure only if it has
+      a valid measurement, has been treated previously, at least 60 seconds have elapsed since
+      its latest treatment, it has at least 3 valid post-treatment comparisons, and more than
+      half increased in length. Combine all qualifying trenches into one exposure per FOV.
+      Wait 5 seconds after each round. Stop before starting a round once elapsed experiment
+      time reaches 300 seconds, then return to the first FOV.
+      Images use 25 ms exposure, 450 nm at 10 percent brightness and 465 nm filter.
+      Projections use 385 nm at 10 percent brightness for 0.5 seconds.
+      All thresholds and illumination values here are illustrative requested inputs, not
+      recommended experimental settings or proof of viability.
+    strategy: |
+      initialise
+          loop fovs:
+              move_fov(target=current_fov)
+              image(detect_rois=true, segment=true, exposure=25, led=450nm, led_brightness=10, filter=465nm)
+              clear_projection_targets()
+              loop rois:
+                  if observations.target_selected:
+                      if observations.measurement_valid:
+                          select_roi()
+              project_selected(illumination_led=385nm, illumination_brightness=10, duration=0.5)
+      step
+          if observations.elapsed_time >= 300:
+              terminate
+          else:
+              loop fovs:
+                  move_fov(target=current_fov)
+                  image(detect_rois=false, segment=true, exposure=25, led=450nm, led_brightness=10, filter=465nm)
+                  clear_projection_targets()
+                  loop rois:
+                      if observations.target_selected:
+                          if observations.measurement_valid:
+                              if observations.treatment_count > 0:
+                                  since_treatment = observations.elapsed_time - observations.last_treatment_time
+                                  if since_treatment >= 60:
+                                      if observations.comparison_count >= 3:
+                                          fraction = observations.length_increase_count / observations.comparison_count
+                                          if fraction > 0.5:
+                                              select_roi()
+                  project_selected(illumination_led=385nm, illumination_brightness=10, duration=0.5)
+              wait(duration=5)
+      finalise
+          move_fov(target=first_fov)
+
+  - name: User-requested abort versus normal completion
+    user_request: >-
+      Move to the first FOV during initialisation. Complete at most 20 imaging rounds.
+      Before each round, if the limit is reached terminate normally and return to the first FOV.
+      Otherwise move to the next FOV and immediately abort without finalisation if focus
+      recovery is exhausted. If focus is acceptable, acquire an unprocessed 25 ms image using
+      515 nm at 12 percent brightness with the 527 nm filter. Immediately abort without
+      finalisation if the image was skipped or more than 10 percent of it is saturated;
+      otherwise wait 1 second.
+      These are explicit strategy stop conditions, not DSL handlers for command failures.
     strategy: |
       initialise
           move_fov(target=first_fov)
-
       step
-          if observations.step_count >= 5:
+          if observations.step_count >= 20:
               terminate
           else:
-              image(exposure=25, led=515nm, led_brightness=12, filter=527nm)
-
-      finalise
-  - name: Two passes over configured FOVs and registered ROIs
-    user_request: >-
-      Perform two imaging rounds over every configured FOV using a 100 ms exposure,
-      the 450 nm LED at 10 percent brightness, and the 465 nm filter. After each image,
-      count that FOV's registered ROIs and wait that many seconds, bounded between 1 and 10.
-      Then finish and return to the first FOV. Do not detect new ROIs.
-    strategy: |
-      initialise
-          rounds = 0
-      step
-          loop fovs:
-              move_fov(target=current_fov)
-              image(exposure=100, led=450nm, led_brightness=10, filter=465nm)
-              count = 0
-              loop rois:
-                  count = count + 1
-              pause = max(1, min(10, count))
-              wait(duration=pause)
-          rounds = rounds + 1
-          if rounds >= 2:
-              terminate
+              move_fov(target=next_fov)
+              if observations.focus_recovery_exhausted:
+                  abort
+              else:
+                  image(detect_rois=false, segment=false, exposure=25, led=515nm, led_brightness=12, filter=527nm)
+                  if observations.fov_imaging_skipped:
+                      abort
+                  else:
+                      if observations.saturation_fraction > 0.1:
+                          abort
+                      else:
+                          wait(duration=1)
       finalise
           move_fov(target=first_fov)

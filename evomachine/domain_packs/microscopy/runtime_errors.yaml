@@ -32,3 +32,13 @@ runtime_errors:
     description: An unexpected internal strategy execution failure occurred.
     action: abort
     max_retries: 0
+
+  processing_failed:
+    description: DeLTA preprocessing, segmentation or lineage processing failed. Processing may have partially advanced, so the experiment stops without retry.
+    action: abort
+    max_retries: 0
+
+  targeted_projection_failed:
+    description: Targeted exposure failed or completion is uncertain. Never retry automatically because some UV may already have been delivered.
+    action: abort
+    max_retries: 0

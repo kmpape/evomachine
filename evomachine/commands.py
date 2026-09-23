@@ -196,6 +196,7 @@ class CommandFactory:
             frame_metadata: FrameMetaData | list[FrameMetaData],
             segment: bool,
             save: bool = False,
+            detect_rois: bool | None = None,
     ) -> AutomatonCommand:
         """
         Create a command for taking an image.
@@ -206,16 +207,16 @@ class CommandFactory:
         segment         : Segments image and tracks cells if True. See channels for channel requirements. If segment is
                           True, and ImageProcessorConfig.preproc_enabled is False, this function throws an exception.
         save            : Save image(s) through the acquisition manager's configured FileManager.
+        detect_rois     : Replace trench ROIs when True. None preserves legacy first-image detection.
 
         Returns in AbstractStrategy.callback
         ------------------------------------
         command_data: Dictionary
         # TODO
         command_data['img']: 3D int16 numpy array (normalised & rotated images) with 1st dimension = len(channels)
-        command_data['seg']: Provided if segment is True. A dictionary with ROI IDs as keys and a delta.Lineage object
-                             as values. In case of a mothermachine experiment, the ROIs will be the trenches in
-                             the corresponding FoV. Otherwise, the single key will be 0 and the Lineage object will
-                             correspond to all cells in the current FoV.
+        command_data['seg']: Provided if segment is True. Maps stable trench IDs to segmentation masks.
+                             Mother-cell lineage remains in the FOV's PositionRT processor and its scalar
+                             measurements are exposed through the shared microscopy processing state.
 
         Returns
         -------
@@ -230,9 +231,11 @@ class CommandFactory:
             raise TypeError("AutomatonCommandFactory.image: every frame_metadata entry must be FrameMetaData.")
         if not isinstance(segment, bool):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument segment ({type(segment)}).")
+        if detect_rois is not None and not isinstance(detect_rois, bool):
+            raise TypeError("detect_rois must be a bool or None")
         if not isinstance(save, bool):
             raise TypeError(f"AutomatonCommandFactory.image: Wrong type for argument save ({type(save)}).")
-        if segment:
+        if segment or detect_rois:
             metadata_leds = [
                 metadata.leds
                 for metadata in metadata_items
@@ -248,11 +251,12 @@ class CommandFactory:
                     f"AutomatonCommandFactory.image: channels_seg={self._cfg.channels_seg} not in "
                     f"FrameMetaData LED channels={metadata_channels} for segment=True."
                 )
-        if segment and not self._cfg.preproc_enabled:
+        if (segment or detect_rois) and not self._cfg.preproc_enabled:
             raise TypeError(f"AutomatonCommandFactory.image: segment=True but preproc_enabled=False.")
         command_args = {
             'frame_metadata': frame_metadata,
             'segment': segment,
+            'detect_rois': detect_rois,
             'save': save,
         }
         return AutomatonCommand(
@@ -283,6 +287,19 @@ class CommandFactory:
             command_args=status,
             command_id=self.get_next_id(),
             command_creation_time=time(),
+        )
+
+    def command_projection_selection(self, fov_id: int, roi_id: int | None = None) -> AutomatonCommand:
+        """Clear a FOV's pending targets, or add one ROI without exposing it."""
+        if type(fov_id) is not int or fov_id not in self._fov_to_roi:
+            raise ValueError("Unknown projection FOV")
+        if roi_id is not None and (type(roi_id) is not int or roi_id not in self._fov_to_roi[fov_id]):
+            raise ValueError("Unknown projection ROI")
+        return AutomatonCommand(
+            command_type=(AutomatonCommandType.CLEAR_PROJECTION_TARGETS if roi_id is None
+                          else AutomatonCommandType.SELECT_PROJECTION_ROI),
+            command_args={"fov_id": fov_id, "roi_id": roi_id},
+            command_id=self.get_next_id(), command_creation_time=time(),
         )
 
     def command_move(self, fov_id: int | None) -> AutomatonCommand:
@@ -434,7 +451,7 @@ class CommandFactory:
             raise TypeError(f"AutomatonCommandFactory.command_project_roi: fov_id={fov_id} does not exist.")
         if not (all(isinstance(r, int) and (r in self._fov_to_roi[fov_id]) for r in roi_ids)):
             raise TypeError(f"AutomatonCommandFactory.command_project_roi: roi_ids do not exist for fov_id={fov_id}.")
-        if not (isinstance(brightness, int) or not isinstance(brightness, float)) or not (0 <= brightness <= 100):
+        if type(brightness) not in (int, float) or not (0 <= brightness <= 100):
             raise TypeError(f"AutomatonCommandFactory.project: Wrong type or range for argument brightness.")
         max_duration = 60*60 if brightness > 29 else 3600
         if not (isinstance(duration, float) or isinstance(duration, int)) or not (0 < duration < max_duration):

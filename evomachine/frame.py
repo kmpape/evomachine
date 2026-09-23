@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,8 @@ class FrameMetaData:
     "Strategy callback identifier filled by the automaton before acquisition."
     additional_metadata: dict[str, Any] = field(default_factory=dict)
     "JSON-serializable extra metadata supplied by callers."
+    acquisition_monotonic: float | None = None
+    "Runtime-only capture-start clock sample; not meaningful when reloading saved frames."
 
     def __post_init__(self) -> None:
         if not isinstance(self.frame_id, int) or isinstance(self.frame_id, bool):
@@ -84,6 +87,11 @@ class FrameMetaData:
             raise TypeError(f"FrameMetaData: callback_id must be int or None, received {type(self.callback_id)}.")
         if not isinstance(self.additional_metadata, dict):
             raise TypeError(f"FrameMetaData: additional_metadata must be dict[str, Any], received {type(self.additional_metadata)}.")
+        if self.acquisition_monotonic is not None and (
+            type(self.acquisition_monotonic) not in (int, float)
+            or not math.isfinite(self.acquisition_monotonic)
+        ):
+            raise ValueError("FrameMetaData: acquisition_monotonic must be finite or None.")
         if not all(isinstance(key, str) for key in self.additional_metadata):
             raise TypeError("FrameMetaData: additional_metadata keys must be str.")
 

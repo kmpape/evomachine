@@ -291,7 +291,7 @@ initialise
 step
     loop fovs:
         move_fov(target=current_fov)
-        image(exposure=100, led=450nm, led_brightness=10, filter=465nm)
+        image(detect_rois=false, segment=false, exposure=100, led=450nm, led_brightness=10, filter=465nm)
         count = 0
         loop rois:
             count = count + 1
@@ -308,8 +308,8 @@ Each loop snapshots the registered IDs on entry and starts from the beginning. E
 collections do nothing. Entering a loop only selects context: explicit commands move or image.
 `observations.selected_fov_id` is scoped to the FOV loop; `selected_roi_id` to its ROI loop.
 `current_fov_id` remains the actual physical position. Existing image metrics describe the
-latest acquisition, not biological measurements attached to each ROI. The ROI collection
-contains registered ROI IDs; this does not add detection, DeLTA, targeting or growth tracking.
+latest acquisition. Processed images additionally publish scoped mother-cell measurements for each
+stable detected trench. See the DeLTA integration below.
 
 Each command is resolved and range-checked just before it is emitted. Successful completion
 refreshes observations before execution resumes. Step count measures completed DSL steps,
@@ -324,3 +324,101 @@ The generic host interface is `CollectionProvider.items(name, context)` plus
 `observe(context)`; providers supply unique stable integer/string IDs and current scoped
 values. Missing values fail when read, and invalid supplied values fail on refresh. There are
 no DSL lists or implicit hardware actions. Iteration/statement budgets bound each section.
+
+### DeLTA integration (microscopy pack 0.7.0)
+
+AutoStrat itself is unchanged. The microscopy pack adds required `image(detect_rois=..., segment=..., ...)`,
+`clear_projection_targets()`, `select_roi()` and `project_selected(...)` for combined ROI projection.
+Revalidate older generated strategies after adding `detect_rois=false, segment=false` to acquisition-only images.
+Waits remain bounded by the domain pack and interruptible by stop/shutdown events.
+
+For processed imaging, construct the strategy and Automaton with the same explicit configuration:
+
+```python
+from evomachine.image_processing_config import ImageProcessorConfigFactory
+from evomachine.delta_processing import DeltaProcessor
+from evomachine.types import LEDType
+
+cfg = ImageProcessorConfigFactory.default_config(
+    channels=[LEDType.LED_450_NM],
+    channels_seg=[LEDType.LED_450_NM],
+).updated(preproc_enabled=True, roi_enabled=True, seg_enabled=True,
+          track_enabled=True, lineage_enabled=True)
+
+# Optional application-supplied selection: IDs refer to the final detected trench order.
+processor = DeltaProcessor(cfg, selected_targets={0: {1, 3}, 1: {2}})
+# Omit selected_targets to permit all detected trenches.
+# Pass cfg_processor=cfg and delta_processor=processor to Automaton.
+# Use cfg=cfg, MicroscopyCollectionProvider(), MicroscopyObservationProvider()
+# and MicroscopyRuntimeErrorProvider() when constructing AutoStratStrategy.
+```
+
+Set `detect_rois=true` to detect trenches and `segment=true` to segment bacteria and update
+mother-cell tracking. Detection alone does not load the segmentation model. Segmentation alone
+requires existing ROIs. Repeat measurements with `detect_rois=false, segment=true`.
+Redetection replaces the FOV's ROIs and resets tracking, measurements, treatment history and
+pending projection targets. External target IDs are cleared rather than reassigned to new trenches;
+the default all-targets policy continues to permit all detected trenches. Models and supported input channels must be
+configured locally; no model loading, imaging or projection happens in the quick notebook.
+The current integration accepts one segmentation-channel plane per processed image.
+
+The microscope owns typed per-FOV/per-trench records. The DSL gets `measurement_valid`,
+`length`, `measurement_time`, valid previous measurements, and DeLTA's `growth_rate` with
+a separate `growth_rate_valid` flag. Invalid/missing values are omitted, not replaced by zero.
+Always guard reads with validity observations. No mother found and zero detected trenches are
+valid outcomes; model/processing exceptions invalidate the FOV and abort without reprocessing
+partially mutated lineage. A failed, skipped or unprocessed acquisition also invalidates current
+biological measurements. A new strategy run clears processing, treatments and pending projection targets.
+
+**Growth-rate semantics:** DeLTA's built-in rate is inverse frames, not inverse seconds; its
+smoothing assumes equal spacing. Mother-only tracking does not provide daughter-aware division
+correction. A strategy can compute a fractional elongation-per-second proxy
+from successive lengths and actual times in the DSL. This is not a validated biological
+growth estimator and can be affected by division, tracking loss or segmentation noise.
+
+**Projection safety:** `project_selected` requires valid processing and the correct physical
+FOV for a nonempty selection. It illuminates all buffered trench boxes in one pattern and one exposure,
+not segmented mother-cell outlines. Only confirmed completion increments treatment_count and records
+the same last_treatment_time for every included ROI. The shared exposure duration is at most 100 seconds. An interrupted or uncertain exposure
+aborts and is never automatically retried; illumination is disabled and the DMD cleared on exit.
+This cannot undo a partial delivered dose. The existing full-field `project` retains its old policy.
+
+Post-treatment comparison counters count only valid consecutive processed measurements with both
+acquisition times after the last treatment. Treatment resets these counters. They are factual
+length-comparison summaries, not a survival or motion decision. The DSL chooses the evidence
+threshold, reassessment interval, exposure limit and experiment stopping condition.
+
+Projection selection is per FOV. Clear the buffer, iterate the ROIs and add qualifying targets,
+then expose the entire set once after the ROI loop:
+
+```text
+clear_projection_targets()
+loop rois:
+    if observations.target_selected:
+        if observations.measurement_valid:
+            select_roi()
+project_selected(illumination_led=385nm, illumination_brightness=10, duration=0.5)
+```
+
+This fragment belongs inside a FOV loop after movement and processed imaging. Its illumination
+values are illustrative inputs, not recommended settings. Adding an ROI does not expose it.
+Duplicate additions are harmless; an empty projection does nothing. Successful projection clears
+the buffer, as does a new acquisition or a new strategy run. Each FOV has its own buffer.
+The application-supplied authorised target set remains separate from this temporary selection.
+
+For continuous acquisition, let each step traverse the FOVs, use explicit waits and check the
+requested experiment stopping time. There is no per-FOV scheduling API. All timestamps share
+one monotonic experiment clock; per-ROI treatment times remain available for DSL calculations.
+Experimental thresholds, timings and treatment policies belong in the user's strategy request,
+not the domain's general semantic guidance.
+
+**Geometry boundary:** this first version supports horizontal mother-machine layouts using
+DeLTA's existing grouping/dead-end conventions. Automatic rotation and drift correction are
+disabled to keep ROI boxes in the camera coordinate system used by the DMD transform. Confirm
+trench ordering, mother-cell ends, camera/DMD calibration and stage registration on representative
+data before enabling UV. Drift compensation and arbitrary trench orientations are not implemented.
+
+The pack includes a generic combined-projection example with explicit user-supplied parameters.
+Tests include real PositionRT/lineage code driven by synthetic segmentation outputs, fake-hardware
+execution, timing and exposure failures. No real microscope or trained-model performance has been
+validated by these tests.

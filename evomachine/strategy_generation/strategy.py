@@ -168,6 +168,8 @@ class AutoStratStrategy(AbstractStrategy):
             region_of_interests=self.region_of_interests,
             fov_processors=self.fov_processors,
         )
+        self.collection_provider.bind_processing_state(self.processing_state)
+        self.observation_provider.bind_processing_state(self.processing_state)
         self.observation_provider.reset()
         self._refresh([])
         self._execution.start("initialise")
@@ -231,7 +233,11 @@ class AutoStratStrategy(AbstractStrategy):
         event = self._pending_event
         call = event.call
         context = CommandBuildContext(
-            self.command_factory, self.fovs, self._current_fov_id, event.context
+            self.command_factory,
+            self.fovs,
+            self._current_fov_id,
+            event.context,
+            self.processing_state,
         )
         expected = self.command_adapter.command_type(call)
         command = self.command_adapter.build(call, context)

@@ -10,6 +10,11 @@ import numpy as np
 from autostrat.language.model import ValidatedCommandCall, ValidatedCommandTemplate, ValidatedValue
 
 from evomachine.commands import AutomatonCommand
+from evomachine.delta_processing import (
+    DeltaProcessingError,
+    MicroscopyState,
+    TargetedProjectionError,
+)
 from evomachine.config import DMD_WIDTH_HEIGHT
 from evomachine.bindings.software_focus.software_focus_algorithms import (
     LaplacianVarianceFocusAlgorithm,
@@ -53,6 +58,9 @@ _COMMAND_TYPES = {
     "image": AutomatonCommandType.IMAGE,
     "project": AutomatonCommandType.PROJECT,
     "wait": AutomatonCommandType.WAIT,
+    "project_selected": AutomatonCommandType.PROJECT_ROI,
+    "clear_projection_targets": AutomatonCommandType.CLEAR_PROJECTION_TARGETS,
+    "select_roi": AutomatonCommandType.SELECT_PROJECTION_ROI,
 }
 
 
@@ -95,6 +103,41 @@ class MicroscopyCommandAdapter(CommandAdapter):
             return self._build_project(call, context)
         if call.name == "wait":
             return self._build_wait(call, context)
+        if call.name in {"project_selected", "clear_projection_targets", "select_roi"}:
+            selected = {item.collection: item.item_id for item in context.selections}
+            if "fovs" not in selected:
+                raise StrategyInterpretationError(f"{call.name} requires loop fovs")
+            if call.name == "clear_projection_targets":
+                return context.command_factory.command_projection_selection(selected["fovs"])
+            if call.name == "select_roi":
+                if "rois" not in selected:
+                    raise StrategyInterpretationError("select_roi requires loop rois")
+                return context.command_factory.command_projection_selection(
+                    selected["fovs"], selected["rois"]
+                )
+            if "rois" in selected:
+                raise StrategyInterpretationError(
+                    "project_selected must follow, not be inside, loop rois"
+                )
+            if context.current_fov_id != selected["fovs"] or context.processing_state is None:
+                raise StrategyInterpretationError(
+                    "project_selected requires movement to its FOV and processing state"
+                )
+            fov = context.processing_state.fovs.get(selected["fovs"])
+            targets = sorted(fov.projection_targets) if fov is not None else []
+            args = call.arguments
+            command = context.command_factory.command_project_roi(
+                channel=_LED_BY_DOMAIN_VALUE[args["illumination_led"]],
+                brightness=args["illumination_brightness"],
+                duration=args["duration"],
+                fov_id=selected["fovs"],
+                roi_ids=targets,
+                fill_x=1.0,
+                fill_y=1.0,
+                invert=False,
+            )
+            command.command_args["record_treatment"] = True
+            return command
         raise StrategyInterpretationError(f"Unsupported microscopy command {call.name!r}.")
 
     @staticmethod
@@ -131,6 +174,10 @@ class MicroscopyCommandAdapter(CommandAdapter):
         call: ValidatedCommandCall,
         context: CommandBuildContext,
     ) -> AutomatonCommand:
+        if call.arguments.get("detect_rois", False) and any(
+            item.collection == "rois" for item in context.selections
+        ):
+            raise StrategyInterpretationError("Cannot replace ROI identities inside loop rois")
         exposure = call.arguments["exposure"]
         led = call.arguments["led"]
         led_brightness = call.arguments["led_brightness"]
@@ -149,7 +196,8 @@ class MicroscopyCommandAdapter(CommandAdapter):
         )
         return context.command_factory.command_image(
             frame_metadata=metadata,
-            segment=self._segment_images,
+            segment=call.arguments.get("segment", self._segment_images),
+            detect_rois=call.arguments.get("detect_rois", False),
             save=self._save_images,
         )
 
@@ -204,6 +252,10 @@ class MicroscopyObservationProvider(ObservationProvider):
         self._focus_algorithm = LaplacianVarianceFocusAlgorithm()
         self._started_at: float | None = None
         self._latest: dict[str, ValidatedValue] = {}
+        self._processing_state: MicroscopyState | None = None
+
+    def bind_processing_state(self, state) -> None:
+        self._processing_state = state
 
     def observe(
         self,
@@ -229,6 +281,8 @@ class MicroscopyObservationProvider(ObservationProvider):
         observations: dict[str, ValidatedValue] = dict(self._latest)
         observations["step_count"] = step_count
         observations["elapsed_time"] = max(0.0, time.monotonic() - self._started_at)
+        if self._processing_state is not None:
+            observations["elapsed_time"] = self._processing_state.elapsed()
         if fov_id >= 0:
             observations["current_fov_id"] = fov_id
         return observations
@@ -261,6 +315,8 @@ class MicroscopyObservationProvider(ObservationProvider):
         if not isinstance(result, dict):
             raise StrategyInterpretationError("Completed image command did not contain image data.")
         if result.get("skipped") is True:
+            for name in ("mean_intensity", "contrast_score", "saturation_fraction", "focus_score"):
+                self._latest.pop(name, None)
             self._latest["fov_imaging_skipped"] = True
             return
         images = result.get("img")
@@ -290,6 +346,7 @@ class MicroscopyObservationProvider(ObservationProvider):
         self._latest.update(
             {
                 "mean_intensity": float(clipped.mean()) / camera_max,
+                "fov_imaging_skipped": False,
                 "contrast_score": contrast,
                 "saturation_fraction": float(np.mean(clipped >= 0.98 * camera_max)),
                 "focus_score": focus_score,
@@ -371,6 +428,25 @@ class MicroscopyRuntimeErrorProvider(RuntimeErrorProvider):
             )
 
         cause = supplied_error.original_error
+        if isinstance(cause, DeltaProcessingError):
+            return (
+                "processing_failed",
+                failed_call,
+                supplied_error.command_id,
+                supplied_error.occurred_at,
+                cause,
+            )
+        if (
+            isinstance(cause, TargetedProjectionError)
+            or supplied_error.command_type is AutomatonCommandType.PROJECT_ROI
+        ):
+            return (
+                "targeted_projection_failed",
+                failed_call,
+                supplied_error.command_id,
+                supplied_error.occurred_at,
+                cause,
+            )
         detail = f"{type(cause).__module__}.{type(cause).__name__}: {cause}".lower()
         if any(marker in detail for marker in cls._DEVICE_NOT_READY_MARKERS):
             name = "device_not_ready"
@@ -409,6 +485,10 @@ class MicroscopyCollectionProvider(CollectionProvider):
     def __init__(self):
         self._fovs = {}
         self._rois = {}
+        self._state: MicroscopyState | None = None
+
+    def bind_processing_state(self, state) -> None:
+        self._state = state
 
     def bind(self, *, fovs, region_of_interests, fov_processors):
         self._fovs = fovs
@@ -423,9 +503,39 @@ class MicroscopyCollectionProvider(CollectionProvider):
 
     def observe(self, context):
         values = {}
+        fov = None
         for item in context:
             if item.collection == "fovs":
                 values["selected_fov_id"] = item.item_id
+                fov = self._state.fovs.get(item.item_id) if self._state is not None else None
+                values["processing_valid"] = fov is not None and fov.valid
+                values["roi_count"] = len(self._rois.get(item.item_id, ()))
+                values["projection_target_count"] = (
+                    len(fov.projection_targets) if fov is not None else 0
+                )
             elif item.collection == "rois":
                 values["selected_roi_id"] = item.item_id
+                trench = fov.rois.get(item.item_id) if fov is not None else None
+                measurement = trench.measurement if trench is not None else None
+                valid = bool(fov and fov.valid and measurement and measurement.valid)
+                previous = trench.previous if trench is not None else None
+                values.update(
+                    target_selected=trench.selected if trench else False,
+                    measurement_valid=valid,
+                    growth_rate_valid=valid and measurement.growth_rate is not None,
+                    previous_measurement_valid=valid and previous is not None and previous.valid,
+                    treatment_count=trench.treatment_count if trench else 0,
+                    comparison_count=trench.comparison_count if trench else 0,
+                    length_increase_count=trench.length_increase_count if trench else 0,
+                )
+                if trench and trench.last_treatment_time is not None:
+                    values["last_treatment_time"] = trench.last_treatment_time
+                if valid:
+                    values["length"] = measurement.length
+                    values["measurement_time"] = measurement.time
+                    if measurement.growth_rate is not None:
+                        values["growth_rate"] = measurement.growth_rate
+                    if previous is not None and previous.valid:
+                        values["previous_length"] = previous.length
+                        values["previous_measurement_time"] = previous.time
         return values
