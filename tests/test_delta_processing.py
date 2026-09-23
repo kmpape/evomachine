@@ -38,7 +38,14 @@ class FakePosition:
         self.frame_id = 0
         self.initialisations = 0
         self.roi_boxes = [object(), object()]
-        self.rois = [SimpleNamespace(lineage=SimpleNamespace(cells={})) for _ in range(2)]
+        self.rois = [
+            SimpleNamespace(
+                lineage=SimpleNamespace(cells={}),
+                seg_stack=[np.ones((4, 4), dtype=np.uint8) for _ in range(2)],
+                label_stack=[np.ones((4, 4), dtype=np.uint8) for _ in range(2)],
+            )
+            for _ in range(2)
+        ]
 
     def _measure(self):
         for roi in self.rois:
@@ -186,9 +193,20 @@ def test_treatment_comparisons_exclude_baseline_and_invalid_gaps():
 
 
 @pytest.mark.parametrize("segment_first", [True, False])
-def test_real_positionrt_with_synthetic_segmentation_outputs(segment_first):
+def test_real_positionrt_with_synthetic_segmentation_outputs(segment_first, monkeypatch):
     """Exercise real ROI/lineage API without model files or learned predictions."""
     from delta.imgops import CroppingBox
+    from delta.rt import ROIRT
+
+    original_init = ROIRT.__init__
+
+    def poisoned_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        # Reproduce dirty np.empty allocations deterministically, on all platforms.
+        for mask in (*self.seg_stack, *self.label_stack):
+            mask.fill(1)
+
+    monkeypatch.setattr(ROIRT, "__init__", poisoned_init)
 
     cfg = make_cfg()
     cfg.cfg_delta.target_size_seg = (16, 64)
@@ -242,6 +260,8 @@ def test_detection_only_then_segmentation_and_redetection_reset():
     assert state.fovs[0].valid
     assert state.fovs[0].rois[1].measurement is None
     first_position = positions[0]
+    for roi in first_position.rois:
+        assert all(not np.any(mask) for mask in (*roi.seg_stack, *roi.label_stack))
     acquire(False, True)
     assert positions[0] is first_position
     assert state.fovs[0].rois[1].measurement.valid

@@ -196,6 +196,13 @@ class DeltaProcessor:
                     roi_max_area=self.cfg.roi_max_area,
                     roi_max_height=self.cfg.roi_max_height,
                 )
+                if not segment:
+                    # DeLTA allocates these stacks with np.empty. Without initial
+                    # segmentation, garbage labels can look like existing cells
+                    # when tracking starts on a later acquisition.
+                    for roi in position.rois:
+                        for mask in (*roi.seg_stack, *roi.label_stack):
+                            mask.fill(0)
                 processors[fov_id] = position
                 ids = list(range(len(position.rois)))
                 if self.selected_targets is not None and not redetection:
