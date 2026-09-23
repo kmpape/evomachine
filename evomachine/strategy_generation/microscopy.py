@@ -315,6 +315,8 @@ class MicroscopyObservationProvider(ObservationProvider):
         if not isinstance(result, dict):
             raise StrategyInterpretationError("Completed image command did not contain image data.")
         if result.get("skipped") is True:
+            for name in ("mean_intensity", "contrast_score", "saturation_fraction", "focus_score"):
+                self._latest.pop(name, None)
             self._latest["fov_imaging_skipped"] = True
             return
         images = result.get("img")
@@ -344,6 +346,7 @@ class MicroscopyObservationProvider(ObservationProvider):
         self._latest.update(
             {
                 "mean_intensity": float(clipped.mean()) / camera_max,
+                "fov_imaging_skipped": False,
                 "contrast_score": contrast,
                 "saturation_fraction": float(np.mean(clipped >= 0.98 * camera_max)),
                 "focus_score": focus_score,

@@ -4,11 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import time
-from typing import Mapping
 
-from autostrat.domain import RecoveryAction
 from autostrat.language.evaluator import ExecutionContext
-from autostrat.language.model import ValidatedCommandCall, ValidatedValue
+from autostrat.language.model import ValidatedCommandCall
 
 
 class StrategyInterpretationError(RuntimeError):
@@ -27,8 +25,6 @@ class ActiveRuntimeError:
     retry_attempt: int = 0
     statement_path: str = ""
     collection_context: ExecutionContext = ()
-    remaining_calls: tuple[ValidatedCommandCall, ...] = ()
-    remaining_action: RecoveryAction | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
@@ -37,12 +33,6 @@ class ActiveRuntimeError:
             raise ValueError("ActiveRuntimeError.command_id must be non-negative or None.")
         if self.retry_attempt < 0:
             raise ValueError("ActiveRuntimeError.retry_attempt must be non-negative.")
-        if not isinstance(self.remaining_calls, tuple) or not all(
-            isinstance(call, ValidatedCommandCall) for call in self.remaining_calls
-        ):
-            raise TypeError("ActiveRuntimeError.remaining_calls must be validated command calls.")
-        if self.remaining_action not in {None, "continue", "terminate", "abort"}:
-            raise ValueError("ActiveRuntimeError.remaining_action is not resumable.")
 
     @property
     def message(self) -> str:
@@ -55,25 +45,7 @@ class ActiveRuntimeError:
         return None if self.original_error is None else type(self.original_error).__name__
 
 
-@dataclass(frozen=True, slots=True)
-class StrategyRuntimeContext:
-    """Provide one immutable-by-convention snapshot to the conditional interpreter."""
-
-    observations: Mapping[str, ValidatedValue] = field(default_factory=dict)
-    errors: Mapping[str, ActiveRuntimeError] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "observations", dict(self.observations))
-        object.__setattr__(self, "errors", dict(self.errors))
-        for name, error in self.errors.items():
-            if name != error.name:
-                raise ValueError(
-                    f"Runtime error key {name!r} must match ActiveRuntimeError.name {error.name!r}."
-                )
-
-
 __all__ = [
     "ActiveRuntimeError",
     "StrategyInterpretationError",
-    "StrategyRuntimeContext",
 ]

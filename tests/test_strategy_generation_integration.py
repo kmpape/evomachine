@@ -36,12 +36,10 @@ from evomachine.strategy_generation import (
     StrategyGenerationService,
 )
 from evomachine.strategy_generation.interfaces import EmptyRuntimeErrorProvider
-from evomachine.strategy_generation.interpreter import ConditionalInterpreter
 from evomachine.strategy_generation.preview import generate_preview
 from evomachine.strategy_generation.runtime import (
     ActiveRuntimeError,
     StrategyInterpretationError,
-    StrategyRuntimeContext,
 )
 from evomachine.types import AutomatonCommandType, FilterWheelType, FocusStatusType, LEDType
 from evomachine.runtime_errors import CommandExecutionError
@@ -184,21 +182,6 @@ def test_collection_iteration_does_not_move_hardware() -> None:
     assert strategy._execution.variables["selected"] == 2
 
 
-def test_interpreter_selects_nested_branch_from_runtime_snapshot() -> None:
-    verified = _verified(
-        "initialise\nstep\n    if observations.focus_score < 0.5:\n        if observations.hardware_autofocus_locked:\n            wait(duration=1)\n    else:\n        terminate\nfinalise\n"
-    )
-    result = ConditionalInterpreter(_domain()).interpret(
-        verified.program.step,
-        StrategyRuntimeContext(
-            observations={"focus_score": 0.2, "hardware_autofocus_locked": True}
-        ),
-    )
-    assert len(result.calls) == 1
-    assert result.calls[0].arguments["duration"] == 1
-    assert result.action is None
-
-
 def test_unconfigured_error_provider_does_not_silently_discard_errors() -> None:
     provider = EmptyRuntimeErrorProvider()
 
@@ -206,7 +189,7 @@ def test_unconfigured_error_provider_does_not_silently_discard_errors() -> None:
         provider.classify(errors=[RuntimeError("camera failed")], command_origins={})
 
 
-def test_lean_preview_exposes_accepted_dsl_and_executable_wrapper() -> None:
+def test_lean_preview_exposes_accepted_dsl_and_diagnostics() -> None:
     verified = _verified("initialise\nstep\n    wait(duration=1)\n    terminate\nfinalise\n")
 
     class Pipeline:
@@ -216,11 +199,6 @@ def test_lean_preview_exposes_accepted_dsl_and_executable_wrapper() -> None:
 
     preview = generate_preview(Pipeline(), "wait please")
     assert preview.dsl == verified.source
-    namespace = {}
-    exec(compile(preview.python, "<preview>", "exec"), namespace)
-    strategy = namespace["build_strategy"](preview.verified, _domain(), _cfg())
-    assert isinstance(strategy, AutoStratStrategy)
-    assert strategy.source == preview.dsl
     assert "Semantic revisions: 0" in preview.diagnostics()
     assert "not exposed" in preview.diagnostics()
     assert "Hardware execution: not run" in preview.diagnostics()
@@ -234,7 +212,6 @@ def test_lean_preview_failure_has_no_accepted_outputs() -> None:
     preview = generate_preview(Pipeline(), "wait please")
     assert preview.verified is None
     assert preview.dsl is None
-    assert preview.python is None
     assert preview.attempts == ()
     assert "endpoint unavailable" in preview.diagnostics()
 
@@ -304,7 +281,7 @@ def test_lean_notebook_generation_cell_runs_without_hardware(fail) -> None:
         assert verified.source not in displayed
     else:
         assert verified.source in displayed
-        assert namespace["preview"].python not in displayed
+        assert "def build_strategy" not in displayed
     assert "<details>" in displayed[-1]
 
 
@@ -811,6 +788,19 @@ def test_microscopy_provider_exposes_latest_image_and_focus_results() -> None:
     assert observations["focus_score"] >= 0
     assert isinstance(observations["elapsed_time"], float)
     assert observations["elapsed_time"] >= 0
+
+    skipped = AutomatonCommand(
+        command_id=3, command_type=AutomatonCommandType.IMAGE,
+        command_args={}, command_creation_time=0, command_data={"skipped": True},
+    )
+    for _ in range(2):
+        observations = provider.observe(fov_id=1, completed_commands=[skipped], step_count=2)
+        assert observations["fov_imaging_skipped"] is True
+        assert observations["hardware_autofocus_locked"] is True
+        assert not {"mean_intensity", "contrast_score", "saturation_fraction", "focus_score"} & observations.keys()
+    observations = provider.observe(fov_id=1, completed_commands=[image], step_count=3)
+    assert observations["fov_imaging_skipped"] is False
+    assert observations["saturation_fraction"] == pytest.approx(1 / image_array.size)
 
 
 def test_microscopy_observations_drive_step_conditionals() -> None:

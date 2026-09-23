@@ -29,7 +29,10 @@ class StrategyPipelineRunner(Protocol):
 
 
 class StrategyGenerationService:
-    """Offer an explicit blocking build and non-blocking worker submission."""
+    """Offer blocking builds and worker submission for one active strategy at a time.
+
+    Providers are shared: initialising another built strategy rebinds their state.
+    """
 
     def __init__(
         self,

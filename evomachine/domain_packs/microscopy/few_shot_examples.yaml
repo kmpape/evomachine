@@ -171,7 +171,8 @@ examples:
       Otherwise move to the next FOV and immediately abort without finalisation if focus
       recovery is exhausted. If focus is acceptable, acquire an unprocessed 25 ms image using
       515 nm at 12 percent brightness with the 527 nm filter. Immediately abort without
-      finalisation if more than 10 percent of that image is saturated; otherwise wait 1 second.
+      finalisation if the image was skipped or more than 10 percent of it is saturated;
+      otherwise wait 1 second.
       These are explicit strategy stop conditions, not DSL handlers for command failures.
     strategy: |
       initialise
@@ -185,9 +186,12 @@ examples:
                   abort
               else:
                   image(detect_rois=false, segment=false, exposure=25, led=515nm, led_brightness=12, filter=527nm)
-                  if observations.saturation_fraction > 0.1:
+                  if observations.fov_imaging_skipped:
                       abort
                   else:
-                      wait(duration=1)
+                      if observations.saturation_fraction > 0.1:
+                          abort
+                      else:
+                          wait(duration=1)
       finalise
           move_fov(target=first_fov)

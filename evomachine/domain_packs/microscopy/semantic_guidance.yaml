@@ -10,7 +10,7 @@ global_rules:
   - This first integration requires horizontal, stationary, registered trenches and calibrated camera-to-DMD coordinates. Automatic rotation and drift correction are disabled so projection boxes remain in camera coordinates.
   - Initialise persistent counters before issuing commands; finalise can be entered early on a hardware failure.
   - "`step_count` is zero during the first step and counts previously completed steps."
-  - Image-derived observations are unavailable until an image has completed and then retain the most recent measured value.
+  - Image-derived observations are unavailable until an image has completed. Skipped acquisitions clear mean_intensity, contrast_score, saturation_fraction and focus_score; check fov_imaging_skipped before reading them. A successful acquisition supplies fresh values and clears the skipped flag.
   - Focus-management observations are unavailable until a field-of-view movement has completed and then retain the most recent outcome.
   - Command failures follow runtime_errors.yaml automatically; never emit DSL error handlers.
   - Check the requested acquisition stopping condition before selecting further imaging, projection, movement, or wait commands. Use terminate for normal completion.

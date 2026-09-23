@@ -24,6 +24,7 @@ class ExampleHost:
         values = dict(
             elapsed_time=self.elapsed, step_count=self.steps,
             focus_recovery_exhausted=False, saturation_fraction=self.saturation,
+            fov_imaging_skipped=False,
         )
         if context:
             values["roi_count"] = 12 if context[0].item_id == 0 else 2
