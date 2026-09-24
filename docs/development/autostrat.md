@@ -146,7 +146,9 @@ For a new error:
 
 `terminate` runs finalisation; `abort` halts without normal finalisation. An uncertain
 UV exposure must not be automatically repeated: `targeted_projection_failed`
-aborts. Processing failures also abort because lineage may have partially advanced.
+and `projection_exposure_uncertain` abort. A full-field `projection_failed` is
+retryable only when illumination was never attempted. Processing failures also
+abort because lineage may have partially advanced.
 Arithmetic/evaluator failures are separate from device errors; do not disguise
 them as observations or retry hardware to fix an invalid expression.
 

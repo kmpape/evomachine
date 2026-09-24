@@ -23,6 +23,7 @@ _OPERATION_SAFE_COMMANDS = frozenset(
     {
         GuiCommandType.PING,
         GuiCommandType.STRATEGY_GENERATE,
+        GuiCommandType.STRATEGY_GENERATION_CANCEL,
         GuiCommandType.AUTOSTRAT_CONFIGURE,
         GuiCommandType.STRATEGY_GENERATION_STATUS,
         GuiCommandType.STOP,

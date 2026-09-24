@@ -69,6 +69,7 @@ class GuiCommandType(str, Enum):
     STAGE_MOVEMENT_STATUS = "stage.movement_status"
     STRATEGY_STATUS = "strategy.status"
     STRATEGY_GENERATE = "strategy.generate"
+    STRATEGY_GENERATION_CANCEL = "strategy.generation_cancel"
     AUTOSTRAT_CONFIGURE = "strategy.configure_autostrat"
     STRATEGY_GENERATION_STATUS = "strategy.generation_status"
     STRATEGY_LIST = "strategy.list"

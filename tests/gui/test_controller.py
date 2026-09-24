@@ -22,18 +22,36 @@ def test_generation_requests_and_errors_use_the_generation_channel() -> None:
     controller.strategy_generation_received.connect(received.append)
     controller.response_error.connect(errors.append)
     controller.generate_strategy("Image then finish")
+    controller.cancel_strategy_generation()
     controller.refresh_strategy_generation()
     controller.set_generated_strategy("accepted-id")
     assert [request.command for request in client.requests] == [
-        GuiCommandType.STRATEGY_GENERATE, GuiCommandType.STRATEGY_GENERATION_STATUS,
+        GuiCommandType.STRATEGY_GENERATE, GuiCommandType.STRATEGY_GENERATION_CANCEL,
+        GuiCommandType.STRATEGY_GENERATION_STATUS,
         GuiCommandType.STRATEGY_SET,
     ]
-    assert client.requests[2].payload == {"generation_id": "accepted-id"}
+    assert client.requests[3].payload == {"generation_id": "accepted-id"}
     failed_request = client.requests[0]
-    controller._generation_requests.add(failed_request.request_id)
+    controller._request_commands[failed_request.request_id] = failed_request.command
     controller._handle_request_failure(failed_request, "endpoint unavailable")
     assert received == [{"state": "failed", "error": "endpoint unavailable"}]
     assert not errors
+
+
+def test_request_errors_include_the_failed_command() -> None:
+    client = RecordingClient()
+    controller = EvoMachineGuiController(client=client, start_worker=False)
+    contextual, generic = [], []
+    controller.request_error.connect(lambda command, error: contextual.append((command, error)))
+    controller.response_error.connect(generic.append)
+
+    controller.refresh_stage()
+    failed_request = client.requests[-1]
+    controller._request_commands[failed_request.request_id] = failed_request.command
+    controller._handle_request_failure(failed_request, "stage unavailable")
+
+    assert contextual == [(GuiCommandType.STAGE_GET_COORDINATES, "stage unavailable")]
+    assert generic == ["stage unavailable"]
 
 
 def test_gui_stage_moves_are_non_blocking_so_stop_can_be_processed() -> None:

@@ -68,6 +68,7 @@ commands:
     runtime_errors:
       - device_not_ready
       - projection_failed
+      - projection_exposure_uncertain
       - communication_failed
     arguments:
       illumination_led:

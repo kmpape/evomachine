@@ -26,6 +26,10 @@ class TargetedProjectionError(RuntimeError):
     """Targeted exposure failed or its completion is uncertain; do not auto-retry."""
 
 
+class ProjectionExposureError(RuntimeError):
+    """Full-field exposure started but completion is uncertain; do not auto-retry."""
+
+
 @dataclass(frozen=True)
 class MotherMeasurement:
     frame_id: int

@@ -131,7 +131,8 @@ expose it on an untrusted network.
 Model/endpoint configuration and generation pipeline construction live in
 `gui/strategy_generation.py`. Reuse `strategy_generation/preview.py` for notebook-
 compatible diagnostics. UI labels say “strategy code”; internal DSL names need
-not be renamed.
+not be renamed. GUI generation runs in a disposable process so Cancel and the
+`AUTOSTRAT_GENERATION_TIMEOUT_SECONDS` limit can stop a stalled model request.
 
 ## Lifecycle rules to preserve
 

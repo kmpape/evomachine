@@ -13,6 +13,7 @@ from evomachine.commands import AutomatonCommand
 from evomachine.delta_processing import (
     DeltaProcessingError,
     MicroscopyState,
+    ProjectionExposureError,
     TargetedProjectionError,
 )
 from evomachine.config import DMD_WIDTH_HEIGHT
@@ -431,6 +432,14 @@ class MicroscopyRuntimeErrorProvider(RuntimeErrorProvider):
         if isinstance(cause, DeltaProcessingError):
             return (
                 "processing_failed",
+                failed_call,
+                supplied_error.command_id,
+                supplied_error.occurred_at,
+                cause,
+            )
+        if isinstance(cause, ProjectionExposureError):
+            return (
+                "projection_exposure_uncertain",
                 failed_call,
                 supplied_error.command_id,
                 supplied_error.occurred_at,

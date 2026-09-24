@@ -17,10 +17,15 @@ runtime_errors:
     exhausted_action: continue
 
   projection_failed:
-    description: A requested DMD projection could not be completed.
+    description: A requested DMD projection failed before illumination was attempted.
     action: retry
     max_retries: 2
     exhausted_action: continue
+
+  projection_exposure_uncertain:
+    description: Full-field illumination was attempted but its completion is uncertain. Never retry automatically because some exposure may already have been delivered.
+    action: abort
+    max_retries: 0
 
   communication_failed:
     description: Communication with a hardware device failed.

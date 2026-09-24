@@ -25,6 +25,7 @@ from PyQt5.QtWidgets import (
 
 from evomachine.coordinates import Coordinate, CoordinateFactory
 from evomachine.gui.panels.common import muted_label
+from evomachine.gui.protocol import GuiCommandType
 
 
 class FovSetupPanel(QGroupBox):
@@ -115,7 +116,7 @@ class FovSetupPanel(QGroupBox):
         self.controller.operation_status_received.connect(self.update_operation_status)
         self.controller.strategy_status_received.connect(self.update_strategy_status)
         self.controller.fovs_received.connect(self.update_initialised_fovs)
-        self.controller.response_error.connect(self._show_error)
+        self.controller.request_error.connect(self._show_request_error)
         self._sync_buttons()
 
     def _capture(self, action: str) -> None:
@@ -246,6 +247,10 @@ class FovSetupPanel(QGroupBox):
         self.status_label.setText(error)
         self._sync_buttons()
 
+    def _show_request_error(self, command: GuiCommandType, error: str) -> None:
+        if command in {GuiCommandType.STAGE_GET_COORDINATES, GuiCommandType.FOV_INITIALISE}:
+            self._show_error(error)
+
     @staticmethod
     def _show_endpoint(label: QLabel, coordinate: dict) -> None:
         text = "\n".join(f"{axis.upper()}: {coordinate[axis]:.3f}" for axis in ("x", "y", "z"))
@@ -292,6 +297,7 @@ class StrategySetupPanel(QGroupBox):
         self.prompt_input.setPlaceholderText("Describe the imaging strategy and its stopping condition…")
         self.prompt_input.setFixedHeight(120)
         self.generate_button = QPushButton("Generate strategy")
+        self.cancel_generation_button = QPushButton("Cancel generation")
         self.generation_label = QLabel("Generate, review the strategy code, then Set Strategy. Generation does not run hardware.")
         self.generation_label.setWordWrap(True)
         self.dsl_output = QPlainTextEdit()
@@ -305,7 +311,8 @@ class StrategySetupPanel(QGroupBox):
         self.diagnostics_output.setReadOnly(True)
         self.diagnostics_output.setFixedHeight(150)
         self.diagnostics_output.hide()
-        for widget in (self.prompt_input, self.generate_button, self.generation_label,
+        for widget in (self.prompt_input, self.generate_button, self.cancel_generation_button,
+                       self.generation_label,
                        self.dsl_output, self.expand_dsl_button, self.diagnostics_toggle,
                        self.diagnostics_output):
             auto_layout.addWidget(widget)
@@ -349,6 +356,7 @@ class StrategySetupPanel(QGroupBox):
 
         self.source_combo.currentIndexChanged.connect(self._source_changed)
         self.generate_button.clicked.connect(self._generate)
+        self.cancel_generation_button.clicked.connect(self._cancel_generation)
         self.prompt_input.textChanged.connect(self._prompt_changed)
         self.expand_dsl_button.clicked.connect(self._expand_dsl)
         self.diagnostics_toggle.toggled.connect(self.diagnostics_output.setVisible)
@@ -361,7 +369,7 @@ class StrategySetupPanel(QGroupBox):
         self.strategy_combo.currentIndexChanged.connect(self._show_selected_strategy)
         self.controller.strategies_received.connect(self.update_strategies)
         self.controller.strategy_status_received.connect(self.update_status)
-        self.controller.response_error.connect(self._show_error)
+        self.controller.request_error.connect(self._show_request_error)
         self._sync_controls(strategy_status={})
         self.controller.refresh_strategies()
 
@@ -400,6 +408,12 @@ class StrategySetupPanel(QGroupBox):
             self._generation_pending = True
             self.controller.refresh_strategy_generation()
 
+    def _cancel_generation(self) -> None:
+        if self._generation_busy:
+            self.cancel_generation_button.setEnabled(False)
+            self.generation_label.setText("Cancelling generation…")
+            self.controller.cancel_strategy_generation()
+
     def update_generation(self, payload: dict) -> None:
         self._generation_pending = False
         self._generation_busy = payload.get("state") == "running"
@@ -413,10 +427,13 @@ class StrategySetupPanel(QGroupBox):
             self.dsl_output.setPlainText(payload.get("dsl") or "")
             diagnostics = payload.get("diagnostics") or payload.get("error") or ""
             self.diagnostics_output.setPlainText(diagnostics)
-            self.generation_label.setText(
-                "Accepted. Review the strategy code, then press Set Strategy."
-                if accepted else "Generation failed. See diagnostics; no strategy was installed."
-            )
+            if payload.get("state") == "cancelled":
+                self.generation_label.setText("Generation cancelled; no strategy was installed.")
+            else:
+                self.generation_label.setText(
+                    "Accepted. Review the strategy code, then press Set Strategy."
+                    if accepted else "Generation failed. See diagnostics; no strategy was installed."
+                )
             if not accepted:
                 self.diagnostics_toggle.setChecked(True)
         self._sync_controls(self._last_strategy_status)
@@ -514,6 +531,7 @@ class StrategySetupPanel(QGroupBox):
         self.auto_group.setVisible(automatic)
         self.prompt_input.setReadOnly(self._generation_busy)
         self.generate_button.setEnabled(not self._generation_busy and bool(self.prompt_input.toPlainText().strip()))
+        self.cancel_generation_button.setEnabled(self._generation_busy)
         self.expand_dsl_button.setEnabled(bool(self.dsl_output.toPlainText()))
         matches_installed = (
             self._generation_id is not None and self._generation_id == strategy_status.get("generation_id")
@@ -543,3 +561,14 @@ class StrategySetupPanel(QGroupBox):
     def _show_error(self, error: str) -> None:
         self._status_pending = False
         self.status_label.setText(error)
+
+    def _show_request_error(self, command: GuiCommandType, error: str) -> None:
+        if command in {
+            GuiCommandType.STRATEGY_LIST,
+            GuiCommandType.STRATEGY_SET,
+            GuiCommandType.STRATEGY_START,
+            GuiCommandType.STRATEGY_STOP,
+            GuiCommandType.STRATEGY_STATUS,
+            GuiCommandType.AUTOSTRAT_CONFIGURE,
+        }:
+            self._show_error(error)

@@ -50,6 +50,7 @@ class EvoMachineGuiController(QObject):
 
     request_ready = pyqtSignal(object)
     response_error = pyqtSignal(str)
+    request_error = pyqtSignal(object, str)
     controller_status_received = pyqtSignal(dict)
     logs_received = pyqtSignal(dict)
     fovs_received = pyqtSignal(list)
@@ -94,7 +95,7 @@ class EvoMachineGuiController(QObject):
         self._thread: QThread | None = None
         self._worker: RpcClientWorker | None = None
         self._closed = False
-        self._generation_requests: set[str] = set()
+        self._request_commands: dict[str, GuiCommandType] = {}
         if start_worker:
             self._thread = QThread()
             self._worker = RpcClientWorker(client=self.client)
@@ -337,6 +338,9 @@ class EvoMachineGuiController(QObject):
     def generate_strategy(self, prompt: str) -> None:
         self._send(GuiCommandType.STRATEGY_GENERATE, {"prompt": prompt})
 
+    def cancel_strategy_generation(self) -> None:
+        self._send(GuiCommandType.STRATEGY_GENERATION_CANCEL)
+
     def configure_autostrat(self, api_key: str) -> None:
         self._send(GuiCommandType.AUTOSTRAT_CONFIGURE, {"api_key": api_key})
 
@@ -351,8 +355,7 @@ class EvoMachineGuiController(QObject):
 
     def _send(self, command: GuiCommandType, payload: dict[str, Any] | None = None) -> None:
         request = GuiRequest(command=command, payload={} if payload is None else payload)
-        if command in {GuiCommandType.STRATEGY_GENERATE, GuiCommandType.STRATEGY_GENERATION_STATUS}:
-            self._generation_requests.add(request.request_id)
+        self._request_commands[request.request_id] = command
         if self._worker is None:
             self._handle_response(self.client.request_object(request))
             return
@@ -368,13 +371,20 @@ class EvoMachineGuiController(QObject):
 
     @pyqtSlot(object)
     def _handle_response(self, response: GuiResponse) -> None:
-        generation_response = response.request_id in self._generation_requests
-        self._generation_requests.discard(response.request_id)
+        command = self._request_commands.pop(response.request_id, None)
+        generation_response = command in {
+            GuiCommandType.STRATEGY_GENERATE,
+            GuiCommandType.STRATEGY_GENERATION_STATUS,
+            GuiCommandType.STRATEGY_GENERATION_CANCEL,
+        }
         if not response.ok:
             if generation_response:
                 self.strategy_generation_received.emit({"state": "failed", "error": response.error})
                 return
-            self.response_error.emit(response.error or "Unknown automaton RPC error.")
+            error = response.error or "Unknown automaton RPC error."
+            if command is not None:
+                self.request_error.emit(command, error)
+            self.response_error.emit(error)
             return
         payload = response.payload
         if "image_transport_probe" in payload:
