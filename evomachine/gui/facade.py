@@ -22,6 +22,9 @@ logger = get_logger(name=__name__)
 _OPERATION_SAFE_COMMANDS = frozenset(
     {
         GuiCommandType.PING,
+        GuiCommandType.STRATEGY_GENERATE,
+        GuiCommandType.AUTOSTRAT_CONFIGURE,
+        GuiCommandType.STRATEGY_GENERATION_STATUS,
         GuiCommandType.STOP,
         GuiCommandType.LOGS_RECENT,
         GuiCommandType.STAGE_STOP,
@@ -47,6 +50,11 @@ class AutomatonGuiFacade:
         self._loaded_dmd_pattern: dict[str, Any] | None = None
         self._last_software_focus_result: dict[str, Any] | None = None
         self.gui_operations = GuiOperationManager()
+        # Generation has no hardware access and must not lock out microscope controls.
+        self.strategy_generation = GuiOperationManager()
+        self.autostrat_enabled = False
+        self._installed_generation_id: str | None = None
+        self._installed_generated_strategy = None
 
     def handle(self, request: GuiRequest) -> GuiResponse:
         active_operation = self.gui_operations.active()
@@ -90,7 +98,9 @@ class AutomatonGuiFacade:
     def gui_strategy_active(self) -> bool:
         started = bool(self.automaton.strategy_has_started())
         stopped = bool(self.automaton.strategy_has_stopped())
-        return started and not stopped
+        return bool(getattr(self.automaton, "_strategy_processing", False)) or (
+            started and not stopped and not self.automaton.stopped()
+        )
 
     @staticmethod
     def gui_is_rejected_during_strategy(command: GuiCommandType) -> bool:
@@ -227,11 +237,15 @@ class AutomatonGuiFacade:
                 command_error = f"{type(error).__name__}: {error}"
         payload = {
             "name": None if strategy is None else strategy.name(),
+            "generation_id": self._installed_generation_id
+            if strategy is self._installed_generated_strategy else None,
             "is_initialised": bool(getattr(self.automaton, "_strategy_is_initialised", False)),
             "fovs_initialised": bool(getattr(self.automaton, "_fov_list_is_initialised", False)),
             "running": self.gui_strategy_active(),
             "started": bool(self.automaton.strategy_has_started()),
-            "stopped": bool(self.automaton.strategy_has_stopped()),
+            "stopped": bool(self.automaton.strategy_has_stopped()) or (
+                self.automaton.strategy_has_started() and self.automaton.stopped()
+            ),
             "next_commands": len(getattr(self.automaton, "next_commands", []) or []),
             "last_commands": len(getattr(self.automaton, "last_commands", []) or []),
             "commands": command_names,

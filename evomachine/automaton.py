@@ -196,6 +196,7 @@ class Automaton:
         self._strategy_is_initialised: bool = False
         "True after the current strategy has been initialised."
         self._strategy_is_finalised: bool = False
+        self._strategy_processing = False
         "True after finalisation has been requested for the current strategy."
         self._fov_processors_is_initialised: dict[int, bool] = {}
         "Initialisation status of each FoV processor keyed by FoV ID."
@@ -232,6 +233,7 @@ class Automaton:
         "Optional callable that processes pending GUI requests on the automaton thread."
         self.gui_request_budget: int = gui_request_budget
         "Maximum number of GUI requests processed per automaton loop tick."
+        self._servicing_gui = False
 
     def gui_set_request_processor(
             self,
@@ -536,7 +538,7 @@ class Automaton:
 
     def set_strategy(self, strategy: AbstractStrategy) -> None:
         """
-        Set or replace the strategy before strategy execution has started.
+        Prepare a fresh strategy before execution or after the previous run stops.
 
         Parameters
         ----------
@@ -547,11 +549,16 @@ class Automaton:
         -------
         None
         """
-        if self.strategy_has_started():
-            raise RuntimeError("Automaton.set_strategy: cannot set strategy after start_strategy_event is set.")
+        if self.has_shutdown():
+            raise RuntimeError("Cannot set a strategy after shutdown.")
+        if self._strategy_processing or (self.strategy_has_started()
+                and not self.strategy_has_stopped() and not self.stopped()):
+            raise RuntimeError("Cannot set a strategy while execution is active.")
         if not isinstance(strategy, AbstractStrategy):
             raise TypeError(f"Automaton.set_strategy: strategy must be AbstractStrategy, received {type(strategy)}.")
         self._strategy = strategy
+        self._start_strategy_event.clear()
+        self._stop_strategy_event.clear()
         self._strategy_is_initialised = False
         self._strategy_is_finalised = False
         self.next_commands = []
@@ -683,8 +690,12 @@ class Automaton:
         -------
         None
         """
-        if self.gui_request_processor is not None:
-            self.gui_request_processor(self.gui_request_budget)
+        if self.gui_request_processor is not None and not self._servicing_gui:
+            self._servicing_gui = True
+            try:
+                self.gui_request_processor(self.gui_request_budget)
+            finally:
+                self._servicing_gui = False
 
     @property
     def runtime_failure_history(
@@ -696,11 +707,14 @@ class Automaton:
     def _process(self, finalise: bool = False) -> None:
         """Execute one batch under the Automaton's fail-safe runtime boundary."""
         section: LifecycleSection = "finalise" if finalise else self._command_section
+        self._strategy_processing = True
         try:
             self._process_commands(finalise=finalise)
         except BaseException as error:
             self._fail_safe_abort(error, section=section)
             raise
+        finally:
+            self._strategy_processing = False
 
     def _process_commands(self, finalise: bool = False) -> None:
         """
@@ -744,7 +758,7 @@ class Automaton:
         completed_commands: list[AutomatonCommand] = []
         command_errors: list[Exception] = []
         for command in self.next_commands:
-            if self.stopped():
+            if self.stopped() or (not finalise and self.strategy_has_stopped()):
                 return
             command.command_data = None
             command_section = self._command_section
@@ -1060,7 +1074,7 @@ class Automaton:
         if not args["roi_ids"]:
             return None  # Empty selection: no illumination and no treatment bookkeeping.
         try:
-            if self.stopped() or self.has_shutdown():
+            if self.stopped() or self.has_shutdown() or self.strategy_has_stopped():
                 raise RuntimeError("Experiment stopped before targeted exposure")
             fov = self.processing_state.fovs.get(args["fov_id"])
             if args["fov_id"] != self.get_fov_id() or fov is None or not fov.valid:
@@ -1076,7 +1090,7 @@ class Automaton:
                 finally:
                     if self._dmd is not None:
                         self._dmd.display_none()
-            if self.stopped() or self.has_shutdown():
+            if self.stopped() or self.has_shutdown() or self.strategy_has_stopped():
                 raise RuntimeError("Targeted exposure was interrupted")
             completed_at = self.processing_state.elapsed()
             for roi_id in args["roi_ids"]:
@@ -1139,16 +1153,12 @@ class Automaton:
         """
         try:
             while not self.has_shutdown():
-                while not self.strategy_has_started() and not self.has_shutdown():
-                    self.gui_process_requests()
-                    if self.run_timeout > 0:
-                        self.sleep(duration=self.run_timeout)
-                while not self.strategy_has_stopped() and not self.has_shutdown():
-                    self.gui_process_requests()
-                    if not self.stopped():
-                        self._process()
-                    if self.run_timeout > 0:
-                        self.sleep(duration=self.run_timeout)
+                self.gui_process_requests()
+                if (self.strategy_has_started() and not self.strategy_has_stopped()
+                        and not self.stopped() and not self.has_shutdown()):
+                    self._process()
+                if self.run_timeout > 0:
+                    self._shutdown_event.wait(timeout=self.run_timeout)
         except BaseException as error:
             self._fail_safe_abort(error, section=self._command_section)
             raise
@@ -1232,6 +1242,9 @@ class Automaton:
             self._led_mngr.set_led(led_type=channel, brightness=brightness)
             self.set_cam_live_mode(status=True)
         while time.perf_counter() < end and not self.stopped() and not self.has_shutdown():
+            self.gui_process_requests()
+            if self.strategy_has_started() and self.strategy_has_stopped():
+                break
             time.sleep(min(0.01, max(0.0, end - time.perf_counter())))
         if set_live_mode:
             self._led_mngr.disable_led()
@@ -1367,11 +1380,16 @@ class Automaton:
         -------
         None
         """
+        if self.has_shutdown():
+            raise RuntimeError("Cannot start a strategy after shutdown.")
+        if self.strategy_has_started() or self.strategy_has_stopped():
+            raise RuntimeError("Set Strategy again to prepare a fresh run before starting.")
         if self._strategy is None:
             raise RuntimeError("Automaton.start_strategy: strategy is required.")
         if not self._strategy_is_initialised:
             raise RuntimeError("Automaton.start_strategy: strategy is not initialised.")
         self._validate_strategy_command_requirements()
+        self._stop_event.clear()
         self._start_strategy_event.set()
 
     def strategy_has_started(self) -> bool:

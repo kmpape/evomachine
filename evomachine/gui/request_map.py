@@ -993,6 +993,8 @@ def gui_strategy_list(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def gui_strategy_set(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    if "generation_id" in payload:
+        return gui_generated_strategy_set(facade, payload)
     name = str(payload["name"])
     cfg = facade.gui_strategy_config()
     if name == "NoStrategy":
@@ -1010,6 +1012,8 @@ def gui_strategy_set(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
             file_path = matches[0].file_path
         strategy = create_strategy_from_definition(name=name, file_path=file_path, cfg=cfg)
     facade.automaton.set_strategy(strategy=strategy)
+    facade._installed_generation_id = None
+    facade._installed_generated_strategy = None
     return {
         **facade.gui_status_payload(),
         "strategy": facade.gui_strategy_status_payload(),
@@ -1022,6 +1026,90 @@ def gui_strategy_start(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
         **facade.gui_status_payload(),
         "strategy": facade.gui_strategy_status_payload(),
     }
+
+
+def gui_strategy_generate(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    from evomachine.gui.strategy_generation import generate
+
+    if not facade.autostrat_enabled:
+        raise ValueError("AutoStrat is disabled: no API key was supplied at GUI startup.")
+    request = payload.get("prompt")
+    if not isinstance(request, str) or not request.strip():
+        raise ValueError("Enter a strategy prompt first.")
+
+    def run(cancel_event, report):
+        report(0, "Generating and verifying strategy; hardware is unchanged.")
+        return generate(request.strip())
+
+    facade.strategy_generation.start("strategy_generation", run)
+    return gui_strategy_generation_status(facade, {})
+
+
+def gui_autostrat_configure(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    import os
+
+    if facade.strategy_generation.active() is not None:
+        raise ValueError("Cannot change the API key while generation is running.")
+    key = payload.get("api_key", "")
+    if not isinstance(key, str):
+        raise TypeError("API key must be text.")
+    key = key.strip()
+    # Backend session memory only: never write credentials to a file or response.
+    if key:
+        os.environ["OPENAI_API_KEY"] = key
+    else:
+        os.environ.pop("OPENAI_API_KEY", None)
+    facade.autostrat_enabled = bool(key)
+    return {"autostrat": {"enabled": facade.autostrat_enabled}}
+
+
+def gui_strategy_generation_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    from evomachine.strategy_generation.preview import GenerationPreview
+
+    operation = facade.strategy_generation.status("strategy_generation")
+    if operation is None:
+        return {"generation": {"state": "idle"}}
+    preview = operation.pop("result")
+    operation.update(accepted=False, dsl="", diagnostics=operation.get("error") or "")
+    if isinstance(preview, GenerationPreview):
+        operation.update(
+            accepted=preview.verified is not None,
+            dsl=preview.dsl or "", diagnostics=preview.diagnostics(),
+        )
+    return {"generation": operation}
+
+
+def gui_generated_strategy_set(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    from autostrat import load_domain_pack
+    from evomachine.domain_packs import MICROSCOPY_DOMAIN_PACK_PATH
+    from evomachine.strategy_generation import (
+        AutoStratStrategy, MicroscopyCommandAdapter, MicroscopyCollectionProvider,
+        MicroscopyObservationProvider, MicroscopyRuntimeErrorProvider,
+    )
+    from evomachine.strategy_generation.preview import GenerationPreview
+
+    if not facade.autostrat_enabled:
+        raise ValueError("AutoStrat is disabled for this GUI session.")
+    operation = facade.strategy_generation.status("strategy_generation")
+    if (operation is None or operation["operation_id"] != payload["generation_id"]
+            or operation["state"] != "completed"):
+        raise ValueError("This generated strategy is not available; generate and review it again.")
+    preview = operation["result"]
+    if not isinstance(preview, GenerationPreview) or preview.verified is None:
+        raise ValueError("Only an accepted generated strategy can be installed.")
+    strategy = AutoStratStrategy(
+        # Explicit DSL image flags opt into processing; model loading remains lazy.
+        cfg=facade.gui_strategy_config().updated(preproc_enabled=True), verified=preview.verified,
+        domain=load_domain_pack(MICROSCOPY_DOMAIN_PACK_PATH),
+        command_adapter=MicroscopyCommandAdapter(segment_images=False, save_images=True),
+        collection_provider=MicroscopyCollectionProvider(),
+        observation_provider=MicroscopyObservationProvider(),
+        runtime_error_provider=MicroscopyRuntimeErrorProvider(),
+    )
+    facade.automaton.set_strategy(strategy=strategy)
+    facade._installed_generation_id = operation["operation_id"]
+    facade._installed_generated_strategy = strategy
+    return {**facade.gui_status_payload(), "strategy": facade.gui_strategy_status_payload()}
 
 
 def gui_strategy_stop(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1085,6 +1173,9 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.SOFTWARE_FOCUS_RUN: gui_software_focus_run,
     GuiCommandType.SOFTWARE_FOCUS_OPERATION_STATUS: gui_software_focus_operation_status,
     GuiCommandType.STRATEGY_STATUS: gui_strategy_status,
+    GuiCommandType.STRATEGY_GENERATE: gui_strategy_generate,
+    GuiCommandType.AUTOSTRAT_CONFIGURE: gui_autostrat_configure,
+    GuiCommandType.STRATEGY_GENERATION_STATUS: gui_strategy_generation_status,
     GuiCommandType.STRATEGY_LIST: gui_strategy_list,
     GuiCommandType.STRATEGY_SET: gui_strategy_set,
     GuiCommandType.STRATEGY_START: gui_strategy_start,

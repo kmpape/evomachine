@@ -311,14 +311,15 @@ def targeted_command(automaton):
     return command
 
 
-def test_targeted_projection_records_only_confirmed_completion():
+@pytest.mark.parametrize("stop_event", ["_stop_event", "_stop_strategy_event"])
+def test_targeted_projection_records_only_confirmed_completion(stop_event):
     automaton, _, _, _, leds, _ = make_automaton()
     command = targeted_command(automaton)
     automaton._execute_project_roi(command)
     trench = automaton.processing_state.fovs[0].rois[0]
     assert trench.treatment_count == 1 and trench.last_treatment_time is not None
     assert leds.disable_count >= 1
-    automaton.sleep = lambda **kwargs: automaton._stop_event.set()
+    automaton.sleep = lambda **kwargs: getattr(automaton, stop_event).set()
     with pytest.raises(TargetedProjectionError, match="interrupted"):
         automaton._execute_project_roi(command)
     assert trench.treatment_count == 1

@@ -27,7 +27,7 @@ class RpcClientWorker(QObject):
     """Qt worker that performs blocking socket requests off the GUI thread."""
 
     response_ready = pyqtSignal(object)
-    request_failed = pyqtSignal(str)
+    request_failed = pyqtSignal(object, str)
 
     def __init__(self, client: GuiSocketClient):
         super().__init__()
@@ -38,7 +38,7 @@ class RpcClientWorker(QObject):
         try:
             self.response_ready.emit(self.client.request_object(request))
         except Exception as error:
-            self.request_failed.emit(f"{type(error).__name__}: {error}")
+            self.request_failed.emit(request, f"{type(error).__name__}: {error}")
 
     @pyqtSlot()
     def close(self) -> None:
@@ -70,6 +70,8 @@ class EvoMachineGuiController(QObject):
     operation_status_received = pyqtSignal(dict)
     strategies_received = pyqtSignal(list)
     strategy_status_received = pyqtSignal(dict)
+    strategy_generation_received = pyqtSignal(dict)
+    autostrat_configuration_received = pyqtSignal(dict)
     lifecycle_status_received = pyqtSignal(dict)
 
     def __init__(
@@ -92,13 +94,14 @@ class EvoMachineGuiController(QObject):
         self._thread: QThread | None = None
         self._worker: RpcClientWorker | None = None
         self._closed = False
+        self._generation_requests: set[str] = set()
         if start_worker:
             self._thread = QThread()
             self._worker = RpcClientWorker(client=self.client)
             self._worker.moveToThread(self._thread)
             self.request_ready.connect(self._worker.send_request)
             self._worker.response_ready.connect(self._handle_response)
-            self._worker.request_failed.connect(self.response_error.emit)
+            self._worker.request_failed.connect(self._handle_request_failure)
             self._thread.start()
 
     def close(self) -> None:
@@ -331,15 +334,32 @@ class EvoMachineGuiController(QObject):
     def start_strategy(self) -> None:
         self._send(GuiCommandType.STRATEGY_START)
 
+    def generate_strategy(self, prompt: str) -> None:
+        self._send(GuiCommandType.STRATEGY_GENERATE, {"prompt": prompt})
+
+    def configure_autostrat(self, api_key: str) -> None:
+        self._send(GuiCommandType.AUTOSTRAT_CONFIGURE, {"api_key": api_key})
+
+    def refresh_strategy_generation(self) -> None:
+        self._send(GuiCommandType.STRATEGY_GENERATION_STATUS)
+
+    def set_generated_strategy(self, generation_id: str) -> None:
+        self._send(GuiCommandType.STRATEGY_SET, {"generation_id": generation_id})
+
     def stop_strategy(self) -> None:
         self._send(GuiCommandType.STRATEGY_STOP)
 
     def _send(self, command: GuiCommandType, payload: dict[str, Any] | None = None) -> None:
         request = GuiRequest(command=command, payload={} if payload is None else payload)
+        if command in {GuiCommandType.STRATEGY_GENERATE, GuiCommandType.STRATEGY_GENERATION_STATUS}:
+            self._generation_requests.add(request.request_id)
         if self._worker is None:
             self._handle_response(self.client.request_object(request))
             return
         self.request_ready.emit(request)
+
+    def _handle_request_failure(self, request: GuiRequest, error: str) -> None:
+        self._handle_response(GuiResponse(request_id=request.request_id, ok=False, error=error))
 
     def _with_image_transport(self, payload: dict[str, Any] | None) -> dict[str, Any]:
         updated = {} if payload is None else dict(payload)
@@ -348,7 +368,12 @@ class EvoMachineGuiController(QObject):
 
     @pyqtSlot(object)
     def _handle_response(self, response: GuiResponse) -> None:
+        generation_response = response.request_id in self._generation_requests
+        self._generation_requests.discard(response.request_id)
         if not response.ok:
+            if generation_response:
+                self.strategy_generation_received.emit({"state": "failed", "error": response.error})
+                return
             self.response_error.emit(response.error or "Unknown automaton RPC error.")
             return
         payload = response.payload
@@ -405,6 +430,10 @@ class EvoMachineGuiController(QObject):
             self.strategies_received.emit(payload["strategies"])
         if "strategy" in payload:
             self.strategy_status_received.emit(payload["strategy"])
+        if "generation" in payload:
+            self.strategy_generation_received.emit(payload["generation"])
+        if "autostrat" in payload:
+            self.autostrat_configuration_received.emit(payload["autostrat"])
         if (
             "devices_initialised" in payload
             or "shutdown" in payload

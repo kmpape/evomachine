@@ -14,6 +14,44 @@ class EchoHandler:
         return GuiResponse(request_id=request.request_id, ok=True, payload={"command": request.command.value})
 
 
+def test_strategy_wait_keeps_status_and_stop_requests_responsive() -> None:
+    from tests.test_automaton import make_automaton
+
+    automaton, *_ = make_automaton()
+    automaton._start_strategy_event.set()
+
+    class Handler(EchoHandler):
+        def handle(self, request):
+            if request.command is GuiCommandType.STRATEGY_STOP:
+                automaton.stop_strategy()
+            return super().handle(request)
+
+    server = GuiRpcServer(handler=Handler(), port=0)
+    host, port = server.start()
+    automaton.gui_set_request_processor(server.process_pending)
+    responses, failures = [], []
+
+    def request_status_and_stop():
+        try:
+            with GuiSocketClient(host=host, port=port, timeout=0.5) as client:
+                responses.append(client.request(GuiCommandType.STRATEGY_STATUS))
+                responses.append(client.request(GuiCommandType.STRATEGY_STOP))
+        except Exception as error:
+            failures.append(error)
+
+    thread = threading.Thread(target=request_status_and_stop)
+    try:
+        thread.start()
+        automaton.sleep(2)
+        thread.join(timeout=1)
+        assert not failures
+        assert len(responses) == 2 and all(response.ok for response in responses)
+        assert automaton.strategy_has_stopped()
+    finally:
+        server.stop()
+        thread.join(timeout=1)
+
+
 def test_socket_server_queues_requests_for_bounded_processing() -> None:
     server = GuiRpcServer(handler=EchoHandler(), port=0)
     host, port = server.start()
