@@ -21,6 +21,7 @@ from autostrat.verification import SemanticVerdict
 from evomachine.commands import AutomatonCommand
 from evomachine.config import DMD_WIDTH_HEIGHT
 from evomachine.coordinates import Coordinate
+from evomachine.delta_processing import ProjectionExposureError
 from evomachine.image_processing_config import ImageProcessorConfigFactory
 from evomachine.navigation import FocusNavigatorFovRecord, FovConfig
 from evomachine.strategy import AbstractStrategy
@@ -354,6 +355,11 @@ def test_strategy_rejects_multiple_errors_for_one_stopped_batch() -> None:
         (AutomatonCommandType.MOVE, RuntimeError("motion rejected"), "movement_failed"),
         (AutomatonCommandType.IMAGE, RuntimeError("no frame returned"), "image_acquisition_failed"),
         (AutomatonCommandType.PROJECT, RuntimeError("DMD rejected pattern"), "projection_failed"),
+        (
+            AutomatonCommandType.PROJECT,
+            ProjectionExposureError("completion uncertain"),
+            "projection_exposure_uncertain",
+        ),
         (AutomatonCommandType.IMAGE, ConnectionError("socket closed"), "communication_failed"),
     ],
 )
@@ -641,6 +647,7 @@ def test_microscopy_domain_exposes_runtime_error_policies() -> None:
         "movement_failed",
         "image_acquisition_failed",
         "projection_failed",
+        "projection_exposure_uncertain",
         "communication_failed",
         "runtime_failure",
         "processing_failed",
@@ -654,6 +661,8 @@ def test_microscopy_domain_exposes_runtime_error_policies() -> None:
     )
     assert domain.runtime_errors["image_acquisition_failed"].exhausted_action == "continue"
     assert domain.runtime_errors["projection_failed"].exhausted_action == "continue"
+    assert domain.runtime_errors["projection_exposure_uncertain"].action == "abort"
+    assert domain.runtime_errors["projection_exposure_uncertain"].max_retries == 0
     assert "filter" in domain.commands["image"].arguments["filter"].values
 
 

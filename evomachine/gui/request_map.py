@@ -1029,7 +1029,7 @@ def gui_strategy_start(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def gui_strategy_generate(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    from evomachine.gui.strategy_generation import generate
+    from evomachine.gui.strategy_generation import generate_cancellable
 
     if not facade.autostrat_enabled:
         raise ValueError("AutoStrat is disabled: no API key was supplied at GUI startup.")
@@ -1039,9 +1039,14 @@ def gui_strategy_generate(facade: Any, payload: dict[str, Any]) -> dict[str, Any
 
     def run(cancel_event, report):
         report(0, "Generating and verifying strategy; hardware is unchanged.")
-        return generate(request.strip())
+        return generate_cancellable(request.strip(), cancel_event)
 
     facade.strategy_generation.start("strategy_generation", run)
+    return gui_strategy_generation_status(facade, {})
+
+
+def gui_strategy_generation_cancel(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    facade.strategy_generation.cancel("strategy_generation")
     return gui_strategy_generation_status(facade, {})
 
 
@@ -1174,6 +1179,7 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.SOFTWARE_FOCUS_OPERATION_STATUS: gui_software_focus_operation_status,
     GuiCommandType.STRATEGY_STATUS: gui_strategy_status,
     GuiCommandType.STRATEGY_GENERATE: gui_strategy_generate,
+    GuiCommandType.STRATEGY_GENERATION_CANCEL: gui_strategy_generation_cancel,
     GuiCommandType.AUTOSTRAT_CONFIGURE: gui_autostrat_configure,
     GuiCommandType.STRATEGY_GENERATION_STATUS: gui_strategy_generation_status,
     GuiCommandType.STRATEGY_LIST: gui_strategy_list,

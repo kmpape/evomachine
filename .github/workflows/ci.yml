@@ -19,6 +19,7 @@ jobs:
     env:
       # The GUI tests use Qt's headless platform plugin.
       QT_QPA_PLATFORM: offscreen
+      EVOMACHINE_GUI_RUN_QT_TESTS: "1"
 
     steps:
       - name: Check out repository

@@ -10,6 +10,7 @@ from evomachine.acquisition import FrameAcquisitionManager
 from evomachine.automaton import Automaton
 from evomachine.commands import AutomatonCommand, CommandFactory
 from evomachine.config import DMD_WIDTH_HEIGHT
+from evomachine.delta_processing import ProjectionExposureError
 from evomachine.frame import Frame, FrameMetaData
 from evomachine.image_processing_config import ImageProcessorConfigFactory
 from evomachine.coordinates import Coordinate
@@ -1473,6 +1474,39 @@ def test_automaton_project_uses_dmd_and_led_manager() -> None:
     assert np.array_equal(dmd.images[0], image)
     assert led_manager.set_calls[0] == (LEDType.LED_450_NM, 10, 1.0)
     assert led_manager.disable_count == 1
+    assert dmd.none_count == 1
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_automaton_project_cleans_up_and_rejects_uncertain_exposure(
+    monkeypatch, interrupted: bool
+) -> None:
+    automaton, _, _, _, led_manager, dmd = make_automaton()
+    command = CommandFactory(cfg=make_cfg()).command_project(
+        channel=LEDType.LED_450_NM,
+        image=np.ones(DMD_WIDTH_HEIGHT, dtype=np.uint8),
+        duration=1,
+        brightness=10,
+    )
+
+    if interrupted:
+        def interrupt(duration):
+            del duration
+            automaton.stop_strategy()
+
+        monkeypatch.setattr(automaton, "sleep", interrupt)
+    else:
+        def fail(duration):
+            del duration
+            raise ConnectionError("controller disconnected")
+
+        monkeypatch.setattr(automaton, "sleep", fail)
+
+    with pytest.raises(ProjectionExposureError, match="exposure not confirmed"):
+        automaton._execute_project(command)
+
+    assert led_manager.disable_count == 1
+    assert dmd.none_count == 1
 
 
 def test_automaton_project_raises_when_dmd_missing() -> None:

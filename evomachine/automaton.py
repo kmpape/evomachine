@@ -14,7 +14,7 @@ from evomachine.acquisition import FrameAcquisitionManager, FrameAcquisitionSett
 from evomachine.commands import AutomatonCommand
 from evomachine.delta_processing import (
     DeltaProcessor, DeltaProcessingError, FovMeasurements, MicroscopyState,
-    TargetedProjectionError,
+    ProjectionExposureError, TargetedProjectionError,
 )
 from evomachine.config import get_logger
 from evomachine.coordinates import Coordinate
@@ -1058,13 +1058,43 @@ class Automaton:
         assert self._dmd is not None
         args = command.command_args
         self._dmd.display_image(img=args["image"])
-        self._led_mngr.set_led(
-            led_type=args["channel"],
-            brightness=args["brightness"],
-            duration=args["duration"] * 1000.0,
-        )
-        self.sleep(duration=args["duration"])
-        self._led_mngr.disable_led()
+        exposure_error: Exception | None = None
+        cleanup_errors: list[Exception] = []
+        try:
+            # A set_led failure is uncertain: hardware may have accepted the
+            # command before communication failed.
+            self._led_mngr.set_led(
+                led_type=args["channel"],
+                brightness=args["brightness"],
+                duration=args["duration"] * 1000.0,
+            )
+            self.sleep(duration=args["duration"])
+            if self.stopped() or self.has_shutdown() or self.strategy_has_stopped():
+                raise RuntimeError("Full-field exposure was interrupted")
+        except Exception as error:
+            exposure_error = error
+        finally:
+            try:
+                self._led_mngr.disable_led()
+            except Exception as error:
+                cleanup_errors.append(error)
+            try:
+                self._dmd.display_none()
+            except Exception as error:
+                cleanup_errors.append(error)
+        if exposure_error is not None or cleanup_errors:
+            details: list[str] = []
+            if exposure_error is not None:
+                details.append(
+                    f"exposure: {type(exposure_error).__name__}: {exposure_error}"
+                )
+            details.extend(
+                f"cleanup: {type(error).__name__}: {error}" for error in cleanup_errors
+            )
+            cause = exposure_error or cleanup_errors[0]
+            raise ProjectionExposureError(
+                "Full-field exposure not confirmed: " + "; ".join(details)
+            ) from cause
         return True
 
     def _execute_project_roi(self, command: AutomatonCommand) -> np.ndarray | None:

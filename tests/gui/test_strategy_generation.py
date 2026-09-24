@@ -33,13 +33,14 @@ def test_background_generation_does_not_lock_hardware_and_requires_explicit_set(
     verified = _verified("initialise\nstep\n    terminate\nfinalise\n")
     started, release = threading.Event(), threading.Event()
 
-    def generate(prompt):
+    def generate(prompt, cancel_event):
         assert prompt == "finish"
+        assert not cancel_event.is_set()
         started.set()
         assert release.wait(3)
         return GenerationPreview(elapsed_seconds=1, verified=verified)
 
-    monkeypatch.setattr(strategy_generation, "generate", generate)
+    monkeypatch.setattr(strategy_generation, "generate_cancellable", generate)
     automaton = FakeAutomaton()
     facade = AutomatonGuiFacade(automaton)
     facade.autostrat_enabled = True  # Model requests below are mocked.
@@ -76,12 +77,13 @@ def test_background_generation_does_not_lock_hardware_and_requires_explicit_set(
 def test_failed_generation_has_diagnostics_and_cannot_be_installed(monkeypatch, exception):
     from evomachine.gui import strategy_generation
 
-    def generate(prompt):
+    def generate(prompt, cancel_event):
+        assert not cancel_event.is_set()
         if exception:
             raise ValueError("Missing model configuration")
         return GenerationPreview(elapsed_seconds=1, error=RuntimeError("Rejected candidate"))
 
-    monkeypatch.setattr(strategy_generation, "generate", generate)
+    monkeypatch.setattr(strategy_generation, "generate_cancellable", generate)
     facade = AutomatonGuiFacade(FakeAutomaton())
     facade.autostrat_enabled = True
     assert request(facade, GuiCommandType.STRATEGY_GENERATE, prompt="finish").ok
@@ -110,6 +112,48 @@ def test_generation_worker_has_event_loop_and_reuses_preview_diagnostics(monkeyp
     assert not thread.is_alive()
     assert previews[0].verified is verified
     assert "Semantic candidates: 1" in previews[0].diagnostics()
+
+
+def test_cancellable_generation_stops_its_worker_process(monkeypatch):
+    from evomachine.gui import strategy_generation
+
+    cancel_event = threading.Event()
+    cancel_event.set()
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    preview = strategy_generation.generate_cancellable("finish", cancel_event)
+    assert isinstance(preview.error, RuntimeError)
+    assert "cancelled" in str(preview.error).lower()
+
+
+def test_generation_timeout_configuration_is_validated(monkeypatch):
+    from evomachine.gui import strategy_generation
+
+    monkeypatch.setenv(strategy_generation.GENERATION_TIMEOUT_ENV, "0")
+    with pytest.raises(ValueError, match="positive number"):
+        strategy_generation.generation_timeout_seconds()
+
+
+def test_generation_can_be_cancelled_without_waiting_for_model_completion(monkeypatch):
+    from evomachine.gui import strategy_generation
+
+    started = threading.Event()
+
+    def generate(prompt, cancel_event):
+        assert prompt == "finish"
+        started.set()
+        assert cancel_event.wait(3)
+        return GenerationPreview(elapsed_seconds=0, error=RuntimeError("cancelled"))
+
+    monkeypatch.setattr(strategy_generation, "generate_cancellable", generate)
+    facade = AutomatonGuiFacade(FakeAutomaton())
+    facade.autostrat_enabled = True
+    assert request(facade, GuiCommandType.STRATEGY_GENERATE, prompt="finish").ok
+    assert started.wait(1)
+    cancelled = request(facade, GuiCommandType.STRATEGY_GENERATION_CANCEL)
+    assert cancelled.ok
+    result = finish_generation(facade)
+    assert result["state"] == "cancelled"
+    assert not result["accepted"]
 
 
 def test_blank_startup_key_disables_autostrat_even_with_inherited_key(monkeypatch):

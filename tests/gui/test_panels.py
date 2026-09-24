@@ -37,6 +37,7 @@ from evomachine.gui.panels.logs import ApplicationLogPanel
 from evomachine.gui.panels.software_focus import SoftwareFocusPanel
 from evomachine.gui.panels.stage import StagePanel
 from evomachine.gui.panels.strategy import FovSetupPanel, StrategySetupPanel
+from evomachine.gui.protocol import GuiCommandType
 from evomachine.types import FilterWheelType, LEDType
 
 
@@ -66,6 +67,7 @@ class FakeController(QObject):
     autostrat_configuration_received = pyqtSignal(dict)
     lifecycle_status_received = pyqtSignal(dict)
     response_error = pyqtSignal(str)
+    request_error = pyqtSignal(object, str)
     fovs_received = pyqtSignal(list)
 
     def __init__(self):
@@ -215,6 +217,9 @@ class FakeController(QObject):
 
     def generate_strategy(self, prompt):
         self.calls.append(("generate_strategy", prompt))
+
+    def cancel_strategy_generation(self):
+        self.calls.append(("cancel_strategy_generation",))
 
     def configure_autostrat(self, api_key):
         self.calls.append(("configure_autostrat", api_key))
@@ -1394,8 +1399,11 @@ def test_autostrat_panel_reviews_then_uses_shared_lifecycle_buttons() -> None:
     assert not panel.set_button.isEnabled()
     assert not panel.generate_button.isEnabled()
     controller.strategy_generation_received.emit({"state": "running", "operation_id": "a"})
+    panel.cancel_generation_button.click()
+    assert controller.calls[-1] == ("cancel_strategy_generation",)
     controller.response_error.emit("An unrelated stage request failed")
     assert panel.generation_timer.isActive()
+    assert "unrelated stage" not in panel.status_label.text()
     controller.strategy_generation_received.emit({
         "state": "completed", "operation_id": "a", "accepted": True,
         "dsl": "initialise\nstep\n    terminate\nfinalise\n",
@@ -1427,6 +1435,23 @@ def test_autostrat_panel_reviews_then_uses_shared_lifecycle_buttons() -> None:
     assert not panel.set_button.isEnabled()
     assert panel.generate_button.isEnabled()
     assert "endpoint unavailable" in panel.diagnostics_output.toPlainText()
+    panel.close()
+
+
+def test_fov_capture_ignores_unrelated_request_errors() -> None:
+    _app()
+    controller = FakeController()
+    panel = FovSetupPanel(controller)
+    panel.add_button.click()
+    assert panel._pending_capture == "add"
+
+    controller.request_error.emit(GuiCommandType.CAMERA_STATUS, "camera unavailable")
+    assert panel._pending_capture == "add"
+    assert "camera unavailable" not in panel.status_label.text()
+
+    controller.request_error.emit(GuiCommandType.STAGE_GET_COORDINATES, "stage unavailable")
+    assert panel._pending_capture is None
+    assert panel.status_label.text() == "stage unavailable"
     panel.close()
 
 
