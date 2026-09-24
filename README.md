@@ -4,6 +4,13 @@ Evomachine is the main microscope automation application in this workspace. It
 coordinates hardware peripherals, image acquisition, focus navigation,
 projection, strategies, and real-time processing workflows.
 
+## Developer guides
+
+- [Extending AutoStrat integration](docs/development/autostrat.md): commands,
+  observations, collections, runtime errors, and domain-pack examples.
+- [Extending the GUI](docs/development/gui.md): panels, RPC operations, background
+  work, lifecycle rules, and tests.
+
 ## Installation
 
 Dependencies are managed with [uv](https://docs.astral.sh/uv/) and specified in the [pyproject.toml](pyproject.toml) file.
