@@ -292,14 +292,14 @@ class StrategySetupPanel(QGroupBox):
         self.prompt_input.setPlaceholderText("Describe the imaging strategy and its stopping condition…")
         self.prompt_input.setFixedHeight(120)
         self.generate_button = QPushButton("Generate strategy")
-        self.generation_label = QLabel("Generate, review the DSL, then Set Strategy. Generation does not run hardware.")
+        self.generation_label = QLabel("Generate, review the strategy code, then Set Strategy. Generation does not run hardware.")
         self.generation_label.setWordWrap(True)
         self.dsl_output = QPlainTextEdit()
         self.dsl_output.setReadOnly(True)
         self.dsl_output.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.dsl_output.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
         self.dsl_output.setFixedHeight(180)
-        self.expand_dsl_button = QPushButton("Expand DSL")
+        self.expand_dsl_button = QPushButton("Expand strategy code")
         self.diagnostics_toggle = QCheckBox("Show generation diagnostics")
         self.diagnostics_output = QPlainTextEdit()
         self.diagnostics_output.setReadOnly(True)
@@ -414,7 +414,7 @@ class StrategySetupPanel(QGroupBox):
             diagnostics = payload.get("diagnostics") or payload.get("error") or ""
             self.diagnostics_output.setPlainText(diagnostics)
             self.generation_label.setText(
-                "Accepted. Review the DSL, then press Set Strategy."
+                "Accepted. Review the strategy code, then press Set Strategy."
                 if accepted else "Generation failed. See diagnostics; no strategy was installed."
             )
             if not accepted:
@@ -423,7 +423,7 @@ class StrategySetupPanel(QGroupBox):
 
     def _expand_dsl(self) -> None:
         dialog = QDialog(self)
-        dialog.setWindowTitle("AutoStrat DSL — review only")
+        dialog.setWindowTitle("AutoStrat strategy code — review only")
         editor = QPlainTextEdit(dialog)
         editor.setReadOnly(True)
         editor.setFont(self.dsl_output.font())
