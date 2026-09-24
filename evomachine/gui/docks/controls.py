@@ -32,7 +32,7 @@ from evomachine.gui.panels.filterwheel import FilterWheelPanel
 from evomachine.gui.panels.leds import LedManagerPanel
 from evomachine.gui.panels.software_focus import SoftwareFocusPanel
 from evomachine.gui.panels.stage import StagePanel
-from evomachine.gui.panels.strategy import AiAssistancePanel, FovSetupPanel, StrategySetupPanel
+from evomachine.gui.panels.strategy import FovSetupPanel, StrategySetupPanel
 
 
 class EvoMachineControlsDock(QWidget):
@@ -150,10 +150,15 @@ class EvoMachineControlsDock(QWidget):
     def _build_strategy_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout()
-        layout.addWidget(FovSetupPanel(controller=self.controller))
-        layout.addWidget(OutputDirectoryPanel(controller=self.controller))
-        layout.addWidget(StrategySetupPanel(controller=self.controller))
-        layout.addWidget(AiAssistancePanel())
+        layout.setSpacing(6)
+        layout.setContentsMargins(6, 6, 6, 6)
+        for panel in (
+            FovSetupPanel(controller=self.controller),
+            OutputDirectoryPanel(controller=self.controller),
+            StrategySetupPanel(controller=self.controller),
+        ):
+            panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+            layout.addWidget(panel)
         layout.addStretch(1)
         widget.setLayout(layout)
         return widget

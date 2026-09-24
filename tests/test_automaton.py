@@ -1140,10 +1140,45 @@ def test_automaton_set_strategy_rejects_after_start_event() -> None:
     automaton.start_strategy()
     replacement = FakeStrategy(cfg=make_cfg())
 
-    with pytest.raises(RuntimeError, match="start_strategy_event"):
+    with pytest.raises(RuntimeError, match="execution is active"):
         automaton.set_strategy(strategy=replacement)
 
     assert automaton._strategy is original_strategy
+
+
+@pytest.mark.parametrize("stop_kind", ["strategy", "global", "terminate"])
+def test_fresh_strategy_after_stop_can_start(stop_kind):
+    automaton, *_ = make_automaton()
+    automaton.start_strategy()
+    if stop_kind in {"strategy", "terminate"}:
+        automaton.stop_strategy()
+    if stop_kind in {"global", "terminate"}:
+        automaton.stop()
+    with pytest.raises(RuntimeError, match="fresh run"):
+        automaton.start_strategy()
+    replacement = FakeStrategy(cfg=make_cfg())
+    automaton.set_strategy(replacement)
+    assert not automaton.strategy_has_started()
+    assert not automaton.strategy_has_stopped()
+    assert replacement.initialise_count == 1
+    automaton.start_strategy()
+    assert automaton.strategy_has_started()
+    assert not automaton.stopped()
+
+
+def test_replacement_cannot_interrupt_unwinding_batch_or_shutdown():
+    automaton, *_ = make_automaton()
+    automaton.start_strategy()
+    automaton.stop_strategy()
+    automaton._strategy_processing = True
+    with pytest.raises(RuntimeError, match="execution is active"):
+        automaton.set_strategy(FakeStrategy(cfg=make_cfg()))
+    automaton._strategy_processing = False
+    automaton._shutdown_event.set()
+    with pytest.raises(RuntimeError, match="shutdown"):
+        automaton.set_strategy(FakeStrategy(cfg=make_cfg()))
+    with pytest.raises(RuntimeError, match="shutdown"):
+        automaton.start_strategy()
 
 
 def test_automaton_update_fov_config_delegates_to_focus_navigator() -> None:
@@ -1753,3 +1788,35 @@ def test_automaton_gui_set_request_processor_updates_hook_and_budget() -> None:
     assert budgets == [5]
     assert automaton.gui_request_processor is process_gui_requests
     assert automaton.gui_request_budget == 5
+
+
+def test_wait_services_stop_requests_without_recursively_servicing_gui() -> None:
+    automaton, *_ = make_automaton()
+    automaton._start_strategy_event.set()
+    calls = []
+
+    def process_requests(budget):
+        calls.append(budget)
+        # A GUI handler may itself sleep; it must not re-enter request handling.
+        automaton.sleep(0.001)
+        automaton.stop_strategy()
+
+    automaton.gui_set_request_processor(process_requests, budget=2)
+    automaton.sleep(10)
+    assert calls == [2]
+    assert automaton.strategy_has_stopped()
+
+
+def test_automaton_keeps_servicing_gui_after_strategy_stops() -> None:
+    automaton, *_ = make_automaton()
+    automaton._start_strategy_event.set()
+    automaton.stop_strategy()
+    calls = []
+
+    def process_requests(budget):
+        calls.append(budget)
+        automaton._shutdown_event.set()
+
+    automaton.gui_set_request_processor(process_requests)
+    automaton.run()
+    assert calls == [automaton.gui_request_budget]

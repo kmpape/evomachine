@@ -62,6 +62,8 @@ class FakeController(QObject):
     logs_received = pyqtSignal(dict)
     strategies_received = pyqtSignal(list)
     strategy_status_received = pyqtSignal(dict)
+    strategy_generation_received = pyqtSignal(dict)
+    autostrat_configuration_received = pyqtSignal(dict)
     lifecycle_status_received = pyqtSignal(dict)
     response_error = pyqtSignal(str)
     fovs_received = pyqtSignal(list)
@@ -210,6 +212,18 @@ class FakeController(QObject):
 
     def set_strategy(self, name, file_path=None):
         self.calls.append(("set_strategy", name, file_path))
+
+    def generate_strategy(self, prompt):
+        self.calls.append(("generate_strategy", prompt))
+
+    def configure_autostrat(self, api_key):
+        self.calls.append(("configure_autostrat", api_key))
+
+    def refresh_strategy_generation(self):
+        self.calls.append(("refresh_strategy_generation",))
+
+    def set_generated_strategy(self, generation_id):
+        self.calls.append(("set_generated_strategy", generation_id))
 
     def start_strategy(self):
         self.calls.append(("start_strategy",))
@@ -418,10 +432,9 @@ def test_narrow_control_columns_use_compact_action_labels() -> None:
     assert dmd.show_calibration_plot_button.text() == "Show Plot"
     assert autofocus.run_calibration_button.text() == "Calibrate"
     assert autofocus.lock_after_calibration_checkbox.text() == "Lock afterwards"
-    assert fovs.use_autofocus_checkbox.text() == "Use autofocus"
-    assert fovs.use_current_button.text() == "Use Current"
-    assert fovs.add_button.text() == "Add / Update"
-    assert fovs.remove_button.text() == "Remove"
+    assert fovs.add_button.text() == "Add current"
+    assert fovs.remove_button.text() == "Remove last"
+    assert not hasattr(fovs, "use_autofocus_checkbox")
     assert fovs.initialise_button.text() == "Initialise"
 
 
@@ -1211,6 +1224,10 @@ def test_strategy_panel_sends_lifecycle_requests() -> None:
         }
     )
     panel.start_button.click()
+    panel.strategy_combo.setCurrentIndex(0)
+    assert not panel.start_button.isEnabled()
+    assert "Set Strategy to load NoStrategy" in panel.status_label.text()
+    panel.strategy_combo.setCurrentIndex(1)
     panel.update_status(
         {
             "name": "SimpleImagingStrategy",
@@ -1220,6 +1237,14 @@ def test_strategy_panel_sends_lifecycle_requests() -> None:
         }
     )
     panel.stop_button.click()
+    assert not hasattr(panel, "refresh_button")
+    assert panel.status_timer.isActive()
+    panel.update_status({"name": "SimpleImagingStrategy", "started": True, "running": False, "stopped": True})
+    assert not panel.status_timer.isActive()
+    assert panel.set_button.isEnabled()
+    assert panel.strategy_combo.isEnabled()
+    assert not panel.start_button.isEnabled()
+    assert "fresh run" in panel.status_label.text()
 
     assert controller.calls == [
         ("set_strategy", "SimpleImagingStrategy", "/tmp/strategy_simple_imaging.py"),
@@ -1232,18 +1257,16 @@ def test_fov_setup_panel_sends_initialise_request() -> None:
     _app()
     controller = FakeController()
     panel = FovSetupPanel(controller=controller)
-    panel.fov_id_input.setValue(2)
-    panel.x_input.setValue(10)
-    panel.y_input.setValue(20)
-    panel.z_input.setValue(30)
-
     panel.add_button.click()
+    assert panel.table.rowCount() == 0
+    controller.stage_coordinates_received.emit({"coordinate": {"x": 10, "y": 20, "z": 30}})
     panel.initialise_button.click()
 
     assert controller.calls == [
+        ("refresh_stage",),
         (
             "initialise_fovs",
-            [{"fov_id": 2, "x": 10.0, "y": 20.0, "z": 30.0, "channel_id": 0}],
+            [{"fov_id": 0, "x": 10.0, "y": 20.0, "z": 30.0, "channel_id": 0}],
             False,
         )
     ]
@@ -1254,23 +1277,24 @@ def test_fov_setup_panel_generates_linear_fovs_from_stage_endpoints() -> None:
     controller = FakeController()
     panel = FovSetupPanel(controller=controller)
 
-    assert panel.set_linear_start_button.text() == "Use Current as Start"
-    assert panel.set_linear_end_button.text() == "Use Current as End"
+    panel.mode_combo.setCurrentText("Linear")
+    assert panel.set_linear_start_button.text() == "Start"
+    assert panel.set_linear_end_button.text() == "End"
 
+    panel.set_linear_start_button.click()
     panel.update_current_coordinate(
         {
             "coordinate": {"x": 0, "y": 0, "z": 0},
             "stage": {"camera_fov_step_size": 10},
         }
     )
-    panel.set_linear_start_button.click()
+    panel.set_linear_end_button.click()
     panel.update_current_coordinate(
         {
             "coordinate": {"x": 15, "y": 7.5, "z": 3},
             "stage": {"camera_fov_step_size": 10},
         }
     )
-    panel.set_linear_end_button.click()
     panel.generate_line_button.click()
 
     assert panel._fov_payload() == [
@@ -1285,16 +1309,18 @@ def test_fov_setup_panel_requires_endpoints_and_camera_spacing() -> None:
     _app()
     panel = FovSetupPanel(controller=FakeController())
 
-    assert not panel.set_linear_start_button.isEnabled()
+    assert panel.set_linear_start_button.isEnabled()
     assert not panel.generate_line_button.isEnabled()
 
-    panel.update_current_coordinate({"coordinate": {"x": 1, "y": 2, "z": 3}})
     panel.set_linear_start_button.click()
+    panel.update_current_coordinate({"coordinate": {"x": 1, "y": 2, "z": 3}})
     panel.set_linear_end_button.click()
+    panel.update_current_coordinate({"coordinate": {"x": 1, "y": 2, "z": 3}})
 
     assert panel.linear_spacing_label.text() == "spacing: unavailable"
     assert not panel.generate_line_button.isEnabled()
 
+    panel.add_button.click()
     panel.update_current_coordinate(
         {
             "coordinate": {"x": 1, "y": None, "z": 3},
@@ -1303,4 +1329,121 @@ def test_fov_setup_panel_requires_endpoints_and_camera_spacing() -> None:
     )
 
     assert panel.current_coordinate is None
-    assert not panel.set_linear_start_button.isEnabled()
+    assert panel.table.rowCount() == 0
+    assert panel.set_linear_start_button.isEnabled()
+
+
+def test_fov_setup_uses_append_remove_last_and_read_only_rows() -> None:
+    _app()
+    controller = FakeController()
+    panel = FovSetupPanel(controller=controller)
+    for x in (10, 20, 30):
+        panel.add_button.click()
+        controller.stage_coordinates_received.emit({"coordinate": {"x": x, "y": 0, "z": 0}})
+    panel.table.selectRow(0)
+    panel.remove_button.click()
+    assert [row["x"] for row in panel._fov_payload()] == [10, 20]
+    assert panel.table.editTriggers() == panel.table.NoEditTriggers
+    assert panel.layout().indexOf(panel.initialise_button) > panel.layout().indexOf(panel.table)
+    controller.operation_status_received.emit({"kind": "stage_movement", "state": "running"})
+    assert not panel.add_button.isEnabled()
+    controller.operation_status_received.emit({"kind": "stage_movement", "state": "completed"})
+    assert panel.add_button.isEnabled()
+    controller.strategy_status_received.emit({"running": True})
+    assert not panel.initialise_button.isEnabled()
+    assert not panel.remove_button.isEnabled()
+
+
+def test_linear_endpoint_rows_keep_their_height_after_capture() -> None:
+    app = _app()
+    controller = FakeController()
+    panel = FovSetupPanel(controller=controller)
+    panel.mode_combo.setCurrentText("Linear")
+    EvoMachineControlsDock._make_panel_contents_responsive(panel)
+    panel.resize(280, 650)
+    panel.show()
+    app.processEvents()
+    widgets = (panel.linear_start_label, panel.linear_end_label,
+               panel.set_linear_start_button, panel.set_linear_end_button)
+    heights = [widget.height() for widget in widgets]
+    assert panel.set_linear_start_button.height() == panel.generate_line_button.height()
+    assert panel.set_linear_end_button.height() == panel.generate_line_button.height()
+    for button in (panel.set_linear_start_button, panel.set_linear_end_button):
+        button.click()
+        controller.stage_coordinates_received.emit({
+            "coordinate": {"x": -12345.678, "y": 98765.432, "z": 1000.123},
+            "stage": {"camera_fov_step_size": 10},
+        })
+        app.processEvents()
+        assert [widget.height() for widget in widgets] == heights
+    assert panel.table.height() == 140
+    panel.close()
+
+
+def test_autostrat_panel_reviews_then_uses_shared_lifecycle_buttons() -> None:
+    _app()
+    controller = FakeController()
+    panel = StrategySetupPanel(controller)
+    panel.source_combo.setCurrentText("AutoStrat")
+    assert not panel.auto_group.isEnabled()
+    assert "AutoStrat disabled" in panel.auth_label.text()
+    controller.autostrat_configuration_received.emit({"enabled": True})
+    panel.prompt_input.setPlainText("Image twice then terminate.")
+    panel.generate_button.click()
+    assert controller.calls[-1] == ("generate_strategy", "Image twice then terminate.")
+    assert not panel.set_button.isEnabled()
+    assert not panel.generate_button.isEnabled()
+    controller.strategy_generation_received.emit({"state": "running", "operation_id": "a"})
+    controller.response_error.emit("An unrelated stage request failed")
+    assert panel.generation_timer.isActive()
+    controller.strategy_generation_received.emit({
+        "state": "completed", "operation_id": "a", "accepted": True,
+        "dsl": "initialise\nstep\n    terminate\nfinalise\n",
+        "diagnostics": "Semantic candidates: 1\nSemantic revisions: 0",
+    })
+    assert not panel.generation_timer.isActive()
+    assert panel.dsl_output.isReadOnly()
+    assert "terminate" in panel.dsl_output.toPlainText()
+    assert "Semantic candidates: 1" in panel.diagnostics_output.toPlainText()
+    assert panel.set_button.isEnabled() and not panel.start_button.isEnabled()
+    panel.set_button.click()
+    assert controller.calls[-1] == ("set_generated_strategy", "a")
+    controller.strategy_status_received.emit({
+        "name": "AutoStratStrategy", "generation_id": "a", "is_initialised": False,
+    })
+    assert not panel.start_button.isEnabled()
+    controller.strategy_status_received.emit({
+        "name": "AutoStratStrategy", "generation_id": "a", "is_initialised": True,
+    })
+    panel.start_button.click()
+    assert controller.calls[-1] == ("start_strategy",)
+    panel.prompt_input.setPlainText("A different request")
+    assert not panel.set_button.isEnabled() and not panel.start_button.isEnabled()
+    panel.generate_button.click()
+    controller.strategy_generation_received.emit({
+        "state": "failed", "error": "endpoint unavailable",
+    })
+    assert panel.dsl_output.toPlainText() == ""
+    assert not panel.set_button.isEnabled()
+    assert panel.generate_button.isEnabled()
+    assert "endpoint unavailable" in panel.diagnostics_output.toPlainText()
+    panel.close()
+
+
+@pytest.mark.parametrize("key,accepted,expected", [("", True, ""), ("unused", False, ""), (" test-key ", True, "test-key")])
+def test_startup_api_key_prompt_is_masked_and_optional(monkeypatch, key, accepted, expected) -> None:
+    from PyQt5.QtWidgets import QInputDialog, QLineEdit
+    from evomachine.gui.napari_app import prompt_autostrat_api_key
+
+    _app()
+    controller = FakeController()
+
+    def get_text(parent, title, message, echo_mode):
+        assert echo_mode == QLineEdit.Password
+        assert "Leave blank and press Enter" in message
+        assert "disable AutoStrat" in message
+        return key, accepted
+
+    monkeypatch.setattr(QInputDialog, "getText", get_text)
+    prompt_autostrat_api_key(controller)
+    assert controller.calls == [("configure_autostrat", expected)]

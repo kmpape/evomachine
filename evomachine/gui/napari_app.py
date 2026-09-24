@@ -171,6 +171,21 @@ def _reset_view(viewer) -> None:
         fit_central_viewer(viewer)
 
 
+def prompt_autostrat_api_key(controller, parent=None) -> None:
+    from PyQt5.QtWidgets import QInputDialog, QLineEdit
+
+    key, accepted = QInputDialog.getText(
+        parent,
+        "AutoStrat — optional API key",
+        "Enter an API key to enable AutoStrat for this session.\n"
+        "Leave blank and press Enter, or Cancel, to disable AutoStrat.\n"
+        "Fixed strategies and microscope controls remain available.\n"
+        "The key is held in memory only and is not saved.",
+        QLineEdit.Password,
+    )
+    controller.configure_autostrat(key.strip() if accepted else "")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Launch Napari with the EvoMachine control and status dock widgets."""
     args = list(sys.argv[1:] if argv is None else argv)
@@ -219,6 +234,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         logs_dock_widget=logs_dock_widget,
         status_dock_widget=status_dock_widget,
     )
+    prompt_autostrat_api_key(controls_dock.controller, controls_dock)
     napari.run()
     return 0
 

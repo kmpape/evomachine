@@ -15,6 +15,27 @@ class RecordingClient:
         self.closed = True
 
 
+def test_generation_requests_and_errors_use_the_generation_channel() -> None:
+    client = RecordingClient()
+    controller = EvoMachineGuiController(client=client, start_worker=False)
+    received, errors = [], []
+    controller.strategy_generation_received.connect(received.append)
+    controller.response_error.connect(errors.append)
+    controller.generate_strategy("Image then finish")
+    controller.refresh_strategy_generation()
+    controller.set_generated_strategy("accepted-id")
+    assert [request.command for request in client.requests] == [
+        GuiCommandType.STRATEGY_GENERATE, GuiCommandType.STRATEGY_GENERATION_STATUS,
+        GuiCommandType.STRATEGY_SET,
+    ]
+    assert client.requests[2].payload == {"generation_id": "accepted-id"}
+    failed_request = client.requests[0]
+    controller._generation_requests.add(failed_request.request_id)
+    controller._handle_request_failure(failed_request, "endpoint unavailable")
+    assert received == [{"state": "failed", "error": "endpoint unavailable"}]
+    assert not errors
+
+
 def test_gui_stage_moves_are_non_blocking_so_stop_can_be_processed() -> None:
     client = RecordingClient()
     controller = EvoMachineGuiController(client=client, start_worker=False)
