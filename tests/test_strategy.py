@@ -472,3 +472,26 @@ def test_strategy_discovery_and_creation_use_name_file_pair() -> None:
     )
 
     assert strategy.name() == "SimpleImagingStrategy"
+
+
+@pytest.mark.parametrize("strategy_name", [
+    "SimpleImagingStrategy",
+    "MCherryGfpImagingStrategy",
+    "DmdProjectFullFovStrategy",
+    "DmdProjectByRoiStrategy",
+])
+def test_builtin_imaging_strategies_surface_failures_without_restarting(strategy_name):
+    definitions = {item.name: item for item in list_strategy_definitions()}
+    strategy = create_strategy_from_definition(
+        name=strategy_name,
+        file_path=definitions[strategy_name].file_path,
+        cfg=ImageProcessorConfigFactory.default_config(
+            channels=[LEDType.LED_450_NM],
+            channels_seg=[LEDType.LED_450_NM],
+        ),
+    )
+    error = RuntimeError("Camera acquisition failed")
+    with pytest.raises(RuntimeError, match="Camera acquisition failed") as caught:
+        strategy.callback(fov_id=0, data=[], errors=[error])
+    assert caught.value is error
+    assert strategy.callback_counter == 0

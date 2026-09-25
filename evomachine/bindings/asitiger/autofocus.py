@@ -137,7 +137,7 @@ class TigerAutofocusConfigFactory:
             loop_gain=10,
             averaging=5,
             update_rate=10,
-            objective_na=0.9,
+            objective_na=0.95,
             lock_range=0.1,
         )
 

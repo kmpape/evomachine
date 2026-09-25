@@ -95,6 +95,8 @@ class DmdProjectFullFovStrategy(AbstractStrategy):
             errors: list[Exception],
     ) -> list[AutomatonCommand]:
         """Return repeated imaging plus projection commands."""
+        if errors:
+            raise errors[0]
         return self._cycle_commands(project=True)
 
     def finalise(self) -> list[AutomatonCommand]:

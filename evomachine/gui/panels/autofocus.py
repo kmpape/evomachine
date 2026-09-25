@@ -36,13 +36,12 @@ class AutofocusPanel(QGroupBox):
         ConfigFieldSpec(
             "Objective NA",
             "objective_na",
-            0.9,
+            0.95,
             kind="float",
             minimum=0.01,
-            maximum=10.0,
+            maximum=9.999,
             decimals=3,
-            single_step=0.1,
-            editable=False,
+            single_step=0.01,
         ),
         ConfigFieldSpec(
             "Minimum SNR",

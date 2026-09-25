@@ -126,7 +126,7 @@ def test_tiger_autofocus_config_validation_and_factory_defaults() -> None:
     """
     default_config = TigerAutofocusConfigFactory.default_config()
     assert isinstance(default_config, AutofocusCalibrationConfig)
-    assert default_config.objective_na == 0.9
+    assert default_config.objective_na == 0.95
     assert TigerAutofocusConfigFactory.default_oil_config().objective_na == 1.4
 
     with pytest.raises(TypeError):

@@ -920,15 +920,23 @@ def test_autofocus_panel_sends_lock_request() -> None:
     assert controller.calls == [("lock_autofocus",)]
 
 
-def test_autofocus_panel_sends_config_request() -> None:
+def test_autofocus_panel_sends_config_request(monkeypatch) -> None:
     _app()
     controller = FakeController()
     panel = AutofocusPanel(controller=controller)
     panel.update_lifecycle_status({"devices_initialised": True})
-    panel.config_values["led_intensity"] = 80
-    panel.config_values["objective_na"] = 1.4
+    def edit_config(dialog):
+        na_widget = dialog._widgets["objective_na"]
+        assert na_widget.isEnabled()
+        assert na_widget.value() == 0.95
+        na_widget.setValue(1.4)
+        dialog._widgets["led_intensity"].setValue(80)
+        return dialog.Accepted
 
-    panel._apply_config()
+    monkeypatch.setattr(
+        "evomachine.gui.panels.autofocus.ConfigDialog.exec_", edit_config
+    )
+    panel.configure_button.click()
 
     assert controller.calls == [
         (
@@ -936,6 +944,7 @@ def test_autofocus_panel_sends_config_request() -> None:
             {
                 "averaging": 5,
                 "led_intensity": 80,
+                "objective_na": 1.4,
                 "lock_range": 0.1,
                 "loop_gain": 10,
                 "update_rate": 10,
@@ -966,7 +975,7 @@ def test_autofocus_panel_sends_calibration_request() -> None:
                 "loop_gain": 10,
                 "update_rate": 10,
                 "min_error": 100,
-                "objective_na": 0.9,
+                "objective_na": 0.95,
                 "min_snr": 2.0,
             },
         ),

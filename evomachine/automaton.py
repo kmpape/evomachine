@@ -1190,6 +1190,7 @@ class Automaton:
                 if self.run_timeout > 0:
                     self._shutdown_event.wait(timeout=self.run_timeout)
         except BaseException as error:
+            logger.exception("Automaton backend stopped after an execution failure.")
             self._fail_safe_abort(error, section=self._command_section)
             raise
 
