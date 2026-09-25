@@ -8,9 +8,9 @@ from PyQt5.QtWidgets import QPlainTextEdit, QVBoxLayout, QWidget
 
 
 class ApplicationLogPanel(QWidget):
-    """Display a bounded, live view of informational and higher-level logs."""
+    """Display application logs with the same levels and formatting as the terminal."""
 
-    def __init__(self, controller, history_limit: int = 200, parent: QWidget | None = None):
+    def __init__(self, controller, history_limit: int = 5000, parent: QWidget | None = None):
         super().__init__(parent)
         if not isinstance(history_limit, int) or isinstance(history_limit, bool) or history_limit < 1:
             raise ValueError("ApplicationLogPanel history_limit must be a positive integer.")
@@ -62,6 +62,9 @@ class ApplicationLogPanel(QWidget):
             "ERROR": "#d33c3c",
             "CRITICAL": "#d33c3c",
         }.get(level, "#808080")
+        if "formatted" in record:
+            text = escape(str(record["formatted"])).replace("\n", "<br>")
+            return f'<span style="color:{colour}; white-space:pre-wrap">{text}</span>'
         timestamp = escape(str(record.get("timestamp", "-")))
         logger_name = escape(str(record.get("logger", "")))
         message = escape(str(record.get("message", ""))).replace("\n", "<br>")

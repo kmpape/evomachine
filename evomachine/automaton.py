@@ -798,10 +798,12 @@ class Automaton:
                         self._process_commands(finalise=True)
                     self.stop_strategy()
                     self._stop_event.set()
+                    logger.info("Strategy %s terminated; finalisation completed.", self.get_strategy_name())
                     command.command_execution_time = time.time()
                     command.fov_id = self.get_fov_id()
                     return
                 elif command.command_type == AutomatonCommandType.ABORT_STRATEGY:
+                    logger.warning("Strategy %s aborted without finalisation.", self.get_strategy_name())
                     self.stop_strategy()
                     self.stop()
                     command.command_execution_time = time.time()
@@ -826,6 +828,11 @@ class Automaton:
                     original_error=error,
                 )
                 self._runtime_failure_history.append(failure)
+                logger.exception(
+                    "Strategy %s command %s (id=%s, section=%s, FOV=%s) failed: %s",
+                    self.get_strategy_name(), command.command_type.name,
+                    command.command_id, command_section, command.fov_id, error,
+                )
                 if finalise or command.command_type in {
                     AutomatonCommandType.TERMINATE_STRATEGY,
                     AutomatonCommandType.ABORT_STRATEGY,
@@ -1341,6 +1348,11 @@ class Automaton:
             for failure in self._runtime_failure_history
         )
         if not already_recorded:
+            logger.error(
+                "Strategy %s failed in %s; emergency halt: %s",
+                self.get_strategy_name(), section, error,
+                exc_info=(type(error), error, error.__traceback__),
+            )
             self._runtime_failure_history.append(
                 UnexpectedRuntimeError(
                     lifecycle_section=section,
@@ -1422,6 +1434,8 @@ class Automaton:
         self._stop_event.clear()
         self._start_strategy_event.set()
 
+        logger.info("Strategy %s started.", self.get_strategy_name())
+
     def strategy_has_started(self) -> bool:
         """
         Return whether the strategy-start event is set.
@@ -1449,6 +1463,8 @@ class Automaton:
         -------
         None
         """
+        if not self.strategy_has_stopped():
+            logger.info("Strategy %s execution stopped.", self.get_strategy_name())
         self._stop_strategy_event.set()
 
     def strategy_has_stopped(self) -> bool:
@@ -1478,6 +1494,8 @@ class Automaton:
         -------
         None
         """
+        if not self.stopped():
+            logger.info("Automaton halt requested; stopping active peripherals and strategy execution.")
         self._stop_event.set()
         if self.devices_is_initialised():
             self.act_on_halt()

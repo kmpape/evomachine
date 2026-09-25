@@ -19,6 +19,7 @@ from autostrat.language.model import (
 from autostrat.pipeline import VerifiedStrategy
 
 from evomachine.commands import AutomatonCommand
+from evomachine.config import get_logger
 from evomachine.image_processing_config import ImageProcessorConfig
 from evomachine.strategy import AbstractStrategy
 from evomachine.strategy_generation.interfaces import (
@@ -32,6 +33,8 @@ from evomachine.strategy_generation.interfaces import (
 )
 from evomachine.strategy_generation.runtime import ActiveRuntimeError, StrategyInterpretationError
 from evomachine.types import AutomatonCommandType
+
+logger = get_logger(__name__)
 
 
 class _Host:
@@ -288,6 +291,8 @@ class AutoStratStrategy(AbstractStrategy):
         )
         policy = self.domain.runtime_errors[name]
         action = policy.action
+        logger.warning("Strategy runtime error %s: %s; policy=%s, retries used=%s/%s.",
+                       name, error.message, action, attempts, policy.max_retries)
         if action == "retry":
             if self._pending_event is None or error.failed_call is None:
                 raise StrategyInterpretationError("Cannot retry without a pending command")
@@ -295,6 +300,7 @@ class AutoStratStrategy(AbstractStrategy):
                 self._retry_counts[key] = attempts + 1
                 return self._build_pending()
             action = policy.exhausted_action
+            logger.warning("Strategy runtime error %s exhausted retries; action=%s.", name, action)
         self._retry_counts.pop(key, None)
         if action in {"terminate", "abort"}:
             return self._control(action)

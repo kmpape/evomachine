@@ -641,6 +641,8 @@ def test_automaton_move_delegates_to_focus_navigator() -> None:
 
 
 def test_command_failure_is_delivered_to_strategy_and_stops_the_batch() -> None:
+    from evomachine.config import gui_log_handler
+    cursor = gui_log_handler.latest_sequence
     automaton, _, focus_navigator, _, _, _ = make_automaton()
     strategy = automaton._strategy
     assert isinstance(strategy, FakeStrategy)
@@ -659,9 +661,16 @@ def test_command_failure_is_delivered_to_strategy_and_stops_the_batch() -> None:
     assert supplied.original_error.args == ("stage blip",)
     assert skipped.command_execution_time is None
     assert automaton.runtime_failure_history == (supplied,)
+    errors = [r for r in gui_log_handler.records_after(cursor) if r["level"] == "ERROR"]
+    assert len(errors) == 1
+    assert "MOVE" in errors[0]["message"]
+    assert "Traceback" in errors[0]["formatted"]
+    assert "RuntimeError: stage blip" in errors[0]["formatted"]
 
 
 def test_unexpected_callback_failure_aborts_and_is_recorded() -> None:
+    from evomachine.config import gui_log_handler
+    cursor = gui_log_handler.latest_sequence
     automaton, acquisition_manager, *_deps = make_automaton()
     strategy = automaton._strategy
     assert isinstance(strategy, FakeStrategy)
@@ -679,6 +688,9 @@ def test_unexpected_callback_failure_aborts_and_is_recorded() -> None:
     assert automaton.stopped()
     assert acquisition_manager.stop_count == 1
     assert isinstance(automaton.runtime_failure_history[-1], UnexpectedRuntimeError)
+    errors = [r for r in gui_log_handler.records_after(cursor) if r["level"] == "ERROR"]
+    assert len(errors) == 1
+    assert "RuntimeError: interpreter failed" in errors[0]["formatted"]
 
 
 @pytest.mark.parametrize(

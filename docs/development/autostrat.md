@@ -186,6 +186,7 @@ does not include EvoMachine's custom trained model files: configure matching mod
 paths and input sizes in `image_processing_config.py`. The virtual camera supplies
 random pixels; use recorded microscopy frames for meaningful processing validation.
 
-Current diagnostic limitation: runtime histories exist on the Automaton/strategy,
-but GUI strategy status does not yet expose their full error details. Do not treat
-the GUI's stopped label as proof of successful completion.
+Runtime failures and tracebacks are logged to the shared application logger, visible
+in the terminal and GUI log. AutoStrat also logs recovery policy decisions. Runtime
+histories remain available on the Automaton/strategy; the compact strategy status
+does not expose their full details. Check the log, not just the stopped label.
