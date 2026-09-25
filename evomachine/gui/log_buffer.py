@@ -26,9 +26,10 @@ class GuiLogBufferHandler(logging.Handler):
                 "%Y-%m-%d %H:%M:%S"
             )
         )
+        formatted = self.format(record)
         message = record.getMessage()
-        if record.exc_info is not None and formatter is not None:
-            message = f"{message}\n{formatter.formatException(record.exc_info)}"
+        if record.exc_info is not None:
+            message = f"{message}\n{(formatter or logging.Formatter()).formatException(record.exc_info)}"
         self._records.append(
             {
                 "sequence": self._sequence,
@@ -36,6 +37,7 @@ class GuiLogBufferHandler(logging.Handler):
                 "level": record.levelname,
                 "logger": record.name,
                 "message": message,
+                "formatted": formatted,
             }
         )
 

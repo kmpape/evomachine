@@ -1087,6 +1087,15 @@ def test_application_log_panel_is_incremental_and_bounded() -> None:
     assert controller.calls[-1] == ("refresh_logs", 3)
 
 
+def test_log_panel_preserves_terminal_format_and_traceback():
+    _app()
+    panel = ApplicationLogPanel(FakeController())
+    text = "2026-09-24 10:00:00 - ERROR - evomachine.automaton - failed\nTraceback:\n    raise ValueError('<missing>')\nValueError: <missing>"
+    panel.update_logs({"records": [{"sequence": 1, "level": "ERROR", "formatted": text}], "latest_sequence": 1})
+    assert panel.log_view.toPlainText() == text
+    panel.poll_timer.stop()
+
+
 def test_long_operation_status_updates_controls_and_cancellation() -> None:
     _app()
     controller = FakeController()

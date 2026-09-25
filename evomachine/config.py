@@ -370,7 +370,8 @@ file_handler.setLevel(
         DEFAULT_LOGGING_CONFIG.binding_level,
     )
 )
-gui_log_handler = GuiLogBufferHandler(capacity=200, level=logging.INFO)
+# Match the unfiltered stream handler; each source logger still owns its level.
+gui_log_handler = GuiLogBufferHandler(capacity=5000, level=logging.NOTSET)
 gui_log_handler.setFormatter(EVO_FORMATTER)
 
 
@@ -409,7 +410,7 @@ def get_logger(
             f"get_logger: logging_config must be EvoLoggingConfig or None, received {type(logging_config)}."
         )
     logger = logging.getLogger(name)
-    for handler in logger.handlers:
+    for handler in list(logger.handlers):
         logger.removeHandler(handler)
     if is_binding:
         logger.setLevel(logging_config.binding_level)

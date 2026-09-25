@@ -6,6 +6,13 @@ projection, strategies, and real-time processing workflows.
 
 ## Developer guides
 
+The GUI application log mirrors the backend's configured EvoMachine and hardware
+binding log records, including DEBUG device activity and strategy exception
+tracebacks, using the terminal formatter. It retains a bounded recent history
+(5,000 records on the backend; 5,000 displayed text blocks); rotating log files
+remain the longer-term record. This is an application log viewer, not a capture of
+arbitrary stdout/stderr from Napari, native libraries or unrelated processes.
+
 - [Extending AutoStrat integration](docs/development/autostrat.md): commands,
   observations, collections, runtime errors, and domain-pack examples.
 - [Extending the GUI](docs/development/gui.md): panels, RPC operations, background
