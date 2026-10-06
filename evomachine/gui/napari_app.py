@@ -177,9 +177,9 @@ def prompt_autostrat_api_key(controller, parent=None) -> None:
     key, accepted = QInputDialog.getText(
         parent,
         "AutoStrat — optional API key",
-        "Enter an API key to enable AutoStrat for this session.\n"
-        "Leave blank and press Enter, or Cancel, to disable AutoStrat.\n"
-        "Fixed strategies and microscope controls remain available.\n"
+        "Enter an API key to enable AI strategy generation for this session.\n"
+        "Leave blank and press Enter, or Cancel, to disable AI generation.\n"
+        "Python, saved, and hand-written strategies remain available.\n"
         "The key is held in memory only and is not saved.",
         QLineEdit.Password,
     )

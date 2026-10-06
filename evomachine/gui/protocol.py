@@ -72,6 +72,10 @@ class GuiCommandType(str, Enum):
     STRATEGY_GENERATION_CANCEL = "strategy.generation_cancel"
     AUTOSTRAT_CONFIGURE = "strategy.configure_autostrat"
     STRATEGY_GENERATION_STATUS = "strategy.generation_status"
+    AUTOSTRAT_STRATEGY_LIST = "strategy.autostrat.list"
+    AUTOSTRAT_STRATEGY_LOAD = "strategy.autostrat.load"
+    AUTOSTRAT_STRATEGY_SAVE = "strategy.autostrat.save"
+    AUTOSTRAT_STRATEGY_VALIDATE = "strategy.autostrat.validate"
     STRATEGY_LIST = "strategy.list"
     STRATEGY_SET = "strategy.set"
     STRATEGY_START = "strategy.start"
@@ -108,6 +112,7 @@ MUTATING_COMMANDS = frozenset(
         GuiCommandType.AUTOFOCUS_UNLOCK,
         GuiCommandType.AUTOFOCUS_DISABLE,
         GuiCommandType.SOFTWARE_FOCUS_RUN,
+        GuiCommandType.AUTOSTRAT_STRATEGY_SAVE,
         GuiCommandType.STRATEGY_SET,
         GuiCommandType.STRATEGY_START,
         GuiCommandType.STRATEGY_STOP,

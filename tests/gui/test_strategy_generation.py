@@ -8,6 +8,7 @@ import pytest
 
 from evomachine.gui.facade import AutomatonGuiFacade
 from evomachine.gui.protocol import GuiCommandType, GuiRequest
+from evomachine.strategy_generation.files import StrategyFileStore
 from evomachine.strategy_generation.preview import GenerationPreview
 from tests.gui.test_facade import FakeAutomaton
 from tests.test_strategy_generation_integration import _verified
@@ -169,3 +170,70 @@ def test_blank_startup_key_disables_autostrat_even_with_inherited_key(monkeypatc
     assert "OPENAI_API_KEY" not in os.environ
     assert not request(facade, GuiCommandType.STRATEGY_GENERATE, prompt="finish").ok
     assert request(facade, GuiCommandType.STRATEGY_SET, name="NoStrategy").ok
+
+
+def test_user_authored_strategies_save_load_validate_and_install_without_api_key(tmp_path):
+    facade = AutomatonGuiFacade(FakeAutomaton())
+    facade.autostrat_strategy_store = StrategyFileStore(tmp_path)
+    source = "initialise\nstep\n    terminate\nfinalise\n"
+
+    assert request(facade, GuiCommandType.AUTOSTRAT_STRATEGY_LIST).payload == {
+        "autostrat_strategies": [],
+    }
+    saved = request(
+        facade,
+        GuiCommandType.AUTOSTRAT_STRATEGY_SAVE,
+        name="My strategy.strat",
+        source=source,
+        overwrite=False,
+    )
+    assert saved.ok
+    assert saved.payload["autostrat_strategy"] == {
+        "name": "My strategy",
+        "filename": "My strategy.strat",
+        "source": source,
+        "saved": True,
+    }
+    assert (tmp_path / "My strategy.strat").read_text() == source
+    assert not request(
+        facade,
+        GuiCommandType.AUTOSTRAT_STRATEGY_SAVE,
+        name="My strategy",
+        source=source,
+        overwrite=False,
+    ).ok
+
+    loaded = request(
+        facade, GuiCommandType.AUTOSTRAT_STRATEGY_LOAD, name="My strategy"
+    )
+    assert loaded.ok and loaded.payload["autostrat_strategy"]["source"] == source
+    validated = request(
+        facade, GuiCommandType.AUTOSTRAT_STRATEGY_VALIDATE, source=source
+    )
+    assert validated.ok and validated.payload["autostrat_validation"]["valid"]
+
+    installed = request(
+        facade,
+        GuiCommandType.STRATEGY_SET,
+        autostrat_name="My strategy",
+        autostrat_source=source,
+    )
+    assert installed.ok
+    assert installed.payload["strategy"]["autostrat_name"] == "My strategy"
+    assert facade.automaton._strategy.source == source
+
+
+def test_strategy_file_store_rejects_unsafe_names_and_invalid_source(tmp_path):
+    store = StrategyFileStore(tmp_path)
+    with pytest.raises(ValueError, match="Strategy name"):
+        store.save("../escape", "initialise\nstep\nfinalise\n")
+    with pytest.raises(ValueError, match="non-empty"):
+        store.save("empty", "  \n")
+
+
+def test_strategy_file_store_preserves_source_text(tmp_path):
+    store = StrategyFileStore(tmp_path)
+    source = "\ninitialise\nstep\nfinalise"
+    store.save("exact", source)
+    _, loaded = store.load("exact")
+    assert loaded == source

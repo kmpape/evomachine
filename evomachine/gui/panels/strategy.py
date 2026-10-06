@@ -14,7 +14,9 @@ from PyQt5.QtWidgets import (
     QGridLayout,
     QGroupBox,
     QHeaderView,
+    QInputDialog,
     QLabel,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QTableWidget,
@@ -279,14 +281,22 @@ class StrategySetupPanel(QGroupBox):
         super().__init__("Strategy Setup", parent)
         self.controller = controller
         self.source_combo = QComboBox()
-        self.source_combo.addItems(["Fixed strategy", "AutoStrat"])
+        self.source_combo.addItems(["Python Strategies", "AutoStrat"])
         self._autostrat_enabled = False
-        self.auth_label = QLabel("AutoStrat disabled: no API key supplied. Restart the GUI and enter a key to enable it. Fixed strategies remain available.")
+        self.auth_label = QLabel(
+            "AI generation is disabled: no API key was supplied. "
+            "Saved and hand-written AutoStrat strategies remain available."
+        )
         self.auth_label.setWordWrap(True)
         self._generation_id: str | None = None
         self._generation_busy = False
         self._generation_pending = False
         self._generated_prompt = ""
+        self._generation_source = ""
+        self._validated_source = ""
+        self._current_autostrat_name: str | None = None
+        self._saved_source = ""
+        self._saved_autostrat_names: set[str] = set()
         self.generation_timer = QTimer(self)
         self.generation_timer.setInterval(500)
         self.generation_timer.timeout.connect(self._poll_generation)
@@ -300,12 +310,28 @@ class StrategySetupPanel(QGroupBox):
         self.cancel_generation_button = QPushButton("Cancel generation")
         self.generation_label = QLabel("Generate, review the strategy code, then Set Strategy. Generation does not run hardware.")
         self.generation_label.setWordWrap(True)
+        self.saved_strategy_combo = QComboBox()
+        self.load_strategy_button = QPushButton("Load")
+        self.new_strategy_button = QPushButton("New")
+        saved_buttons = QGridLayout()
+        saved_buttons.addWidget(self.load_strategy_button, 0, 0)
+        saved_buttons.addWidget(self.new_strategy_button, 0, 1)
+        auto_layout.addWidget(QLabel("Saved .strat strategies"))
+        auto_layout.addWidget(self.saved_strategy_combo)
+        auto_layout.addLayout(saved_buttons)
         self.dsl_output = QPlainTextEdit()
-        self.dsl_output.setReadOnly(True)
         self.dsl_output.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.dsl_output.setFont(QFontDatabase.systemFont(QFontDatabase.FixedFont))
         self.dsl_output.setFixedHeight(180)
         self.expand_dsl_button = QPushButton("Expand strategy code")
+        self.validate_strategy_button = QPushButton("Validate")
+        self.save_strategy_button = QPushButton("Save")
+        self.save_strategy_as_button = QPushButton("Save As…")
+        file_buttons = QGridLayout()
+        file_buttons.addWidget(self.validate_strategy_button, 0, 0)
+        file_buttons.addWidget(self.save_strategy_button, 0, 1)
+        file_buttons.addWidget(self.save_strategy_as_button, 1, 0)
+        file_buttons.addWidget(self.expand_dsl_button, 1, 1)
         self.diagnostics_toggle = QCheckBox("Show generation diagnostics")
         self.diagnostics_output = QPlainTextEdit()
         self.diagnostics_output.setReadOnly(True)
@@ -313,9 +339,10 @@ class StrategySetupPanel(QGroupBox):
         self.diagnostics_output.hide()
         for widget in (self.prompt_input, self.generate_button, self.cancel_generation_button,
                        self.generation_label,
-                       self.dsl_output, self.expand_dsl_button, self.diagnostics_toggle,
+                       self.dsl_output, self.diagnostics_toggle,
                        self.diagnostics_output):
             auto_layout.addWidget(widget)
+        auto_layout.insertLayout(auto_layout.count() - 2, file_buttons)
         self.strategy_combo = QComboBox()
         self.strategy_combo.setEnabled(False)
         self.set_button = QPushButton("Set Strategy")
@@ -359,9 +386,18 @@ class StrategySetupPanel(QGroupBox):
         self.cancel_generation_button.clicked.connect(self._cancel_generation)
         self.prompt_input.textChanged.connect(self._prompt_changed)
         self.expand_dsl_button.clicked.connect(self._expand_dsl)
+        self.dsl_output.textChanged.connect(self._strategy_code_changed)
+        self.load_strategy_button.clicked.connect(self._load_selected_autostrat_strategy)
+        self.new_strategy_button.clicked.connect(self._new_autostrat_strategy)
+        self.validate_strategy_button.clicked.connect(self._validate_autostrat_strategy)
+        self.save_strategy_button.clicked.connect(self._save_autostrat_strategy)
+        self.save_strategy_as_button.clicked.connect(self._save_autostrat_strategy_as)
         self.diagnostics_toggle.toggled.connect(self.diagnostics_output.setVisible)
         self.controller.strategy_generation_received.connect(self.update_generation)
         self.controller.autostrat_configuration_received.connect(self._update_autostrat_configuration)
+        self.controller.autostrat_strategies_received.connect(self.update_autostrat_strategies)
+        self.controller.autostrat_strategy_received.connect(self.update_autostrat_strategy)
+        self.controller.autostrat_validation_received.connect(self.update_autostrat_validation)
 
         self.set_button.clicked.connect(self._set_strategy)
         self.start_button.clicked.connect(self.controller.start_strategy)
@@ -372,6 +408,7 @@ class StrategySetupPanel(QGroupBox):
         self.controller.request_error.connect(self._show_request_error)
         self._sync_controls(strategy_status={})
         self.controller.refresh_strategies()
+        self.controller.refresh_autostrat_strategies()
 
     def _source_changed(self) -> None:
         self.update_status(self._last_strategy_status)
@@ -385,8 +422,20 @@ class StrategySetupPanel(QGroupBox):
     def _prompt_changed(self) -> None:
         if self.prompt_input.toPlainText().strip() != self._generated_prompt:
             self._generation_id = None
+            if self._normalise_source(self.dsl_output.toPlainText()) == self._normalise_source(
+                    self._generation_source
+            ):
+                self._validated_source = ""
             if self._generated_prompt:
                 self.generation_label.setText("Prompt changed; generate again before setting this strategy.")
+        self._sync_controls(self._last_strategy_status)
+
+    def _strategy_code_changed(self) -> None:
+        source = self.dsl_output.toPlainText()
+        if self._normalise_source(source) != self._normalise_source(self._generation_source):
+            self._generation_id = None
+        if self._normalise_source(source) != self._validated_source:
+            self._validated_source = ""
         self._sync_controls(self._last_strategy_status)
 
     def _generate(self) -> None:
@@ -395,6 +444,10 @@ class StrategySetupPanel(QGroupBox):
             return
         self._generated_prompt = prompt
         self._generation_id = None
+        self._generation_source = ""
+        self._validated_source = ""
+        self._current_autostrat_name = None
+        self._saved_source = ""
         self._generation_busy = True
         self._generation_pending = True
         self.dsl_output.clear()
@@ -423,8 +476,15 @@ class StrategySetupPanel(QGroupBox):
         else:
             self.generation_timer.stop()
             accepted = bool(payload.get("accepted"))
+            source = payload.get("dsl") or ""
             self._generation_id = payload.get("operation_id") if accepted else None
-            self.dsl_output.setPlainText(payload.get("dsl") or "")
+            self._generation_source = source if accepted else ""
+            self._validated_source = self._normalise_source(source) if accepted else ""
+            self._current_autostrat_name = None
+            self._saved_source = ""
+            blocked = self.dsl_output.blockSignals(True)
+            self.dsl_output.setPlainText(source)
+            self.dsl_output.blockSignals(blocked)
             diagnostics = payload.get("diagnostics") or payload.get("error") or ""
             self.diagnostics_output.setPlainText(diagnostics)
             if payload.get("state") == "cancelled":
@@ -437,6 +497,127 @@ class StrategySetupPanel(QGroupBox):
             if not accepted:
                 self.diagnostics_toggle.setChecked(True)
         self._sync_controls(self._last_strategy_status)
+
+    def update_autostrat_strategies(self, strategies: list[dict]) -> None:
+        previous = self.saved_strategy_combo.currentData()
+        self.saved_strategy_combo.blockSignals(True)
+        self.saved_strategy_combo.clear()
+        self._saved_autostrat_names = set()
+        selected_index = 0
+        for strategy in strategies:
+            name = strategy.get("name")
+            if not isinstance(name, str):
+                continue
+            self.saved_strategy_combo.addItem(name, name)
+            self._saved_autostrat_names.add(name)
+            if name == previous or name == self._current_autostrat_name:
+                selected_index = self.saved_strategy_combo.count() - 1
+        if self.saved_strategy_combo.count():
+            self.saved_strategy_combo.setCurrentIndex(selected_index)
+        self.saved_strategy_combo.blockSignals(False)
+        self._sync_controls(self._last_strategy_status)
+
+    def update_autostrat_strategy(self, payload: dict) -> None:
+        name = payload.get("name")
+        source = payload.get("source")
+        if not isinstance(name, str) or not isinstance(source, str):
+            return
+        self._current_autostrat_name = name
+        self._generation_id = None
+        self._generation_source = ""
+        self._validated_source = ""
+        self._saved_source = self._normalise_source(source)
+        saved_index = self.saved_strategy_combo.findData(name)
+        if saved_index >= 0:
+            self.saved_strategy_combo.setCurrentIndex(saved_index)
+        blocked = self.dsl_output.blockSignals(True)
+        self.dsl_output.setPlainText(source)
+        self.dsl_output.blockSignals(blocked)
+        self.generation_label.setText(
+            f"{'Saved' if payload.get('saved') else 'Loaded'} {name}.strat. Validate before setting."
+        )
+        self.controller.validate_autostrat_strategy(source)
+        self._sync_controls(self._last_strategy_status)
+
+    def update_autostrat_validation(self, payload: dict) -> None:
+        if payload.get("valid"):
+            source = payload.get("source")
+            validated_source = self._normalise_source(source) if isinstance(source, str) else ""
+            if validated_source != self._normalise_source(self.dsl_output.toPlainText()):
+                return
+            self._validated_source = validated_source
+            commands = payload.get("commands") or []
+            suffix = f" Commands: {', '.join(commands)}." if commands else ""
+            self.generation_label.setText(str(payload.get("message") or "Strategy is valid.") + suffix)
+            self.diagnostics_output.clear()
+        self._sync_controls(self._last_strategy_status)
+
+    def _new_autostrat_strategy(self) -> None:
+        if not self._confirm_discard_changes():
+            return
+        self._current_autostrat_name = None
+        self._generation_id = None
+        self._generation_source = ""
+        self._validated_source = ""
+        self._saved_source = ""
+        self.dsl_output.clear()
+        self.generation_label.setText("New unsaved strategy. Enter strategy code, then validate it.")
+
+    def _load_selected_autostrat_strategy(self) -> None:
+        name = self.saved_strategy_combo.currentData()
+        if isinstance(name, str) and self._confirm_discard_changes():
+            self.controller.load_autostrat_strategy(name)
+
+    def _validate_autostrat_strategy(self) -> None:
+        source = self.dsl_output.toPlainText()
+        if source.strip():
+            self.generation_label.setText("Validating strategy code…")
+            self.controller.validate_autostrat_strategy(source)
+
+    def _save_autostrat_strategy(self) -> None:
+        if self._current_autostrat_name is None:
+            self._save_autostrat_strategy_as()
+            return
+        self.controller.save_autostrat_strategy(
+            self._current_autostrat_name,
+            self.dsl_output.toPlainText(),
+            overwrite=True,
+        )
+
+    def _save_autostrat_strategy_as(self) -> None:
+        suggested = self._current_autostrat_name or "new_strategy"
+        name, accepted = QInputDialog.getText(self, "Save AutoStrat Strategy", "Strategy name", text=suggested)
+        if not accepted or not name.strip():
+            return
+        normalised = name.strip()
+        if normalised.lower().endswith(".strat"):
+            normalised = normalised[:-6].rstrip()
+        overwrite = normalised in self._saved_autostrat_names
+        if overwrite and QMessageBox.question(
+                self,
+                "Replace Strategy",
+                f"Replace {normalised}.strat?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        self.controller.save_autostrat_strategy(
+            normalised,
+            self.dsl_output.toPlainText(),
+            overwrite=overwrite,
+        )
+
+    def _confirm_discard_changes(self) -> bool:
+        source = self.dsl_output.toPlainText()
+        if not source.strip() or self._normalise_source(source) == self._saved_source:
+            return True
+        return QMessageBox.question(
+            self,
+            "Discard Unsaved Changes",
+            "Discard the current strategy code?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        ) == QMessageBox.Yes
 
     def _expand_dsl(self) -> None:
         dialog = QDialog(self)
@@ -492,8 +673,18 @@ class StrategySetupPanel(QGroupBox):
 
     def _set_strategy(self) -> None:
         if self.source_combo.currentIndex() == 1:
-            if self._generation_id is not None:
+            source = self.dsl_output.toPlainText()
+            normalised_source = self._normalise_source(source)
+            if (
+                    self._generation_id is not None
+                    and normalised_source == self._normalise_source(self._generation_source)
+            ):
                 self.controller.set_generated_strategy(self._generation_id)
+            elif normalised_source and normalised_source == self._validated_source:
+                self.controller.set_autostrat_strategy(
+                    self._current_autostrat_name or "Unsaved strategy",
+                    source,
+                )
             return
         strategy = self._selected_strategy()
         if strategy is None:
@@ -526,26 +717,58 @@ class StrategySetupPanel(QGroupBox):
         selected = self._selected_strategy()
         automatic = self.source_combo.currentIndex() == 1
         self.auth_label.setVisible(automatic and not self._autostrat_enabled)
-        self.auto_group.setEnabled(self._autostrat_enabled)
+        self.auto_group.setEnabled(not running)
         self.fixed_group.setVisible(not automatic)
         self.auto_group.setVisible(automatic)
+        self.source_combo.setEnabled(not running and not self._generation_busy)
         self.prompt_input.setReadOnly(self._generation_busy)
-        self.generate_button.setEnabled(not self._generation_busy and bool(self.prompt_input.toPlainText().strip()))
-        self.cancel_generation_button.setEnabled(self._generation_busy)
-        self.expand_dsl_button.setEnabled(bool(self.dsl_output.toPlainText()))
-        matches_installed = (
-            self._generation_id is not None and self._generation_id == strategy_status.get("generation_id")
-            if automatic else selected is not None and selected.get("name") == strategy_status.get("name")
+        self.dsl_output.setReadOnly(self._generation_busy)
+        self.saved_strategy_combo.setEnabled(not self._generation_busy)
+        self.generate_button.setEnabled(
+            self._autostrat_enabled
+            and not self._generation_busy
+            and bool(self.prompt_input.toPlainText().strip())
         )
+        self.cancel_generation_button.setEnabled(self._generation_busy)
+        source = self.dsl_output.toPlainText()
+        normalised_source = self._normalise_source(source)
+        source_is_generated = (
+            self._generation_id is not None
+            and normalised_source == self._normalise_source(self._generation_source)
+        )
+        source_is_validated = bool(normalised_source) and normalised_source == self._validated_source
+        self.expand_dsl_button.setEnabled(bool(source))
+        self.validate_strategy_button.setEnabled(bool(source.strip()) and not self._generation_busy)
+        self.save_strategy_button.setEnabled(bool(source.strip()) and not self._generation_busy)
+        self.save_strategy_as_button.setEnabled(bool(source.strip()) and not self._generation_busy)
+        self.load_strategy_button.setEnabled(
+            self.saved_strategy_combo.count() > 0 and not self._generation_busy
+        )
+        self.new_strategy_button.setEnabled(not self._generation_busy)
+        if automatic:
+            if source_is_generated:
+                matches_installed = self._generation_id == strategy_status.get("generation_id")
+            else:
+                installed_name = self._current_autostrat_name or "Unsaved strategy"
+                matches_installed = (
+                    source_is_validated
+                    and installed_name == strategy_status.get("autostrat_name")
+                )
+        else:
+            matches_installed = (
+                selected is not None and selected.get("name") == strategy_status.get("name")
+            )
         can_start = (
             bool(strategy_status.get("is_initialised"))
-            and (not automatic or self._autostrat_enabled)
             and matches_installed
             and not started
             and not stopped
             and not running
         )
-        can_set = self._autostrat_enabled and self._generation_id is not None if automatic else selected is not None and not selected.get("error")
+        can_set = (
+            source_is_generated or source_is_validated
+            if automatic else selected is not None and not selected.get("error")
+        )
         self.set_button.setEnabled(can_set and not running)
         self.strategy_combo.setEnabled(self.strategy_combo.count() > 0 and not running)
         self.start_button.setEnabled(can_start)
@@ -570,5 +793,21 @@ class StrategySetupPanel(QGroupBox):
             GuiCommandType.STRATEGY_STOP,
             GuiCommandType.STRATEGY_STATUS,
             GuiCommandType.AUTOSTRAT_CONFIGURE,
+            GuiCommandType.AUTOSTRAT_STRATEGY_LIST,
+            GuiCommandType.AUTOSTRAT_STRATEGY_LOAD,
+            GuiCommandType.AUTOSTRAT_STRATEGY_SAVE,
+            GuiCommandType.AUTOSTRAT_STRATEGY_VALIDATE,
         }:
+            if command == GuiCommandType.AUTOSTRAT_STRATEGY_VALIDATE:
+                self._validated_source = ""
+                self.generation_label.setText("Strategy validation failed.")
+                self.diagnostics_output.setPlainText(error)
+                self.diagnostics_toggle.setChecked(True)
+                self._sync_controls(self._last_strategy_status)
             self._show_error(error)
+
+    @staticmethod
+    def _normalise_source(source: str) -> str:
+        if not isinstance(source, str) or not source.strip():
+            return ""
+        return source.lstrip("\r\n").rstrip("\r\n") + "\n"

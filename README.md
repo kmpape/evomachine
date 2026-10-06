@@ -269,22 +269,29 @@ uv run python scripts/launch_virtual_gui.py --port 0 --no-napari
 
 In the GUI's Strategy Setup panel, choose **AutoStrat**, enter a prompt and click
 **Generate strategy**. Generation and semantic verification run on a background worker,
-independently of hardware operations. Review the read-only DSL (or use **Expand DSL**) and
+independently of hardware operations. Review or edit the strategy code (or use **Expand DSL**) and
 enable **Show generation diagnostics** for the same candidate/revision/error report as
 the quick notebook. Internal retry counts not exposed by AutoStrat are explicitly marked
 unavailable, not reported as zero.
 
+AutoStrat strategy code can also be written directly in the editor. Use **Validate** before
+**Set Strategy**. **Save** and **Save As** persist plain UTF-8 `.strat` files under
+`strategies/autostrat`; the saved-strategy selector loads them back into the editor. An API
+key is only required for AI generation, not for editing, loading, validating, or running a
+saved strategy. The original fixed choices are labelled **Python Strategies** in the GUI.
+
 Then use the shared **Set Strategy**, FoV **Initialise**, and **Start Strategy** buttons;
-**Stop Strategy** is shared with fixed strategies too. If FoVs are already initialised,
+**Stop Strategy** is shared with Python strategies too. If FoVs are already initialised,
 Set Strategy prepares the generated strategy immediately. Generation alone never installs
 or runs a strategy. Editing the prompt or generating again invalidates the preview's Set
 eligibility until an accepted result is available. Generated acquisitions save to the
 configured Output Folder. Detection/segmentation still require configured DeLTA models
 and a suitable segmentation channel; generation itself never loads those models.
 
-At GUI startup, an optional **masked API-key dialog** enables AutoStrat for that session.
-Leave it blank and press Enter, or Cancel, to disable AutoStrat; fixed strategies and hardware
-controls remain available. Skipping also disables use of any inherited environment key.
+At GUI startup, an optional **masked API-key dialog** enables AI generation for that session.
+Leave it blank and press Enter, or Cancel, to disable generation; Python strategies, `.strat`
+editing, and hardware controls remain available. Skipping also disables use of any inherited
+environment key.
 The key is held in backend process memory only, not saved to a file or echoed in responses.
 Restart the GUI to enter a key after skipping. `OPENAI_BASE_URL` and `AUTOSTRAT_MODEL_ID`
 remain optional backend environment settings; defaults match the notebook's Robin endpoint

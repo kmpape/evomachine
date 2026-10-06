@@ -6,6 +6,8 @@ from collections.abc import Iterable
 from dataclasses import replace
 
 from autostrat.domain import DomainPack
+from autostrat.language.parser import parse_strategy
+from autostrat.language.validator import validate_strategy
 from autostrat.language.evaluator import StrategyExecution
 from autostrat.language.model import (
     ControlAction,
@@ -80,19 +82,68 @@ class AutoStratStrategy(AbstractStrategy):
             raise TypeError("command_adapter must be a CommandAdapter.")
 
         self.verified = verified
+        self._source = verified.source
+        self._program = verified.program
         self.domain = domain
         self.command_adapter = command_adapter
         self.observation_provider = observation_provider or EmptyObservationProvider()
         self.runtime_error_provider = runtime_error_provider or EmptyRuntimeErrorProvider()
         self.collection_provider = collection_provider or CollectionProvider()
-        self._execution = StrategyExecution(domain, verified.program)
-        self._host = _Host(self)
+        self._finish_initialisation()
+
+    @property
+    def source(self) -> str:
+        """Return the accepted DSL source used by this strategy."""
+        return self._source
+
+    @property
+    def program(self) -> ValidatedStrategyProgram:
+        """Return the accepted, deterministically validated program."""
+        return self._program
+
+    @classmethod
+    def from_source(
+            cls,
+            cfg: ImageProcessorConfig,
+            *,
+            source: str,
+            domain: DomainPack,
+            command_adapter: CommandAdapter,
+            observation_provider: ObservationProvider | None = None,
+            runtime_error_provider: RuntimeErrorProvider | None = None,
+            collection_provider: CollectionProvider | None = None,
+    ) -> "AutoStratStrategy":
+        """Build a strategy from user-authored DSL after deterministic validation."""
+        if not isinstance(source, str) or not source.strip():
+            raise ValueError("AutoStrat strategy source must be non-empty text.")
+        instance = cls.__new__(cls)
+        AbstractStrategy.__init__(instance, cfg=cfg)
+        if not isinstance(domain, DomainPack):
+            raise TypeError("domain must be a DomainPack.")
+        if not isinstance(command_adapter, CommandAdapter):
+            raise TypeError("command_adapter must be a CommandAdapter.")
+        normalized_source = source.lstrip("\r\n").rstrip("\r\n") + "\n"
+        instance.verified = None
+        instance._source = normalized_source
+        instance._program = validate_strategy(parse_strategy(normalized_source), domain)
+        instance.domain = domain
+        instance.command_adapter = command_adapter
+        instance.observation_provider = observation_provider or EmptyObservationProvider()
+        instance.runtime_error_provider = runtime_error_provider or EmptyRuntimeErrorProvider()
+        instance.collection_provider = collection_provider or CollectionProvider()
+        instance._finish_initialisation()
+        return instance
+
+    def _finish_initialisation(self) -> None:
+        """Initialise runtime state shared by generated and user-authored strategies."""
         if not isinstance(self.observation_provider, ObservationProvider):
             raise TypeError("observation_provider must be an ObservationProvider.")
         if not isinstance(self.runtime_error_provider, RuntimeErrorProvider):
             raise TypeError("runtime_error_provider must be a RuntimeErrorProvider.")
         if not isinstance(self.collection_provider, CollectionProvider):
             raise TypeError("collection_provider must be a CollectionProvider.")
+        self._execution = StrategyExecution(self.domain, self.program)
+        self._host = _Host(self)
         self._command_origins: dict[int, ValidatedCommandCall] = {}
         self._retry_counts: dict[tuple[str, int], int] = {}
         self._failure_history: list[ActiveRuntimeError] = []
@@ -103,16 +154,6 @@ class AutoStratStrategy(AbstractStrategy):
         self._next_section = "initialise"
         self._current_fov_id = -1
         self._stopped = False
-
-    @property
-    def source(self) -> str:
-        """Return the accepted DSL source used by this strategy."""
-        return self.verified.source
-
-    @property
-    def program(self) -> ValidatedStrategyProgram:
-        """Return the accepted, deterministically validated program."""
-        return self.verified.program
 
     @property
     def failure_history(self) -> tuple[ActiveRuntimeError, ...]:

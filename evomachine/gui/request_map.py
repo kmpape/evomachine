@@ -953,6 +953,81 @@ def gui_strategy_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     return {"strategy": facade.gui_strategy_status_payload()}
 
 
+def gui_autostrat_files_payload(facade: Any) -> list[dict[str, str]]:
+    """Return saved `.strat` files from the configured AutoStrat directory."""
+    return [
+        {"name": item.name, "filename": item.path.name}
+        for item in facade.autostrat_strategy_store.list()
+    ]
+
+
+def gui_autostrat_strategy_list(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    del payload
+    return {"autostrat_strategies": gui_autostrat_files_payload(facade)}
+
+
+def gui_autostrat_strategy_load(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    stored, source = facade.autostrat_strategy_store.load(payload.get("name"))
+    return {
+        "autostrat_strategy": {
+            "name": stored.name,
+            "filename": stored.path.name,
+            "source": source,
+        }
+    }
+
+
+def gui_autostrat_strategy_save(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    overwrite = gui_bool_from_payload(payload, "overwrite", False)
+    stored = facade.autostrat_strategy_store.save(
+        name=payload.get("name"),
+        source=payload.get("source"),
+        overwrite=overwrite,
+    )
+    _, source = facade.autostrat_strategy_store.load(stored.name)
+    return {
+        "autostrat_strategy": {
+            "name": stored.name,
+            "filename": stored.path.name,
+            "source": source,
+            "saved": True,
+        },
+        "autostrat_strategies": gui_autostrat_files_payload(facade),
+    }
+
+
+def _gui_autostrat_strategy_from_source(facade: Any, source: str):
+    from autostrat import load_domain_pack
+    from evomachine.domain_packs import MICROSCOPY_DOMAIN_PACK_PATH
+    from evomachine.strategy_generation import (
+        AutoStratStrategy, MicroscopyCommandAdapter, MicroscopyCollectionProvider,
+        MicroscopyObservationProvider, MicroscopyRuntimeErrorProvider,
+    )
+
+    return AutoStratStrategy.from_source(
+        cfg=facade.gui_strategy_config().updated(preproc_enabled=True),
+        source=source,
+        domain=load_domain_pack(MICROSCOPY_DOMAIN_PACK_PATH),
+        command_adapter=MicroscopyCommandAdapter(segment_images=False, save_images=True),
+        collection_provider=MicroscopyCollectionProvider(),
+        observation_provider=MicroscopyObservationProvider(),
+        runtime_error_provider=MicroscopyRuntimeErrorProvider(),
+    )
+
+
+def gui_autostrat_strategy_validate(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    source = payload.get("source")
+    strategy = _gui_autostrat_strategy_from_source(facade, source)
+    return {
+        "autostrat_validation": {
+            "valid": True,
+            "source": strategy.source,
+            "commands": sorted(item.name for item in strategy.register_automaton_commands()),
+            "message": "Strategy syntax and domain validation passed.",
+        }
+    }
+
+
 def gui_strategy_list(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     cfg = facade.gui_strategy_config()
     definitions = [
@@ -995,6 +1070,13 @@ def gui_strategy_list(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
 def gui_strategy_set(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     if "generation_id" in payload:
         return gui_generated_strategy_set(facade, payload)
+    if "autostrat_source" in payload:
+        strategy = _gui_autostrat_strategy_from_source(facade, payload["autostrat_source"])
+        facade.automaton.set_strategy(strategy=strategy)
+        facade._installed_generation_id = None
+        facade._installed_generated_strategy = None
+        facade._installed_autostrat_name = str(payload.get("autostrat_name") or "Unsaved strategy")
+        return {**facade.gui_status_payload(), "strategy": facade.gui_strategy_status_payload()}
     name = str(payload["name"])
     cfg = facade.gui_strategy_config()
     if name == "NoStrategy":
@@ -1014,6 +1096,7 @@ def gui_strategy_set(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     facade.automaton.set_strategy(strategy=strategy)
     facade._installed_generation_id = None
     facade._installed_generated_strategy = None
+    facade._installed_autostrat_name = None
     return {
         **facade.gui_status_payload(),
         "strategy": facade.gui_strategy_status_payload(),
@@ -1114,6 +1197,7 @@ def gui_generated_strategy_set(facade: Any, payload: dict[str, Any]) -> dict[str
     facade.automaton.set_strategy(strategy=strategy)
     facade._installed_generation_id = operation["operation_id"]
     facade._installed_generated_strategy = strategy
+    facade._installed_autostrat_name = None
     return {**facade.gui_status_payload(), "strategy": facade.gui_strategy_status_payload()}
 
 
@@ -1182,6 +1266,10 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.STRATEGY_GENERATION_CANCEL: gui_strategy_generation_cancel,
     GuiCommandType.AUTOSTRAT_CONFIGURE: gui_autostrat_configure,
     GuiCommandType.STRATEGY_GENERATION_STATUS: gui_strategy_generation_status,
+    GuiCommandType.AUTOSTRAT_STRATEGY_LIST: gui_autostrat_strategy_list,
+    GuiCommandType.AUTOSTRAT_STRATEGY_LOAD: gui_autostrat_strategy_load,
+    GuiCommandType.AUTOSTRAT_STRATEGY_SAVE: gui_autostrat_strategy_save,
+    GuiCommandType.AUTOSTRAT_STRATEGY_VALIDATE: gui_autostrat_strategy_validate,
     GuiCommandType.STRATEGY_LIST: gui_strategy_list,
     GuiCommandType.STRATEGY_SET: gui_strategy_set,
     GuiCommandType.STRATEGY_START: gui_strategy_start,

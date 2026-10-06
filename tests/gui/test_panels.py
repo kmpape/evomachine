@@ -64,6 +64,9 @@ class FakeController(QObject):
     strategies_received = pyqtSignal(list)
     strategy_status_received = pyqtSignal(dict)
     strategy_generation_received = pyqtSignal(dict)
+    autostrat_strategies_received = pyqtSignal(list)
+    autostrat_strategy_received = pyqtSignal(dict)
+    autostrat_validation_received = pyqtSignal(dict)
     autostrat_configuration_received = pyqtSignal(dict)
     lifecycle_status_received = pyqtSignal(dict)
     response_error = pyqtSignal(str)
@@ -227,8 +230,23 @@ class FakeController(QObject):
     def refresh_strategy_generation(self):
         self.calls.append(("refresh_strategy_generation",))
 
+    def refresh_autostrat_strategies(self):
+        self.calls.append(("refresh_autostrat_strategies",))
+
+    def load_autostrat_strategy(self, name):
+        self.calls.append(("load_autostrat_strategy", name))
+
+    def save_autostrat_strategy(self, name, source, *, overwrite=False):
+        self.calls.append(("save_autostrat_strategy", name, source, overwrite))
+
+    def validate_autostrat_strategy(self, source):
+        self.calls.append(("validate_autostrat_strategy", source))
+
     def set_generated_strategy(self, generation_id):
         self.calls.append(("set_generated_strategy", generation_id))
+
+    def set_autostrat_strategy(self, name, source):
+        self.calls.append(("set_autostrat_strategy", name, source))
 
     def start_strategy(self):
         self.calls.append(("start_strategy",))
@@ -1399,8 +1417,9 @@ def test_autostrat_panel_reviews_then_uses_shared_lifecycle_buttons() -> None:
     controller = FakeController()
     panel = StrategySetupPanel(controller)
     panel.source_combo.setCurrentText("AutoStrat")
-    assert not panel.auto_group.isEnabled()
-    assert "AutoStrat disabled" in panel.auth_label.text()
+    assert panel.auto_group.isEnabled()
+    assert not panel.generate_button.isEnabled()
+    assert "AI generation is disabled" in panel.auth_label.text()
     controller.autostrat_configuration_received.emit({"enabled": True})
     panel.prompt_input.setPlainText("Image twice then terminate.")
     panel.generate_button.click()
@@ -1419,7 +1438,7 @@ def test_autostrat_panel_reviews_then_uses_shared_lifecycle_buttons() -> None:
         "diagnostics": "Semantic candidates: 1\nSemantic revisions: 0",
     })
     assert not panel.generation_timer.isActive()
-    assert panel.dsl_output.isReadOnly()
+    assert not panel.dsl_output.isReadOnly()
     assert "terminate" in panel.dsl_output.toPlainText()
     assert "Semantic candidates: 1" in panel.diagnostics_output.toPlainText()
     assert panel.set_button.isEnabled() and not panel.start_button.isEnabled()
@@ -1444,6 +1463,42 @@ def test_autostrat_panel_reviews_then_uses_shared_lifecycle_buttons() -> None:
     assert not panel.set_button.isEnabled()
     assert panel.generate_button.isEnabled()
     assert "endpoint unavailable" in panel.diagnostics_output.toPlainText()
+    panel.close()
+
+
+def test_autostrat_panel_loads_edits_validates_and_sets_saved_strategy() -> None:
+    _app()
+    controller = FakeController()
+    panel = StrategySetupPanel(controller)
+    panel.source_combo.setCurrentText("AutoStrat")
+    controller.calls.clear()
+    controller.autostrat_strategies_received.emit([{"name": "timelapse"}])
+    panel.load_strategy_button.click()
+    assert controller.calls[-1] == ("load_autostrat_strategy", "timelapse")
+
+    source = "initialise\nstep\n    terminate\nfinalise\n"
+    controller.autostrat_strategy_received.emit({"name": "timelapse", "source": source})
+    assert panel.dsl_output.toPlainText() == source
+    assert controller.calls[-1] == ("validate_autostrat_strategy", source)
+    controller.autostrat_validation_received.emit({
+        "valid": True,
+        "source": source,
+        "commands": ["TERMINATE_STRATEGY"],
+        "message": "Strategy syntax and domain validation passed.",
+    })
+    assert panel.set_button.isEnabled()
+    panel.set_button.click()
+    assert controller.calls[-1] == ("set_autostrat_strategy", "timelapse", source)
+
+    controller.strategy_status_received.emit({
+        "name": "AutoStratStrategy",
+        "autostrat_name": "timelapse",
+        "is_initialised": True,
+    })
+    assert panel.start_button.isEnabled()
+    panel.dsl_output.appendPlainText("# edited")
+    assert not panel.set_button.isEnabled()
+    assert not panel.start_button.isEnabled()
     panel.close()
 
 
@@ -1475,7 +1530,7 @@ def test_startup_api_key_prompt_is_masked_and_optional(monkeypatch, key, accepte
     def get_text(parent, title, message, echo_mode):
         assert echo_mode == QLineEdit.Password
         assert "Leave blank and press Enter" in message
-        assert "disable AutoStrat" in message
+        assert "disable AI generation" in message
         return key, accepted
 
     monkeypatch.setattr(QInputDialog, "getText", get_text)

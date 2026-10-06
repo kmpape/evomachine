@@ -15,6 +15,7 @@ from evomachine.gui.protocol import (
 )
 from evomachine.gui.operations import GuiOperationManager
 from evomachine.gui.request_map import GUI_REQUEST_HANDLERS, gui_coordinate_to_payload
+from evomachine.strategy_generation.files import StrategyFileStore
 
 
 logger = get_logger(name=__name__)
@@ -26,6 +27,10 @@ _OPERATION_SAFE_COMMANDS = frozenset(
         GuiCommandType.STRATEGY_GENERATION_CANCEL,
         GuiCommandType.AUTOSTRAT_CONFIGURE,
         GuiCommandType.STRATEGY_GENERATION_STATUS,
+        GuiCommandType.AUTOSTRAT_STRATEGY_LIST,
+        GuiCommandType.AUTOSTRAT_STRATEGY_LOAD,
+        GuiCommandType.AUTOSTRAT_STRATEGY_SAVE,
+        GuiCommandType.AUTOSTRAT_STRATEGY_VALIDATE,
         GuiCommandType.STOP,
         GuiCommandType.LOGS_RECENT,
         GuiCommandType.STAGE_STOP,
@@ -56,6 +61,10 @@ class AutomatonGuiFacade:
         self.autostrat_enabled = False
         self._installed_generation_id: str | None = None
         self._installed_generated_strategy = None
+        self._installed_autostrat_name: str | None = None
+        self.autostrat_strategy_store = StrategyFileStore(
+            EVOMACHINE_DIR / "strategies" / "autostrat"
+        )
 
     def handle(self, request: GuiRequest) -> GuiResponse:
         active_operation = self.gui_operations.active()
@@ -240,6 +249,7 @@ class AutomatonGuiFacade:
             "name": None if strategy is None else strategy.name(),
             "generation_id": self._installed_generation_id
             if strategy is self._installed_generated_strategy else None,
+            "autostrat_name": self._installed_autostrat_name,
             "is_initialised": bool(getattr(self.automaton, "_strategy_is_initialised", False)),
             "fovs_initialised": bool(getattr(self.automaton, "_fov_list_is_initialised", False)),
             "running": self.gui_strategy_active(),

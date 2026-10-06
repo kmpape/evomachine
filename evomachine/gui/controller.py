@@ -72,6 +72,9 @@ class EvoMachineGuiController(QObject):
     strategies_received = pyqtSignal(list)
     strategy_status_received = pyqtSignal(dict)
     strategy_generation_received = pyqtSignal(dict)
+    autostrat_strategies_received = pyqtSignal(list)
+    autostrat_strategy_received = pyqtSignal(dict)
+    autostrat_validation_received = pyqtSignal(dict)
     autostrat_configuration_received = pyqtSignal(dict)
     lifecycle_status_received = pyqtSignal(dict)
 
@@ -347,8 +350,31 @@ class EvoMachineGuiController(QObject):
     def refresh_strategy_generation(self) -> None:
         self._send(GuiCommandType.STRATEGY_GENERATION_STATUS)
 
+    def refresh_autostrat_strategies(self) -> None:
+        self._send(GuiCommandType.AUTOSTRAT_STRATEGY_LIST)
+
+    def load_autostrat_strategy(self, name: str) -> None:
+        self._send(GuiCommandType.AUTOSTRAT_STRATEGY_LOAD, {"name": name})
+
+    def save_autostrat_strategy(
+            self, name: str, source: str, *, overwrite: bool = False
+    ) -> None:
+        self._send(
+            GuiCommandType.AUTOSTRAT_STRATEGY_SAVE,
+            {"name": name, "source": source, "overwrite": overwrite},
+        )
+
+    def validate_autostrat_strategy(self, source: str) -> None:
+        self._send(GuiCommandType.AUTOSTRAT_STRATEGY_VALIDATE, {"source": source})
+
     def set_generated_strategy(self, generation_id: str) -> None:
         self._send(GuiCommandType.STRATEGY_SET, {"generation_id": generation_id})
+
+    def set_autostrat_strategy(self, name: str, source: str) -> None:
+        self._send(
+            GuiCommandType.STRATEGY_SET,
+            {"autostrat_name": name, "autostrat_source": source},
+        )
 
     def stop_strategy(self) -> None:
         self._send(GuiCommandType.STRATEGY_STOP)
@@ -442,6 +468,12 @@ class EvoMachineGuiController(QObject):
             self.strategy_status_received.emit(payload["strategy"])
         if "generation" in payload:
             self.strategy_generation_received.emit(payload["generation"])
+        if "autostrat_strategies" in payload:
+            self.autostrat_strategies_received.emit(payload["autostrat_strategies"])
+        if "autostrat_strategy" in payload:
+            self.autostrat_strategy_received.emit(payload["autostrat_strategy"])
+        if "autostrat_validation" in payload:
+            self.autostrat_validation_received.emit(payload["autostrat_validation"])
         if "autostrat" in payload:
             self.autostrat_configuration_received.emit(payload["autostrat"])
         if (
