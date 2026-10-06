@@ -11,6 +11,7 @@ from evomachine.bindings.em_dmd_window.peripheralcontroller import EmDmdWindowPe
 from evomachine.bindings.pygame.dmd import PygameDmd
 from evomachine.bindings.pygame.peripheralcontroller import PygameDmdPeripheralController
 from evomachine.bindings.virtual.dmd import VirtualDmd, VirtualDmdPeripheralController
+from evomachine.config import DMD_WIDTH_HEIGHT
 from evomachine.gui.request_map import gui_dmd_pattern_array
 from evomachine.peripherals.dmd import Dmd, DmdConfig, DmdFactory, DmdShapeConfig
 from evomachine.peripherals.peripheralcontrollers import PeripheralController, SocketPeripheralController
@@ -571,6 +572,16 @@ def test_em_dmd_window_binding_sends_transposed_image_bytes(tmp_path):
     dmd.display_image(img)
 
     assert fake_socket.sent[-1] == img.transpose().tobytes()
+
+
+def test_em_dmd_window_initialise_blanks_display_after_connection_test():
+    fake_socket = FakeSocket()
+    controller = EmDmdWindowPeripheralController(socket_obj=fake_socket, debug_mode=False)
+
+    controller.initialise()
+
+    assert len(fake_socket.sent) == 2
+    assert fake_socket.sent[-1] == np.zeros(DMD_WIDTH_HEIGHT, dtype=np.uint8).transpose().tobytes()
 
 
 def test_pygame_binding_displays_through_pygame_controller(tmp_path):

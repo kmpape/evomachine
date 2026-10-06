@@ -24,7 +24,7 @@ from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
 
 PATTERN_ACTIONS = (
     ("Empty", "empty"),
-    ("Full", "full"),
+    ("Full Camera Field", "full"),
     ("Rectangle", "rectangle"),
     ("Circle", "circle"),
     ("Checkerboard", "checkerboard"),

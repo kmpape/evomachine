@@ -139,7 +139,14 @@ class EmDmdWindowPeripheralController(SocketPeripheralController):
         try:
             self._launch_dmd_window()
             self._connect_socket()
-            return self._connection_test()
+            if not self._connection_test():
+                return False
+            # The standalone display process starts white. Send an explicit
+            # black frame as soon as the socket handshake succeeds so the
+            # physical DMD and EvoMachine's initial blank state agree.
+            self.send_image(np.zeros(DMD_WIDTH_HEIGHT, dtype=np.uint8))
+            logger.info("EmDmdWindowPeripheralController.initialise: DMD display blanked.")
+            return True
         except Exception as error:
             msg = f"Error initialising DMD socket backend: {error}"
             logger.error(msg)

@@ -823,6 +823,8 @@ def test_dmd_panel_sends_pattern_request() -> None:
     panel = DmdPanel(controller=controller)
     panel.update_lifecycle_status({"devices_initialised": True})
 
+    assert panel.pattern_buttons["full"].text() == "Full Camera Field"
+
     panel.pattern_buttons["checkerboard"].click()
 
     assert controller.calls == [
