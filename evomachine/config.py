@@ -370,7 +370,7 @@ file_handler.setLevel(
         DEFAULT_LOGGING_CONFIG.binding_level,
     )
 )
-gui_log_handler = GuiLogBufferHandler(capacity=200, level=logging.INFO)
+gui_log_handler = GuiLogBufferHandler(capacity=5000, level=logging.NOTSET)
 gui_log_handler.setFormatter(EVO_FORMATTER)
 
 

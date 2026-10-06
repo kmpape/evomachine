@@ -1079,6 +1079,7 @@ def test_application_log_panel_is_incremental_and_bounded() -> None:
                     "level": "WARNING",
                     "logger": "b",
                     "message": "second",
+                    "formatted": "10:00:01 - WARNING - b - second",
                 },
                 {
                     "sequence": 3,
@@ -1110,6 +1111,7 @@ def test_application_log_panel_is_incremental_and_bounded() -> None:
     assert "first" not in rendered
     assert rendered.count("second") == 1
     assert rendered.count("third") == 1
+    assert "10:00:01 - WARNING - b - second" in rendered
     panel.refresh()
     assert controller.calls[-1] == ("refresh_logs", 3)
 

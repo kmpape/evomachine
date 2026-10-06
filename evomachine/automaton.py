@@ -748,10 +748,15 @@ class Automaton:
         while True:
             self._execute_strategy_batch(finalise=finalise)
             if not finalise or self.stopped():
+                if finalise and self.stopped():
+                    logger.warning(
+                        "Strategy finalisation interrupted: %s.", self._strategy.name()
+                    )
                 return
             self.next_commands = self._strategy.resume_finalise(self.get_fov_id(), self.last_commands)
             self._validate_commands_are_registered(commands=self.next_commands, source="finalise")
             if not self.next_commands:
+                logger.info("Strategy finalisation completed: %s.", self._strategy.name())
                 return
 
     def _execute_strategy_batch(self, finalise: bool = False) -> None:
@@ -795,14 +800,18 @@ class Automaton:
                     return
                 elif command.command_type == AutomatonCommandType.TERMINATE_STRATEGY:
                     if not finalise:
+                        logger.info(
+                            "Strategy termination condition reached: %s; starting finalisation.",
+                            self._strategy.name(),
+                        )
                         self._process_commands(finalise=True)
-                    self.stop_strategy()
+                    self.stop_strategy(reason="termination condition reached")
                     self._stop_event.set()
                     command.command_execution_time = time.time()
                     command.fov_id = self.get_fov_id()
                     return
                 elif command.command_type == AutomatonCommandType.ABORT_STRATEGY:
-                    self.stop_strategy()
+                    self.stop_strategy(reason="abort command")
                     self.stop()
                     command.command_execution_time = time.time()
                     command.fov_id = self.get_fov_id()
@@ -1350,7 +1359,7 @@ class Automaton:
             )
 
         already_stopped = self.strategy_has_stopped() and self.stopped()
-        self.stop_strategy()
+        self.stop_strategy(reason=f"execution failure during {section}")
         if already_stopped:
             return
         try:
@@ -1420,8 +1429,27 @@ class Automaton:
         if not self._strategy_is_initialised:
             raise RuntimeError("Automaton.start_strategy: strategy is not initialised.")
         self._validate_strategy_command_requirements()
+        preparation_errors: list[str] = []
+        try:
+            self._led_mngr.disable_led()
+            logger.info("All LEDs disabled before strategy start.")
+        except Exception as error:
+            logger.exception("Failed to disable all LEDs before strategy start.")
+            preparation_errors.append(f"LED shutdown: {type(error).__name__}: {error}")
+        try:
+            self.acq_mngr.set_camera_live_mode(status=False)
+            logger.info("Camera live mode disabled before strategy start.")
+        except Exception as error:
+            logger.exception("Failed to disable camera live mode before strategy start.")
+            preparation_errors.append(f"live-mode shutdown: {type(error).__name__}: {error}")
+        if preparation_errors:
+            raise RuntimeError(
+                "Cannot start strategy because hardware safety preparation failed: "
+                + "; ".join(preparation_errors)
+            )
         self._stop_event.clear()
         self._start_strategy_event.set()
+        logger.info("Strategy started: %s.", self._strategy.name())
 
     def strategy_has_started(self) -> bool:
         """
@@ -1438,7 +1466,7 @@ class Automaton:
         """
         return self._start_strategy_event.is_set()
 
-    def stop_strategy(self) -> None:
+    def stop_strategy(self, *, reason: str = "user request") -> None:
         """
         Set the strategy-stop event.
 
@@ -1450,6 +1478,10 @@ class Automaton:
         -------
         None
         """
+        if reason == "user request":
+            logger.info("Strategy stop requested by user.")
+        else:
+            logger.info("Strategy stop requested: %s.", reason)
         self._stop_strategy_event.set()
 
     def strategy_has_stopped(self) -> bool:

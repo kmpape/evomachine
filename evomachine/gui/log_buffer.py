@@ -8,7 +8,7 @@ import logging
 class GuiLogBufferHandler(logging.Handler):
     """Retain a bounded, structured view of recent application log records."""
 
-    def __init__(self, capacity: int = 200, level: int = logging.INFO):
+    def __init__(self, capacity: int = 5000, level: int = logging.NOTSET):
         if not isinstance(capacity, int) or isinstance(capacity, bool) or capacity < 1:
             raise ValueError("GuiLogBufferHandler capacity must be a positive integer.")
         super().__init__(level=level)
@@ -29,6 +29,7 @@ class GuiLogBufferHandler(logging.Handler):
         message = record.getMessage()
         if record.exc_info is not None and formatter is not None:
             message = f"{message}\n{formatter.formatException(record.exc_info)}"
+        formatted = formatter.format(record) if formatter is not None else message
         self._records.append(
             {
                 "sequence": self._sequence,
@@ -36,6 +37,7 @@ class GuiLogBufferHandler(logging.Handler):
                 "level": record.levelname,
                 "logger": record.name,
                 "message": message,
+                "formatted": formatted,
             }
         )
 

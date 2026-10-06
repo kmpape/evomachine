@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import StringIO
 import logging
 
 import pytest
@@ -24,6 +25,24 @@ def test_gui_log_buffer_filters_and_bounds_structured_records() -> None:
     assert records[0]["logger"] == "test.gui.buffer"
     assert isinstance(records[0]["timestamp"], str)
     assert handler.records_after(records[0]["sequence"]) == (records[1],)
+
+
+def test_gui_log_buffer_preserves_exact_terminal_format() -> None:
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(name)s - %(message)s")
+    handler = GuiLogBufferHandler()
+    handler.setFormatter(formatter)
+    terminal_output = StringIO()
+    terminal_handler = logging.StreamHandler(terminal_output)
+    terminal_handler.setFormatter(formatter)
+    logger = logging.Logger("test.gui.exact", level=logging.DEBUG)
+    logger.addHandler(handler)
+    logger.addHandler(terminal_handler)
+
+    logger.debug("same debug record")
+
+    record = handler.records_after()[0]
+    assert record["formatted"] == terminal_output.getvalue().rstrip("\n")
+    assert record["level"] == "DEBUG"
 
 
 def test_gui_log_buffer_rejects_invalid_bounds_and_cursors() -> None:

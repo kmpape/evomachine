@@ -8,9 +8,9 @@ from PyQt5.QtWidgets import QPlainTextEdit, QVBoxLayout, QWidget
 
 
 class ApplicationLogPanel(QWidget):
-    """Display a bounded, live view of informational and higher-level logs."""
+    """Display a bounded, live view of the same records written to the terminal."""
 
-    def __init__(self, controller, history_limit: int = 200, parent: QWidget | None = None):
+    def __init__(self, controller, history_limit: int = 5000, parent: QWidget | None = None):
         super().__init__(parent)
         if not isinstance(history_limit, int) or isinstance(history_limit, bool) or history_limit < 1:
             raise ValueError("ApplicationLogPanel history_limit must be a positive integer.")
@@ -62,10 +62,11 @@ class ApplicationLogPanel(QWidget):
             "ERROR": "#d33c3c",
             "CRITICAL": "#d33c3c",
         }.get(level, "#808080")
-        timestamp = escape(str(record.get("timestamp", "-")))
-        logger_name = escape(str(record.get("logger", "")))
-        message = escape(str(record.get("message", ""))).replace("\n", "<br>")
-        return (
-            f'<span style="color:{colour}">[{timestamp}] <b>{escape(level)}</b> '
-            f'{logger_name}: {message}</span>'
-        )
+        formatted = record.get("formatted")
+        if not isinstance(formatted, str):
+            timestamp = str(record.get("timestamp", "-"))
+            logger_name = str(record.get("logger", ""))
+            message = str(record.get("message", ""))
+            formatted = f"{timestamp} - {level} - {logger_name} - {message}"
+        rendered = escape(formatted).replace("\n", "<br>")
+        return f'<span style="color:{colour}">{rendered}</span>'
