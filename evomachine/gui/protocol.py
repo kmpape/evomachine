@@ -24,6 +24,8 @@ class GuiCommandType(str, Enum):
     CONTROLLER_STATUS = "controllers.status"
     LOGS_RECENT = "logs.recent"
     FOV_INITIALISE = "fov.initialise"
+    FOV_MOVE = "fov.move"
+    FOV_MOVEMENT_STATUS = "fov.movement_status"
     STAGE_STATUS = "stage.status"
     STAGE_GET_COORDINATES = "stage.get_coordinates"
     STAGE_MOVE_ABSOLUTE = "stage.move_absolute"
@@ -64,6 +66,7 @@ class GuiCommandType(str, Enum):
     AUTOFOCUS_UNLOCK = "autofocus.unlock"
     AUTOFOCUS_DISABLE = "autofocus.disable"
     SOFTWARE_FOCUS_STATUS = "software_focus.status"
+    SOFTWARE_FOCUS_CONFIGURE = "software_focus.configure"
     SOFTWARE_FOCUS_RUN = "software_focus.run"
     SOFTWARE_FOCUS_OPERATION_STATUS = "software_focus.operation_status"
     STAGE_MOVEMENT_STATUS = "stage.movement_status"
@@ -86,6 +89,7 @@ MUTATING_COMMANDS = frozenset(
     {
         GuiCommandType.INITIALISE_DEVICES,
         GuiCommandType.FOV_INITIALISE,
+        GuiCommandType.FOV_MOVE,
         GuiCommandType.STAGE_MOVE_ABSOLUTE,
         GuiCommandType.STAGE_MOVE_RELATIVE,
         GuiCommandType.STAGE_MOVE_FOV,
@@ -111,6 +115,7 @@ MUTATING_COMMANDS = frozenset(
         GuiCommandType.AUTOFOCUS_LOCK,
         GuiCommandType.AUTOFOCUS_UNLOCK,
         GuiCommandType.AUTOFOCUS_DISABLE,
+        GuiCommandType.SOFTWARE_FOCUS_CONFIGURE,
         GuiCommandType.SOFTWARE_FOCUS_RUN,
         GuiCommandType.AUTOSTRAT_STRATEGY_SAVE,
         GuiCommandType.STRATEGY_SET,

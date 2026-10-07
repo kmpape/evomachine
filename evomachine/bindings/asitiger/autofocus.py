@@ -133,12 +133,12 @@ class TigerAutofocusConfigFactory:
             Default CRISP configuration.
         """
         return TigerAutofocusConfig(
-            led_intensity=70,
-            loop_gain=10,
-            averaging=5,
-            update_rate=10,
+            led_intensity=95,
+            loop_gain=5,
+            averaging=0,
+            update_rate=100,
             objective_na=0.95,
-            lock_range=0.1,
+            lock_range=0.025,
         )
 
     @staticmethod
@@ -156,12 +156,12 @@ class TigerAutofocusConfigFactory:
             Default oil-objective CRISP configuration.
         """
         return TigerAutofocusConfig(
-            led_intensity=70,
-            loop_gain=10,
-            averaging=5,
-            update_rate=10,
+            led_intensity=95,
+            loop_gain=5,
+            averaging=0,
+            update_rate=100,
             objective_na=1.4,
-            lock_range=0.1,
+            lock_range=0.025,
         )
 
 
@@ -512,44 +512,68 @@ class TigerAutofocus(Autofocus):
         """
         tiger_config = self._normalise_config(config=config)
         self._unlock()
-        self.sleep(self.pause_short)
+        if self._wait_for_calibration_pause(self.pause_short, stop_event):
+            return False
         commands = (
-            lambda: self.tiger.crisp_get_set_objective_na(
-                card_address=self.card_address,
-                value=tiger_config.objective_na,
+            (
+                "objective NA",
+                lambda: self.tiger.crisp_get_set_objective_na(
+                    card_address=self.card_address,
+                    value=tiger_config.objective_na,
+                ),
             ),
-            lambda: self.tiger.crisp_get_set_led_intensity(
-                card_address=self.card_address,
-                value=tiger_config.led_intensity,
+            (
+                "LED intensity",
+                lambda: self.tiger.crisp_get_set_led_intensity(
+                    card_address=self.card_address,
+                    value=tiger_config.led_intensity,
+                ),
             ),
-            lambda: self.tiger.crisp_get_set_loop_gain(
-                card_address=self.card_address,
-                value=tiger_config.loop_gain,
+            (
+                "loop gain",
+                lambda: self.tiger.crisp_get_set_loop_gain(
+                    card_address=self.card_address,
+                    value=tiger_config.loop_gain,
+                ),
             ),
-            lambda: self.tiger.crisp_get_set_num_avg(
-                card_address=self.card_address,
-                value=tiger_config.averaging,
+            (
+                "averaging",
+                lambda: self.tiger.crisp_get_set_num_avg(
+                    card_address=self.card_address,
+                    value=tiger_config.averaging,
+                ),
             ),
-            lambda: self.tiger.crisp_get_set_update_rate(
-                card_address=self.card_address,
-                value=tiger_config.update_rate,
+            (
+                "update rate",
+                lambda: self.tiger.crisp_get_set_update_rate(
+                    card_address=self.card_address,
+                    value=tiger_config.update_rate,
+                ),
             ),
-            lambda: self.tiger.crisp_get_set_lock_range(
-                card_address=self.card_address,
-                value=tiger_config.lock_range,
+            (
+                "lock range",
+                lambda: self.tiger.crisp_get_set_lock_range(
+                    card_address=self.card_address,
+                    value=tiger_config.lock_range,
+                ),
             ),
         )
-        for index, command in enumerate(commands):
+        for index, (label, command) in enumerate(commands):
             if self._calibration_cancelled(stop_event):
                 return False
-            command()
-            if index < len(commands) - 1:
-                self.sleep(self.pause_short)
             self._report_calibration_progress(
                 progress_callback,
-                0.05 + 0.15 * (index + 1) / len(commands),
-                f"Applying CRISP configuration ({index + 1}/{len(commands)}).",
+                0.05 + 0.15 * index / len(commands),
+                f"Applying CRISP {label} ({index + 1}/{len(commands)}).",
             )
+            command()
+            if index < len(commands) - 1 and self._wait_for_calibration_pause(
+                self.pause_short,
+                stop_event,
+            ):
+                return False
+        if self._calibration_cancelled(stop_event):
+            return False
         self.tiger_config = tiger_config
         return True
 
@@ -597,12 +621,16 @@ class TigerAutofocus(Autofocus):
         self._report_calibration_progress(progress_callback, 0.25, "Setting CRISP offset.")
         self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.IDLE)
         self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.SET_OFFSET)
-        self.sleep(self.pause_short)
+        if self._wait_for_calibration_pause(self.pause_short, stop_event):
+            self._calibration_cancelled(stop_event)
+            return self._cancelled_result(measurements)
         if self._calibration_cancelled(stop_event):
             return self._cancelled_result(measurements)
         self._report_calibration_progress(progress_callback, 0.45, "Running CRISP log calibration.")
         self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.LOG_CAL)
-        self.sleep(self.pause_long)
+        if self._wait_for_calibration_pause(self.pause_long, stop_event):
+            self._calibration_cancelled(stop_event)
+            return self._cancelled_result(measurements)
         if self._calibration_cancelled(stop_event):
             return self._cancelled_result(measurements)
         snr = float(self.tiger.crisp_get_snr(card_address=self.card_address))
@@ -613,7 +641,9 @@ class TigerAutofocus(Autofocus):
             )
         self._report_calibration_progress(progress_callback, 0.70, "Running CRISP dither calibration.")
         self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.DITHER)
-        self.sleep(self.pause_long)
+        if self._wait_for_calibration_pause(self.pause_long, stop_event):
+            self._calibration_cancelled(stop_event)
+            return self._cancelled_result(measurements)
         if self._calibration_cancelled(stop_event):
             return self._cancelled_result(measurements)
         error = float(self.tiger.crisp_get_err(card_address=self.card_address))
@@ -624,11 +654,15 @@ class TigerAutofocus(Autofocus):
             )
         self._report_calibration_progress(progress_callback, 0.90, "Applying CRISP gain.")
         self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.SET_GAIN)
-        self.sleep(self.pause_short)
+        if self._wait_for_calibration_pause(self.pause_short, stop_event):
+            self._calibration_cancelled(stop_event)
+            return self._cancelled_result(measurements)
         if self._calibration_cancelled(stop_event):
             return self._cancelled_result(measurements)
         self._unlock()
-        self.sleep(self.pause_short)
+        if self._wait_for_calibration_pause(self.pause_short, stop_event):
+            self._calibration_cancelled(stop_event)
+            return self._cancelled_result(measurements)
         is_success = not failure_reasons
         if lock_after_calibration and is_success:
             self._lock()
@@ -655,6 +689,17 @@ class TigerAutofocus(Autofocus):
             return False
         self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.IDLE)
         return True
+
+    def _wait_for_calibration_pause(
+            self,
+            pause: float,
+            stop_event: threading.Event | None,
+    ) -> bool:
+        """Wait for a CRISP settling pause and return whether cancellation was requested."""
+        if stop_event is None:
+            self.sleep(pause)
+            return False
+        return stop_event.wait(pause)
 
     @staticmethod
     def _report_calibration_progress(

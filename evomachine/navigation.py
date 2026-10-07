@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import time
 from typing import Any
 
@@ -203,6 +203,15 @@ class FocusNavigator:
         self._num_refocus: int = 0
         self._active_autofocus_initialise_config: Any | None = None
 
+    def update_config(self, config: FocusNavigatorConfig) -> None:
+        """Replace the runtime movement and focus policy."""
+        if not isinstance(config, FocusNavigatorConfig):
+            raise TypeError(
+                "FocusNavigator.update_config: config must be FocusNavigatorConfig, "
+                f"received {type(config)}."
+            )
+        self.config = config
+
     def initialise_fovs(
             self,
             fov_id_to_coordinate: dict[int, Coordinate],
@@ -232,6 +241,8 @@ class FocusNavigator:
             value=use_autofocus,
             name="use_autofocus",
         )
+        if autofocus_enabled != self.config.use_autofocus:
+            self.config = replace(self.config, use_autofocus=autofocus_enabled)
         if fov_configs is not None and not isinstance(fov_configs, dict):
             raise TypeError("FocusNavigator.initialise_fovs: fov_configs must be dict[int, FovConfig] or None.")
         states: dict[int, FocusNavigatorFovRecord] = {}

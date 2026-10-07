@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QLineEdit,
+    QLabel,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -33,6 +34,7 @@ class ConfigFieldSpec:
     editable: bool = True
     enabled_when_key: str | None = None
     enabled_when_value: Any = True
+    emphasized: bool = False
 
 
 class ConfigDialog(QDialog):
@@ -53,7 +55,15 @@ class ConfigDialog(QDialog):
         for field in fields:
             widget = self._make_widget(field)
             self._widgets[field.key] = widget
-            form.addRow(field.label, widget)
+            label = QLabel(field.label)
+            if field.emphasized:
+                label_font = label.font()
+                label_font.setBold(True)
+                label.setFont(label_font)
+                widget_font = widget.font()
+                widget_font.setBold(True)
+                widget.setFont(widget_font)
+            form.addRow(label, widget)
         self._connect_dependency_widgets()
         self._sync_dependency_states()
 

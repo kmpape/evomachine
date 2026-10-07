@@ -37,6 +37,7 @@ class StagePanel(QGroupBox):
         self.devices_initialised = False
         self.strategy_running = False
         self.movement_running = False
+        self.autofocus_locked = False
         self.fov_buttons: list[QPushButton] = []
         self.x_input = self._axis_input("ΔX (µm): ")
         self.y_input = self._axis_input("ΔY (µm): ")
@@ -113,6 +114,7 @@ class StagePanel(QGroupBox):
         self.configure_button.clicked.connect(self._open_config_dialog)
         self.controller.stage_coordinates_received.connect(self.update_coordinates)
         self.controller.stage_status_received.connect(self.update_status)
+        self.controller.autofocus_status_received.connect(self.update_autofocus_status)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
         self.controller.strategy_status_received.connect(self.update_strategy_status)
         self.controller.operation_status_received.connect(self.update_operation_status)
@@ -148,7 +150,7 @@ class StagePanel(QGroupBox):
         self.controller.move_stage_relative(
             dx=self.x_input.value(),
             dy=self.y_input.value(),
-            dz=self.z_input.value(),
+            dz=None if self.autofocus_locked else self.z_input.value(),
         )
 
     def _move_absolute(self) -> None:
@@ -160,7 +162,7 @@ class StagePanel(QGroupBox):
         self.controller.move_stage_absolute(
             x=self.absolute_x_input.value(),
             y=self.absolute_y_input.value(),
-            z=self.absolute_z_input.value(),
+            z=None if self.autofocus_locked else self.absolute_z_input.value(),
         )
 
     def _move_camera_fov(self, direction: str) -> None:
@@ -267,6 +269,10 @@ class StagePanel(QGroupBox):
         self.strategy_running = bool(payload.get("running"))
         self._sync_controls_enabled()
 
+    def update_autofocus_status(self, payload: dict) -> None:
+        self.autofocus_locked = bool(payload.get("is_locked"))
+        self._sync_controls_enabled()
+
     def _sync_controls_enabled(self) -> None:
         manual_controls_enabled = (
             self.devices_initialised
@@ -276,16 +282,17 @@ class StagePanel(QGroupBox):
         for widget in (
             self.x_input,
             self.y_input,
-            self.z_input,
             self.absolute_x_input,
             self.absolute_y_input,
-            self.absolute_z_input,
             self.move_button,
             self.absolute_move_button,
-            self.origin_button,
             *self.fov_buttons,
         ):
             widget.setEnabled(manual_controls_enabled)
+        z_controls_enabled = manual_controls_enabled and not self.autofocus_locked
+        self.z_input.setEnabled(z_controls_enabled)
+        self.absolute_z_input.setEnabled(z_controls_enabled)
+        self.origin_button.setEnabled(z_controls_enabled)
         self.configure_button.setEnabled(self.devices_initialised and not self.strategy_running)
         self.refresh_button.setEnabled(self.devices_initialised and not self.movement_running)
         self.stop_button.setEnabled(self.devices_initialised)

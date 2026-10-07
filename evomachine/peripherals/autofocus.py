@@ -268,6 +268,7 @@ class Autofocus(Peripheral):
             self.name,
             lock_after_calibration,
         )
+        self._last_calibration_result = None
         result = self._run_calibration(
             config=config,
             lock_after_calibration=lock_after_calibration,

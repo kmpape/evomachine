@@ -35,6 +35,7 @@ _OPERATION_SAFE_COMMANDS = frozenset(
         GuiCommandType.LOGS_RECENT,
         GuiCommandType.STAGE_STOP,
         GuiCommandType.STAGE_MOVEMENT_STATUS,
+        GuiCommandType.FOV_MOVEMENT_STATUS,
         GuiCommandType.ACQUISITION_Z_STACK_STATUS,
         GuiCommandType.DMD_CALIBRATION_STATUS,
         GuiCommandType.DMD_CANCEL_CALIBRATION,
@@ -55,6 +56,8 @@ class AutomatonGuiFacade:
         self._last_dmd_preview: dict[str, Any] | None = None
         self._loaded_dmd_pattern: dict[str, Any] | None = None
         self._last_software_focus_result: dict[str, Any] | None = None
+        self._last_strategy_frame_sequence: int = 0
+        self._last_strategy_projection_sequence: int = 0
         self.gui_operations = GuiOperationManager()
         # Generation has no hardware access and must not lock out microscope controls.
         self.strategy_generation = GuiOperationManager()

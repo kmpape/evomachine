@@ -83,8 +83,14 @@ class FakeController(QObject):
     def refresh_logs(self, after_sequence=0):
         self.calls.append(("refresh_logs", after_sequence))
 
-    def initialise_fovs(self, fovs, use_autofocus=False):
-        self.calls.append(("initialise_fovs", fovs, use_autofocus))
+    def initialise_fovs(self, fovs, use_autofocus=False, focus_config=None):
+        self.calls.append(("initialise_fovs", fovs, use_autofocus, focus_config))
+
+    def move_to_fov(self, fov_id):
+        self.calls.append(("move_to_fov", fov_id))
+
+    def refresh_fov_movement_operation(self):
+        self.calls.append(("refresh_fov_movement_operation",))
 
     def move_stage_relative(self, dx, dy, dz):
         self.calls.append(("move_stage_relative", dx, dy, dz))
@@ -202,6 +208,9 @@ class FakeController(QObject):
 
     def refresh_software_focus(self):
         self.calls.append(("refresh_software_focus",))
+
+    def configure_software_focus(self, config):
+        self.calls.append(("configure_software_focus", config))
 
     def run_software_focus(self):
         self.calls.append(("run_software_focus",))
@@ -358,6 +367,43 @@ def test_stage_panel_sends_absolute_target_move_request() -> None:
     assert controller.calls == [("move_stage_absolute", 10.0, 20.0, 30.0)]
     assert panel.relative_movement_group.title() == "Relative movement"
     assert panel.absolute_movement_group.title() == "Absolute movement"
+
+
+def test_stage_panel_blocks_only_z_movement_while_autofocus_is_locked() -> None:
+    _app()
+    controller = FakeController()
+    panel = StagePanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+    panel.x_input.setValue(1)
+    panel.y_input.setValue(2)
+    panel.z_input.setValue(3)
+
+    controller.autofocus_status_received.emit({"is_locked": True})
+
+    assert panel.x_input.isEnabled()
+    assert panel.y_input.isEnabled()
+    assert panel.move_button.isEnabled()
+    assert panel.absolute_move_button.isEnabled()
+    assert all(button.isEnabled() for button in panel.fov_buttons)
+    assert not panel.z_input.isEnabled()
+    assert not panel.absolute_z_input.isEnabled()
+    assert not panel.origin_button.isEnabled()
+
+    panel._move_delta()
+    assert controller.calls == [("move_stage_relative", 1.0, 2.0, None)]
+
+    panel.update_operation_status({"kind": "stage_movement", "state": "completed"})
+    panel.absolute_x_input.setValue(10)
+    panel.absolute_y_input.setValue(20)
+    panel.absolute_z_input.setValue(30)
+    panel._move_absolute()
+    assert controller.calls[-1] == ("move_stage_absolute", 10.0, 20.0, None)
+
+    panel.update_operation_status({"kind": "stage_movement", "state": "completed"})
+    controller.autofocus_status_received.emit({"is_locked": False})
+    assert panel.z_input.isEnabled()
+    assert panel.absolute_z_input.isEnabled()
+    assert panel.origin_button.isEnabled()
 
 
 def test_stage_movement_sections_align_coordinate_fields_with_equal_spacing() -> None:
@@ -719,7 +765,13 @@ def test_led_panel_uses_compact_labels_for_overhead_controls() -> None:
     assert tiger_button.toolTip() == "Tiger overhead"
     assert kwr103_button.text() == "Overhead"
     assert kwr103_button.toolTip() == "KWR103 overhead"
-    assert panel.custom_duration_checkbox.text() == "Custom duration"
+
+    duration_field = next(
+        field for field in panel._config_fields()
+        if field.key == "high_brightness_duration_s"
+    )
+    assert duration_field.label == "Duration when above threshold (s)"
+    assert duration_field.value == 3.0
 
 
 def test_led_panel_sends_optional_high_brightness_duration_in_milliseconds() -> None:
@@ -728,13 +780,30 @@ def test_led_panel_sends_optional_high_brightness_duration_in_milliseconds() -> 
     panel = LedManagerPanel(controller=controller)
     panel.update_lifecycle_status({"devices_initialised": True})
     panel.update_leds(["LED_450_NM"])
-    panel.custom_duration_checkbox.setChecked(True)
-    panel.high_brightness_duration_input.setValue(4.5)
+    panel.high_brightness_duration_s = 4.5
 
     panel.brightness_inputs[LEDType.LED_450_NM].setValue(50)
     panel.led_buttons[LEDType.LED_450_NM].setChecked(True)
 
     assert controller.calls == [("set_led", "LED_450_NM", 50.0, 4500.0)]
+
+
+def test_led_panel_updates_high_brightness_duration_from_config(monkeypatch) -> None:
+    _app()
+    panel = LedManagerPanel(controller=FakeController())
+    panel.update_lifecycle_status({"devices_initialised": True})
+
+    def edit_config(dialog):
+        duration_widget = dialog._widgets["high_brightness_duration_s"]
+        assert duration_widget.value() == 3.0
+        duration_widget.setValue(4.5)
+        return dialog.Accepted
+
+    monkeypatch.setattr("evomachine.gui.panels.leds.ConfigDialog.exec_", edit_config)
+
+    panel.configure_button.click()
+
+    assert panel.high_brightness_duration_s == 4.5
 
 
 def test_led_panel_omits_custom_duration_at_safe_continuous_brightness() -> None:
@@ -743,8 +812,7 @@ def test_led_panel_omits_custom_duration_at_safe_continuous_brightness() -> None
     panel = LedManagerPanel(controller=controller)
     panel.update_lifecycle_status({"devices_initialised": True})
     panel.update_leds(["LED_450_NM"])
-    panel.custom_duration_checkbox.setChecked(True)
-    panel.high_brightness_duration_input.setValue(4.5)
+    panel.high_brightness_duration_s = 4.5
 
     panel.brightness_inputs[LEDType.LED_450_NM].setValue(29)
     panel.led_buttons[LEDType.LED_450_NM].setChecked(True)
@@ -962,19 +1030,17 @@ def test_autofocus_panel_sends_config_request(monkeypatch) -> None:
         (
             "configure_autofocus",
             {
-                "averaging": 5,
+                "averaging": 0,
                 "led_intensity": 80,
                 "objective_na": 1.4,
-                "lock_range": 0.1,
-                "loop_gain": 10,
-                "update_rate": 10,
+                "lock_range": 0.025,
+                "loop_gain": 5,
+                "update_rate": 100,
                 "min_error": 100,
                 "min_snr": 2.0,
             },
         ),
     ]
-
-
 def test_autofocus_panel_sends_calibration_request() -> None:
     _app()
     controller = FakeController()
@@ -989,17 +1055,32 @@ def test_autofocus_panel_sends_calibration_request() -> None:
             "initialise_autofocus",
             True,
             {
-                "averaging": 5,
-                "led_intensity": 70,
-                "lock_range": 0.1,
-                "loop_gain": 10,
-                "update_rate": 10,
+                "averaging": 0,
+                "led_intensity": 95,
+                "lock_range": 0.025,
+                "loop_gain": 5,
+                "update_rate": 100,
                 "min_error": 100,
                 "objective_na": 0.95,
                 "min_snr": 2.0,
             },
         ),
     ]
+    assert panel.state_label.text() == "status: Calibrating"
+    assert panel.diagnostics_label.text() == "calibration: in progress"
+
+    panel.cancel_calibration_button.click()
+    assert controller.calls[-1] == ("cancel_autofocus_calibration",)
+    assert panel.state_label.text() == "status: Cancelling calibration"
+
+    panel.update_operation_status({
+        "kind": "autofocus_calibration",
+        "state": "cancelled",
+        "message": "Cancelled.",
+    })
+    assert panel.state_label.text() == "status: Calibration cancelled"
+    assert panel.diagnostics_label.text() == "calibration: cancelled"
+    assert controller.calls[-1] == ("refresh_autofocus",)
 
 
 def test_autofocus_panel_maps_crisp_status_and_displays_calibration_diagnostics() -> None:
@@ -1047,6 +1128,17 @@ def test_autofocus_panel_maps_crisp_status_and_displays_calibration_diagnostics(
     assert panel.state_label.text() == "status: Calibration failed"
     assert "SNR below minimum" in panel.diagnostics_label.text()
 
+    payload["status"] = {"name": "IN_FOCUS", "value": "F"}
+    payload["calibration_result"] = {
+        "success": False,
+        "measurements": {},
+        "failure_reason": "Calibration cancelled.",
+        "cancelled": True,
+    }
+    panel.update_status(payload)
+    assert panel.state_label.text() == "status: Calibration cancelled"
+    assert panel.diagnostics_label.text().startswith("calibration: cancelled")
+
 
 def test_software_focus_panel_sends_run_request() -> None:
     _app()
@@ -1057,6 +1149,33 @@ def test_software_focus_panel_sends_run_request() -> None:
     panel.run_button.click()
 
     assert controller.calls == [("run_software_focus",)]
+
+
+def test_software_focus_panel_updates_shared_defaults(monkeypatch) -> None:
+    _app()
+    controller = FakeController()
+    panel = SoftwareFocusPanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+    panel.update_status({
+        "available": True,
+        "config": {"rel_range": 50, "step_size": 5, "algorithm": "STEEL"},
+    })
+
+    def edit_config(dialog):
+        dialog._widgets["rel_range"].setValue(60)
+        dialog._widgets["step_size"].setValue(6)
+        dialog._widgets["algorithm"].setCurrentText("LAPLACIAN_VAR")
+        return dialog.Accepted
+
+    monkeypatch.setattr(
+        "evomachine.gui.panels.software_focus.ConfigDialog.exec_", edit_config
+    )
+    panel.configure_button.click()
+
+    assert controller.calls == [(
+        "configure_software_focus",
+        {"rel_range": 60, "step_size": 6, "algorithm": "LAPLACIAN_VAR"},
+    )]
 
 
 def test_application_log_panel_is_incremental_and_bounded() -> None:
@@ -1303,9 +1422,47 @@ def test_fov_setup_panel_sends_initialise_request() -> None:
         (
             "initialise_fovs",
             [{"fov_id": 0, "x": 10.0, "y": 20.0, "z": 30.0, "channel_id": 0}],
-            False,
+            True,
+            panel.global_focus_config,
         )
     ]
+
+
+def test_fov_setup_only_moves_on_explicit_focus_preflight() -> None:
+    _app()
+    controller = FakeController()
+    panel = FovSetupPanel(controller=controller)
+    panel.add_button.click()
+    controller.stage_coordinates_received.emit({"coordinate": {"x": 10, "y": 20, "z": 30}})
+    panel.table.selectRow(0)
+
+    assert ("move_to_fov", 0) not in controller.calls
+    assert panel.move_test_button.isEnabled()
+    panel.move_test_button.click()
+    assert ("move_to_fov", 0) not in controller.calls
+    assert "Initialise" in panel.status_label.text()
+
+    controller.fovs_received.emit(panel._fov_payload())
+    assert panel.move_test_button.isEnabled()
+    panel.move_test_button.click()
+
+    assert controller.calls[-1] == ("move_to_fov", 0)
+    assert not panel.move_test_button.isEnabled()
+    controller.operation_status_received.emit({
+        "kind": "focus_navigation",
+        "state": "completed",
+        "result": {
+            "focus_navigation": {
+                "fov_id": 0,
+                "is_locked": True,
+                "software_focus_status": "IN_FOCUS",
+                "skipped": False,
+            }
+        },
+    })
+    assert "CRISP locked" in panel.status_label.text()
+    assert controller.calls[-1] == ("acquire_frame", {"use_current_main_controls": True})
+    assert panel.move_test_button.isEnabled()
 
 
 def test_fov_setup_panel_generates_linear_fovs_from_stage_endpoints() -> None:
@@ -1467,6 +1624,20 @@ def test_autostrat_panel_reviews_then_uses_shared_lifecycle_buttons() -> None:
     assert not panel.set_button.isEnabled()
     assert panel.generate_button.isEnabled()
     assert "endpoint unavailable" in panel.diagnostics_output.toPlainText()
+    panel.close()
+
+
+def test_autostrat_editor_is_clearly_present_when_empty() -> None:
+    _app()
+    panel = StrategySetupPanel(FakeController())
+    panel.source_combo.setCurrentText("AutoStrat")
+    panel.dsl_output.clear()
+
+    assert panel.dsl_editor_label.text() == "Editable .strat strategy code"
+    assert panel.dsl_editor_label.font().bold()
+    assert "Type or paste" in panel.dsl_editor_hint.text()
+    assert "Type or paste your .strat strategy code" in panel.dsl_output.placeholderText()
+    assert not panel.dsl_output.isReadOnly()
     panel.close()
 
 

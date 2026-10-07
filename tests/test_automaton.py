@@ -967,6 +967,18 @@ def test_user_strategy_stop_is_emitted_to_gui_logs() -> None:
     assert "Strategy stop requested by user." in messages
 
 
+def test_user_strategy_stop_cleans_up_peripherals_once() -> None:
+    automaton, acquisition_manager, *_ = make_automaton()
+
+    automaton.start_strategy()
+    automaton.stop_strategy()
+    automaton.stop_strategy()
+
+    assert acquisition_manager.stop_count == 1
+    assert acquisition_manager.camera.live_mode_history == [False, False]
+    assert automaton._strategy_cleanup_done
+
+
 class MissingDmdStrategy(FakeStrategy):
     """Strategy fake that declares DMD projection support."""
 

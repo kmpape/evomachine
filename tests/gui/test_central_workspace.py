@@ -7,9 +7,10 @@ import numpy as np
 
 from evomachine.config import DMD_WIDTH_HEIGHT
 from evomachine.gui.central_workspace import (
+    CAMERA_VIEW_MARGIN,
+    CentralVisualWorkspace,
     DMD_DISPLAY_SHAPE,
     CENTRAL_VIEW_MARGIN,
-    CENTRAL_VIEW_ZOOM,
     DMD_RECT,
     HISTOGRAM_BINS,
     MAIN_RECT,
@@ -74,9 +75,10 @@ def test_visual_workspace_is_one_rgb_dashboard_image() -> None:
     assert workspace.dtype == np.uint8
 
 
-def test_central_viewer_fit_keeps_complete_workspace_visible() -> None:
+def test_central_viewer_fit_centres_and_fits_camera_panel() -> None:
     viewer = SimpleNamespace(
-        camera=SimpleNamespace(zoom=1.0),
+        camera=SimpleNamespace(zoom=1.0, center=(0.0, 0.0)),
+        _canvas_size=(900, 600),
         reset_count=0,
         reset_margin=None,
     )
@@ -92,8 +94,30 @@ def test_central_viewer_fit_keeps_complete_workspace_visible() -> None:
 
     assert viewer.reset_count == 1
     assert viewer.reset_margin == CENTRAL_VIEW_MARGIN == 0.0
-    assert CENTRAL_VIEW_ZOOM <= 1.0
-    assert viewer.camera.zoom == 2.0 * CENTRAL_VIEW_ZOOM
+    assert viewer.camera.center == (
+        MAIN_RECT[1] + MAIN_RECT[3] / 2,
+        MAIN_RECT[0] + MAIN_RECT[2] / 2,
+    )
+    assert viewer.camera.zoom == (1 - CAMERA_VIEW_MARGIN) * min(
+        900 / MAIN_RECT[3],
+        600 / MAIN_RECT[2],
+    )
+
+
+def test_central_workspace_refresh_preserves_user_camera_view() -> None:
+    workspace = CentralVisualWorkspace.__new__(CentralVisualWorkspace)
+    workspace.viewer = SimpleNamespace(
+        camera=SimpleNamespace(zoom=3.0, center=(123.0, 456.0)),
+    )
+    layer = SimpleNamespace(data=None)
+    workspace._layer = lambda name: layer
+    workspace._workspace_image = lambda: np.zeros((4, 5, 3), dtype=np.uint8)
+
+    workspace._refresh()
+
+    assert layer.data.shape == (4, 5, 3)
+    assert workspace.viewer.camera.zoom == 3.0
+    assert workspace.viewer.camera.center == (123.0, 456.0)
 
 
 def test_visual_workspace_magnifies_small_camera_image_to_dmd_width() -> None:

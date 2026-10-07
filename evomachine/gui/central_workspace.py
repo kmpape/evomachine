@@ -19,7 +19,8 @@ DMD_DISPLAY_SHAPE = (DMD_WIDTH_HEIGHT[1], DMD_WIDTH_HEIGHT[0])
 HISTOGRAM_BINS = 256
 AUTO_CONTRAST_PERCENTILES = (0.5, 99.5)
 CENTRAL_VIEW_MARGIN = 0.00
-CENTRAL_VIEW_ZOOM = 1.00
+CENTRAL_VIEW_ZOOM = 1.25
+CAMERA_VIEW_MARGIN = 0.05
 
 BACKGROUND = np.array([9, 11, 14], dtype=np.uint8)
 PANEL = np.array([21, 24, 29], dtype=np.uint8)
@@ -41,9 +42,30 @@ MIN_CONTENT_WIDTH = PANEL_WIDTH - 2 * PANEL_PAD
 
 
 def fit_central_viewer(viewer: Any) -> None:
-    """Fit the complete workspace within the central canvas without cropping."""
+    """Centre the startup view on the camera panel instead of the full dashboard."""
     viewer.reset_view(margin=CENTRAL_VIEW_MARGIN)
-    viewer.camera.zoom *= CENTRAL_VIEW_ZOOM
+    camera_center = (
+        MAIN_RECT[1] + MAIN_RECT[3] / 2,
+        MAIN_RECT[0] + MAIN_RECT[2] / 2,
+    )
+    current_center = tuple(getattr(viewer.camera, "center", ()))
+    viewer.camera.center = (
+        (*current_center[:-2], *camera_center)
+        if len(current_center) >= 2
+        else camera_center
+    )
+    canvas_size = getattr(viewer, "_canvas_size", None)
+    if (
+            isinstance(canvas_size, tuple | list)
+            and len(canvas_size) >= 2
+            and all(isinstance(value, int | float) and value > 0 for value in canvas_size[-2:])
+    ):
+        viewer.camera.zoom = (1 - CAMERA_VIEW_MARGIN) * min(
+            float(canvas_size[-2]) / MAIN_RECT[3],
+            float(canvas_size[-1]) / MAIN_RECT[2],
+        )
+    else:
+        viewer.camera.zoom *= CENTRAL_VIEW_ZOOM
 
 
 def _magnified_shape(shape: tuple[int, int], target_width: int) -> tuple[int, int]:
@@ -311,7 +333,6 @@ class CentralVisualWorkspace:
         layer = self._layer(VISUAL_WORKSPACE_LAYER)
         if layer is not None:
             layer.data = self._workspace_image()
-            fit_central_viewer(self.viewer)
 
     def _workspace_image(self) -> np.ndarray:
         if self.last_stack is not None:

@@ -164,13 +164,32 @@ class EvoMachineGuiController(QObject):
     def refresh_logs(self, after_sequence: int = 0) -> None:
         self._send(GuiCommandType.LOGS_RECENT, {"after_sequence": after_sequence})
 
-    def initialise_fovs(self, fovs: list[dict[str, Any]], use_autofocus: bool = False) -> None:
-        self._send(GuiCommandType.FOV_INITIALISE, {"fovs": fovs, "use_autofocus": use_autofocus})
+    def initialise_fovs(
+            self,
+            fovs: list[dict[str, Any]],
+            use_autofocus: bool = False,
+            focus_config: dict[str, Any] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {"fovs": fovs, "use_autofocus": use_autofocus}
+        if focus_config is not None:
+            payload["focus_config"] = focus_config
+        self._send(GuiCommandType.FOV_INITIALISE, payload)
+
+    def move_to_fov(self, fov_id: int) -> None:
+        self._send(GuiCommandType.FOV_MOVE, {"fov_id": fov_id})
+
+    def refresh_fov_movement_operation(self) -> None:
+        self._send(GuiCommandType.FOV_MOVEMENT_STATUS)
 
     def refresh_stage(self) -> None:
         self._send(GuiCommandType.STAGE_GET_COORDINATES)
 
-    def move_stage_absolute(self, x: float, y: float, z: float) -> None:
+    def move_stage_absolute(
+            self,
+            x: float | None,
+            y: float | None,
+            z: float | None,
+    ) -> None:
         self._send(
             GuiCommandType.STAGE_MOVE_ABSOLUTE,
             {"x": x, "y": y, "z": z, "block": False},
@@ -317,6 +336,9 @@ class EvoMachineGuiController(QObject):
     def refresh_software_focus(self) -> None:
         self._send(GuiCommandType.SOFTWARE_FOCUS_STATUS)
 
+    def configure_software_focus(self, config: dict[str, Any]) -> None:
+        self._send(GuiCommandType.SOFTWARE_FOCUS_CONFIGURE, {"config": config})
+
     def run_software_focus(self) -> None:
         self._send(GuiCommandType.SOFTWARE_FOCUS_RUN)
 
@@ -324,7 +346,7 @@ class EvoMachineGuiController(QObject):
         self._send(GuiCommandType.SOFTWARE_FOCUS_OPERATION_STATUS)
 
     def refresh_strategy_status(self) -> None:
-        self._send(GuiCommandType.STRATEGY_STATUS)
+        self._send(GuiCommandType.STRATEGY_STATUS, self._with_image_transport({}))
 
     def refresh_strategies(self) -> None:
         self._send(GuiCommandType.STRATEGY_LIST)

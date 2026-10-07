@@ -21,7 +21,7 @@ from evomachine.coordinates import Coordinate
 from evomachine.frame import Frame, FrameMetaData
 from evomachine.gui.protocol import GuiRequestProcessor
 from evomachine.image_processing_config import ImageProcessorConfig
-from evomachine.navigation import FocusNavigator
+from evomachine.navigation import FovConfig, FocusNavigator, FocusNavigatorConfig
 from evomachine.peripherals.autofocus import Autofocus
 from evomachine.peripherals.camera import Camera
 from evomachine.peripherals.dmd import Dmd, DmdCalibrationConfig
@@ -190,12 +190,22 @@ class Automaton:
         "Maximum number of raw Frame objects retained per FoV, or None to retain all."
         self._all_frames: dict[int, deque[Frame]] = {}
         "Raw acquired Frame objects keyed by FoV ID, newest frame first."
+        self._latest_frame: Frame | None = None
+        "Most recent strategy-acquired frame exposed for live GUI preview."
+        self._latest_frame_sequence: int = 0
+        "Monotonic counter incremented after every strategy image acquisition."
+        self._latest_projection_pattern: np.ndarray | None = None
+        "Most recent strategy DMD pattern exposed for live GUI preview."
+        self._latest_projection_sequence: int = 0
+        "Monotonic counter incremented after every strategy DMD update."
 
         self._fov_list_is_initialised: bool = False
         "True after FoV state has been registered."
         self._strategy_is_initialised: bool = False
         "True after the current strategy has been initialised."
         self._strategy_is_finalised: bool = False
+        self._strategy_cleanup_done: bool = True
+        "True after the current strategy run's peripherals have been made safe."
         self._strategy_processing = False
         "True after finalisation has been requested for the current strategy."
         self._fov_processors_is_initialised: dict[int, bool] = {}
@@ -492,6 +502,8 @@ class Automaton:
             fovs: dict[int, Coordinate],
             cropping_boxes: dict[int, list[Any]] | None = None,
             use_autofocus: bool = False,
+            focus_config: FocusNavigatorConfig | None = None,
+            fov_configs: dict[int, FovConfig] | None = None,
     ) -> None:
         """
         Initialise devices, field-of-view state, focus navigation, and strategy.
@@ -504,6 +516,10 @@ class Automaton:
             Optional mapping from FoV ID to cropping boxes.
         use_autofocus
             Whether registered stage fovs should omit Z for autofocus.
+        focus_config
+            Optional complete focus-navigation configuration supplied by the GUI.
+        fov_configs
+            Optional GUI-supplied per-FoV focus policies.
 
         Returns
         -------
@@ -526,14 +542,17 @@ class Automaton:
         self._fov_list_is_initialised = True
         self._skip_image_fov_id = None
         self._skip_image_reason = None
-        fov_configs = None
+        if focus_config is not None:
+            self.focus_nav.update_config(config=focus_config)
+            use_autofocus = focus_config.use_autofocus
+        configured_fovs = {} if fov_configs is None else dict(fov_configs)
         if self._strategy is not None:
             self._initialise_strategy()
-            fov_configs = self._strategy.initial_fov_configs()
+            configured_fovs.update(self._strategy.initial_fov_configs())
         self.focus_nav.initialise_fovs(
             fov_id_to_coordinate=self._fovs,
             use_autofocus=use_autofocus,
-            fov_configs=fov_configs or None,
+            fov_configs=configured_fovs or None,
         )
 
     def set_strategy(self, strategy: AbstractStrategy) -> None:
@@ -665,6 +684,8 @@ class Automaton:
         self.processing_state = MicroscopyState()
         self._delta_processor.reset()
         self._fov_processors.clear()
+        self._latest_frame = None
+        self._latest_projection_pattern = None
         for roi_ids in self._fov_to_roi.values():
             roi_ids.clear()
         self._strategy.command_factory.update_region_of_interests(region_of_interests=self._fov_to_roi)
@@ -1004,6 +1025,8 @@ class Automaton:
         if fov_id not in self._all_frames:
             self._all_frames[fov_id] = deque(maxlen=self.frame_history_limit)
         self._all_frames[fov_id].appendleft(frame)
+        self._latest_frame = frame
+        self._latest_frame_sequence += 1
 
     def _frame_channel_arrays(self, frame: Frame, channel: LEDType) -> list[np.ndarray]:
         """
@@ -1067,6 +1090,8 @@ class Automaton:
         assert self._dmd is not None
         args = command.command_args
         self._dmd.display_image(img=args["image"])
+        self._latest_projection_pattern = np.array(args["image"], copy=True)
+        self._latest_projection_sequence += 1
         exposure_error: Exception | None = None
         cleanup_errors: list[Exception] = []
         try:
@@ -1169,6 +1194,8 @@ class Automaton:
             warp=True,
         )
         self._dmd.display_image(img=pattern)
+        self._latest_projection_pattern = np.array(pattern, copy=True)
+        self._latest_projection_sequence += 1
         self._led_mngr.set_led(
             led_type=args["channel"],
             brightness=args["brightness"],
@@ -1317,7 +1344,10 @@ class Automaton:
         -------
         None
         """
-        actions = [("acquisition manager", self.acq_mngr.stop)]
+        actions = [
+            ("camera live mode", lambda: self.acq_mngr.set_camera_live_mode(status=False)),
+            ("acquisition manager", self.acq_mngr.stop),
+        ]
         if self._swfocus is not None and callable(getattr(self._swfocus, "stop", None)):
             actions.append(("software focus", self._swfocus.stop))
         if self._autofocus is not None and callable(getattr(self._autofocus, "unlock", None)):
@@ -1334,6 +1364,17 @@ class Automaton:
             raise RuntimeError(
                 "Automaton halt completed with errors: " + "; ".join(errors)
             )
+
+    def _cleanup_strategy_hardware(self) -> None:
+        """Make strategy-controlled peripherals safe exactly once per run."""
+        if self._strategy_cleanup_done:
+            return
+        self.act_on_halt()
+        self._strategy_cleanup_done = True
+        logger.info(
+            "Strategy hardware cleanup completed: LEDs and live mode disabled; "
+            "software focus stopped; hardware autofocus unlocked."
+        )
 
     def _fail_safe_abort(
         self,
@@ -1447,7 +1488,23 @@ class Automaton:
                 "Cannot start strategy because hardware safety preparation failed: "
                 + "; ".join(preparation_errors)
             )
+        focus_config = getattr(self.focus_nav, "config", None)
+        if (
+                self._autofocus is not None
+                and focus_config is not None
+                and not focus_config.use_autofocus
+        ):
+            try:
+                self._autofocus.unlock()
+                self._autofocus.disable()
+                logger.info("Hardware autofocus disabled because strategy focus management is off.")
+            except Exception as error:
+                raise RuntimeError(
+                    "Cannot start strategy because autofocus could not be disabled: "
+                    f"{type(error).__name__}: {error}"
+                ) from error
         self._stop_event.clear()
+        self._strategy_cleanup_done = False
         self._start_strategy_event.set()
         logger.info("Strategy started: %s.", self._strategy.name())
 
@@ -1483,6 +1540,8 @@ class Automaton:
         else:
             logger.info("Strategy stop requested: %s.", reason)
         self._stop_strategy_event.set()
+        if self.strategy_has_started():
+            self._cleanup_strategy_hardware()
 
     def strategy_has_stopped(self) -> bool:
         """

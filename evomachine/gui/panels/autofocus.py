@@ -19,20 +19,20 @@ class AutofocusPanel(QGroupBox):
     """Hardware autofocus controls."""
 
     CONFIG_FIELDS = (
-        ConfigFieldSpec("Averaging", "averaging", 5, kind="int", minimum=0, maximum=99),
-        ConfigFieldSpec("LED intensity", "led_intensity", 70, kind="int", minimum=2, maximum=100),
+        ConfigFieldSpec("Averaging", "averaging", 0, kind="int", minimum=0, maximum=99),
+        ConfigFieldSpec("LED intensity", "led_intensity", 95, kind="int", minimum=2, maximum=100),
         ConfigFieldSpec(
             "Lock range",
             "lock_range",
-            0.1,
+            0.025,
             kind="float",
             minimum=0.001,
             maximum=0.999,
             decimals=3,
-            single_step=0.1,
+            single_step=0.005,
         ),
-        ConfigFieldSpec("Loop gain", "loop_gain", 10, kind="int", minimum=1, maximum=100),
-        ConfigFieldSpec("Update rate", "update_rate", 10, kind="int", minimum=0, maximum=1000),
+        ConfigFieldSpec("Loop gain", "loop_gain", 5, kind="int", minimum=1, maximum=100),
+        ConfigFieldSpec("Update rate", "update_rate", 100, kind="int", minimum=0, maximum=1000),
         ConfigFieldSpec(
             "Objective NA",
             "objective_na",
@@ -114,9 +114,7 @@ class AutofocusPanel(QGroupBox):
         self.run_calibration_button.clicked.connect(self._run_calibration)
         self.lock_button.clicked.connect(self._lock_autofocus)
         self.unlock_button.clicked.connect(self._unlock_autofocus)
-        self.cancel_calibration_button.clicked.connect(
-            self.controller.cancel_autofocus_calibration
-        )
+        self.cancel_calibration_button.clicked.connect(self._cancel_calibration)
         self.calibration_poll_timer.timeout.connect(
             self.controller.refresh_autofocus_calibration_operation
         )
@@ -184,6 +182,9 @@ class AutofocusPanel(QGroupBox):
         if not self._ensure_devices_initialised():
             return
         self.status_label.setText("Running autofocus calibration.")
+        self.state_label.setText("status: Calibrating")
+        self.state_label.setStyleSheet(self._state_style("Calibrating"))
+        self.diagnostics_label.setText("calibration: in progress")
         self.calibration_running = True
         self.calibration_operation_label.setText("operation: starting")
         self.calibration_poll_timer.start()
@@ -204,10 +205,23 @@ class AutofocusPanel(QGroupBox):
             self.calibration_poll_timer.stop()
             if state == "failed" and operation.get("error"):
                 self.status_label.setText(str(operation["error"]))
+            elif state == "cancelled":
+                self.status_label.setText("Autofocus calibration cancelled.")
+                self.state_label.setText("status: Calibration cancelled")
+                self.state_label.setStyleSheet(self._state_style("Calibration cancelled"))
+                self.diagnostics_label.setText("calibration: cancelled")
             else:
                 self.status_label.setText(f"Autofocus calibration {state}.")
             self.controller.refresh_autofocus()
         self._sync_controls_enabled()
+
+    def _cancel_calibration(self) -> None:
+        if not self.calibration_running:
+            return
+        self.status_label.setText("Cancelling autofocus calibration.")
+        self.state_label.setText("status: Cancelling calibration")
+        self.state_label.setStyleSheet(self._state_style("Cancelling calibration"))
+        self.controller.cancel_autofocus_calibration()
 
     def _lock_autofocus(self) -> None:
         if not self._ensure_devices_initialised():
@@ -225,13 +239,22 @@ class AutofocusPanel(QGroupBox):
         status = payload.get("status", {})
         status_name = status.get("name") if isinstance(status, dict) else status
         calibration_result = payload.get("calibration_result")
-        display_state = self._display_state(status_name, calibration_result)
+        display_state = (
+            "Calibrating"
+            if self.calibration_running
+            else self._display_state(status_name, calibration_result)
+        )
         self.status_label.setText(
             f"initialised: {payload.get('is_initialised')}, alive: {payload.get('is_alive')}"
         )
         self.state_label.setText(f"status: {display_state}")
         self.state_label.setStyleSheet(self._state_style(display_state))
-        self.diagnostics_label.setText(self._diagnostics_text(calibration_result, payload.get("config")))
+        diagnostics = (
+            "calibration: in progress"
+            if self.calibration_running
+            else self._diagnostics_text(calibration_result, payload.get("config"))
+        )
+        self.diagnostics_label.setText(diagnostics)
         self.locked_label.setText(f"locked: {payload.get('is_locked')}")
         config = payload.get("config")
         if isinstance(config, dict):
@@ -312,6 +335,8 @@ class AutofocusPanel(QGroupBox):
 
     @classmethod
     def _display_state(cls, status_name: str | None, calibration_result: object) -> str:
+        if isinstance(calibration_result, dict) and calibration_result.get("cancelled"):
+            return "Calibration cancelled"
         if status_name == "IN_FOCUS":
             return "Locked"
         if status_name in {"OUT_OF_FOCUS", "ERROR"}:
@@ -327,8 +352,15 @@ class AutofocusPanel(QGroupBox):
     def _state_style(display_state: str) -> str:
         if display_state in {"Calibrated", "Locked"}:
             return "font-weight: 600; color: #4caf50;"
-        if display_state in {"Out of focus", "Out of range"}:
+        if display_state in {
+            "Out of focus",
+            "Out of range",
+            "Calibration cancelled",
+            "Cancelling calibration",
+        }:
             return "font-weight: 600; color: #ffb74d;"
+        if display_state == "Calibrating":
+            return "font-weight: 600; color: #42a5f5;"
         if display_state == "Calibration failed":
             return "font-weight: 600; color: #ef5350;"
         return ""

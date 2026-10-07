@@ -4,7 +4,12 @@ import threading
 
 import pytest
 
-from evomachine.peripherals.autofocus import AutofocusCalibrationConfig, AutofocusConfig, AutofocusFactory
+from evomachine.peripherals.autofocus import (
+    AutofocusCalibrationConfig,
+    AutofocusCalibrationResult,
+    AutofocusConfig,
+    AutofocusFactory,
+)
 from evomachine.bindings.asitiger.autofocus import (
     CRISPSetState,
     FakeTigerAutofocusController,
@@ -126,7 +131,16 @@ def test_tiger_autofocus_config_validation_and_factory_defaults() -> None:
     """
     default_config = TigerAutofocusConfigFactory.default_config()
     assert isinstance(default_config, AutofocusCalibrationConfig)
-    assert default_config.objective_na == 0.95
+    assert default_config.model_dump() == {
+        "averaging": 0,
+        "led_intensity": 95,
+        "lock_range": 0.025,
+        "loop_gain": 5,
+        "update_rate": 100,
+        "objective_na": 0.95,
+        "min_snr": 2,
+        "min_error": 100,
+    }
     assert TigerAutofocusConfigFactory.default_oil_config().objective_na == 1.4
 
     with pytest.raises(TypeError):
@@ -191,6 +205,26 @@ def test_virtual_autofocus_lifecycle_and_state_transitions() -> None:
         "unlock",
         "disable",
     ]
+
+
+def test_autofocus_clears_previous_result_before_new_calibration(monkeypatch) -> None:
+    autofocus = AutofocusFactory.create(
+        config=AutofocusConfig(binding=BindingType.VIRTUAL),
+        peripheral_controllers=_virtual_controller(),
+    )
+    autofocus.initialise()
+    autofocus._last_calibration_result = AutofocusCalibrationResult(success=True)
+
+    def run_calibration(**_kwargs):
+        assert autofocus.last_calibration_result is None
+        return AutofocusCalibrationResult(success=False, cancelled=True)
+
+    monkeypatch.setattr(autofocus, "_run_calibration", run_calibration)
+
+    result = autofocus.run_calibration()
+
+    assert result.cancelled
+    assert autofocus.last_calibration_result == result
 
 
 def test_autofocus_factory_rejects_unsupported_valid_binding() -> None:
@@ -267,10 +301,16 @@ def test_tiger_autofocus_initialise_command_sequence_and_lock() -> None:
     )
 
     autofocus.initialise()
-    result = autofocus.run_calibration(lock_after_calibration=True)
+    progress_messages = []
+    result = autofocus.run_calibration(
+        lock_after_calibration=True,
+        progress_callback=lambda _progress, message: progress_messages.append(message),
+    )
     assert result
     assert result.measurements == {"snr": 10.0, "error": 200.0}
     assert result.failure_reason is None
+    assert "Applying CRISP objective NA (1/6)." in progress_messages
+    assert "Applying CRISP lock range (6/6)." in progress_messages
 
     assert controller.tiger.commands == [
         ("state", CRISPSetState.UNLOCK),
@@ -346,6 +386,37 @@ def test_tiger_autofocus_cancellation_stops_at_safe_idle_boundary() -> None:
     assert result.failure_reason == "Calibration cancelled."
     assert controller.tiger.commands[-1] == ("state", CRISPSetState.IDLE)
     assert ("state", CRISPSetState.SET_OFFSET) not in controller.tiger.commands
+
+
+def test_tiger_autofocus_cancellation_interrupts_initial_settling_pause() -> None:
+    class CancelOnWait:
+        def __init__(self):
+            self.cancelled = False
+
+        def is_set(self):
+            return self.cancelled
+
+        def wait(self, _timeout):
+            self.cancelled = True
+            return True
+
+    controller = _tiger_controller()
+    autofocus = TigerAutofocus(
+        peripheral_ctrl=controller,
+        tiger_config=_tiger_config(),
+        pause_long=60,
+        pause_short=60,
+        sleep=lambda _seconds: pytest.fail("Calibration pause was not interruptible."),
+    )
+    autofocus.initialise()
+
+    result = autofocus.run_calibration(stop_event=CancelOnWait())
+
+    assert result.cancelled
+    assert controller.tiger.commands == [
+        ("state", CRISPSetState.UNLOCK),
+        ("state", CRISPSetState.IDLE),
+    ]
 
 
 def test_tiger_autofocus_disable_unlock_and_status() -> None:
