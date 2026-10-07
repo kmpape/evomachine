@@ -203,6 +203,9 @@ class FakeController(QObject):
     def unlock_autofocus(self):
         self.calls.append(("unlock_autofocus",))
 
+    def reset_autofocus_offset(self):
+        self.calls.append(("reset_autofocus_offset",))
+
     def disable_autofocus(self):
         self.calls.append(("disable_autofocus",))
 
@@ -1008,6 +1011,51 @@ def test_autofocus_panel_sends_lock_request() -> None:
     assert controller.calls == [("lock_autofocus",)]
 
 
+def test_autofocus_panel_resets_offset_only_while_ready_and_unlocked() -> None:
+    _app()
+    controller = FakeController()
+    panel = AutofocusPanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+    assert not panel.reset_offset_button.isEnabled()
+
+    panel.update_status({
+        "is_initialised": True,
+        "is_alive": True,
+        "is_locked": False,
+        "status": {"name": "READY", "value": "R"},
+        "live_error": 42,
+        "calibration_result": {"success": True},
+    })
+    assert panel.reset_offset_button.isEnabled()
+    assert panel.live_error_label.text() == "live focus error: 42"
+
+    panel.reset_offset_button.click()
+    assert controller.calls == [("reset_autofocus_offset",)]
+
+    panel.update_status({
+        "is_initialised": True,
+        "is_alive": True,
+        "is_locked": False,
+        "status": {"name": "READY", "value": "R"},
+        "live_error": 0,
+        "calibration_result": {"success": True},
+        "offset_reset": True,
+        "offset_reset_response": ":A",
+    })
+    assert panel.live_error_label.text() == "live focus error: 0"
+    assert panel.status_label.text() == (
+        "CRISP offset reset at the current focus. Controller response: :A"
+    )
+
+    panel.update_status({
+        "is_initialised": True,
+        "is_alive": True,
+        "is_locked": True,
+        "status": {"name": "IN_FOCUS", "value": "F"},
+    })
+    assert not panel.reset_offset_button.isEnabled()
+
+
 def test_autofocus_panel_sends_config_request(monkeypatch) -> None:
     _app()
     controller = FakeController()
@@ -1103,7 +1151,7 @@ def test_autofocus_panel_maps_crisp_status_and_displays_calibration_diagnostics(
     panel.update_status(payload)
     assert panel.state_label.text() == "status: Calibrated"
     assert "SNR 10" in panel.diagnostics_label.text()
-    assert "error 200" in panel.diagnostics_label.text()
+    assert "dither error 200" in panel.diagnostics_label.text()
 
     payload["status"] = {"name": "ERROR", "value": "E"}
     panel.update_status(payload)

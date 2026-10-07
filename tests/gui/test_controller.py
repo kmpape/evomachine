@@ -72,6 +72,16 @@ def test_gui_stage_moves_are_non_blocking_so_stop_can_be_processed() -> None:
     assert all(request.payload["block"] is False for request in client.requests[:3])
 
 
+def test_gui_controller_sends_autofocus_offset_reset_request() -> None:
+    client = RecordingClient()
+    controller = EvoMachineGuiController(client=client, start_worker=False)
+
+    controller.reset_autofocus_offset()
+
+    assert client.requests[-1].command is GuiCommandType.AUTOFOCUS_RESET_OFFSET
+    assert client.requests[-1].payload == {}
+
+
 def test_gui_controller_dispatches_completed_stage_movement_coordinates() -> None:
     controller = EvoMachineGuiController(client=RecordingClient(), start_worker=False)
     received = []

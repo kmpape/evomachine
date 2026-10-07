@@ -62,9 +62,12 @@ class AutofocusPanel(QGroupBox):
         self.devices_initialised = False
         self.strategy_running = False
         self.calibration_running = False
+        self.autofocus_ready = False
+        self.autofocus_locked = False
         self.status_label = QLabel("Run Initialise Devices before using autofocus controls.")
         self.status_label.setWordWrap(True)
         self.state_label = QLabel("status: -")
+        self.live_error_label = QLabel("live focus error: -")
         self.diagnostics_label = QLabel("calibration: -")
         self.diagnostics_label.setWordWrap(True)
         self.locked_label = QLabel("locked: -")
@@ -83,6 +86,11 @@ class AutofocusPanel(QGroupBox):
         self.run_calibration_button.setToolTip("Run CRISP autofocus calibration.")
         self.lock_button = QPushButton("Lock")
         self.unlock_button = QPushButton("Unlock")
+        self.reset_offset_button = QPushButton("Reset Offset at Current Focus")
+        self.reset_offset_button.setToolTip(
+            "While CRISP is calibrated, Ready and unlocked, make the current focal "
+            "position the reference used by the next Lock command."
+        )
         self.cancel_calibration_button = QPushButton("Stop")
         self.cancel_calibration_button.setToolTip("Stop CRISP autofocus calibration.")
         self.calibration_operation_label = QLabel("operation: -")
@@ -97,11 +105,13 @@ class AutofocusPanel(QGroupBox):
         buttons.addWidget(self.lock_after_calibration_checkbox, 1, 1)
         buttons.addWidget(self.lock_button, 2, 0)
         buttons.addWidget(self.unlock_button, 2, 1)
-        buttons.addWidget(self.cancel_calibration_button, 3, 0, 1, 2)
+        buttons.addWidget(self.reset_offset_button, 3, 0, 1, 2)
+        buttons.addWidget(self.cancel_calibration_button, 4, 0, 1, 2)
 
         layout = QVBoxLayout()
         layout.addWidget(self.status_label)
         layout.addWidget(self.state_label)
+        layout.addWidget(self.live_error_label)
         layout.addWidget(self.diagnostics_label)
         layout.addWidget(self.locked_label)
         layout.addWidget(self.note_label)
@@ -114,6 +124,7 @@ class AutofocusPanel(QGroupBox):
         self.run_calibration_button.clicked.connect(self._run_calibration)
         self.lock_button.clicked.connect(self._lock_autofocus)
         self.unlock_button.clicked.connect(self._unlock_autofocus)
+        self.reset_offset_button.clicked.connect(self._reset_offset)
         self.cancel_calibration_button.clicked.connect(self._cancel_calibration)
         self.calibration_poll_timer.timeout.connect(
             self.controller.refresh_autofocus_calibration_operation
@@ -235,10 +246,22 @@ class AutofocusPanel(QGroupBox):
         self.status_label.setText("Unlocking autofocus.")
         self.controller.unlock_autofocus()
 
+    def _reset_offset(self) -> None:
+        if not self._ensure_devices_initialised():
+            return
+        self.status_label.setText("Resetting CRISP offset at the current focus.")
+        self.controller.reset_autofocus_offset()
+
     def update_status(self, payload: dict) -> None:
         status = payload.get("status", {})
         status_name = status.get("name") if isinstance(status, dict) else status
+        self.autofocus_locked = bool(payload.get("is_locked"))
         calibration_result = payload.get("calibration_result")
+        self.autofocus_ready = (
+            status_name == "READY"
+            and isinstance(calibration_result, dict)
+            and bool(calibration_result.get("success"))
+        )
         display_state = (
             "Calibrating"
             if self.calibration_running
@@ -249,13 +272,25 @@ class AutofocusPanel(QGroupBox):
         )
         self.state_label.setText(f"status: {display_state}")
         self.state_label.setStyleSheet(self._state_style(display_state))
+        live_error = payload.get("live_error")
+        self.live_error_label.setText(
+            "live focus error: unavailable"
+            if live_error is None
+            else f"live focus error: {live_error:g}"
+        )
         diagnostics = (
             "calibration: in progress"
             if self.calibration_running
             else self._diagnostics_text(calibration_result, payload.get("config"))
         )
         self.diagnostics_label.setText(diagnostics)
-        self.locked_label.setText(f"locked: {payload.get('is_locked')}")
+        self.locked_label.setText(f"locked: {self.autofocus_locked}")
+        if payload.get("offset_reset"):
+            response = payload.get("offset_reset_response")
+            response_text = "" if response is None else f" Controller response: {response}"
+            self.status_label.setText(
+                f"CRISP offset reset at the current focus.{response_text}"
+            )
         config = payload.get("config")
         if isinstance(config, dict):
             self._update_config_values(config)
@@ -301,6 +336,11 @@ class AutofocusPanel(QGroupBox):
             self.unlock_button,
         ):
             widget.setEnabled(manual_controls_enabled)
+        self.reset_offset_button.setEnabled(
+            manual_controls_enabled
+            and self.autofocus_ready
+            and not self.autofocus_locked
+        )
         self.refresh_button.setEnabled(self.devices_initialised and not self.calibration_running)
         self.cancel_calibration_button.setEnabled(self.calibration_running)
 
@@ -380,7 +420,7 @@ class AutofocusPanel(QGroupBox):
             parts.append(f"SNR {measurements['snr']:g}{suffix}")
         if "error" in measurements:
             suffix = f" (minimum absolute {config['min_error']:g})" if config.get("min_error") is not None else ""
-            parts.append(f"error {measurements['error']:g}{suffix}")
+            parts.append(f"dither error {measurements['error']:g}{suffix}")
         if calibration_result.get("failure_reason"):
             parts.append(str(calibration_result["failure_reason"]))
         return "; ".join(parts)

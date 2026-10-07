@@ -64,6 +64,7 @@ class GuiCommandType(str, Enum):
     AUTOFOCUS_CANCEL_CALIBRATION = "autofocus.cancel_calibration"
     AUTOFOCUS_LOCK = "autofocus.lock"
     AUTOFOCUS_UNLOCK = "autofocus.unlock"
+    AUTOFOCUS_RESET_OFFSET = "autofocus.reset_offset"
     AUTOFOCUS_DISABLE = "autofocus.disable"
     SOFTWARE_FOCUS_STATUS = "software_focus.status"
     SOFTWARE_FOCUS_CONFIGURE = "software_focus.configure"
@@ -114,6 +115,7 @@ MUTATING_COMMANDS = frozenset(
         GuiCommandType.AUTOFOCUS_CANCEL_CALIBRATION,
         GuiCommandType.AUTOFOCUS_LOCK,
         GuiCommandType.AUTOFOCUS_UNLOCK,
+        GuiCommandType.AUTOFOCUS_RESET_OFFSET,
         GuiCommandType.AUTOFOCUS_DISABLE,
         GuiCommandType.SOFTWARE_FOCUS_CONFIGURE,
         GuiCommandType.SOFTWARE_FOCUS_RUN,
