@@ -25,6 +25,7 @@ from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
 PATTERN_ACTIONS = (
     ("Empty", "empty"),
     ("Full Camera Field", "full"),
+    ("Full DMD", "full_dmd"),
     ("Rectangle", "rectangle"),
     ("Circle", "circle"),
     ("Checkerboard", "checkerboard"),
@@ -108,6 +109,7 @@ class DmdPanel(QGroupBox):
             button.clicked.connect(
                 lambda _checked=False, selected=pattern: self._display_pattern(selected)
             )
+        self.pattern_buttons["full_dmd"].setToolTip("Illuminate the entire DMD without camera calibration.")
         self.configure_pattern_button.clicked.connect(self._open_pattern_config_dialog)
         self.select_custom_pattern_button.clicked.connect(self._select_custom_pattern)
         self.display_custom_pattern_button.clicked.connect(self._display_custom_pattern)
@@ -202,7 +204,10 @@ class DmdPanel(QGroupBox):
             self.status_label.setText("Run Initialise Devices before using DMD controls.")
             return
         self.status_label.setText(f"Displaying {self._format_pattern(pattern)}")
-        self.controller.display_dmd_pattern(pattern=pattern, config=self._shape_config_payload())
+        if pattern == "full_dmd":
+            self.controller.display_dmd_pattern(pattern="full", warp=False)
+        else:
+            self.controller.display_dmd_pattern(pattern=pattern, config=self._shape_config_payload())
 
     def _select_custom_pattern(self) -> None:
         if not self.devices_initialised:

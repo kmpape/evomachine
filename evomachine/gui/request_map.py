@@ -918,7 +918,7 @@ def gui_dmd_display_pattern(facade: Any, payload: dict[str, Any]) -> dict[str, A
         warp=warp,
     )
     dmd.display_image(pattern_array, _is_full_display=pattern == "full" and not warp)
-    facade._last_dmd_pattern = pattern
+    facade._last_dmd_pattern = "full_dmd" if pattern == "full" and not warp else pattern
     facade._last_dmd_preview = gui_dmd_preview_payload(dmd=dmd, pattern_array=pattern_array)
     return {"dmd": facade.gui_dmd_status_payload()}
 

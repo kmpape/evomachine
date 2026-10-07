@@ -764,6 +764,7 @@ def test_facade_handles_dmd_requests() -> None:
     assert response.ok
     assert automaton.acq_mngr.dmd.pattern_warps[-1] is False
     assert response.payload["dmd"]["is_full_display"] is True
+    assert response.payload["dmd"]["last_pattern"] == "full_dmd"
 
     response = facade.handle(GuiRequest(command=GuiCommandType.DMD_CALIBRATE))
     assert response.ok

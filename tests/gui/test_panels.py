@@ -158,8 +158,8 @@ class FakeController(QObject):
     def refresh_dmd(self):
         self.calls.append(("refresh_dmd",))
 
-    def display_dmd_pattern(self, pattern, config=None):
-        self.calls.append(("display_dmd_pattern", pattern, config))
+    def display_dmd_pattern(self, pattern, config=None, warp=True):
+        self.calls.append(("display_dmd_pattern", pattern, config, warp))
 
     def load_dmd_pattern(self, filename):
         self.calls.append(("load_dmd_pattern", filename))
@@ -892,11 +892,14 @@ def test_dmd_panel_sends_pattern_request() -> None:
     panel.update_lifecycle_status({"devices_initialised": True})
 
     assert panel.pattern_buttons["full"].text() == "Full Camera Field"
+    assert panel.pattern_buttons["full_dmd"].text() == "Full DMD"
 
     panel.pattern_buttons["checkerboard"].click()
+    panel.pattern_buttons["full_dmd"].click()
 
     assert controller.calls == [
-        ("display_dmd_pattern", "checkerboard", panel._shape_config_payload())
+        ("display_dmd_pattern", "checkerboard", panel._shape_config_payload(), True),
+        ("display_dmd_pattern", "full", None, False),
     ]
 
 
