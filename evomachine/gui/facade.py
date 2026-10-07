@@ -472,6 +472,7 @@ class AutomatonGuiFacade:
                 "value": getattr(status, "value", None),
             },
             "is_locked": bool(autofocus.is_locked()),
+            "live_error": autofocus.get_error(),
             "config": self._gui_autofocus_config_payload(config),
             "calibration_result": None
             if calibration_result is None

@@ -298,6 +298,7 @@ class FakeAutofocus:
         self.locked = False
         self.calls = []
         self.last_calibration_result = None
+        self.live_error = 25.0
 
     def is_initialised(self):
         self.last_calibration_result = AutofocusCalibrationResult(
@@ -314,6 +315,9 @@ class FakeAutofocus:
 
     def is_locked(self):
         return self.locked
+
+    def get_error(self):
+        return self.live_error
 
     def apply_config(self, config=None):
         self.calls.append(("apply_config", config))
@@ -349,6 +353,11 @@ class FakeAutofocus:
         self.calls.append("unlock")
         self.locked = False
         self.status = AutoFocusStatusType.READY
+
+    def reset_offset(self):
+        self.calls.append("reset_offset")
+        self.live_error = 0.0
+        return ":A"
 
     def disable(self):
         self.calls.append("disable")
@@ -1062,6 +1071,7 @@ def test_facade_handles_autofocus_requests() -> None:
     response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_STATUS))
     assert response.ok
     assert response.payload["autofocus"]["status"]["name"] == "IDLE"
+    assert response.payload["autofocus"]["live_error"] == 25.0
 
     response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_CONFIGURE, payload={"config": {"preset": "oil"}}))
     assert response.ok
@@ -1087,6 +1097,13 @@ def test_facade_handles_autofocus_requests() -> None:
     response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_UNLOCK))
     assert response.ok
     assert response.payload["autofocus"]["status"]["name"] == "READY"
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_RESET_OFFSET))
+    assert response.ok
+    assert response.payload["autofocus"]["offset_reset"] is True
+    assert response.payload["autofocus"]["offset_reset_response"] == ":A"
+    assert response.payload["autofocus"]["live_error"] == 0.0
+    assert automaton.focus_nav.autofocus.calls[-1] == "reset_offset"
 
     response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_DISABLE))
     assert response.ok

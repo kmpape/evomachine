@@ -1080,6 +1080,18 @@ def gui_autofocus_unlock(facade: Any, payload: dict[str, Any]) -> dict[str, Any]
     return {"autofocus": facade.gui_autofocus_status_payload()}
 
 
+def gui_autofocus_reset_offset(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """Reset CRISP's lock reference at the current calibrated focal position."""
+    gui_require_devices_initialised(facade, "autofocus")
+    response = facade.gui_autofocus().reset_offset()
+    autofocus_payload = facade.gui_autofocus_status_payload()
+    autofocus_payload.update({
+        "offset_reset": True,
+        "offset_reset_response": None if response is None else str(response),
+    })
+    return {"autofocus": autofocus_payload}
+
+
 def gui_autofocus_disable(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "autofocus")
     facade.gui_autofocus().disable()
@@ -1461,6 +1473,7 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.AUTOFOCUS_CANCEL_CALIBRATION: gui_autofocus_cancel_calibration,
     GuiCommandType.AUTOFOCUS_LOCK: gui_autofocus_lock,
     GuiCommandType.AUTOFOCUS_UNLOCK: gui_autofocus_unlock,
+    GuiCommandType.AUTOFOCUS_RESET_OFFSET: gui_autofocus_reset_offset,
     GuiCommandType.AUTOFOCUS_DISABLE: gui_autofocus_disable,
     GuiCommandType.SOFTWARE_FOCUS_STATUS: gui_software_focus_status,
     GuiCommandType.SOFTWARE_FOCUS_CONFIGURE: gui_software_focus_configure,

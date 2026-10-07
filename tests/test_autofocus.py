@@ -334,6 +334,42 @@ def test_tiger_autofocus_initialise_command_sequence_and_lock() -> None:
     assert autofocus.is_locked()
 
 
+def test_tiger_autofocus_resets_offset_at_current_ready_focus() -> None:
+    controller = _tiger_controller(error=-4358)
+    autofocus = TigerAutofocus(
+        peripheral_ctrl=controller,
+        tiger_config=_tiger_config(),
+        pause_long=0,
+        pause_short=0,
+        sleep=lambda seconds: None,
+    )
+    autofocus.initialise()
+    assert autofocus.run_calibration()
+    assert autofocus.get_status() == AutoFocusStatusType.READY
+    assert autofocus.get_error() == -4358.0
+
+    assert autofocus.reset_offset() == ":A"
+    assert autofocus.get_error() == 0.0
+    assert ("reset_offset", None) in controller.tiger.commands
+
+
+def test_tiger_autofocus_rejects_offset_reset_until_ready_and_unlocked() -> None:
+    autofocus = TigerAutofocus(
+        peripheral_ctrl=_tiger_controller(),
+        tiger_config=_tiger_config(),
+        pause_long=0,
+        pause_short=0,
+        sleep=lambda seconds: None,
+    )
+    autofocus.initialise()
+    with pytest.raises(RuntimeError, match="calibrated and Ready"):
+        autofocus.reset_offset()
+
+    assert autofocus.run_calibration(lock_after_calibration=True)
+    with pytest.raises(RuntimeError, match="unlock autofocus"):
+        autofocus.reset_offset()
+
+
 def test_tiger_autofocus_initialise_returns_false_for_low_snr_or_error() -> None:
     """
     Check TigerAutofocus.initialise_autofocus reports failed quality checks.

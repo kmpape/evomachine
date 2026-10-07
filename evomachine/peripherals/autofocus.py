@@ -337,6 +337,36 @@ class Autofocus(Peripheral):
         logger.debug("Autofocus.unlock: unlocking %s.", self.name)
         self._unlock()
 
+    def reset_offset(self) -> Any:
+        """Reset the autofocus lock reference at the current focal position."""
+        self._require_ready(action="reset_offset")
+        if self.is_locked():
+            raise RuntimeError("Autofocus.reset_offset: unlock autofocus before resetting its offset.")
+        status = self.get_status()
+        calibration_result = self.last_calibration_result
+        if (
+            status != AutoFocusStatusType.READY
+            or calibration_result is None
+            or not calibration_result.success
+        ):
+            raise RuntimeError(
+                "Autofocus.reset_offset: autofocus must be calibrated and Ready before "
+                "resetting its offset."
+            )
+        logger.info("Autofocus.reset_offset: resetting %s at the current focus.", self.name)
+        response = self._reset_offset()
+        logger.info(
+            "Autofocus.reset_offset: %s offset reset completed; controller response=%r.",
+            self.name,
+            response,
+        )
+        return response
+
+    def get_error(self) -> float | None:
+        """Return the current binding-specific focus error, when available."""
+        self._require_ready(action="get_error")
+        return self._get_error()
+
     def disable(self) -> None:
         """
         Disable autofocus activity.
@@ -425,6 +455,16 @@ class Autofocus(Peripheral):
     def _unlock(self) -> None:
         """Unlock binding-specific autofocus."""
         raise NotImplementedError
+
+    def _reset_offset(self) -> Any:
+        """Reset the binding-specific focus offset at the current position."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support resetting the autofocus offset."
+        )
+
+    def _get_error(self) -> float | None:
+        """Return the current binding-specific focus error, when available."""
+        return None
 
     @abstractmethod
     def _disable(self) -> None:

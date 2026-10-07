@@ -330,6 +330,9 @@ class EvoMachineGuiController(QObject):
     def unlock_autofocus(self) -> None:
         self._send(GuiCommandType.AUTOFOCUS_UNLOCK)
 
+    def reset_autofocus_offset(self) -> None:
+        self._send(GuiCommandType.AUTOFOCUS_RESET_OFFSET)
+
     def disable_autofocus(self) -> None:
         self._send(GuiCommandType.AUTOFOCUS_DISABLE)
 

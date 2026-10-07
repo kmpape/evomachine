@@ -315,6 +315,12 @@ class FakeTigerAutofocusController:
         self.commands.append(("error", None))
         return self.error
 
+    def crisp_reset_offset(self, card_address: int) -> str:
+        """Record a CRISP offset reset and centre the fake live error."""
+        self.commands.append(("reset_offset", None))
+        self.error = 0
+        return ":A"
+
 
 class TigerAutofocus(Autofocus):
     """Autofocus implementation backed by an ASI Tiger CRISP module."""
@@ -737,6 +743,15 @@ class TigerAutofocus(Autofocus):
         None
         """
         self.tiger.crisp_get_set_state(card_address=self.card_address, value=CRISPSetState.UNLOCK)
+
+    def _reset_offset(self) -> str:
+        """Reset the CRISP lock reference at the current focal position."""
+        return self.tiger.crisp_reset_offset(card_address=self.card_address)
+
+    def _get_error(self) -> float | None:
+        """Return the current CRISP focus error."""
+        error = self.tiger.crisp_get_err(card_address=self.card_address)
+        return None if error is None else float(error)
 
     def _disable(self) -> None:
         """
