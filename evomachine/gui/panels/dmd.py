@@ -544,10 +544,10 @@ class DmdCalibrationPlotWindow(QWidget):
     def _draw(self, payload: dict) -> None:
         dmd_shape = self._shape_from_payload(payload.get("dmd_shape"), default=DMD_WIDTH_HEIGHT)
         cam_shape = self._shape_from_payload(payload.get("cam_shape"), default=CAM_WIDTH_HEIGHT)
-        dmd_points = self._dmd_display_points(self._points_from_payload(payload.get("dmd_points")))
+        dmd_points = self._points_from_payload(payload.get("dmd_points"))
         cam_points = self._points_from_payload(payload.get("cam_points"))
 
-        dmd_image = np.ones(self._dmd_display_shape(dmd_shape), dtype=np.uint8) * 100
+        dmd_image = np.ones(dmd_shape, dtype=np.uint8) * 100
         cam_image = np.ones(cam_shape, dtype=np.uint8) * 100
         axes = self.figure.subplots(1, 2)
         self._draw_points_axis(axes[0], image=dmd_image, points=dmd_points, title="DMD Points")
@@ -572,14 +572,6 @@ class DmdCalibrationPlotWindow(QWidget):
             if isinstance(rows, int) and isinstance(cols, int) and rows > 0 and cols > 0:
                 return rows, cols
         return default
-
-    @staticmethod
-    def _dmd_display_shape(dmd_shape: tuple[int, int]) -> tuple[int, int]:
-        return dmd_shape[1], dmd_shape[0]
-
-    @staticmethod
-    def _dmd_display_points(points: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        return [(col, row) for row, col in points]
 
     @staticmethod
     def _points_from_payload(value) -> list[tuple[int, int]]:

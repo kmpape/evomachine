@@ -145,7 +145,8 @@ class ProjectionManager:
 
             logger.info(f"ProjectionManager.dmd_calibrate: saved calibration data under {filename}.")
             self._report_progress(progress_callback, 1.0, "DMD calibration complete.")
-
+        except Exception as e:
+            logger.exception(f"ProjectionManager.dmd_calibrate: exception during calibration: {e}")
         finally:
             self._restore_calibration_peripherals(last_filter_type=last_filter_type)
 
@@ -432,6 +433,7 @@ class ProjectionManager:
                 0.25 + 0.70 * (index + 1) / total,
                 f"Scanning DMD calibration grid ({index + 1}/{total}).",
             )
+        logger.info("ProjectionManager.dmd_calibrate: completed calibration grid scan.")
         return results
 
     @staticmethod
@@ -440,8 +442,10 @@ class ProjectionManager:
             progress: float,
             message: str,
     ) -> None:
+        logger.info(f"Callback start")
         if callback is not None:
             callback(progress, message)
+        logger.info(f"Callback End")
 
     def _save_calibration_results(
             self,
@@ -480,7 +484,7 @@ class ProjectionManager:
         -------
         None
         """
-        if self.filter_wheel is not None and last_filter_type is not None:
+        if self.filter_wheel is not None and last_filter_type is not None and last_filter_type != FilterWheelType.UNKNOWN:
             self.filter_wheel.set_filter_wheel(last_filter_type)
         self.led_manager.disable_led()
         self.dmd.display_none()
