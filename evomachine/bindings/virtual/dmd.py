@@ -26,8 +26,9 @@ class VirtualDmdControl:
         self._calib_file: Path | None = None
 
     def initialise(self, is_test: bool = False) -> None:
-        """Mark the virtual DMD as initialised."""
+        """Mark the virtual DMD as initialised in its full-white startup state."""
         self._is_initialised = True
+        self.display_full()
 
     def finalise(self) -> None:
         """Mark the virtual DMD as finalised."""
@@ -137,3 +138,21 @@ class VirtualDmd(Dmd):
         self._loaded_img = img
         self._is_full_display = _is_full_display
         self.peripheral_ctrl.dmd_control.display_image(img=img, _is_full_display=_is_full_display)
+        self._record_display_state(img, is_full_display=_is_full_display)
+
+    def initialise(self, force: bool = False) -> None:
+        """Initialise and mirror the virtual controller's own startup image."""
+        self.peripheral_ctrl.initialise(force=force)
+        self.synchronise_display_state()
+
+    def synchronise_display_state(self) -> None:
+        """Record the current in-memory display state without changing it."""
+        image = self.peripheral_ctrl.dmd_control._image
+        if image is None:
+            return
+        is_full_display = self.peripheral_ctrl.dmd_control.is_full_display()
+        self._is_full_display = is_full_display
+        latest = self.last_display_state
+        if latest is not None and np.array_equal(latest.image, image):
+            return
+        self._record_display_state(image, is_full_display=is_full_display)

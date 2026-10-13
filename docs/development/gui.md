@@ -116,17 +116,21 @@ serializable preview data; the accepted strategy object stays in the backend.
 
 ## AutoStrat UI and credentials
 
-`StrategySetupPanel` switches between fixed and AutoStrat sources but shares
-Set/Start/Stop. Generation only prepares a candidate; Set installs it; Start is an
-explicit separate action. A changed prompt invalidates the prior candidate for
-installation, and generation IDs prevent installing stale results.
+`StrategySetupPanel` switches between Python and AutoStrat sources but shares
+Set/Start/Stop. AutoStrat includes an editable code area and a named `.strat` file library
+under `strategies/autostrat`. Loaded or hand-written code must pass deterministic parser and
+domain validation before Set can install it. Generation only prepares a candidate; Set
+installs it; Start is an explicit separate action. A changed prompt invalidates the prior
+candidate for installation, and generation IDs prevent installing stale results.
 
-The startup prompt in `napari_app.py` sends an optional masked API key through
-`AUTOSTRAT_CONFIGURE`. Blank Enter/Cancel disables AutoStrat even if an environment
-key was inherited. The key is held in backend process memory, not saved or returned
-in status. Do not log request payloads containing credentials. This RPC connection
-is not a credential-security boundary: use the default local connection; do not
-expose it on an untrusted network.
+The startup dialog sends a provider, model, optional base URL and masked API key through
+`AUTOSTRAT_CONFIGURE`. The Robin Office 2 preset contains only non-secret connection
+metadata; custom OpenAI-compatible and Anthropic sessions are supported. Blank Apply or
+Continue without AI disables generation even if an environment key was inherited; local
+`.strat` workflows remain enabled. The key is held in backend process memory, passed only
+to the disposable generation process, and is not saved or returned in status. Do not log
+request payloads containing credentials. This RPC connection is not a credential-security
+boundary: use the default local connection; do not expose it on an untrusted network.
 
 Model/endpoint configuration and generation pipeline construction live in
 `gui/strategy_generation.py`. Reuse `strategy_generation/preview.py` for notebook-

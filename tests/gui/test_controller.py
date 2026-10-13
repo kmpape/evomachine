@@ -38,6 +38,29 @@ def test_generation_requests_and_errors_use_the_generation_channel() -> None:
     assert not errors
 
 
+def test_autostrat_configuration_request_contains_provider_without_persisting_it() -> None:
+    client = RecordingClient()
+    controller = EvoMachineGuiController(client=client, start_worker=False)
+
+    controller.configure_autostrat(
+        api_key="session-key",
+        provider="anthropic",
+        model="claude-test",
+        base_url=None,
+        preset="custom",
+    )
+
+    request = client.requests[-1]
+    assert request.command is GuiCommandType.AUTOSTRAT_CONFIGURE
+    assert request.payload == {
+        "api_key": "session-key",
+        "provider": "anthropic",
+        "model": "claude-test",
+        "base_url": None,
+        "preset": "custom",
+    }
+
+
 def test_request_errors_include_the_failed_command() -> None:
     client = RecordingClient()
     controller = EvoMachineGuiController(client=client, start_worker=False)
@@ -72,6 +95,16 @@ def test_gui_stage_moves_are_non_blocking_so_stop_can_be_processed() -> None:
     assert all(request.payload["block"] is False for request in client.requests[:3])
 
 
+def test_gui_controller_sends_autofocus_offset_reset_request() -> None:
+    client = RecordingClient()
+    controller = EvoMachineGuiController(client=client, start_worker=False)
+
+    controller.reset_autofocus_offset()
+
+    assert client.requests[-1].command is GuiCommandType.AUTOFOCUS_RESET_OFFSET
+    assert client.requests[-1].payload == {}
+
+
 def test_gui_controller_dispatches_completed_stage_movement_coordinates() -> None:
     controller = EvoMachineGuiController(client=RecordingClient(), start_worker=False)
     received = []
@@ -96,6 +129,29 @@ def test_gui_controller_dispatches_completed_stage_movement_coordinates() -> Non
     )
 
     assert received == [result]
+
+
+def test_gui_controller_dispatches_all_led_states_from_initialisation() -> None:
+    controller = EvoMachineGuiController(client=RecordingClient(), start_worker=False)
+    available, states = [], []
+    controller.led_list_received.connect(available.append)
+    controller.led_state_received.connect(states.append)
+    led_states = [
+        {"led": "LED_450_NM", "brightness": 10, "is_on": False, "stop_time": None},
+        {"led": "LED_515_NM", "brightness": 20, "is_on": True, "stop_time": None},
+    ]
+
+    controller._handle_response(GuiResponse(
+        request_id="initialise",
+        ok=True,
+        payload={
+            "leds": ["LED_450_NM", "LED_515_NM"],
+            "led_states": led_states,
+        },
+    ))
+
+    assert available == [["LED_450_NM", "LED_515_NM"]]
+    assert states == led_states
 
 
 def test_gui_controller_sends_output_directory_request() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -445,7 +446,7 @@ class FakeSoftwareFocus:
         self.initialised_fovs = list(fov_ids)
         self.initialised_fov_configs = fov_configs
 
-    def run(self, fov_id: int):
+    def run(self, fov_id: int, stop_event=None):
         """
         Record a software focus run and return a focus status.
 
@@ -459,6 +460,7 @@ class FakeSoftwareFocus:
         SimpleNamespace
             Object exposing focus_status.
         """
+        del stop_event
         self.runs.append(fov_id)
         status = self.statuses.get(fov_id, FocusStatusType.IN_FOCUS)
         if status == FocusStatusType.IN_FOCUS and fov_id in self.z_by_fov:
@@ -691,6 +693,47 @@ def test_move_direct_without_autofocus_toggle() -> None:
     assert result.is_locked
     assert autofocus.history == []
     assert software_focus.runs == []
+
+
+def test_move_honours_cancellation_before_touching_hardware() -> None:
+    navigator, stage, autofocus, software_focus, _ = _navigator(
+        FocusNavigatorConfig(use_autofocus=True)
+    )
+    navigator.initialise_fovs(_fovs())
+    stop_event = threading.Event()
+    stop_event.set()
+
+    result = navigator.move(0, stop_event=stop_event)
+
+    assert result.skipped
+    assert result.skip_reason == "Focus navigation cancelled."
+    assert stage.moves == []
+    assert autofocus.history == []
+    assert software_focus.runs == []
+
+
+def test_move_cancelled_after_stage_arrival_reports_the_physical_fov() -> None:
+    stop_event = threading.Event()
+
+    class CancellingStage(FakeStage):
+        def _move(self, coordinate: Coordinate, block: bool = True) -> Coordinate:
+            result = super()._move(coordinate, block=block)
+            stop_event.set()
+            return result
+
+    stage = CancellingStage()
+    navigator, _, _, _, _ = _navigator(
+        FocusNavigatorConfig(use_autofocus=False),
+        stage=stage,
+    )
+    navigator.initialise_fovs(_fovs())
+
+    result = navigator.move(1, stop_event=stop_event)
+
+    assert result.skipped
+    assert result.fov_id == 1
+    assert navigator.get_current_fov_id() == 1
+    assert stage.get_coordinates(query_hardware=False).x == 100
 
 
 def test_channel_change_move_unlocks_focuses_locks_and_records_z() -> None:

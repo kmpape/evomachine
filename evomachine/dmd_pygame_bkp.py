@@ -100,7 +100,12 @@ class DMDControl:
         "Line width used for calibration and displaying lines. Use odd values."
         self._calib_data: list[tuple[tuple[int, int], tuple[int, int], tuple[int, int]]] | None = None
         "List containing calibration data."
-        self._calib_file: Path = EVOMACHINE_DIR / 'dmd_calibration_data.pkl'
+        self._calib_file: Path = (
+            EVOMACHINE_DIR
+            / 'calibration_data'
+            / 'dmd'
+            / 'dmd_calibration_data_2025-08-14_v2.pkl'
+        )
         "Path to calibration file."
         self._homography_mat: np.ndarray | None = None
         "Homography matrix for mapping image to DMD coordinates."

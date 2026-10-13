@@ -11,18 +11,30 @@ import pytest
 import tifffile
 
 from evomachine.bindings.binding_types import BindingType
+from evomachine.bindings.software_focus.software_focus_algorithms import (
+    create_software_focus_algorithm,
+)
 from evomachine.coordinates import Coordinate, CoordinateBounds
 from evomachine.filemanager import FileManager, FileNameConfig
 from evomachine.frame import Frame
 from evomachine.image_processing_config import ImageProcessorConfigFactory
 from evomachine.peripherals.camera import CameraConfig, ImageConfigType, ObjectiveConfigType
-from evomachine.types import AutoFocusStatusType, FilterWheelType, FocusCurveType, FocusStatusType, FovDirectionType, LEDType
+from evomachine.types import (
+    AutoFocusStatusType,
+    FilterWheelType,
+    FocusAlgorithmType,
+    FocusCurveType,
+    FocusStatusType,
+    FovDirectionType,
+    LEDType,
+)
 from evomachine.peripherals.autofocus import AutofocusCalibrationResult
 from evomachine.gui.facade import AutomatonGuiFacade
 from evomachine.config import get_logger, gui_log_handler
 from evomachine.gui.image_payloads import IMAGE_TRANSPORT_DIR_ENV, IMAGE_TRANSPORT_RAW, array_from_preview_payload
 from evomachine.gui.protocol import GuiCommandType, GuiRequest
 from evomachine.gui.request_map import gui_z_coordinates_from_payload
+from evomachine.softwarefocus import SoftwareFocusConfigFactory
 
 
 @dataclass
@@ -176,6 +188,7 @@ class FakeDmd:
         self.image = None
         self.pattern_warps = []
         self.loaded_image_info = None
+        self.synchronise_display_state_count = 0
 
     def is_initialised(self):
         return True
@@ -188,6 +201,9 @@ class FakeDmd:
 
     def is_calibrated(self):
         return self.calibrated
+
+    def synchronise_display_state(self):
+        self.synchronise_display_state_count += 1
 
     def get_calibration_filename(self):
         return self.calibration_filename
@@ -286,6 +302,9 @@ class FakeAutofocus:
         self.locked = False
         self.calls = []
         self.last_calibration_result = None
+        self.live_error = 25.0
+        self.calibration_prepared = False
+        self.calibration_cancelled_marked = False
 
     def is_initialised(self):
         self.last_calibration_result = AutofocusCalibrationResult(
@@ -302,6 +321,9 @@ class FakeAutofocus:
 
     def is_locked(self):
         return self.locked
+
+    def get_error(self):
+        return self.live_error
 
     def apply_config(self, config=None):
         self.calls.append(("apply_config", config))
@@ -321,9 +343,25 @@ class FakeAutofocus:
             progress_callback(0.5, "calibrating")
         self.calls.append(("run_calibration", config, lock_after_calibration))
         self.status = AutoFocusStatusType.READY
+        self.last_calibration_result = AutofocusCalibrationResult(
+            success=True,
+            measurements={"snr": 10.0, "error": 200.0},
+        )
         if lock_after_calibration:
             self.lock()
-        return True
+        return self.last_calibration_result
+
+    def prepare_calibration(self):
+        self.calibration_prepared = True
+        self.last_calibration_result = None
+
+    def mark_calibration_cancelled(self):
+        self.calibration_cancelled_marked = True
+        self.last_calibration_result = AutofocusCalibrationResult(
+            success=False,
+            failure_reason="Calibration cancelled.",
+            cancelled=True,
+        )
 
     def initialise_autofocus(self, config=None, lock_after_initialise=False):
         return self.run_calibration(config=config, lock_after_calibration=lock_after_initialise)
@@ -338,6 +376,11 @@ class FakeAutofocus:
         self.locked = False
         self.status = AutoFocusStatusType.READY
 
+    def reset_offset(self):
+        self.calls.append("reset_offset")
+        self.live_error = 0.0
+        return ":A"
+
     def disable(self):
         self.calls.append("disable")
         self.locked = False
@@ -346,12 +389,16 @@ class FakeAutofocus:
 
 class FakeSoftwareFocus:
     def __init__(self):
-        self.default_config = SimpleNamespace(
+        self.default_config = SoftwareFocusConfigFactory.default_config().updated(
             rel_range=15,
             step_size=5,
-            algorithm=SimpleNamespace(name="STEEL"),
         )
         self.calls = []
+
+    def update_config(self, config, fov_id=None):
+        self.calls.append(("update_config", fov_id, config))
+        if fov_id is None:
+            self.default_config = config
 
     def run(self, fov_id=None, stop_event=None):
         del stop_event
@@ -464,6 +511,8 @@ class FakeAutomaton:
         self.strategy_started = False
         self.strategy_stopped = False
         self.automaton_stopped = False
+        self.initialise_focus_config = None
+        self.initialise_fov_configs = None
 
     def strategy_has_started(self):
         return self.strategy_started
@@ -487,9 +536,14 @@ class FakeAutomaton:
         self.devices_initialised = True
         return None
 
-    def initialise(self, fovs, cropping_boxes=None, use_autofocus=False):
+    def initialise(
+            self, fovs, cropping_boxes=None, use_autofocus=False,
+            focus_config=None, fov_configs=None,
+    ):
         self.initialise_devices()
         self._fovs = {fov_id: coordinate.copy() for fov_id, coordinate in fovs.items()}
+        self.initialise_focus_config = focus_config
+        self.initialise_fov_configs = fov_configs
         self._fov_list_is_initialised = True
         if self._strategy is not None:
             self._strategy_is_initialised = True
@@ -558,7 +612,7 @@ def test_long_dmd_operation_can_be_polled_cancelled_and_followed_by_requests() -
     assert status.payload["operation"]["state"] == "running"
     assert status.payload["operation"]["progress"] == 0.5
     assert facade.handle(GuiRequest(command=GuiCommandType.PING)).ok
-    assert not facade.handle(GuiRequest(command=GuiCommandType.DMD_STATUS)).ok
+    assert facade.handle(GuiRequest(command=GuiCommandType.DMD_STATUS)).ok
     assert not facade.handle(
         GuiRequest(command=GuiCommandType.AUTOFOCUS_INITIALISE)
     ).ok
@@ -741,6 +795,7 @@ def test_facade_handles_dmd_requests() -> None:
     assert response.ok
     assert automaton.acq_mngr.dmd.pattern_warps[-1] is False
     assert response.payload["dmd"]["is_full_display"] is True
+    assert response.payload["dmd"]["last_pattern"] == "full_dmd"
 
     response = facade.handle(GuiRequest(command=GuiCommandType.DMD_CALIBRATE))
     assert response.ok
@@ -980,7 +1035,39 @@ def test_facade_initialise_devices_initialises_controllers_first() -> None:
     assert automaton.devices_initialised is True
     assert shared_controller.initialise_count == 1
     assert dmd_controller.initialise_count == 1
+    assert automaton.acq_mngr.dmd.synchronise_display_state_count == 1
+    assert response.payload["coordinate"] == {"x": 1, "y": 2, "z": 3, "channel_id": 0}
+    assert response.payload["camera"]["name"] == "Fake Camera"
+    assert response.payload["leds"] == ["LED_450_NM"]
+    assert response.payload["led_states"] == [{
+        "led": "LED_450_NM",
+        "brightness": 0.0,
+        "is_on": False,
+        "stop_time": None,
+    }]
+    assert response.payload["filter_wheel"]["current_filter"]["name"] == "NO_FILTER"
+    assert response.payload["dmd"]["name"] == "Fake DMD"
+    assert response.payload["autofocus"]["name"] == "Fake Autofocus"
+    assert response.payload["software_focus"]["available"] is True
     assert [controller["connected"] for controller in response.payload["controllers"]] == [True, True]
+
+
+def test_facade_initialise_devices_keeps_optional_status_failures_as_warnings(monkeypatch) -> None:
+    automaton = FakeAutomaton(devices_initialised=False)
+    facade = AutomatonGuiFacade(automaton)
+    monkeypatch.setattr(
+        facade,
+        "gui_autofocus_status_payload",
+        lambda: (_ for _ in ()).throw(RuntimeError("CRISP not ready")),
+    )
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.INITIALISE_DEVICES))
+
+    assert response.ok
+    assert automaton.devices_initialised is True
+    assert response.payload["initialisation_warnings"] == [
+        "autofocus: RuntimeError: CRISP not ready"
+    ]
 
 
 def test_facade_shutdown_closes_controllers_and_reports_status() -> None:
@@ -1038,6 +1125,7 @@ def test_facade_handles_autofocus_requests() -> None:
     response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_STATUS))
     assert response.ok
     assert response.payload["autofocus"]["status"]["name"] == "IDLE"
+    assert response.payload["autofocus"]["live_error"] == 25.0
 
     response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_CONFIGURE, payload={"config": {"preset": "oil"}}))
     assert response.ok
@@ -1064,9 +1152,59 @@ def test_facade_handles_autofocus_requests() -> None:
     assert response.ok
     assert response.payload["autofocus"]["status"]["name"] == "READY"
 
+    response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_RESET_OFFSET))
+    assert response.ok
+    assert response.payload["autofocus"]["offset_reset"] is True
+    assert response.payload["autofocus"]["offset_reset_response"] == ":A"
+    assert response.payload["autofocus"]["live_error"] == 0.0
+    assert automaton.focus_nav.autofocus.calls[-1] == "reset_offset"
+
     response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_DISABLE))
     assert response.ok
     assert response.payload["autofocus"]["status"]["name"] == "IDLE"
+
+
+def test_facade_autofocus_cancellation_is_recorded_as_cancelled() -> None:
+    automaton = FakeAutomaton()
+    autofocus = automaton.focus_nav.autofocus
+    facade = AutomatonGuiFacade(automaton)
+    started = threading.Event()
+
+    def blocking_calibration(
+            config=None,
+            lock_after_calibration=False,
+            stop_event=None,
+            progress_callback=None,
+    ):
+        started.set()
+        if progress_callback is not None:
+            progress_callback(0.45, "Running CRISP log calibration.")
+        assert stop_event is not None
+        assert stop_event.wait(1.0)
+        result = AutofocusCalibrationResult(
+            success=False,
+            failure_reason="Calibration cancelled.",
+            cancelled=True,
+        )
+        autofocus.last_calibration_result = result
+        return result
+
+    autofocus.run_calibration = blocking_calibration
+    response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_INITIALISE))
+    assert response.ok
+    assert started.wait(1.0)
+
+    response = facade.handle(
+        GuiRequest(command=GuiCommandType.AUTOFOCUS_CANCEL_CALIBRATION)
+    )
+    assert response.ok
+    assert autofocus.calibration_cancelled_marked
+    assert wait_for_operation(facade, "autofocus_calibration")["state"] == "cancelled"
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_STATUS))
+    result = response.payload["autofocus"]["calibration_result"]
+    assert result["success"] is False
+    assert result["cancelled"] is True
 
 
 def test_facade_handles_software_focus_requests() -> None:
@@ -1086,6 +1224,60 @@ def test_facade_handles_software_focus_requests() -> None:
     assert result["focus_status"]["name"] == "IN_FOCUS"
     assert result["best_coordinate"]["z"] == 4
     assert result["z_points"] == 3
+
+
+def test_facade_configures_shared_software_focus_defaults() -> None:
+    automaton = FakeAutomaton()
+    facade = AutomatonGuiFacade(automaton)
+
+    response = facade.handle(GuiRequest(
+        command=GuiCommandType.SOFTWARE_FOCUS_CONFIGURE,
+        payload={
+            "config": {
+                "rel_range": 60,
+                "step_size": 6,
+                "algorithm": "LAPLACIAN_VAR",
+            },
+        },
+    ))
+
+    assert response.ok
+    config = automaton.focus_nav.software_focus.default_config
+    assert config.rel_range == 60
+    assert config.step_size == 6
+    assert config.algorithm.name == "LAPLACIAN_VAR"
+
+
+@pytest.mark.parametrize(
+    "algorithm",
+    ["LAPLACIAN_VAR", "SQUARED_GRAD_AVG", "STEEL", "BANDPASS_FFT"],
+)
+def test_gui_software_focus_algorithm_change_removes_incompatible_kwargs(algorithm) -> None:
+    automaton = FakeAutomaton()
+    if algorithm == "BANDPASS_FFT":
+        automaton.focus_nav.software_focus.default_config = (
+            automaton.focus_nav.software_focus.default_config.updated(
+                algorithm=FocusAlgorithmType.BANDPASS_FFT,
+                algorithm_kwargs={"rowshift": 25, "colshift": 0},
+            )
+        )
+    facade = AutomatonGuiFacade(automaton)
+
+    response = facade.handle(GuiRequest(
+        command=GuiCommandType.SOFTWARE_FOCUS_CONFIGURE,
+        payload={
+            "config": {
+                "rel_range": 50,
+                "step_size": 5,
+                "algorithm": algorithm,
+            },
+        },
+    ))
+
+    assert response.ok
+    config = automaton.focus_nav.software_focus.default_config
+    scorer = create_software_focus_algorithm(config.algorithm, **config.algorithm_kwargs)
+    assert scorer is not None
 
 
 def test_blocking_software_focus_keeps_ping_and_stop_responsive() -> None:
@@ -1116,6 +1308,38 @@ def test_blocking_software_focus_keeps_ping_and_stop_responsive() -> None:
     assert wait_for_operation(facade, "software_focus")["state"] == "cancelled"
 
 
+def test_stop_cancels_focus_navigation_before_focus_work_continues() -> None:
+    automaton = FakeAutomaton()
+    facade = AutomatonGuiFacade(automaton)
+    started = threading.Event()
+
+    def blocking_move(fov_id, manage_focus=True, stop_event=None):
+        del manage_focus
+        started.set()
+        assert stop_event is not None
+        stop_event.wait(timeout=1)
+        return SimpleNamespace(
+            fov_id=fov_id,
+            is_locked=False,
+            refocusing=False,
+            software_focus_status=FocusStatusType.UNKNOWN,
+            skipped=True,
+            skip_reason="Focus navigation cancelled.",
+        )
+
+    automaton.focus_nav.move = blocking_move
+    response = facade.handle(GuiRequest(
+        command=GuiCommandType.FOV_MOVE,
+        payload={"fov_id": 0},
+    ))
+
+    assert response.ok
+    assert started.wait(timeout=1)
+    assert facade.handle(GuiRequest(command=GuiCommandType.STAGE_STATUS)).ok
+    assert facade.handle(GuiRequest(command=GuiCommandType.STOP)).ok
+    assert wait_for_operation(facade, "focus_navigation")["state"] == "cancelled"
+
+
 def test_stop_remains_responsive_during_long_z_stack() -> None:
     automaton = FakeAutomaton()
     facade = AutomatonGuiFacade(automaton)
@@ -1139,6 +1363,41 @@ def test_stop_remains_responsive_during_long_z_stack() -> None:
     stop_response = facade.handle(GuiRequest(command=GuiCommandType.STOP))
     assert stop_response.ok
     assert wait_for_operation(facade, "z_stack_acquisition")["state"] == "cancelled"
+
+
+def test_shutdown_cancels_long_z_stack_before_closing_controllers() -> None:
+    automaton = FakeAutomaton()
+    facade = AutomatonGuiFacade(automaton)
+    started = threading.Event()
+
+    def blocking_z_stack(frame_metadata, z_coordinates, settings=None, stop_event=None):
+        del frame_metadata, z_coordinates, settings
+        started.set()
+        assert stop_event is not None
+        stop_event.wait(timeout=1)
+        return Frame(
+            frame_metadata=[SimpleNamespace(fov_id=0)],
+            array=np.zeros((1, 1, 1)),
+            saved_paths=[None],
+        )
+
+    automaton.acq_mngr.take_z_stack = blocking_z_stack
+    response = facade.handle(GuiRequest(
+        command=GuiCommandType.ACQUISITION_TAKE_Z_STACK,
+        payload={"start_z": 0, "end_z": 1, "step_z": 1, "image_transport": IMAGE_TRANSPORT_RAW},
+    ))
+
+    assert response.ok
+    assert started.wait(timeout=1)
+    assert facade.handle(GuiRequest(command=GuiCommandType.CONTROLLER_STATUS)).ok
+    shutdown = facade.handle(GuiRequest(command=GuiCommandType.SHUTDOWN))
+    assert shutdown.ok
+    assert wait_for_operation(facade, "z_stack_acquisition")["state"] == "cancelled"
+    assert automaton.shutdown_count == 1
+    assert all(
+        controller["connected"] is False
+        for controller in shutdown.payload["controllers"]
+    )
 
 
 def test_second_stage_movement_is_rejected_until_first_stops() -> None:
@@ -1241,6 +1500,79 @@ def test_facade_handles_strategy_lifecycle_requests() -> None:
     assert response.ok
     assert response.payload["strategy_active"] is False
     assert response.payload["strategy"]["stopped"] is True
+
+
+def test_strategy_status_streams_new_frame_and_dmd_previews_once() -> None:
+    automaton = FakeAutomaton()
+    automaton._latest_frame = SimpleNamespace(
+        array=np.ones((1, 3, 4), dtype=np.uint16),
+        saved_paths=[None],
+        fov_id=0,
+    )
+    automaton._latest_frame_sequence = 1
+    automaton._latest_projection_pattern = np.ones((20, 10), dtype=np.uint8)
+    automaton._latest_projection_sequence = 1
+    facade = AutomatonGuiFacade(automaton)
+
+    first = facade.handle(GuiRequest(
+        command=GuiCommandType.STRATEGY_STATUS,
+        payload={"image_transport": IMAGE_TRANSPORT_RAW},
+    ))
+    second = facade.handle(GuiRequest(
+        command=GuiCommandType.STRATEGY_STATUS,
+        payload={"image_transport": IMAGE_TRANSPORT_RAW},
+    ))
+
+    assert first.ok
+    assert "preview" in first.payload["frame"]
+    assert "preview" in first.payload["dmd"]
+    assert "frame" not in second.payload
+    assert "dmd" not in second.payload
+
+
+def test_fov_initialisation_builds_global_and_per_fov_focus_policies() -> None:
+    automaton = FakeAutomaton()
+    facade = AutomatonGuiFacade(automaton)
+
+    response = facade.handle(GuiRequest(
+        command=GuiCommandType.FOV_INITIALISE,
+        payload={
+            "fovs": [
+                {"fov_id": 0, "x": 1, "y": 2, "z": 3},
+                {
+                    "fov_id": 1, "x": 4, "y": 5, "z": 6,
+                    "focus_config": {
+                        "run_software_focus_on_arrival": True,
+                        "software_focus": {
+                            "rel_range": 30,
+                            "step_size": 3,
+                            "algorithm": "LAPLACIAN_VAR",
+                        },
+                    },
+                },
+            ],
+            "focus_config": {
+                "use_autofocus": True,
+                "refocus": True,
+                "refocus_using_software_focus": True,
+                "software_focus": {
+                    "rel_range": 40,
+                    "step_size": 4,
+                    "algorithm": "STEEL",
+                },
+                "default_fov_config": {
+                    "lock_autofocus_on_fov": True,
+                },
+            },
+        },
+    ))
+
+    assert response.ok
+    assert automaton.initialise_focus_config.use_autofocus
+    assert automaton.initialise_focus_config.refocus_using_software_focus
+    assert automaton.initialise_fov_configs[1].run_software_focus_on_arrival
+    assert automaton.initialise_fov_configs[1].software_focus_config.rel_range == 30
+    assert automaton.focus_nav.software_focus.default_config.rel_range == 40
 
 
 def test_facade_rejects_mutating_requests_during_strategy() -> None:

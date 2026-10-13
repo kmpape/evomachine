@@ -46,6 +46,38 @@ def test_hardware_gui_has_default_runtime_factory() -> None:
     assert factory.__name__ == "build_hardware_automaton"
 
 
+def test_gui_launcher_uses_an_os_assigned_loopback_port_by_default() -> None:
+    parser = launchers._build_common_parser("test")
+
+    args = parser.parse_args([])
+
+    assert args.host == "127.0.0.1"
+    assert args.port == 0
+
+
+def test_virtual_process_reports_startup_errors_to_parent(monkeypatch) -> None:
+    from evomachine.gui import runtime
+
+    class RecordingQueue(list):
+        def put(self, value):
+            self.append(value)
+
+    messages = RecordingQueue()
+    monkeypatch.setattr(runtime, "build_virtual_automaton", lambda: object())
+    monkeypatch.setattr(
+        launchers,
+        "_serve_automaton",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            PermissionError("socket bind denied")
+        ),
+    )
+
+    with pytest.raises(PermissionError, match="socket bind denied"):
+        launchers._virtual_automaton_process("127.0.0.1", 0, messages)
+
+    assert messages == [{"error": "PermissionError: socket bind denied"}]
+
+
 def test_run_napari_passes_forced_image_transport_to_child_environment(monkeypatch) -> None:
     captured = {}
 

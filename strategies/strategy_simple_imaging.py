@@ -89,6 +89,8 @@ class SimpleImagingStrategy(AbstractStrategy):
             errors: list[Exception],
     ) -> list[AutomatonCommand]:
         """Return repeated imaging commands."""
+        if errors:
+            raise errors[0]
         return self._imaging_commands(segment=False)
 
     def finalise(self) -> list[AutomatonCommand]:

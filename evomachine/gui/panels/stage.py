@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
-    QDoubleSpinBox,
     QGridLayout,
     QGroupBox,
     QLabel,
@@ -12,6 +11,7 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
+from evomachine.gui.panels.common import NoWheelDoubleSpinBox, format_micrometre_value
 
 
 class StagePanel(QGroupBox):
@@ -37,6 +37,7 @@ class StagePanel(QGroupBox):
         self.devices_initialised = False
         self.strategy_running = False
         self.movement_running = False
+        self.autofocus_locked = False
         self.fov_buttons: list[QPushButton] = []
         self.x_input = self._axis_input("ΔX (µm): ")
         self.y_input = self._axis_input("ΔY (µm): ")
@@ -113,6 +114,7 @@ class StagePanel(QGroupBox):
         self.configure_button.clicked.connect(self._open_config_dialog)
         self.controller.stage_coordinates_received.connect(self.update_coordinates)
         self.controller.stage_status_received.connect(self.update_status)
+        self.controller.autofocus_status_received.connect(self.update_autofocus_status)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
         self.controller.strategy_status_received.connect(self.update_strategy_status)
         self.controller.operation_status_received.connect(self.update_operation_status)
@@ -122,10 +124,10 @@ class StagePanel(QGroupBox):
         self._sync_controls_enabled()
 
     @staticmethod
-    def _axis_input(prefix: str) -> QDoubleSpinBox:
-        box = QDoubleSpinBox()
+    def _axis_input(prefix: str) -> NoWheelDoubleSpinBox:
+        box = NoWheelDoubleSpinBox()
         box.setRange(-1e7, 1e7)
-        box.setDecimals(3)
+        box.setDecimals(0)
         box.setSingleStep(1.0)
         box.setPrefix(prefix)
         box.setAlignment(Qt.AlignCenter)
@@ -148,7 +150,7 @@ class StagePanel(QGroupBox):
         self.controller.move_stage_relative(
             dx=self.x_input.value(),
             dy=self.y_input.value(),
-            dz=self.z_input.value(),
+            dz=None if self.autofocus_locked else self.z_input.value(),
         )
 
     def _move_absolute(self) -> None:
@@ -160,7 +162,7 @@ class StagePanel(QGroupBox):
         self.controller.move_stage_absolute(
             x=self.absolute_x_input.value(),
             y=self.absolute_y_input.value(),
-            z=self.absolute_z_input.value(),
+            z=None if self.autofocus_locked else self.absolute_z_input.value(),
         )
 
     def _move_camera_fov(self, direction: str) -> None:
@@ -213,7 +215,9 @@ class StagePanel(QGroupBox):
         self._latest_coordinate = dict(coordinate)
         self.coordinate_label.setText(
             "Current absolute position: "
-            f"x: {coordinate.get('x')}, y: {coordinate.get('y')}, z: {coordinate.get('z')}"
+            f"x: {format_micrometre_value(coordinate.get('x'))}, "
+            f"y: {format_micrometre_value(coordinate.get('y'))}, "
+            f"z: {format_micrometre_value(coordinate.get('z'))}"
         )
         for axis, target_input in (
             ("x", self.absolute_x_input),
@@ -234,7 +238,7 @@ class StagePanel(QGroupBox):
         )
         fov_step_size = payload.get("camera_fov_step_size", payload.get("fov_step_size"))
         if isinstance(fov_step_size, int | float):
-            fov_step_text = f"{float(fov_step_size):.3f} um"
+            fov_step_text = f"{format_micrometre_value(fov_step_size)} µm"
         else:
             fov_step_text = "-"
         self.fov_step_label.setText(f"camera FoV step: {fov_step_text}")
@@ -248,9 +252,12 @@ class StagePanel(QGroupBox):
         high = bounds.get("high", {})
         self.limits_label.setText(
             "active limits (µm):\n"
-            f"X [{low.get('x')}, {high.get('x')}]\n"
-            f"Y [{low.get('y')}, {high.get('y')}]\n"
-            f"Z [{low.get('z')}, {high.get('z')}]"
+            f"X [{format_micrometre_value(low.get('x'))}, "
+            f"{format_micrometre_value(high.get('x'))}]\n"
+            f"Y [{format_micrometre_value(low.get('y'))}, "
+            f"{format_micrometre_value(high.get('y'))}]\n"
+            f"Z [{format_micrometre_value(low.get('z'))}, "
+            f"{format_micrometre_value(high.get('z'))}]"
         )
 
     def update_lifecycle_status(self, payload: dict) -> None:
@@ -267,6 +274,10 @@ class StagePanel(QGroupBox):
         self.strategy_running = bool(payload.get("running"))
         self._sync_controls_enabled()
 
+    def update_autofocus_status(self, payload: dict) -> None:
+        self.autofocus_locked = bool(payload.get("is_locked"))
+        self._sync_controls_enabled()
+
     def _sync_controls_enabled(self) -> None:
         manual_controls_enabled = (
             self.devices_initialised
@@ -276,36 +287,54 @@ class StagePanel(QGroupBox):
         for widget in (
             self.x_input,
             self.y_input,
-            self.z_input,
             self.absolute_x_input,
             self.absolute_y_input,
-            self.absolute_z_input,
             self.move_button,
             self.absolute_move_button,
-            self.origin_button,
             *self.fov_buttons,
         ):
             widget.setEnabled(manual_controls_enabled)
+        z_controls_enabled = manual_controls_enabled and not self.autofocus_locked
+        self.z_input.setEnabled(z_controls_enabled)
+        self.absolute_z_input.setEnabled(z_controls_enabled)
+        self.origin_button.setEnabled(z_controls_enabled)
         self.configure_button.setEnabled(self.devices_initialised and not self.strategy_running)
         self.refresh_button.setEnabled(self.devices_initialised and not self.movement_running)
         self.stop_button.setEnabled(self.devices_initialised)
 
     def _config_fields(self) -> list[ConfigFieldSpec]:
         return [
-            ConfigFieldSpec("X", "x", self._latest_coordinate.get("x"), editable=False),
-            ConfigFieldSpec("Y", "y", self._latest_coordinate.get("y"), editable=False),
-            ConfigFieldSpec("Z", "z", self._latest_coordinate.get("z"), editable=False),
-            ConfigFieldSpec("FoV ID", "fov_id", self._latest_status.get("fov_id"), editable=False),
             ConfigFieldSpec(
-                "Stage FoV step",
-                "fov_step_size",
-                self._latest_status.get("fov_step_size"),
+                "X (µm)",
+                "x",
+                format_micrometre_value(self._latest_coordinate.get("x")),
                 editable=False,
             ),
             ConfigFieldSpec(
-                "Camera FoV step",
+                "Y (µm)",
+                "y",
+                format_micrometre_value(self._latest_coordinate.get("y")),
+                editable=False,
+            ),
+            ConfigFieldSpec(
+                "Z (µm)",
+                "z",
+                format_micrometre_value(self._latest_coordinate.get("z")),
+                editable=False,
+            ),
+            ConfigFieldSpec("FoV ID", "fov_id", self._latest_status.get("fov_id"), editable=False),
+            ConfigFieldSpec(
+                "Stage FoV step (µm)",
+                "fov_step_size",
+                format_micrometre_value(self._latest_status.get("fov_step_size")),
+                editable=False,
+            ),
+            ConfigFieldSpec(
+                "Camera FoV step (µm)",
                 "camera_fov_step_size",
-                self._latest_status.get("camera_fov_step_size"),
+                format_micrometre_value(
+                    self._latest_status.get("camera_fov_step_size")
+                ),
                 editable=False,
             ),
         ]

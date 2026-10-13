@@ -155,6 +155,9 @@ class MMCCamera(Camera):
         np.ndarray
             Captured image reshaped from the tagged image payload.
         """
+        # Studio Live owns a sequence acquisition and prevents Core snapshots.
+        # Leave Live off so it cannot compete with subsequent strategy images.
+        self._disable_live_mode()
         self.core.snap_image()
         tagged_image = self.core.get_tagged_image()
         return np.reshape(

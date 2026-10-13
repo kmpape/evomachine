@@ -4,8 +4,10 @@ import argparse
 import importlib
 import multiprocessing as mp
 import os
+import queue
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -18,7 +20,8 @@ from evomachine.config import get_logger
 
 
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 8765
+DEFAULT_PORT = 0
+STARTUP_TIMEOUT_SECONDS = 60.0
 DEFAULT_HARDWARE_RUNTIME = "evomachine.gui.runtime:build_hardware_automaton"
 logger = get_logger(name=__name__)
 
@@ -87,9 +90,18 @@ def _serve_automaton(automaton, host: str, port: int, ready_queue) -> None:
 
 
 def _virtual_automaton_process(host: str, port: int, ready_queue) -> None:
-    from evomachine.gui.runtime import build_virtual_automaton
+    try:
+        from evomachine.gui.runtime import build_virtual_automaton
 
-    _serve_automaton(build_virtual_automaton(), host=host, port=port, ready_queue=ready_queue)
+        _serve_automaton(
+            build_virtual_automaton(),
+            host=host,
+            port=port,
+            ready_queue=ready_queue,
+        )
+    except Exception as error:
+        ready_queue.put({"error": f"{type(error).__name__}: {error}"})
+        raise
 
 
 def _hardware_automaton_process(runtime_spec: str, host: str, port: int, ready_queue) -> None:
@@ -140,10 +152,27 @@ def _launch_with_process(
         no_napari: bool,
         napari_args: Sequence[str],
         *,
-        image_transport: str | None = None,
+    image_transport: str | None = None,
 ) -> int:
     process.start()
-    ready = ready_queue.get(timeout=15.0)
+    deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
+    while True:
+        try:
+            ready = ready_queue.get(timeout=0.1)
+            break
+        except queue.Empty as error:
+            if not process.is_alive():
+                process.join(timeout=0.2)
+                raise RuntimeError(
+                    f"Automaton process exited with code {process.exitcode} before reporting readiness."
+                ) from error
+            if time.monotonic() >= deadline:
+                process.terminate()
+                process.join(timeout=3.0)
+                raise RuntimeError(
+                    "Automaton process did not report readiness within "
+                    f"{STARTUP_TIMEOUT_SECONDS:g} seconds."
+                ) from error
     if isinstance(ready, dict) and "error" in ready:
         process.join(timeout=1.0)
         raise RuntimeError(f"Automaton process failed to start: {ready['error']}")

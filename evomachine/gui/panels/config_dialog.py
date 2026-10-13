@@ -11,9 +11,16 @@ from PyQt5.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QLineEdit,
+    QLabel,
     QSpinBox,
     QVBoxLayout,
     QWidget,
+)
+
+from evomachine.gui.panels.common import (
+    NoWheelComboBox,
+    NoWheelDoubleSpinBox,
+    NoWheelSpinBox,
 )
 
 
@@ -33,6 +40,7 @@ class ConfigFieldSpec:
     editable: bool = True
     enabled_when_key: str | None = None
     enabled_when_value: Any = True
+    emphasized: bool = False
 
 
 class ConfigDialog(QDialog):
@@ -53,7 +61,15 @@ class ConfigDialog(QDialog):
         for field in fields:
             widget = self._make_widget(field)
             self._widgets[field.key] = widget
-            form.addRow(field.label, widget)
+            label = QLabel(field.label)
+            if field.emphasized:
+                label_font = label.font()
+                label_font.setBold(True)
+                label.setFont(label_font)
+                widget_font = widget.font()
+                widget_font.setBold(True)
+                widget.setFont(widget_font)
+            form.addRow(label, widget)
         self._connect_dependency_widgets()
         self._sync_dependency_states()
 
@@ -88,7 +104,7 @@ class ConfigDialog(QDialog):
             widget.setEnabled(field.editable)
             return widget
         if field.kind == "int":
-            widget = QSpinBox()
+            widget = NoWheelSpinBox()
             widget.setRange(
                 int(field.minimum if field.minimum is not None else -2147483647),
                 int(field.maximum if field.maximum is not None else 2147483647),
@@ -98,7 +114,7 @@ class ConfigDialog(QDialog):
             widget.setEnabled(field.editable)
             return widget
         if field.kind == "float":
-            widget = QDoubleSpinBox()
+            widget = NoWheelDoubleSpinBox()
             widget.setRange(
                 float(field.minimum if field.minimum is not None else -1e12),
                 float(field.maximum if field.maximum is not None else 1e12),
@@ -109,7 +125,7 @@ class ConfigDialog(QDialog):
             widget.setEnabled(field.editable)
             return widget
         if field.kind == "choice":
-            widget = QComboBox()
+            widget = NoWheelComboBox()
             for choice in field.choices:
                 widget.addItem(choice, choice)
             index = widget.findData(field.value)

@@ -2,17 +2,16 @@ import cv2
 import numpy as np
 import pickle as pkl
 import matplotlib.pyplot as plt
-import os
 import sys
 from pathlib import Path
 WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 sys.path.append(str(WORKSPACE_ROOT / "asitiger"))
 sys.path.append(str(WORKSPACE_ROOT / "evomachine_repo"))
 sys.path.append(str(WORKSPACE_ROOT / "de-lta-rt"))
-from evomachine.config import EVOMACHINE_DIR
-from evomachine.dmd_socket import DMDControl, DMD_WIDTH_HEIGHT
+from evomachine.config import EVOMACHINE_DIR  # noqa: E402
+from evomachine.dmd_socket import DMDControl, DMD_WIDTH_HEIGHT  # noqa: E402
 
-filename = EVOMACHINE_DIR / 'dmd_calibration_data.pkl'
+filename = EVOMACHINE_DIR / 'calibration_data' / 'dmd' / 'dmd_calibration_data_2025-08-14_v2.pkl'
 with open(str(filename), 'rb') as f:
     calib_data = pkl.load(f)
 

@@ -9,7 +9,7 @@ import pytest
 from evomachine.acquisition import FrameAcquisitionManager
 from evomachine.automaton import Automaton
 from evomachine.commands import AutomatonCommand, CommandFactory
-from evomachine.config import DMD_WIDTH_HEIGHT
+from evomachine.config import DMD_WIDTH_HEIGHT, gui_log_handler
 from evomachine.delta_processing import ProjectionExposureError
 from evomachine.frame import Frame, FrameMetaData
 from evomachine.image_processing_config import ImageProcessorConfigFactory
@@ -287,7 +287,8 @@ class FakeFocusNavigator(FocusNavigator):
         self.current_fov_id = UNKNOWN_FOV_ID
         self.fov_configs = fov_configs
 
-    def move(self, fov_id: int, manage_focus: bool = True):
+    def move(self, fov_id: int, manage_focus: bool = True, stop_event=None):
+        del stop_event
         """Record one move request."""
         self.moves.append(fov_id)
         self.current_fov_id = fov_id
@@ -644,7 +645,7 @@ def test_command_failure_is_delivered_to_strategy_and_stops_the_batch() -> None:
     automaton, _, focus_navigator, _, _, _ = make_automaton()
     strategy = automaton._strategy
     assert isinstance(strategy, FakeStrategy)
-    focus_navigator.move = lambda fov_id: (_ for _ in ()).throw(RuntimeError("stage blip"))
+    focus_navigator.move = lambda fov_id, stop_event=None: (_ for _ in ()).throw(RuntimeError("stage blip"))
     factory = CommandFactory(cfg=make_cfg())
     failed = factory.command_move(fov_id=1)
     skipped = factory.command_wait(duration=0)
@@ -902,6 +903,81 @@ def test_automaton_dmd_free_basic_strategy_initialises_and_starts() -> None:
 
     assert automaton.strategy_has_started()
     assert automaton._strategy.dmd is None
+
+
+def test_strategy_start_disables_all_leds_and_camera_live_mode() -> None:
+    automaton, acquisition_manager, _, _, led_manager, _ = make_automaton()
+
+    automaton.start_strategy()
+
+    assert led_manager.disable_count == 1
+    assert acquisition_manager.camera.live_mode_history == [False]
+    assert automaton.strategy_has_started()
+
+
+def test_strategy_does_not_start_when_hardware_safety_preparation_fails(
+    monkeypatch,
+) -> None:
+    automaton, acquisition_manager, _, _, led_manager, _ = make_automaton()
+
+    def fail_led_shutdown(led_type=None):
+        del led_type
+        raise ConnectionError("LED controller unavailable")
+
+    monkeypatch.setattr(led_manager, "disable_led", fail_led_shutdown)
+
+    with pytest.raises(RuntimeError, match="hardware safety preparation failed"):
+        automaton.start_strategy()
+
+    assert acquisition_manager.camera.live_mode_history == [False]
+    assert not automaton.strategy_has_started()
+
+
+def test_strategy_lifecycle_events_are_emitted_to_gui_logs() -> None:
+    automaton, *_ = make_automaton()
+    strategy = LifecycleStrategy(cfg=make_cfg(), action="terminate")
+    automaton.set_strategy(strategy)
+    gui_log_handler.clear()
+    cursor = gui_log_handler.latest_sequence
+
+    automaton.start_strategy()
+    automaton._process()
+
+    messages = [
+        record["message"] for record in gui_log_handler.records_after(cursor)
+    ]
+    assert "All LEDs disabled before strategy start." in messages
+    assert "Camera live mode disabled before strategy start." in messages
+    assert "Strategy started: LifecycleStrategy." in messages
+    assert any(message.startswith("Strategy termination condition reached:") for message in messages)
+    assert "Strategy finalisation completed: LifecycleStrategy." in messages
+    assert "Strategy stop requested: termination condition reached." in messages
+
+
+def test_user_strategy_stop_is_emitted_to_gui_logs() -> None:
+    automaton, *_ = make_automaton()
+    gui_log_handler.clear()
+    cursor = gui_log_handler.latest_sequence
+
+    automaton.start_strategy()
+    automaton.stop_strategy()
+
+    messages = [
+        record["message"] for record in gui_log_handler.records_after(cursor)
+    ]
+    assert "Strategy stop requested by user." in messages
+
+
+def test_user_strategy_stop_cleans_up_peripherals_once() -> None:
+    automaton, acquisition_manager, *_ = make_automaton()
+
+    automaton.start_strategy()
+    automaton.stop_strategy()
+    automaton.stop_strategy()
+
+    assert acquisition_manager.stop_count == 1
+    assert acquisition_manager.camera.live_mode_history == [False, False]
+    assert automaton._strategy_cleanup_done
 
 
 class MissingDmdStrategy(FakeStrategy):
@@ -1693,6 +1769,8 @@ def test_automaton_act_on_halt_uses_manager_paths() -> None:
         stop_event=Event(),
         shutdown_event=Event(),
     )
+    camera.initialise()
+    autofocus.initialise()
 
     automaton.act_on_halt()
 

@@ -53,6 +53,7 @@ class VirtualAutofocus(Autofocus):
         self.peripheral_ctrl: VirtualPeripheralController = peripheral_ctrl
         self.command_history: list[str] = []
         self.is_configured: bool = False
+        self._focus_error: float = 0.0
         self._status: AutoFocusStatusType = initial_status
         super().__init__(
             name=name,
@@ -195,6 +196,16 @@ class VirtualAutofocus(Autofocus):
         """
         self.command_history.append("unlock")
         self._status = AutoFocusStatusType.READY
+
+    def _reset_offset(self) -> str:
+        """Record an offset reset at the virtual current focus."""
+        self.command_history.append("reset_offset")
+        self._focus_error = 0.0
+        return "virtual offset reset"
+
+    def _get_error(self) -> float:
+        """Return the virtual live focus error."""
+        return self._focus_error
 
     def _disable(self) -> None:
         """

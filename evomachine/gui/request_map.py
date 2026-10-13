@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 
 from evomachine.acquisition import FrameAcquisitionSettings
-from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT, gui_log_handler
+from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT, get_logger, gui_log_handler
 from evomachine.coordinates import Coordinate
 from evomachine.filemanager import FileManager
 from evomachine.frame import FrameMetaDataFactory
@@ -23,11 +23,15 @@ from evomachine.strategy import NoStrategy, create_strategy_from_definition, lis
 from evomachine.types import FilterWheelType, LEDType
 from evomachine.types import FovDirectionType
 from evomachine.gui.protocol import GuiCommandType
+from evomachine.navigation import FovConfig, FocusNavigatorConfig, FocusNavigatorFovRecord
+from evomachine.softwarefocus import SoftwareFocusConfig
+from evomachine.types import FocusAlgorithmType
 
 
 GuiRequestHandler = Callable[[Any, dict[str, Any]], dict[str, Any]]
 DMD_PATTERNS = DMD_BUILT_IN_PATTERNS
 MAX_Z_STACK_PLANES = 10000
+logger = get_logger(name=__name__)
 GUI_CAMERA_FOV_DIRECTION_DELTAS = {
     FovDirectionType.UP: (0.0, -1.0),
     FovDirectionType.DOWN: (0.0, 1.0),
@@ -308,6 +312,143 @@ def gui_fovs_from_payload(payload: dict[str, Any]) -> dict[int, Coordinate]:
     return fovs
 
 
+def gui_software_focus_config_from_payload(
+        facade: Any,
+        payload: dict[str, Any] | None,
+) -> SoftwareFocusConfig | None:
+    """Apply GUI scan overrides to the backend's complete software-focus config."""
+    if payload is None:
+        return None
+    if not isinstance(payload, dict):
+        raise TypeError("Software-focus config payload must be a dict.")
+    base = facade.gui_software_focus().default_config
+    updates: dict[str, Any] = {}
+    if "rel_range" in payload:
+        updates["rel_range"] = int(payload["rel_range"])
+    if "step_size" in payload:
+        updates["step_size"] = int(payload["step_size"])
+    if "algorithm" in payload:
+        algorithm = payload["algorithm"]
+        if not isinstance(algorithm, str):
+            raise TypeError("Software-focus algorithm must be a string enum name.")
+        try:
+            algorithm_type = FocusAlgorithmType[algorithm]
+        except KeyError as error:
+            raise ValueError(f"Unknown software-focus algorithm {algorithm!r}.") from error
+        allowed_kwargs = {
+            FocusAlgorithmType.LAPLACIAN_VAR: frozenset(),
+            FocusAlgorithmType.SQUARED_GRAD_AVG: frozenset({"threshold"}),
+            FocusAlgorithmType.STEEL: frozenset({"rowshift", "colshift", "normalise"}),
+            FocusAlgorithmType.BANDPASS_FFT: frozenset({
+                "cell_radius", "downsample", "order", "saturation", "normalize_brightness",
+            }),
+        }[algorithm_type]
+        updates["algorithm"] = algorithm_type
+        updates["algorithm_kwargs"] = {
+            key: value
+            for key, value in base.algorithm_kwargs.items()
+            if key in allowed_kwargs
+        }
+    return base.updated(**updates)
+
+
+def gui_fov_config_from_payload(
+        facade: Any,
+        payload: dict[str, Any] | None,
+) -> FovConfig:
+    """Build one per-FoV focus policy from a GUI payload."""
+    if payload is None:
+        return FovConfig()
+    if not isinstance(payload, dict):
+        raise TypeError("FoV focus config payload must be a dict.")
+    bool_fields = (
+        "lock_autofocus_during_arrival_move",
+        "lock_autofocus_on_fov",
+        "lock_autofocus_during_departure_move",
+        "run_software_focus_on_arrival",
+    )
+    values: dict[str, Any] = {}
+    for field_name in bool_fields:
+        if field_name in payload:
+            values[field_name] = gui_bool_from_payload(payload, field_name, False)
+    values["software_focus_config"] = gui_software_focus_config_from_payload(
+        facade, payload.get("software_focus")
+    )
+    autofocus_payload = payload.get("autofocus")
+    if autofocus_payload is not None:
+        values["autofocus_initialise_config"] = gui_autofocus_config_from_payload(
+            {"config": autofocus_payload}
+        )
+    return FovConfig(**values)
+
+
+def gui_focus_navigator_config_from_payload(
+        facade: Any,
+        payload: dict[str, Any],
+) -> tuple[FocusNavigatorConfig | None, dict[int, FovConfig] | None]:
+    """Build global and per-FoV focus policies from FoV initialisation data."""
+    config_payload = payload.get("focus_config")
+    fov_rows = payload.get("fovs", [])
+    fov_configs = {
+        int(row["fov_id"]): gui_fov_config_from_payload(facade, row["focus_config"])
+        for row in fov_rows
+        if isinstance(row, dict) and row.get("focus_config") is not None
+    }
+    if config_payload is None:
+        return None, fov_configs or None
+    if not isinstance(config_payload, dict):
+        raise TypeError("Focus navigation config payload must be a dict.")
+    bool_defaults = {
+        "use_autofocus": True,
+        "refocus": True,
+        "refocus_using_software_focus": True,
+        "refocus_on_all_fovs": False,
+        "toggle_autofocus_on_channel_change": True,
+    }
+    values: dict[str, Any] = {
+        field_name: gui_bool_from_payload(config_payload, field_name, default)
+        for field_name, default in bool_defaults.items()
+    }
+    values.update({
+        "max_refocus_trials": int(config_payload.get("max_refocus_trials", 10)),
+        "out_of_focus_wait_s": float(config_payload.get("out_of_focus_wait_s", 10)),
+        "post_autofocus_wait_s": float(config_payload.get("post_autofocus_wait_s", 3)),
+        "post_move_wait_s": float(config_payload.get("post_move_wait_s", 1)),
+        "default_fov_config": gui_fov_config_from_payload(
+            facade, config_payload.get("default_fov_config")
+        ),
+    })
+    autofocus_payload = config_payload.get("autofocus")
+    if autofocus_payload is not None:
+        values["autofocus_initialise_config"] = gui_autofocus_config_from_payload(
+            {"config": autofocus_payload}
+        )
+    software_config = gui_software_focus_config_from_payload(
+        facade, config_payload.get("software_focus")
+    )
+    if software_config is not None:
+        facade.gui_software_focus().update_config(config=software_config)
+    return FocusNavigatorConfig(**values), fov_configs or None
+
+
+def gui_focus_navigation_result_payload(
+        facade: Any,
+        record: FocusNavigatorFovRecord,
+) -> dict[str, Any]:
+    """Serialize a FocusNavigator preflight movement result."""
+    return {
+        "fov_id": record.fov_id,
+        "is_locked": record.is_locked,
+        "refocusing": record.refocusing,
+        "software_focus_status": record.software_focus_status.name,
+        "skipped": record.skipped,
+        "skip_reason": record.skip_reason,
+        "coordinate": gui_coordinate_to_payload(
+            facade.gui_stage().get_coordinates(query_hardware=True)
+        ),
+    }
+
+
 def gui_strategy_notes(command_names: list[str]) -> list[str]:
     """Create user-facing notes for strategies with extra setup needs."""
     notes = []
@@ -418,6 +559,19 @@ def gui_led_state_to_payload(state: Any) -> dict[str, Any]:
     }
 
 
+def gui_led_manager_status_payload(facade: Any) -> dict[str, Any]:
+    """Serialize the available LEDs and each channel's current state."""
+    led_manager = facade.gui_led_manager()
+    available_leds = list(led_manager.get_available_leds())
+    return {
+        "leds": [led_type.name for led_type in available_leds],
+        "led_states": [
+            gui_led_state_to_payload(led_manager.get_led_state(led_type))
+            for led_type in available_leds
+        ],
+    }
+
+
 def gui_require_devices_initialised(facade: Any, control_name: str) -> None:
     """Reject hardware commands before the automaton has initialised devices."""
     if not facade.automaton.devices_is_initialised():
@@ -439,13 +593,57 @@ def gui_image_transport_probe(facade: Any, payload: dict[str, Any]) -> dict[str,
 def gui_initialise_devices(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     facade.gui_initialise_controllers()
     facade.automaton.initialise_devices()
-    return {**facade.gui_status_payload(), **facade.gui_controller_status_payload()}
+    acq_mngr = getattr(facade.automaton, "acq_mngr", None)
+    dmd = getattr(acq_mngr, "dmd", None)
+    synchronise_display_state = getattr(dmd, "synchronise_display_state", None)
+    if callable(synchronise_display_state):
+        try:
+            synchronise_display_state()
+        except Exception:
+            logger.exception("GUI initialisation: DMD display-state readback failed.")
+    response = {**facade.gui_status_payload(), **facade.gui_controller_status_payload()}
+    warnings: list[str] = []
+
+    def add_status(name: str, loader: Callable[[], dict[str, Any]]) -> None:
+        try:
+            response.update(loader())
+        except Exception as error:
+            message = f"{name}: {type(error).__name__}: {error}"
+            warnings.append(message)
+            logger.exception("GUI initialisation: %s status readback failed.", name)
+
+    focus_nav = getattr(facade.automaton, "focus_nav", None)
+    if getattr(focus_nav, "stage", None) is not None:
+        add_status("stage", lambda: facade.gui_stage_coordinates_payload(query_hardware=False))
+    if getattr(acq_mngr, "camera", None) is not None:
+        add_status("camera", lambda: {"camera": facade.gui_camera_status_payload()})
+    if getattr(acq_mngr, "led_manager", None) is not None:
+        add_status("LEDs", lambda: gui_led_manager_status_payload(facade))
+    filter_wheel = getattr(acq_mngr, "filter_wheel", None)
+    if filter_wheel is None:
+        filter_wheel = getattr(facade.automaton, "_filt_wheel", None)
+    if filter_wheel is not None:
+        add_status("filter wheel", lambda: {"filter_wheel": facade.gui_filter_wheel_status_payload()})
+    if dmd is not None:
+        add_status("DMD", lambda: {"dmd": facade.gui_dmd_status_payload()})
+    if getattr(focus_nav, "autofocus", None) is not None:
+        add_status("autofocus", lambda: {"autofocus": facade.gui_autofocus_status_payload()})
+    if getattr(focus_nav, "software_focus", None) is not None:
+        add_status(
+            "software focus",
+            lambda: {"software_focus": facade.gui_software_focus_status_payload()},
+        )
+    if warnings:
+        response["initialisation_warnings"] = warnings
+    return response
 
 
 def gui_stop(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     active_operation = facade.gui_operations.active()
     if active_operation is not None:
-        facade.gui_operations.cancel(active_operation["kind"])
+        facade.gui_operations.cancel_active()
+        if active_operation["kind"] == "autofocus_calibration":
+            facade.gui_autofocus().mark_calibration_cancelled()
     facade.automaton.stop()
     response = facade.gui_status_payload()
     if active_operation is not None:
@@ -455,6 +653,27 @@ def gui_stop(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
 def gui_shutdown(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
+    active_operation = facade.gui_operations.active()
+    if active_operation is not None:
+        facade.gui_operations.cancel_active()
+        if active_operation["kind"] == "autofocus_calibration":
+            facade.gui_autofocus().mark_calibration_cancelled()
+        try:
+            facade.automaton.stop()
+        except Exception as error:
+            errors.append(f"operation halt: {type(error).__name__}: {error}")
+        if not facade.gui_operations.wait_for_completion(active_operation["kind"], timeout=5.0):
+            errors.append(
+                f"operation {active_operation['kind']} did not stop within 5 seconds"
+            )
+    generation_operation = facade.strategy_generation.active()
+    if generation_operation is not None:
+        facade.strategy_generation.cancel_active()
+        if not facade.strategy_generation.wait_for_completion(
+                generation_operation["kind"],
+                timeout=5.0,
+        ):
+            errors.append("strategy generation did not stop within 5 seconds")
     try:
         facade.automaton.shutdown()
     except Exception as error:
@@ -475,17 +694,53 @@ def gui_controller_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any
 
 def gui_fov_initialise(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     fovs = gui_fovs_from_payload(payload)
+    focus_config, fov_configs = gui_focus_navigator_config_from_payload(facade, payload)
     facade.gui_initialise_controllers()
-    facade.automaton.initialise(
+    initialise_kwargs: dict[str, Any] = dict(
         fovs=fovs,
-        use_autofocus=gui_bool_from_payload(payload, "use_autofocus", False),
+        use_autofocus=(
+            focus_config.use_autofocus
+            if focus_config is not None
+            else gui_bool_from_payload(payload, "use_autofocus", False)
+        ),
     )
+    if focus_config is not None:
+        initialise_kwargs["focus_config"] = focus_config
+    if fov_configs is not None:
+        initialise_kwargs["fov_configs"] = fov_configs
+    facade.automaton.initialise(**initialise_kwargs)
     return {
         **facade.gui_status_payload(),
         "fovs": facade.gui_fov_status_payload(),
         "strategy": facade.gui_strategy_status_payload(),
         **facade.gui_controller_status_payload(),
     }
+
+
+def gui_fov_move(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """Run the exact registered-FoV focus workflow as a preflight operation."""
+    gui_require_devices_initialised(facade, "stage")
+    fov_id = int(payload["fov_id"])
+
+    def run(cancel_event, report):
+        report(0.0, f"Moving to FoV {fov_id} and applying its focus policy.")
+        record = facade.automaton.focus_nav.move(
+            fov_id=fov_id,
+            manage_focus=True,
+            stop_event=cancel_event,
+        )
+        return {
+            "focus_navigation": gui_focus_navigation_result_payload(facade, record),
+            "coordinate": gui_coordinate_to_payload(
+                facade.gui_stage().get_coordinates(query_hardware=True)
+            ),
+        }
+
+    return {"operation": facade.gui_operations.start("focus_navigation", run)}
+
+
+def gui_fov_movement_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    return {"operation": _require_operation_status(facade, "focus_navigation")}
 
 
 def gui_stage_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -502,9 +757,12 @@ def gui_stage_get_coordinates(facade: Any, payload: dict[str, Any]) -> dict[str,
 
 def _start_stage_movement(facade: Any, target: Coordinate) -> dict[str, Any]:
     def run(cancel_event, report):
-        del cancel_event
         report(0.0, "Moving stage.")
+        if cancel_event.is_set():
+            return None
         facade.gui_stage().move(target=target, block=True)
+        if cancel_event.is_set():
+            return None
         return facade.gui_stage_coordinates_payload(query_hardware=True)
 
     return {"operation": facade.gui_operations.start("stage_movement", run)}
@@ -687,8 +945,7 @@ def gui_filter_wheel_set(facade: Any, payload: dict[str, Any]) -> dict[str, Any]
 
 def gui_led_list(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "LED")
-    led_manager = facade.gui_led_manager()
-    return {"leds": [led_type.name for led_type in led_manager.get_available_leds()]}
+    return gui_led_manager_status_payload(facade)
 
 
 def gui_led_set(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -745,7 +1002,7 @@ def gui_dmd_display_pattern(facade: Any, payload: dict[str, Any]) -> dict[str, A
         warp=warp,
     )
     dmd.display_image(pattern_array, _is_full_display=pattern == "full" and not warp)
-    facade._last_dmd_pattern = pattern
+    facade._last_dmd_pattern = "full_dmd" if pattern == "full" and not warp else pattern
     facade._last_dmd_preview = gui_dmd_preview_payload(dmd=dmd, pattern_array=pattern_array)
     return {"dmd": facade.gui_dmd_status_payload()}
 
@@ -758,8 +1015,7 @@ def gui_dmd_load_pattern(facade: Any, payload: dict[str, Any]) -> dict[str, Any]
         raise ValueError("DMD pattern filename must be a non-empty string.")
     dmd = facade.gui_dmd()
     facade._loaded_dmd_pattern = None
-    facade._last_dmd_preview = None
-    pattern_array = dmd.load_image(filename, display_image=False)
+    dmd.load_image(filename, display_image=False)
     info = dmd.get_loaded_image_info()
     if info is None:
         raise RuntimeError("DMD did not report metadata for the loaded custom pattern.")
@@ -768,7 +1024,6 @@ def gui_dmd_load_pattern(facade: Any, payload: dict[str, Any]) -> dict[str, Any]
         "source_shape": list(info.source_shape),
         "coordinate_space": info.coordinate_space,
     }
-    facade._last_dmd_preview = gui_dmd_preview_payload(dmd=dmd, pattern_array=pattern_array)
     return {"dmd": facade.gui_dmd_status_payload()}
 
 
@@ -873,9 +1128,11 @@ def gui_autofocus_initialise(facade: Any, payload: dict[str, Any]) -> dict[str, 
     gui_require_devices_initialised(facade, "autofocus")
     config = gui_autofocus_config_from_payload(payload)
     lock_after_calibration = gui_bool_from_payload(payload, "lock_after_initialise", False)
+    autofocus = facade.gui_autofocus()
+    autofocus.prepare_calibration()
 
     def run(cancel_event, report):
-        initialised = facade.gui_autofocus().run_calibration(
+        initialised = autofocus.run_calibration(
             config=config,
             lock_after_calibration=lock_after_calibration,
             stop_event=cancel_event,
@@ -892,7 +1149,10 @@ def gui_autofocus_calibration_status(facade: Any, payload: dict[str, Any]) -> di
 
 
 def gui_autofocus_cancel_calibration(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    return {"operation": facade.gui_operations.cancel("autofocus_calibration")}
+    operation = facade.gui_operations.cancel("autofocus_calibration")
+    if operation["state"] == "running":
+        facade.gui_autofocus().mark_calibration_cancelled()
+    return {"operation": operation}
 
 
 def gui_autofocus_lock(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -905,6 +1165,18 @@ def gui_autofocus_unlock(facade: Any, payload: dict[str, Any]) -> dict[str, Any]
     gui_require_devices_initialised(facade, "autofocus")
     facade.gui_autofocus().unlock()
     return {"autofocus": facade.gui_autofocus_status_payload()}
+
+
+def gui_autofocus_reset_offset(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """Reset CRISP's lock reference at the current calibrated focal position."""
+    gui_require_devices_initialised(facade, "autofocus")
+    response = facade.gui_autofocus().reset_offset()
+    autofocus_payload = facade.gui_autofocus_status_payload()
+    autofocus_payload.update({
+        "offset_reset": True,
+        "offset_reset_response": None if response is None else str(response),
+    })
+    return {"autofocus": autofocus_payload}
 
 
 def gui_autofocus_disable(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -938,6 +1210,16 @@ def gui_software_focus_run(facade: Any, payload: dict[str, Any]) -> dict[str, An
     return {"operation": facade.gui_operations.start("software_focus", run)}
 
 
+def gui_software_focus_configure(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """Update the global software-focus defaults shared by manual and strategy focus."""
+    gui_require_devices_initialised(facade, "software focus")
+    config = gui_software_focus_config_from_payload(facade, payload.get("config"))
+    if config is None:
+        raise ValueError("Software-focus configuration is required.")
+    facade.gui_software_focus().update_config(config=config)
+    return {"software_focus": facade.gui_software_focus_status_payload()}
+
+
 def gui_software_focus_operation_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     return {"operation": _require_operation_status(facade, "software_focus")}
 
@@ -950,7 +1232,101 @@ def _require_operation_status(facade: Any, kind: str) -> dict[str, Any]:
 
 
 def gui_strategy_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    return {"strategy": facade.gui_strategy_status_payload()}
+    response: dict[str, Any] = {"strategy": facade.gui_strategy_status_payload()}
+    frame_sequence = int(getattr(facade.automaton, "_latest_frame_sequence", 0))
+    frame = getattr(facade.automaton, "_latest_frame", None)
+    if frame is not None and frame_sequence > facade._last_strategy_frame_sequence:
+        response["frame"] = gui_frame_payload(
+            frame=frame,
+            kind="strategy_frame",
+            image_transport=payload.get("image_transport"),
+        )
+        facade._last_strategy_frame_sequence = frame_sequence
+    projection_sequence = int(getattr(facade.automaton, "_latest_projection_sequence", 0))
+    pattern = getattr(facade.automaton, "_latest_projection_pattern", None)
+    if pattern is not None and projection_sequence > facade._last_strategy_projection_sequence:
+        facade._last_dmd_preview = gui_dmd_preview_payload(
+            dmd=facade.gui_dmd(),
+            pattern_array=pattern,
+        )
+        response["dmd"] = facade.gui_dmd_status_payload()
+        facade._last_strategy_projection_sequence = projection_sequence
+    return response
+
+
+def gui_autostrat_files_payload(facade: Any) -> list[dict[str, str]]:
+    """Return saved `.strat` files from the configured AutoStrat directory."""
+    return [
+        {"name": item.name, "filename": item.path.name}
+        for item in facade.autostrat_strategy_store.list()
+    ]
+
+
+def gui_autostrat_strategy_list(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    del payload
+    return {"autostrat_strategies": gui_autostrat_files_payload(facade)}
+
+
+def gui_autostrat_strategy_load(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    stored, source = facade.autostrat_strategy_store.load(payload.get("name"))
+    return {
+        "autostrat_strategy": {
+            "name": stored.name,
+            "filename": stored.path.name,
+            "source": source,
+        }
+    }
+
+
+def gui_autostrat_strategy_save(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    overwrite = gui_bool_from_payload(payload, "overwrite", False)
+    stored = facade.autostrat_strategy_store.save(
+        name=payload.get("name"),
+        source=payload.get("source"),
+        overwrite=overwrite,
+    )
+    _, source = facade.autostrat_strategy_store.load(stored.name)
+    return {
+        "autostrat_strategy": {
+            "name": stored.name,
+            "filename": stored.path.name,
+            "source": source,
+            "saved": True,
+        },
+        "autostrat_strategies": gui_autostrat_files_payload(facade),
+    }
+
+
+def _gui_autostrat_strategy_from_source(facade: Any, source: str):
+    from autostrat import load_domain_pack
+    from evomachine.domain_packs import MICROSCOPY_DOMAIN_PACK_PATH
+    from evomachine.strategy_generation import (
+        AutoStratStrategy, MicroscopyCommandAdapter, MicroscopyCollectionProvider,
+        MicroscopyObservationProvider, MicroscopyRuntimeErrorProvider,
+    )
+
+    return AutoStratStrategy.from_source(
+        cfg=facade.gui_strategy_config().updated(preproc_enabled=True),
+        source=source,
+        domain=load_domain_pack(MICROSCOPY_DOMAIN_PACK_PATH),
+        command_adapter=MicroscopyCommandAdapter(segment_images=False, save_images=True),
+        collection_provider=MicroscopyCollectionProvider(),
+        observation_provider=MicroscopyObservationProvider(),
+        runtime_error_provider=MicroscopyRuntimeErrorProvider(),
+    )
+
+
+def gui_autostrat_strategy_validate(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    source = payload.get("source")
+    strategy = _gui_autostrat_strategy_from_source(facade, source)
+    return {
+        "autostrat_validation": {
+            "valid": True,
+            "source": strategy.source,
+            "commands": sorted(item.name for item in strategy.register_automaton_commands()),
+            "message": "Strategy syntax and domain validation passed.",
+        }
+    }
 
 
 def gui_strategy_list(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -995,6 +1371,13 @@ def gui_strategy_list(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
 def gui_strategy_set(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     if "generation_id" in payload:
         return gui_generated_strategy_set(facade, payload)
+    if "autostrat_source" in payload:
+        strategy = _gui_autostrat_strategy_from_source(facade, payload["autostrat_source"])
+        facade.automaton.set_strategy(strategy=strategy)
+        facade._installed_generation_id = None
+        facade._installed_generated_strategy = None
+        facade._installed_autostrat_name = str(payload.get("autostrat_name") or "Unsaved strategy")
+        return {**facade.gui_status_payload(), "strategy": facade.gui_strategy_status_payload()}
     name = str(payload["name"])
     cfg = facade.gui_strategy_config()
     if name == "NoStrategy":
@@ -1014,6 +1397,7 @@ def gui_strategy_set(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     facade.automaton.set_strategy(strategy=strategy)
     facade._installed_generation_id = None
     facade._installed_generated_strategy = None
+    facade._installed_autostrat_name = None
     return {
         **facade.gui_status_payload(),
         "strategy": facade.gui_strategy_status_payload(),
@@ -1039,7 +1423,11 @@ def gui_strategy_generate(facade: Any, payload: dict[str, Any]) -> dict[str, Any
 
     def run(cancel_event, report):
         report(0, "Generating and verifying strategy; hardware is unchanged.")
-        return generate_cancellable(request.strip(), cancel_event)
+        return generate_cancellable(
+            request.strip(),
+            cancel_event,
+            model_config=facade.autostrat_model_config,
+        )
 
     facade.strategy_generation.start("strategy_generation", run)
     return gui_strategy_generation_status(facade, {})
@@ -1051,21 +1439,15 @@ def gui_strategy_generation_cancel(facade: Any, payload: dict[str, Any]) -> dict
 
 
 def gui_autostrat_configure(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    import os
+    from evomachine.gui.autostrat_config import AutoStratModelConfig
 
     if facade.strategy_generation.active() is not None:
-        raise ValueError("Cannot change the API key while generation is running.")
-    key = payload.get("api_key", "")
-    if not isinstance(key, str):
-        raise TypeError("API key must be text.")
-    key = key.strip()
+        raise ValueError("Cannot change AutoStrat model configuration while generation is running.")
+    config = AutoStratModelConfig.from_payload(payload)
     # Backend session memory only: never write credentials to a file or response.
-    if key:
-        os.environ["OPENAI_API_KEY"] = key
-    else:
-        os.environ.pop("OPENAI_API_KEY", None)
-    facade.autostrat_enabled = bool(key)
-    return {"autostrat": {"enabled": facade.autostrat_enabled}}
+    facade.autostrat_model_config = config
+    facade.autostrat_enabled = config.enabled
+    return {"autostrat": config.public_payload()}
 
 
 def gui_strategy_generation_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1114,6 +1496,7 @@ def gui_generated_strategy_set(facade: Any, payload: dict[str, Any]) -> dict[str
     facade.automaton.set_strategy(strategy=strategy)
     facade._installed_generation_id = operation["operation_id"]
     facade._installed_generated_strategy = strategy
+    facade._installed_autostrat_name = None
     return {**facade.gui_status_payload(), "strategy": facade.gui_strategy_status_payload()}
 
 
@@ -1134,6 +1517,8 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.CONTROLLER_STATUS: gui_controller_status,
     GuiCommandType.LOGS_RECENT: gui_recent_logs,
     GuiCommandType.FOV_INITIALISE: gui_fov_initialise,
+    GuiCommandType.FOV_MOVE: gui_fov_move,
+    GuiCommandType.FOV_MOVEMENT_STATUS: gui_fov_movement_status,
     GuiCommandType.STAGE_STATUS: gui_stage_status,
     GuiCommandType.STAGE_GET_COORDINATES: gui_stage_get_coordinates,
     GuiCommandType.STAGE_MOVE_ABSOLUTE: gui_stage_move_absolute,
@@ -1173,8 +1558,10 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.AUTOFOCUS_CANCEL_CALIBRATION: gui_autofocus_cancel_calibration,
     GuiCommandType.AUTOFOCUS_LOCK: gui_autofocus_lock,
     GuiCommandType.AUTOFOCUS_UNLOCK: gui_autofocus_unlock,
+    GuiCommandType.AUTOFOCUS_RESET_OFFSET: gui_autofocus_reset_offset,
     GuiCommandType.AUTOFOCUS_DISABLE: gui_autofocus_disable,
     GuiCommandType.SOFTWARE_FOCUS_STATUS: gui_software_focus_status,
+    GuiCommandType.SOFTWARE_FOCUS_CONFIGURE: gui_software_focus_configure,
     GuiCommandType.SOFTWARE_FOCUS_RUN: gui_software_focus_run,
     GuiCommandType.SOFTWARE_FOCUS_OPERATION_STATUS: gui_software_focus_operation_status,
     GuiCommandType.STRATEGY_STATUS: gui_strategy_status,
@@ -1182,6 +1569,10 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.STRATEGY_GENERATION_CANCEL: gui_strategy_generation_cancel,
     GuiCommandType.AUTOSTRAT_CONFIGURE: gui_autostrat_configure,
     GuiCommandType.STRATEGY_GENERATION_STATUS: gui_strategy_generation_status,
+    GuiCommandType.AUTOSTRAT_STRATEGY_LIST: gui_autostrat_strategy_list,
+    GuiCommandType.AUTOSTRAT_STRATEGY_LOAD: gui_autostrat_strategy_load,
+    GuiCommandType.AUTOSTRAT_STRATEGY_SAVE: gui_autostrat_strategy_save,
+    GuiCommandType.AUTOSTRAT_STRATEGY_VALIDATE: gui_autostrat_strategy_validate,
     GuiCommandType.STRATEGY_LIST: gui_strategy_list,
     GuiCommandType.STRATEGY_SET: gui_strategy_set,
     GuiCommandType.STRATEGY_START: gui_strategy_start,

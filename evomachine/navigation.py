@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+import threading
 import time
 from typing import Any
 
@@ -11,6 +12,10 @@ from evomachine.peripherals.stage import Stage
 from evomachine.softwarefocus import SoftwareFocus, SoftwareFocusConfig
 from evomachine.types import AutoFocusStatusType, FocusStatusType, UNKNOWN_FOV_ID
 from evomachine.utils import validate_dataclass_fields
+
+
+class _FocusNavigationCancelled(RuntimeError):
+    """Internal control flow used to leave a cancelled focus workflow safely."""
 
 
 @dataclass
@@ -203,6 +208,15 @@ class FocusNavigator:
         self._num_refocus: int = 0
         self._active_autofocus_initialise_config: Any | None = None
 
+    def update_config(self, config: FocusNavigatorConfig) -> None:
+        """Replace the runtime movement and focus policy."""
+        if not isinstance(config, FocusNavigatorConfig):
+            raise TypeError(
+                "FocusNavigator.update_config: config must be FocusNavigatorConfig, "
+                f"received {type(config)}."
+            )
+        self.config = config
+
     def initialise_fovs(
             self,
             fov_id_to_coordinate: dict[int, Coordinate],
@@ -232,6 +246,8 @@ class FocusNavigator:
             value=use_autofocus,
             name="use_autofocus",
         )
+        if autofocus_enabled != self.config.use_autofocus:
+            self.config = replace(self.config, use_autofocus=autofocus_enabled)
         if fov_configs is not None and not isinstance(fov_configs, dict):
             raise TypeError("FocusNavigator.initialise_fovs: fov_configs must be dict[int, FovConfig] or None.")
         states: dict[int, FocusNavigatorFovRecord] = {}
@@ -276,7 +292,12 @@ class FocusNavigator:
                     fov_configs=software_focus_configs or None,
                 )
 
-    def move(self, fov_id: int, manage_focus: bool = True) -> FocusNavigatorFovRecord:
+    def move(
+            self,
+            fov_id: int,
+            manage_focus: bool = True,
+            stop_event: threading.Event | None = None,
+    ) -> FocusNavigatorFovRecord:
         """
         Move to a registered fov and optionally manage focus afterwards.
 
@@ -286,6 +307,8 @@ class FocusNavigator:
             Registered fov ID to move to.
         manage_focus
             If True, run manage_focus after movement.
+        stop_event
+            Optional cancellation event checked at safe workflow boundaries.
 
         Returns
         -------
@@ -295,26 +318,45 @@ class FocusNavigator:
         self._require_fov(fov_id=fov_id)
         if not isinstance(manage_focus, bool):
             raise TypeError(f"FocusNavigator.move: manage_focus must be bool, received {type(manage_focus)}.")
-        self._prepare_for_departure(target_fov_id=fov_id)
-        if self._should_toggle_autofocus(target_fov_id=fov_id):
-            self._move_with_autofocus_toggle(fov_id=fov_id)
-        else:
-            self.stage.move(target=fov_id, block=True)
-            self._handle_arrival(fov_id=fov_id)
-        self._current_fov_id = fov_id
-        if manage_focus:
-            return self.manage_focus(fov_id=fov_id)
-        return self._result(
-            fov_id=fov_id,
-            is_locked=self._autofocus_is_locked(default=False),
-            refocusing=False,
-            software_focus_status=FocusStatusType.UNKNOWN,
-        )
+        try:
+            self._check_cancelled(stop_event)
+            self._prepare_for_departure(target_fov_id=fov_id)
+            self._check_cancelled(stop_event)
+            if self._should_toggle_autofocus(target_fov_id=fov_id):
+                self._move_with_autofocus_toggle(fov_id=fov_id, stop_event=stop_event)
+            else:
+                self.stage.move(target=fov_id, block=True)
+                self._current_fov_id = fov_id
+                self._check_cancelled(stop_event)
+                self._handle_arrival(fov_id=fov_id, stop_event=stop_event)
+            self._check_cancelled(stop_event)
+            self._current_fov_id = fov_id
+            if manage_focus:
+                return self.manage_focus(fov_id=fov_id, stop_event=stop_event)
+            return self._result(
+                fov_id=fov_id,
+                is_locked=self._autofocus_is_locked(default=False),
+                refocusing=False,
+                software_focus_status=FocusStatusType.UNKNOWN,
+            )
+        except _FocusNavigationCancelled:
+            current_fov_id = (
+                fov_id if self._current_fov_id is None else self._current_fov_id
+            )
+            return self._result(
+                fov_id=current_fov_id,
+                is_locked=self._autofocus_is_locked(default=False),
+                refocusing=False,
+                software_focus_status=FocusStatusType.UNKNOWN,
+                skipped=True,
+                skip_reason="Focus navigation cancelled.",
+            )
 
     def manage_focus(
             self,
             fov_id: int,
             refocus_on_all_fovs: bool | None = None,
+            stop_event: threading.Event | None = None,
     ) -> FocusNavigatorFovRecord:
         """
         Check autofocus state and recover focus when configured to do so.
@@ -325,6 +367,8 @@ class FocusNavigator:
             Current registered fov ID.
         refocus_on_all_fovs
             Optional override for config.refocus_on_all_fovs.
+        stop_event
+            Optional cancellation event checked at safe workflow boundaries.
 
         Returns
         -------
@@ -332,6 +376,7 @@ class FocusNavigator:
             Focus management result.
         """
         self._require_fov(fov_id=fov_id)
+        self._check_cancelled(stop_event)
         if refocus_on_all_fovs is not None:
             refocus_on_all_fovs = self._validate_bool(
                 value=refocus_on_all_fovs,
@@ -348,7 +393,7 @@ class FocusNavigator:
             )
         self._require_autofocus()
         if self.autofocus.get_status() == AutoFocusStatusType.OUT_OF_FOCUS:
-            self._sleep_func(self.config.out_of_focus_wait_s)
+            self._wait(self.config.out_of_focus_wait_s, stop_event=stop_event)
         if self.autofocus.is_locked():
             self._record_current_z(fov_id=fov_id, is_locked=True)
             return self._result(
@@ -384,10 +429,16 @@ class FocusNavigator:
                         if refocus_on_all_fovs is None
                         else refocus_on_all_fovs
                     ),
+                    stop_event=stop_event,
                 )
             else:
                 software_focus_status = FocusStatusType.UNKNOWN
-                self._recover_with_previous_fov(original_fov_id=fov_id)
+                self._recover_with_previous_fov(
+                    original_fov_id=fov_id,
+                    stop_event=stop_event,
+                )
+        except _FocusNavigationCancelled:
+            raise
         except RuntimeError as exc:
             self._record_current_z(fov_id=fov_id, is_locked=False)
             if self._num_refocus >= self.config.max_refocus_trials:
@@ -651,7 +702,11 @@ class FocusNavigator:
         if not current_config.lock_autofocus_during_departure_move and self.autofocus.is_locked():
             self.autofocus.unlock()
 
-    def _handle_arrival(self, fov_id: int) -> FocusStatusType:
+    def _handle_arrival(
+            self,
+            fov_id: int,
+            stop_event: threading.Event | None = None,
+    ) -> FocusStatusType:
         """
         Apply target fov arrival focus policy after movement.
 
@@ -659,6 +714,8 @@ class FocusNavigator:
         ----------
         fov_id
             Registered fov ID that has just been reached.
+        stop_event
+            Optional cancellation event checked between arrival actions.
 
         Returns
         -------
@@ -666,6 +723,7 @@ class FocusNavigator:
             Software focus status from arrival focus, or UNKNOWN when not run.
         """
         fov_config = self._fov_states[fov_id].fov_config
+        self._check_cancelled(stop_event)
         if (
                 self.config.use_autofocus
                 and self.autofocus is not None
@@ -675,16 +733,23 @@ class FocusNavigator:
             self.autofocus.unlock()
         software_focus_status = FocusStatusType.UNKNOWN
         if fov_config.run_software_focus_on_arrival:
-            software_focus_status = self._run_software_focus(fov_id=fov_id)
+            software_focus_status = self._run_software_focus(
+                fov_id=fov_id,
+                stop_event=stop_event,
+            )
+            self._check_cancelled(stop_event)
             if software_focus_status != FocusStatusType.IN_FOCUS:
                 raise RuntimeError(
                     f"FocusNavigator.move: software focus failed with status {software_focus_status}."
                 )
             self._update_recorded_z(fov_id=fov_id)
-            self._sleep_func(self.config.post_move_wait_s)
+            self._wait(self.config.post_move_wait_s, stop_event=stop_event)
         reinitialised = False
         if self.config.use_autofocus:
-            reinitialised = self._ensure_autofocus_config(fov_id=fov_id)
+            reinitialised = self._ensure_autofocus_config(
+                fov_id=fov_id,
+                stop_event=stop_event,
+            )
             if fov_config.lock_autofocus_on_fov and (
                     reinitialised
                     or software_focus_status == FocusStatusType.IN_FOCUS
@@ -692,7 +757,11 @@ class FocusNavigator:
                 self._require_autofocus().lock()
         return software_focus_status
 
-    def _ensure_autofocus_config(self, fov_id: int) -> bool:
+    def _ensure_autofocus_config(
+            self,
+            fov_id: int,
+            stop_event: threading.Event | None = None,
+    ) -> bool:
         """
         Reinitialise autofocus when the target fov config differs from active config.
 
@@ -700,6 +769,8 @@ class FocusNavigator:
         ----------
         fov_id
             Registered fov ID whose autofocus config should be active.
+        stop_event
+            Optional cancellation event checked around autofocus setup.
 
         Returns
         -------
@@ -707,13 +778,18 @@ class FocusNavigator:
             True when autofocus was reinitialised.
         """
         autofocus = self._require_autofocus()
+        self._check_cancelled(stop_event)
         target_config = self._autofocus_initialise_config_for_fov(fov_id=fov_id)
         if target_config == self._active_autofocus_initialise_config:
             return False
         if autofocus.is_locked():
             autofocus.unlock()
-        self._initialise_and_lock_autofocus(config=target_config, lock_after_initialise=False)
-        self._sleep_func(self.config.post_autofocus_wait_s)
+        self._initialise_and_lock_autofocus(
+            config=target_config,
+            lock_after_initialise=False,
+            stop_event=stop_event,
+        )
+        self._wait(self.config.post_autofocus_wait_s, stop_event=stop_event)
         self._active_autofocus_initialise_config = target_config
         return True
 
@@ -764,7 +840,11 @@ class FocusNavigator:
             and current_channel_id != target_channel_id
         )
 
-    def _move_with_autofocus_toggle(self, fov_id: int) -> None:
+    def _move_with_autofocus_toggle(
+            self,
+            fov_id: int,
+            stop_event: threading.Event | None = None,
+    ) -> None:
         """
         Move using software focus and autofocus reinitialisation for channel changes.
 
@@ -772,17 +852,22 @@ class FocusNavigator:
         ----------
         fov_id
             Registered target fov ID.
+        stop_event
+            Optional cancellation event checked between workflow steps.
 
         Returns
         -------
         None
         """
         autofocus = self._require_autofocus()
+        self._check_cancelled(stop_event)
         autofocus.unlock()
         self.stage.move(target=self._fov_states[fov_id].coordinate.copy(), block=True)
+        self._current_fov_id = fov_id
+        self._check_cancelled(stop_event)
         fov_config = self._fov_states[fov_id].fov_config
         software_focus_status = (
-            self._run_software_focus(fov_id=fov_id)
+            self._run_software_focus(fov_id=fov_id, stop_event=stop_event)
             if fov_config.run_software_focus_on_arrival or self.config.refocus_using_software_focus
             else FocusStatusType.UNKNOWN
         )
@@ -790,17 +875,22 @@ class FocusNavigator:
             raise RuntimeError(
                 f"FocusNavigator.move: software focus failed with status {software_focus_status}."
             )
-        self._sleep_func(self.config.post_move_wait_s)
+        self._wait(self.config.post_move_wait_s, stop_event=stop_event)
         target_config = self._autofocus_initialise_config_for_fov(fov_id=fov_id)
         self._initialise_and_lock_autofocus(
             config=target_config,
             lock_after_initialise=fov_config.lock_autofocus_on_fov,
+            stop_event=stop_event,
         )
         self._active_autofocus_initialise_config = target_config
-        self._sleep_func(self.config.post_autofocus_wait_s)
+        self._wait(self.config.post_autofocus_wait_s, stop_event=stop_event)
         self._record_current_z(fov_id=fov_id, is_locked=autofocus.is_locked())
 
-    def _recover_with_previous_fov(self, original_fov_id: int) -> None:
+    def _recover_with_previous_fov(
+            self,
+            original_fov_id: int,
+            stop_event: threading.Event | None = None,
+    ) -> None:
         """
         Recover autofocus by reinitialising at the previous registered fov.
 
@@ -808,27 +898,35 @@ class FocusNavigator:
         ----------
         original_fov_id
             FoV ID where lock loss was detected.
+        stop_event
+            Optional cancellation event checked between recovery steps.
 
         Returns
         -------
         None
         """
         previous_fov_id = self._previous_fov_id(fov_id=original_fov_id)
+        self._check_cancelled(stop_event)
         self.stage.move(target=self._fov_states[previous_fov_id].coordinate.copy(), block=True)
+        self._current_fov_id = previous_fov_id
+        self._check_cancelled(stop_event)
         self._initialise_and_lock_autofocus(
             config=self._autofocus_initialise_config_for_fov(fov_id=previous_fov_id),
             lock_after_initialise=True,
+            stop_event=stop_event,
         )
         self._active_autofocus_initialise_config = self._autofocus_initialise_config_for_fov(fov_id=previous_fov_id)
-        self._sleep_func(self.config.post_autofocus_wait_s)
+        self._wait(self.config.post_autofocus_wait_s, stop_event=stop_event)
         self.stage.move(target=original_fov_id, block=True)
         self._current_fov_id = original_fov_id
+        self._check_cancelled(stop_event)
         self._update_recorded_z(fov_id=original_fov_id)
 
     def _recover_with_software_focus(
             self,
             original_fov_id: int,
             refocus_on_all_fovs: bool,
+            stop_event: threading.Event | None = None,
     ) -> FocusStatusType:
         """
         Recover focus by running software focus on one or more fovs.
@@ -839,6 +937,8 @@ class FocusNavigator:
             FoV ID where lock loss was detected.
         refocus_on_all_fovs
             If True, try each registered fov until software focus succeeds.
+        stop_event
+            Optional cancellation event checked between recovery steps.
 
         Returns
         -------
@@ -849,23 +949,39 @@ class FocusNavigator:
         attempts = len(self._fov_order) if refocus_on_all_fovs else 1
         last_status = FocusStatusType.UNKNOWN
         for _ in range(attempts):
+            self._check_cancelled(stop_event)
             self.stage.move(target=self._fov_states[candidate_fov_id].coordinate.copy(), block=True)
-            last_status = self._run_software_focus(fov_id=candidate_fov_id)
+            self._current_fov_id = candidate_fov_id
+            self._check_cancelled(stop_event)
+            last_status = self._run_software_focus(
+                fov_id=candidate_fov_id,
+                stop_event=stop_event,
+            )
+            self._check_cancelled(stop_event)
             if last_status == FocusStatusType.IN_FOCUS:
                 target_config = self._autofocus_initialise_config_for_fov(fov_id=candidate_fov_id)
-                self._initialise_and_lock_autofocus(config=target_config, lock_after_initialise=True)
+                self._initialise_and_lock_autofocus(
+                    config=target_config,
+                    lock_after_initialise=True,
+                    stop_event=stop_event,
+                )
                 self._active_autofocus_initialise_config = target_config
                 self._update_recorded_z(fov_id=candidate_fov_id)
                 if candidate_fov_id != original_fov_id:
                     self.stage.move(target=original_fov_id, block=True)
                     self._current_fov_id = original_fov_id
+                    self._check_cancelled(stop_event)
                 return last_status
             candidate_fov_id = self.get_next_fov_id(fov_id=candidate_fov_id)
         raise RuntimeError(
             f"FocusNavigator.manage_focus: software focus failed with status {last_status}."
         )
 
-    def _run_software_focus(self, fov_id: int) -> FocusStatusType:
+    def _run_software_focus(
+            self,
+            fov_id: int,
+            stop_event: threading.Event | None = None,
+    ) -> FocusStatusType:
         """
         Run software focus for one fov and return its status.
 
@@ -873,6 +989,8 @@ class FocusNavigator:
         ----------
         fov_id
             Registered fov ID passed to SoftwareFocus.run.
+        stop_event
+            Optional cancellation event forwarded to SoftwareFocus.run.
 
         Returns
         -------
@@ -880,7 +998,9 @@ class FocusNavigator:
             Focus status from the software focus result.
         """
         software_focus = self._require_software_focus()
-        result = software_focus.run(fov_id=fov_id)
+        self._check_cancelled(stop_event)
+        result = software_focus.run(fov_id=fov_id, stop_event=stop_event)
+        self._check_cancelled(stop_event)
         focus_status = getattr(result, "focus_status", None)
         if not isinstance(focus_status, FocusStatusType):
             raise RuntimeError("FocusNavigator: software_focus.run result must expose focus_status.")
@@ -890,6 +1010,7 @@ class FocusNavigator:
             self,
             config: Any | None = None,
             lock_after_initialise: bool = True,
+            stop_event: threading.Event | None = None,
     ) -> None:
         """
         Initialise autofocus and optionally lock it, raising if initialisation fails.
@@ -900,20 +1021,43 @@ class FocusNavigator:
             Optional binding-specific autofocus initialise config.
         lock_after_initialise
             If True, lock autofocus after successful initialisation.
+        stop_event
+            Optional cancellation event checked around hardware calls.
 
         Returns
         -------
         None
         """
         autofocus = self._require_autofocus()
+        self._check_cancelled(stop_event)
         is_success = autofocus.initialise_autofocus(
             config=self.config.autofocus_initialise_config if config is None else config,
             lock_after_initialise=False,
         )
         if not is_success:
             raise RuntimeError("FocusNavigator: autofocus initialisation failed.")
+        self._check_cancelled(stop_event)
         if lock_after_initialise:
             autofocus.lock()
+
+    def _wait(
+            self,
+            duration: float,
+            stop_event: threading.Event | None,
+    ) -> None:
+        """Wait for a focus settling period while remaining cancellable."""
+        self._check_cancelled(stop_event)
+        if stop_event is None:
+            self._sleep_func(duration)
+            return
+        if stop_event.wait(timeout=duration):
+            raise _FocusNavigationCancelled("Focus navigation cancelled.")
+
+    @staticmethod
+    def _check_cancelled(stop_event: threading.Event | None) -> None:
+        """Raise internal cancellation control flow when requested."""
+        if stop_event is not None and stop_event.is_set():
+            raise _FocusNavigationCancelled("Focus navigation cancelled.")
 
     def _previous_fov_id(self, fov_id: int) -> int:
         """

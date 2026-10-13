@@ -134,6 +134,9 @@ images/
 # Logs
 logs/
 
+# User-authored AutoStrat strategies
+strategies/autostrat/*.strat
+
 # Editor / IDE
 .vscode/
 .DS_Store

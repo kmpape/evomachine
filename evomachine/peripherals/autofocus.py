@@ -92,6 +92,9 @@ class Autofocus(Peripheral):
         self._check_alive: bool = check_alive
         self.config: AutofocusConfig | None = None
         self._last_calibration_result: AutofocusCalibrationResult | None = None
+        self._calibration_result_lock = threading.Lock()
+        self._calibration_prepared = False
+        self._calibration_cancel_requested = False
 
     def _require_ready(self, action: str) -> None:
         """
@@ -268,14 +271,53 @@ class Autofocus(Peripheral):
             self.name,
             lock_after_calibration,
         )
+        with self._calibration_result_lock:
+            if self._calibration_prepared:
+                self._calibration_prepared = False
+            else:
+                self._calibration_cancel_requested = False
+                self._last_calibration_result = None
         result = self._run_calibration(
             config=config,
             lock_after_calibration=lock_after_calibration,
             stop_event=stop_event,
             progress_callback=progress_callback,
         )
-        self._last_calibration_result = result
+        with self._calibration_result_lock:
+            if self._calibration_cancel_requested or (
+                stop_event is not None and stop_event.is_set()
+            ):
+                result = AutofocusCalibrationResult(
+                    success=False,
+                    measurements=dict(result.measurements),
+                    failure_reason="Calibration cancelled.",
+                    cancelled=True,
+                )
+            self._last_calibration_result = result
         return result
+
+    def prepare_calibration(self) -> None:
+        """Clear stale results before a background calibration worker starts."""
+        with self._calibration_result_lock:
+            self._calibration_prepared = True
+            self._calibration_cancel_requested = False
+            self._last_calibration_result = None
+
+    def mark_calibration_cancelled(self) -> None:
+        """Make cancellation authoritative over an earlier successful result."""
+        with self._calibration_result_lock:
+            self._calibration_cancel_requested = True
+            measurements = (
+                {}
+                if self._last_calibration_result is None
+                else dict(self._last_calibration_result.measurements)
+            )
+            self._last_calibration_result = AutofocusCalibrationResult(
+                success=False,
+                measurements=measurements,
+                failure_reason="Calibration cancelled.",
+                cancelled=True,
+            )
 
     def initialise_autofocus(
             self,
@@ -302,7 +344,8 @@ class Autofocus(Peripheral):
     @property
     def last_calibration_result(self) -> AutofocusCalibrationResult | None:
         """Return the most recent calibration outcome, if calibration has run."""
-        return self._last_calibration_result
+        with self._calibration_result_lock:
+            return self._last_calibration_result
 
     def lock(self) -> None:
         """
@@ -335,6 +378,36 @@ class Autofocus(Peripheral):
         self._require_ready(action="unlock")
         logger.debug("Autofocus.unlock: unlocking %s.", self.name)
         self._unlock()
+
+    def reset_offset(self) -> Any:
+        """Reset the autofocus lock reference at the current focal position."""
+        self._require_ready(action="reset_offset")
+        if self.is_locked():
+            raise RuntimeError("Autofocus.reset_offset: unlock autofocus before resetting its offset.")
+        status = self.get_status()
+        calibration_result = self.last_calibration_result
+        if (
+            status != AutoFocusStatusType.READY
+            or calibration_result is None
+            or not calibration_result.success
+        ):
+            raise RuntimeError(
+                "Autofocus.reset_offset: autofocus must be calibrated and Ready before "
+                "resetting its offset."
+            )
+        logger.info("Autofocus.reset_offset: resetting %s at the current focus.", self.name)
+        response = self._reset_offset()
+        logger.info(
+            "Autofocus.reset_offset: %s offset reset completed; controller response=%r.",
+            self.name,
+            response,
+        )
+        return response
+
+    def get_error(self) -> float | None:
+        """Return the current binding-specific focus error, when available."""
+        self._require_ready(action="get_error")
+        return self._get_error()
 
     def disable(self) -> None:
         """
@@ -424,6 +497,16 @@ class Autofocus(Peripheral):
     def _unlock(self) -> None:
         """Unlock binding-specific autofocus."""
         raise NotImplementedError
+
+    def _reset_offset(self) -> Any:
+        """Reset the binding-specific focus offset at the current position."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support resetting the autofocus offset."
+        )
+
+    def _get_error(self) -> float | None:
+        """Return the current binding-specific focus error, when available."""
+        return None
 
     @abstractmethod
     def _disable(self) -> None:

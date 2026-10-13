@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from PyQt5.QtWidgets import (
-    QDoubleSpinBox,
     QGridLayout,
     QGroupBox,
     QLabel,
@@ -11,6 +10,7 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
+from evomachine.gui.panels.common import NoWheelDoubleSpinBox
 
 
 class CameraPanel(QGroupBox):
@@ -57,8 +57,8 @@ class CameraPanel(QGroupBox):
         self._sync_controls_enabled()
 
     @staticmethod
-    def _exposure_input() -> QDoubleSpinBox:
-        box = QDoubleSpinBox()
+    def _exposure_input() -> NoWheelDoubleSpinBox:
+        box = NoWheelDoubleSpinBox()
         box.setRange(0.1, 600000.0)
         box.setDecimals(1)
         box.setSingleStep(10.0)

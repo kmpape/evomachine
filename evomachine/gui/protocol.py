@@ -24,6 +24,8 @@ class GuiCommandType(str, Enum):
     CONTROLLER_STATUS = "controllers.status"
     LOGS_RECENT = "logs.recent"
     FOV_INITIALISE = "fov.initialise"
+    FOV_MOVE = "fov.move"
+    FOV_MOVEMENT_STATUS = "fov.movement_status"
     STAGE_STATUS = "stage.status"
     STAGE_GET_COORDINATES = "stage.get_coordinates"
     STAGE_MOVE_ABSOLUTE = "stage.move_absolute"
@@ -62,8 +64,10 @@ class GuiCommandType(str, Enum):
     AUTOFOCUS_CANCEL_CALIBRATION = "autofocus.cancel_calibration"
     AUTOFOCUS_LOCK = "autofocus.lock"
     AUTOFOCUS_UNLOCK = "autofocus.unlock"
+    AUTOFOCUS_RESET_OFFSET = "autofocus.reset_offset"
     AUTOFOCUS_DISABLE = "autofocus.disable"
     SOFTWARE_FOCUS_STATUS = "software_focus.status"
+    SOFTWARE_FOCUS_CONFIGURE = "software_focus.configure"
     SOFTWARE_FOCUS_RUN = "software_focus.run"
     SOFTWARE_FOCUS_OPERATION_STATUS = "software_focus.operation_status"
     STAGE_MOVEMENT_STATUS = "stage.movement_status"
@@ -72,6 +76,10 @@ class GuiCommandType(str, Enum):
     STRATEGY_GENERATION_CANCEL = "strategy.generation_cancel"
     AUTOSTRAT_CONFIGURE = "strategy.configure_autostrat"
     STRATEGY_GENERATION_STATUS = "strategy.generation_status"
+    AUTOSTRAT_STRATEGY_LIST = "strategy.autostrat.list"
+    AUTOSTRAT_STRATEGY_LOAD = "strategy.autostrat.load"
+    AUTOSTRAT_STRATEGY_SAVE = "strategy.autostrat.save"
+    AUTOSTRAT_STRATEGY_VALIDATE = "strategy.autostrat.validate"
     STRATEGY_LIST = "strategy.list"
     STRATEGY_SET = "strategy.set"
     STRATEGY_START = "strategy.start"
@@ -82,6 +90,7 @@ MUTATING_COMMANDS = frozenset(
     {
         GuiCommandType.INITIALISE_DEVICES,
         GuiCommandType.FOV_INITIALISE,
+        GuiCommandType.FOV_MOVE,
         GuiCommandType.STAGE_MOVE_ABSOLUTE,
         GuiCommandType.STAGE_MOVE_RELATIVE,
         GuiCommandType.STAGE_MOVE_FOV,
@@ -106,8 +115,11 @@ MUTATING_COMMANDS = frozenset(
         GuiCommandType.AUTOFOCUS_CANCEL_CALIBRATION,
         GuiCommandType.AUTOFOCUS_LOCK,
         GuiCommandType.AUTOFOCUS_UNLOCK,
+        GuiCommandType.AUTOFOCUS_RESET_OFFSET,
         GuiCommandType.AUTOFOCUS_DISABLE,
+        GuiCommandType.SOFTWARE_FOCUS_CONFIGURE,
         GuiCommandType.SOFTWARE_FOCUS_RUN,
+        GuiCommandType.AUTOSTRAT_STRATEGY_SAVE,
         GuiCommandType.STRATEGY_SET,
         GuiCommandType.STRATEGY_START,
         GuiCommandType.STRATEGY_STOP,

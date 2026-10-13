@@ -115,6 +115,8 @@ class DmdProjectByRoiStrategy(AbstractStrategy):
             errors: list[Exception],
     ) -> list[AutomatonCommand]:
         """Update ROI registrations from segmentation data and return another cycle."""
+        if errors:
+            raise errors[0]
         for command in data:
             if isinstance(command.command_data, dict) and "seg" in command.command_data:
                 self.command_factory.update_region_of_interests(region_of_interests=self.region_of_interests)

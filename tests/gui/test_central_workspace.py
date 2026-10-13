@@ -7,9 +7,10 @@ import numpy as np
 
 from evomachine.config import DMD_WIDTH_HEIGHT
 from evomachine.gui.central_workspace import (
+    CAMERA_VIEW_MARGIN,
+    CentralVisualWorkspace,
     DMD_DISPLAY_SHAPE,
     CENTRAL_VIEW_MARGIN,
-    CENTRAL_VIEW_ZOOM,
     DMD_RECT,
     HISTOGRAM_BINS,
     MAIN_RECT,
@@ -19,7 +20,6 @@ from evomachine.gui.central_workspace import (
     fit_central_viewer,
     make_brightness_histogram,
     make_dmd_placeholder,
-    make_visual_workspace_stack,
     make_visual_workspace,
     percentile_contrast_limits,
     _content_rect,
@@ -74,9 +74,10 @@ def test_visual_workspace_is_one_rgb_dashboard_image() -> None:
     assert workspace.dtype == np.uint8
 
 
-def test_central_viewer_fit_keeps_complete_workspace_visible() -> None:
+def test_central_viewer_fit_centres_and_fits_camera_panel() -> None:
     viewer = SimpleNamespace(
-        camera=SimpleNamespace(zoom=1.0),
+        camera=SimpleNamespace(zoom=1.0, center=(0.0, 0.0)),
+        _canvas_size=(900, 600),
         reset_count=0,
         reset_margin=None,
     )
@@ -92,8 +93,30 @@ def test_central_viewer_fit_keeps_complete_workspace_visible() -> None:
 
     assert viewer.reset_count == 1
     assert viewer.reset_margin == CENTRAL_VIEW_MARGIN == 0.0
-    assert CENTRAL_VIEW_ZOOM <= 1.0
-    assert viewer.camera.zoom == 2.0 * CENTRAL_VIEW_ZOOM
+    assert viewer.camera.center == (
+        MAIN_RECT[1] + MAIN_RECT[3] / 2,
+        MAIN_RECT[0] + MAIN_RECT[2] / 2,
+    )
+    assert viewer.camera.zoom == (1 - CAMERA_VIEW_MARGIN) * min(
+        900 / MAIN_RECT[3],
+        600 / MAIN_RECT[2],
+    )
+
+
+def test_central_workspace_refresh_preserves_user_camera_view() -> None:
+    workspace = CentralVisualWorkspace.__new__(CentralVisualWorkspace)
+    workspace.viewer = SimpleNamespace(
+        camera=SimpleNamespace(zoom=3.0, center=(123.0, 456.0)),
+    )
+    layer = SimpleNamespace(data=None)
+    workspace._layer = lambda name: layer
+    workspace._workspace_image = lambda: np.zeros((4, 5, 3), dtype=np.uint8)
+
+    workspace._refresh()
+
+    assert layer.data.shape == (4, 5, 3)
+    assert workspace.viewer.camera.zoom == 3.0
+    assert workspace.viewer.camera.center == (123.0, 456.0)
 
 
 def test_visual_workspace_magnifies_small_camera_image_to_dmd_width() -> None:
@@ -124,14 +147,18 @@ def test_visual_workspace_panels_are_vertically_stacked() -> None:
     assert WORKSPACE_SHAPE[0] == DMD_RECT[1] + DMD_RECT[3] + MAIN_RECT[1]
 
 
-def test_visual_workspace_stack_has_one_dashboard_per_plane() -> None:
-    stack = np.arange(3 * 12, dtype=np.uint16).reshape(3, 3, 4)
+def test_central_workspace_keeps_one_dashboard_for_an_image_stack() -> None:
+    workspace = CentralVisualWorkspace.__new__(CentralVisualWorkspace)
+    workspace.camera_shape = (3, 4)
+    workspace.last_stack = np.arange(3 * 12, dtype=np.uint16).reshape(3, 3, 4)
+    workspace.last_image = workspace.last_stack[-1]
+    workspace.dmd_pattern = np.zeros((10, 20), dtype=np.uint8)
 
-    workspace_stack = make_visual_workspace_stack(image_stack=stack)
-    single_workspace = make_visual_workspace(last_image=stack[0])
+    dashboard = workspace._workspace_image()
 
-    assert workspace_stack.shape == (3, *single_workspace.shape)
-    assert workspace_stack.dtype == np.uint8
+    assert dashboard.ndim == 3
+    assert dashboard.shape[-1] == 3
+    assert dashboard.dtype == np.uint8
 
 
 def test_percentile_contrast_limits_ignore_sparse_outliers() -> None:

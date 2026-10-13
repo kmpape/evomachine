@@ -672,3 +672,29 @@ def test_pvcam_camera_factory_with_injected_pyvcam_objects() -> None:
     assert fake_camera.exp_time == 44
     assert fake_camera.readout_port == 2
     assert fake_camera.timeout_ms == 123
+
+
+def test_mmc_snapshot_disables_live_before_acquiring(monkeypatch):
+    image = _image_config()
+    core = FakeMMCCore(shape=image.shape)
+    studio = FakeMMCStudio()
+    camera = CameraFactory.create(
+        CameraConfig(binding=BindingType.MMC, image=image),
+        core=core,
+        studio=studio,
+    )
+    camera.initialise()
+    original_snap = core.snap_image
+
+    def snap_only_when_live_is_off():
+        if studio.live_object.live_mode:
+            raise RuntimeError("Cannot snap while sequence acquisition is running")
+        original_snap()
+
+    monkeypatch.setattr(core, "snap_image", snap_only_when_live_is_off)
+    for _ in range(2):
+        studio.live_object.set_live_mode(True)
+        frame = camera.get_frame()
+        assert frame.shape == image.shape
+        assert studio.live_object.live_mode is False
+    assert core.snap_count == 2

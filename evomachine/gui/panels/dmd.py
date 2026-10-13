@@ -7,7 +7,6 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
-    QComboBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -19,12 +18,14 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT
+from evomachine.gui.panels.common import NoWheelComboBox
 from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
 
 
 PATTERN_ACTIONS = (
     ("Empty", "empty"),
-    ("Full", "full"),
+    ("Full Camera Field", "full"),
+    ("Full DMD", "full_dmd"),
     ("Rectangle", "rectangle"),
     ("Circle", "circle"),
     ("Checkerboard", "checkerboard"),
@@ -71,7 +72,7 @@ class DmdPanel(QGroupBox):
             field_name: (minimum, maximum)
             for _label, field_name, _default, minimum, maximum in SHAPE_CONFIG_FIELDS
         }
-        self.calibration_file_combo = QComboBox()
+        self.calibration_file_combo = NoWheelComboBox()
         self.configure_pattern_button = QPushButton("Configure")
         self.configure_pattern_button.setToolTip("Configure the built-in DMD patterns.")
         self.select_custom_pattern_button = QPushButton("Choose File…")
@@ -108,6 +109,7 @@ class DmdPanel(QGroupBox):
             button.clicked.connect(
                 lambda _checked=False, selected=pattern: self._display_pattern(selected)
             )
+        self.pattern_buttons["full_dmd"].setToolTip("Illuminate the entire DMD without camera calibration.")
         self.configure_pattern_button.clicked.connect(self._open_pattern_config_dialog)
         self.select_custom_pattern_button.clicked.connect(self._select_custom_pattern)
         self.display_custom_pattern_button.clicked.connect(self._display_custom_pattern)
@@ -151,6 +153,8 @@ class DmdPanel(QGroupBox):
             buttons[action_name] = button
             row, column = divmod(index, 2)
             grid.addWidget(button, row, column)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
         layout.addWidget(section_label)
         layout.addLayout(grid)
 
@@ -169,6 +173,8 @@ class DmdPanel(QGroupBox):
         grid = QGridLayout()
         grid.addWidget(self.select_custom_pattern_button, 0, 0)
         grid.addWidget(self.display_custom_pattern_button, 0, 1)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
         layout.addLayout(grid)
 
     def _add_calibration_section(self, layout: QVBoxLayout) -> None:
@@ -194,6 +200,8 @@ class DmdPanel(QGroupBox):
         grid.addWidget(self.load_calibration_button, 0, 1)
         grid.addWidget(self.show_calibration_plot_button, 1, 0, 1, 2)
         grid.addWidget(self.cancel_calibration_button, 2, 0, 1, 2)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
         layout.addLayout(grid)
         layout.addWidget(self.calibration_operation_label)
 
@@ -202,7 +210,10 @@ class DmdPanel(QGroupBox):
             self.status_label.setText("Run Initialise Devices before using DMD controls.")
             return
         self.status_label.setText(f"Displaying {self._format_pattern(pattern)}")
-        self.controller.display_dmd_pattern(pattern=pattern, config=self._shape_config_payload())
+        if pattern == "full_dmd":
+            self.controller.display_dmd_pattern(pattern="full", warp=False)
+        else:
+            self.controller.display_dmd_pattern(pattern=pattern, config=self._shape_config_payload())
 
     def _select_custom_pattern(self) -> None:
         if not self.devices_initialised:
@@ -539,10 +550,10 @@ class DmdCalibrationPlotWindow(QWidget):
     def _draw(self, payload: dict) -> None:
         dmd_shape = self._shape_from_payload(payload.get("dmd_shape"), default=DMD_WIDTH_HEIGHT)
         cam_shape = self._shape_from_payload(payload.get("cam_shape"), default=CAM_WIDTH_HEIGHT)
-        dmd_points = self._dmd_display_points(self._points_from_payload(payload.get("dmd_points")))
+        dmd_points = self._points_from_payload(payload.get("dmd_points"))
         cam_points = self._points_from_payload(payload.get("cam_points"))
 
-        dmd_image = np.ones(self._dmd_display_shape(dmd_shape), dtype=np.uint8) * 100
+        dmd_image = np.ones(dmd_shape, dtype=np.uint8) * 100
         cam_image = np.ones(cam_shape, dtype=np.uint8) * 100
         axes = self.figure.subplots(1, 2)
         self._draw_points_axis(axes[0], image=dmd_image, points=dmd_points, title="DMD Points")
@@ -567,14 +578,6 @@ class DmdCalibrationPlotWindow(QWidget):
             if isinstance(rows, int) and isinstance(cols, int) and rows > 0 and cols > 0:
                 return rows, cols
         return default
-
-    @staticmethod
-    def _dmd_display_shape(dmd_shape: tuple[int, int]) -> tuple[int, int]:
-        return dmd_shape[1], dmd_shape[0]
-
-    @staticmethod
-    def _dmd_display_points(points: list[tuple[int, int]]) -> list[tuple[int, int]]:
-        return [(col, row) for row, col in points]
 
     @staticmethod
     def _points_from_payload(value) -> list[tuple[int, int]]:

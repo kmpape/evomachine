@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from PyQt5.QtCore import QTimer
-from PyQt5.QtWidgets import QGridLayout, QGroupBox, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import QDialog, QGridLayout, QGroupBox, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
 
 
 class SoftwareFocusPanel(QGroupBox):
     """Software focus controls."""
+
+    ALGORITHMS = ("LAPLACIAN_VAR", "SQUARED_GRAD_AVG", "STEEL", "BANDPASS_FFT")
 
     def __init__(self, controller, parent: QWidget | None = None):
         super().__init__("Software Focus", parent)
@@ -82,7 +84,14 @@ class SoftwareFocusPanel(QGroupBox):
             fields=self._config_fields(),
             parent=self,
         )
-        dialog.exec_()
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        values = dialog.values()
+        if values["step_size"] > values["rel_range"]:
+            self.status_label.setText("Software-focus step size cannot exceed its relative range.")
+            return
+        self.status_label.setText("Applying shared software-focus settings…")
+        self.controller.configure_software_focus(values)
 
     def update_status(self, payload: dict) -> None:
         self.status_label.setText(f"available: {payload.get('available')}")
@@ -159,15 +168,18 @@ class SoftwareFocusPanel(QGroupBox):
     def _config_fields(self) -> list[ConfigFieldSpec]:
         return [
             ConfigFieldSpec(
-                "Relative range", "rel_range", self._latest_config.get("rel_range"), editable=False
+                "Relative range", "rel_range", self._latest_config.get("rel_range", 50),
+                kind="int", minimum=1, maximum=1999,
             ),
             ConfigFieldSpec(
-                "Step size", "step_size", self._latest_config.get("step_size"), editable=False
+                "Step size", "step_size", self._latest_config.get("step_size", 5),
+                kind="int", minimum=1, maximum=1999,
             ),
             ConfigFieldSpec(
                 "Algorithm",
                 "algorithm",
-                self._format_enum_name(self._latest_config.get("algorithm")),
-                editable=False,
+                self._latest_config.get("algorithm", "STEEL"),
+                kind="choice",
+                choices=self.ALGORITHMS,
             ),
         ]

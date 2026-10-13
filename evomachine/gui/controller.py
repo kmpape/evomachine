@@ -72,6 +72,9 @@ class EvoMachineGuiController(QObject):
     strategies_received = pyqtSignal(list)
     strategy_status_received = pyqtSignal(dict)
     strategy_generation_received = pyqtSignal(dict)
+    autostrat_strategies_received = pyqtSignal(list)
+    autostrat_strategy_received = pyqtSignal(dict)
+    autostrat_validation_received = pyqtSignal(dict)
     autostrat_configuration_received = pyqtSignal(dict)
     lifecycle_status_received = pyqtSignal(dict)
 
@@ -161,13 +164,32 @@ class EvoMachineGuiController(QObject):
     def refresh_logs(self, after_sequence: int = 0) -> None:
         self._send(GuiCommandType.LOGS_RECENT, {"after_sequence": after_sequence})
 
-    def initialise_fovs(self, fovs: list[dict[str, Any]], use_autofocus: bool = False) -> None:
-        self._send(GuiCommandType.FOV_INITIALISE, {"fovs": fovs, "use_autofocus": use_autofocus})
+    def initialise_fovs(
+            self,
+            fovs: list[dict[str, Any]],
+            use_autofocus: bool = False,
+            focus_config: dict[str, Any] | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {"fovs": fovs, "use_autofocus": use_autofocus}
+        if focus_config is not None:
+            payload["focus_config"] = focus_config
+        self._send(GuiCommandType.FOV_INITIALISE, payload)
+
+    def move_to_fov(self, fov_id: int) -> None:
+        self._send(GuiCommandType.FOV_MOVE, {"fov_id": fov_id})
+
+    def refresh_fov_movement_operation(self) -> None:
+        self._send(GuiCommandType.FOV_MOVEMENT_STATUS)
 
     def refresh_stage(self) -> None:
         self._send(GuiCommandType.STAGE_GET_COORDINATES)
 
-    def move_stage_absolute(self, x: float, y: float, z: float) -> None:
+    def move_stage_absolute(
+            self,
+            x: float | None,
+            y: float | None,
+            z: float | None,
+    ) -> None:
         self._send(
             GuiCommandType.STAGE_MOVE_ABSOLUTE,
             {"x": x, "y": y, "z": z, "block": False},
@@ -308,11 +330,17 @@ class EvoMachineGuiController(QObject):
     def unlock_autofocus(self) -> None:
         self._send(GuiCommandType.AUTOFOCUS_UNLOCK)
 
+    def reset_autofocus_offset(self) -> None:
+        self._send(GuiCommandType.AUTOFOCUS_RESET_OFFSET)
+
     def disable_autofocus(self) -> None:
         self._send(GuiCommandType.AUTOFOCUS_DISABLE)
 
     def refresh_software_focus(self) -> None:
         self._send(GuiCommandType.SOFTWARE_FOCUS_STATUS)
+
+    def configure_software_focus(self, config: dict[str, Any]) -> None:
+        self._send(GuiCommandType.SOFTWARE_FOCUS_CONFIGURE, {"config": config})
 
     def run_software_focus(self) -> None:
         self._send(GuiCommandType.SOFTWARE_FOCUS_RUN)
@@ -321,7 +349,7 @@ class EvoMachineGuiController(QObject):
         self._send(GuiCommandType.SOFTWARE_FOCUS_OPERATION_STATUS)
 
     def refresh_strategy_status(self) -> None:
-        self._send(GuiCommandType.STRATEGY_STATUS)
+        self._send(GuiCommandType.STRATEGY_STATUS, self._with_image_transport({}))
 
     def refresh_strategies(self) -> None:
         self._send(GuiCommandType.STRATEGY_LIST)
@@ -341,14 +369,54 @@ class EvoMachineGuiController(QObject):
     def cancel_strategy_generation(self) -> None:
         self._send(GuiCommandType.STRATEGY_GENERATION_CANCEL)
 
-    def configure_autostrat(self, api_key: str) -> None:
-        self._send(GuiCommandType.AUTOSTRAT_CONFIGURE, {"api_key": api_key})
+    def configure_autostrat(
+            self,
+            *,
+            api_key: str,
+            provider: str,
+            model: str,
+            base_url: str | None,
+            preset: str,
+    ) -> None:
+        self._send(
+            GuiCommandType.AUTOSTRAT_CONFIGURE,
+            {
+                "api_key": api_key,
+                "provider": provider,
+                "model": model,
+                "base_url": base_url,
+                "preset": preset,
+            },
+        )
 
     def refresh_strategy_generation(self) -> None:
         self._send(GuiCommandType.STRATEGY_GENERATION_STATUS)
 
+    def refresh_autostrat_strategies(self) -> None:
+        self._send(GuiCommandType.AUTOSTRAT_STRATEGY_LIST)
+
+    def load_autostrat_strategy(self, name: str) -> None:
+        self._send(GuiCommandType.AUTOSTRAT_STRATEGY_LOAD, {"name": name})
+
+    def save_autostrat_strategy(
+            self, name: str, source: str, *, overwrite: bool = False
+    ) -> None:
+        self._send(
+            GuiCommandType.AUTOSTRAT_STRATEGY_SAVE,
+            {"name": name, "source": source, "overwrite": overwrite},
+        )
+
+    def validate_autostrat_strategy(self, source: str) -> None:
+        self._send(GuiCommandType.AUTOSTRAT_STRATEGY_VALIDATE, {"source": source})
+
     def set_generated_strategy(self, generation_id: str) -> None:
         self._send(GuiCommandType.STRATEGY_SET, {"generation_id": generation_id})
+
+    def set_autostrat_strategy(self, name: str, source: str) -> None:
+        self._send(
+            GuiCommandType.STRATEGY_SET,
+            {"autostrat_name": name, "autostrat_source": source},
+        )
 
     def stop_strategy(self) -> None:
         self._send(GuiCommandType.STRATEGY_STOP)
@@ -415,6 +483,9 @@ class EvoMachineGuiController(QObject):
             self.filter_wheel_status_received.emit(payload["filter_wheel"])
         if "leds" in payload:
             self.led_list_received.emit(payload["leds"])
+        if "led_states" in payload:
+            for state in payload["led_states"]:
+                self.led_state_received.emit(state)
         if "state" in payload:
             self.led_state_received.emit(payload["state"])
         if "dmd" in payload:
@@ -442,6 +513,12 @@ class EvoMachineGuiController(QObject):
             self.strategy_status_received.emit(payload["strategy"])
         if "generation" in payload:
             self.strategy_generation_received.emit(payload["generation"])
+        if "autostrat_strategies" in payload:
+            self.autostrat_strategies_received.emit(payload["autostrat_strategies"])
+        if "autostrat_strategy" in payload:
+            self.autostrat_strategy_received.emit(payload["autostrat_strategy"])
+        if "autostrat_validation" in payload:
+            self.autostrat_validation_received.emit(payload["autostrat_validation"])
         if "autostrat" in payload:
             self.autostrat_configuration_received.emit(payload["autostrat"])
         if (

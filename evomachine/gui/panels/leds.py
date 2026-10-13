@@ -4,8 +4,6 @@ import time
 
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
-    QCheckBox,
-    QDoubleSpinBox,
     QGridLayout,
     QGroupBox,
     QLabel,
@@ -15,6 +13,7 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
+from evomachine.gui.panels.common import NoWheelDoubleSpinBox
 from evomachine.types import LEDType
 
 
@@ -50,7 +49,7 @@ LED_BUTTON_LABELS = {
 }
 
 MANUAL_BRIGHTNESS_MAX = 100.0
-MANUAL_BRIGHTNESS_DEFAULT = 29.0
+MANUAL_BRIGHTNESS_DEFAULT = 10.0
 HIGH_BRIGHTNESS_THRESHOLD = 29.0
 DEFAULT_HIGH_BRIGHTNESS_DURATION_S = 3.0
 TIMED_LED_REFRESH_GRACE_MS = 100
@@ -73,7 +72,7 @@ class LedManagerPanel(QGroupBox):
         super().__init__("LEDManager", parent)
         self.controller = controller
         self.led_buttons: dict[LEDType, QPushButton] = {}
-        self.brightness_inputs: dict[LEDType, QDoubleSpinBox] = {}
+        self.brightness_inputs: dict[LEDType, NoWheelDoubleSpinBox] = {}
         self.available_leds: set[LEDType] = set()
         self._timed_led_stop_times: dict[LEDType, float] = {}
         self.devices_initialised = False
@@ -85,15 +84,7 @@ class LedManagerPanel(QGroupBox):
         self.refresh_button = refresh_button
         self.configure_button = QPushButton("Configure")
         self.configure_button.setEnabled(False)
-        self.custom_duration_checkbox = QCheckBox("Custom duration")
-        self.custom_duration_checkbox.setEnabled(False)
-        self.high_brightness_duration_input = QDoubleSpinBox()
-        self.high_brightness_duration_input.setRange(0.1, 3600.0)
-        self.high_brightness_duration_input.setDecimals(1)
-        self.high_brightness_duration_input.setSingleStep(0.5)
-        self.high_brightness_duration_input.setSuffix(" s")
-        self.high_brightness_duration_input.setValue(DEFAULT_HIGH_BRIGHTNESS_DURATION_S)
-        self.high_brightness_duration_input.setEnabled(False)
+        self.high_brightness_duration_s = DEFAULT_HIGH_BRIGHTNESS_DURATION_S
 
         led_layout = QVBoxLayout()
         for group_name, led_types in LED_GROUPS:
@@ -106,21 +97,14 @@ class LedManagerPanel(QGroupBox):
         buttons.addWidget(refresh_button, 0, 0)
         buttons.addWidget(self.configure_button, 0, 1)
 
-        duration_controls = QGridLayout()
-        duration_controls.addWidget(self.custom_duration_checkbox, 0, 0, 1, 2)
-        duration_controls.addWidget(QLabel("Duration"), 1, 0)
-        duration_controls.addWidget(self.high_brightness_duration_input, 1, 1)
-
         layout = QVBoxLayout()
         layout.addLayout(led_layout)
-        layout.addLayout(duration_controls)
         layout.addLayout(buttons)
         layout.addWidget(self.state_label)
         self.setLayout(layout)
 
         refresh_button.clicked.connect(self.controller.refresh_leds)
         self.configure_button.clicked.connect(self._open_config_dialog)
-        self.custom_duration_checkbox.toggled.connect(self._sync_controls_enabled)
         self.controller.led_list_received.connect(self.update_leds)
         self.controller.led_state_received.connect(self.update_state)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
@@ -163,8 +147,8 @@ class LedManagerPanel(QGroupBox):
         return grid
 
     @staticmethod
-    def _brightness_input() -> QDoubleSpinBox:
-        box = QDoubleSpinBox()
+    def _brightness_input() -> NoWheelDoubleSpinBox:
+        box = NoWheelDoubleSpinBox()
         box.setRange(0.0, MANUAL_BRIGHTNESS_MAX)
         box.setDecimals(0)
         box.setSingleStep(1.0)
@@ -201,10 +185,9 @@ class LedManagerPanel(QGroupBox):
         if (
             led_type not in SYNCBOARD_WAVELENGTH_COLOURS
             or brightness <= HIGH_BRIGHTNESS_THRESHOLD
-            or not self.custom_duration_checkbox.isChecked()
         ):
             return None
-        return self.high_brightness_duration_input.value() * 1000.0
+        return self.high_brightness_duration_s * 1000.0
 
     def _update_active_led(self, led_type: LEDType) -> None:
         button = self.led_buttons[led_type]
@@ -220,7 +203,11 @@ class LedManagerPanel(QGroupBox):
             fields=self._config_fields(),
             parent=self,
         )
-        dialog.exec_()
+        if dialog.exec_() != dialog.Accepted:
+            return
+        self.high_brightness_duration_s = float(
+            dialog.values()["high_brightness_duration_s"]
+        )
 
     def update_leds(self, leds: list[str]) -> None:
         self.available_leds = {self._led_type_from_name(led) for led in leds}
@@ -242,10 +229,6 @@ class LedManagerPanel(QGroupBox):
         self.refresh_button.setEnabled(self.devices_initialised)
         manual_controls_enabled = self.devices_initialised and not self.strategy_running
         self.configure_button.setEnabled(manual_controls_enabled)
-        self.custom_duration_checkbox.setEnabled(manual_controls_enabled)
-        self.high_brightness_duration_input.setEnabled(
-            manual_controls_enabled and self.custom_duration_checkbox.isChecked()
-        )
         for led_type, button in self.led_buttons.items():
             is_available = self.devices_initialised and led_type in self.available_leds
             is_enabled = manual_controls_enabled and led_type in self.available_leds
@@ -335,6 +318,16 @@ class LedManagerPanel(QGroupBox):
                 editable=False,
             ),
             ConfigFieldSpec("Timed threshold", "timed_threshold", "> 29", editable=False),
+            ConfigFieldSpec(
+                "Duration when above threshold (s)",
+                "high_brightness_duration_s",
+                self.high_brightness_duration_s,
+                kind="float",
+                minimum=0.1,
+                maximum=3600.0,
+                decimals=1,
+                single_step=0.5,
+            ),
         ]
 
     def _available_led_labels(self) -> list[str]:

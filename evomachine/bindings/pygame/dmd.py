@@ -25,3 +25,12 @@ class PygameDmd(Dmd):
         img = self._normalise_display_image(img=img)
         self.peripheral_ctrl.display_array(img=img, update_display=update_display)
         self._is_full_display = _is_full_display
+        if update_display:
+            self._record_display_state(img, is_full_display=_is_full_display)
+
+    def initialise(self, force: bool = False) -> None:
+        """Initialise and record pygame's black, newly-created display state."""
+        self.peripheral_ctrl.initialise(force=force)
+        startup_image = np.zeros(self.width_height_DMD, dtype=np.uint8)
+        self._is_full_display = False
+        self._record_display_state(startup_image, is_full_display=False)
