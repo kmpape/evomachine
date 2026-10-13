@@ -7,7 +7,6 @@ from PyQt5.QtGui import QFontDatabase
 
 from PyQt5.QtWidgets import (
     QAbstractItemView,
-    QComboBox,
     QCheckBox,
     QDialog,
     QFormLayout,
@@ -26,7 +25,11 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.coordinates import Coordinate, CoordinateFactory
-from evomachine.gui.panels.common import muted_label
+from evomachine.gui.panels.common import (
+    NoWheelComboBox,
+    format_micrometre_value,
+    muted_label,
+)
 from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
 from evomachine.gui.protocol import GuiCommandType
 
@@ -54,7 +57,7 @@ class FovSetupPanel(QGroupBox):
         self.global_focus_config = self._default_global_focus_config()
         self.focus_operation_timer = QTimer(self)
         self.focus_operation_timer.setInterval(250)
-        self.mode_combo = QComboBox()
+        self.mode_combo = NoWheelComboBox()
         self.mode_combo.addItems(["Manual", "Linear"])
         self.current_label = QLabel("Current stage: unavailable")
         self.current_label.setWordWrap(True)
@@ -119,6 +122,12 @@ class FovSetupPanel(QGroupBox):
         layout.addWidget(self.linear_group)
         layout.addLayout(buttons)
         layout.addWidget(self.table)
+        self.fov_identity_hint = muted_label(
+            "Selected FoV means the highlighted setup row; it does not move the microscope. "
+            "Current stage means the microscope's physical position."
+        )
+        self.fov_identity_hint.setWordWrap(True)
+        layout.addWidget(self.fov_identity_hint)
         layout.addWidget(self.global_focus_button)
         layout.addWidget(self.focus_summary_label)
         focus_buttons = QGridLayout()
@@ -217,7 +226,9 @@ class FovSetupPanel(QGroupBox):
         value = payload.get("camera_fov_step_size")
         if isinstance(value, int | float) and not isinstance(value, bool) and isfinite(value) and value > 0:
             self.camera_fov_step_size = float(value)
-            self.linear_spacing_label.setText(f"spacing: {value:.3f} µm")
+            self.linear_spacing_label.setText(
+                f"spacing: {format_micrometre_value(value)} µm"
+            )
         else:
             self.camera_fov_step_size = None
             self.linear_spacing_label.setText("spacing: unavailable")
@@ -290,7 +301,11 @@ class FovSetupPanel(QGroupBox):
     def _append_coordinate(self, coordinate: dict) -> None:
         row = self.table.rowCount()
         self.table.insertRow(row)
-        for column, value in enumerate((str(row), *(f"{coordinate[axis]:.3f}" for axis in ("x", "y", "z")))):
+        values = (
+            str(row),
+            *(format_micrometre_value(coordinate[axis]) for axis in ("x", "y", "z")),
+        )
+        for column, value in enumerate(values):
             self.table.setItem(row, column, QTableWidgetItem(value))
         self.table.setItem(row, 4, QTableWidgetItem("Global"))
         if self._selected_row() is None:
@@ -405,8 +420,8 @@ class FovSetupPanel(QGroupBox):
         existing = self.fov_focus_configs.get(row, {})
         software = existing.get("software_focus") or self.global_focus_config["software_focus"]
         autofocus = existing.get("autofocus") or {
-            "averaging": 0, "led_intensity": 95, "lock_range": 0.025,
-            "loop_gain": 5, "update_rate": 100, "objective_na": 0.95,
+            "averaging": 5, "led_intensity": 70, "lock_range": 0.1,
+            "loop_gain": 10, "update_rate": 10, "objective_na": 0.9,
             "min_snr": 2.0, "min_error": 100,
         }
         fields = [
@@ -429,7 +444,7 @@ class FovSetupPanel(QGroupBox):
             ("CRISP update rate", "update_rate", "int", 0, 1000),
             ("Objective NA", "objective_na", "float", 0.01, 9.999),
             ("Minimum SNR", "min_snr", "float", 0, 1000),
-            ("Minimum error", "min_error", "float", 0, 100000),
+            ("Minimum absolute calibration measurement", "min_error", "float", 0, 100000),
         ):
             fields.append(ConfigFieldSpec(label, key, autofocus[key], kind=kind, minimum=minimum, maximum=maximum, enabled_when_key="autofocus_override"))
         dialog = ConfigDialog(title=f"FoV {row} Focus Settings", fields=fields, parent=self)
@@ -534,13 +549,19 @@ class FovSetupPanel(QGroupBox):
 
     @staticmethod
     def _show_endpoint(label: QLabel, coordinate: dict) -> None:
-        text = "\n".join(f"{axis.upper()}: {coordinate[axis]:.3f}" for axis in ("x", "y", "z"))
+        text = "\n".join(
+            f"{axis.upper()}: {format_micrometre_value(coordinate[axis])}"
+            for axis in ("x", "y", "z")
+        )
         label.setText(text)
         label.setToolTip(text)
 
     @staticmethod
     def _format_coordinate(coordinate: dict) -> str:
-        return ", ".join(f"{axis}={coordinate[axis]:.3f}" for axis in ("x", "y", "z"))
+        return ", ".join(
+            f"{axis}={format_micrometre_value(coordinate[axis])}"
+            for axis in ("x", "y", "z")
+        )
 
     @staticmethod
     def _validated_coordinate_payload(coordinate: object) -> dict[str, float] | None:
@@ -559,7 +580,7 @@ class StrategySetupPanel(QGroupBox):
     def __init__(self, controller, parent: QWidget | None = None):
         super().__init__("Strategy Setup", parent)
         self.controller = controller
-        self.source_combo = QComboBox()
+        self.source_combo = NoWheelComboBox()
         self.source_combo.addItems(["Python Strategies", "AutoStrat"])
         self._autostrat_enabled = False
         self.auth_label = QLabel(
@@ -589,7 +610,7 @@ class StrategySetupPanel(QGroupBox):
         self.cancel_generation_button = QPushButton("Cancel generation")
         self.generation_label = QLabel("Generate, review the strategy code, then Set Strategy. Generation does not run hardware.")
         self.generation_label.setWordWrap(True)
-        self.saved_strategy_combo = QComboBox()
+        self.saved_strategy_combo = NoWheelComboBox()
         self.load_strategy_button = QPushButton("Load")
         self.new_strategy_button = QPushButton("New")
         saved_buttons = QGridLayout()
@@ -640,7 +661,7 @@ class StrategySetupPanel(QGroupBox):
                        self.diagnostics_output):
             auto_layout.addWidget(widget)
         auto_layout.insertLayout(auto_layout.count() - 2, file_buttons)
-        self.strategy_combo = QComboBox()
+        self.strategy_combo = NoWheelComboBox()
         self.strategy_combo.setEnabled(False)
         self.set_button = QPushButton("Set Strategy")
         self.start_button = QPushButton("Start Strategy")
@@ -714,6 +735,19 @@ class StrategySetupPanel(QGroupBox):
         self._autostrat_enabled = bool(payload.get("enabled"))
         if not self._autostrat_enabled:
             self._generation_id = None
+            self.auth_label.setText(
+                "AI generation is disabled. Saved and hand-written AutoStrat strategies "
+                "remain available."
+            )
+        else:
+            provider = str(payload.get("provider") or "model provider")
+            model = str(payload.get("model") or "configured model")
+            preset = payload.get("preset")
+            setup = "Robin Office 2" if preset == "robin-office-2" else provider
+            self.auth_label.setText(
+                f"AI generation enabled: {setup} — {model}. "
+                "Credentials are held for this session only."
+            )
         self._sync_controls(self._last_strategy_status)
 
     def _prompt_changed(self) -> None:
@@ -749,7 +783,7 @@ class StrategySetupPanel(QGroupBox):
         self._generation_pending = True
         self.dsl_output.clear()
         self.diagnostics_output.clear()
-        self.generation_label.setText("Generating and verifying in the background…")
+        self.generation_label.setText("Generating and verifying strategy…")
         self._sync_controls(self._last_strategy_status)
         self.controller.generate_strategy(prompt)
 
@@ -769,7 +803,7 @@ class StrategySetupPanel(QGroupBox):
         self._generation_busy = payload.get("state") == "running"
         if self._generation_busy:
             self.generation_timer.start()
-            self.generation_label.setText("Generating and verifying in the background…")
+            self.generation_label.setText("Generating and verifying strategy…")
         else:
             self.generation_timer.stop()
             accepted = bool(payload.get("accepted"))

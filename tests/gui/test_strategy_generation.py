@@ -7,6 +7,7 @@ import time
 import pytest
 
 from evomachine.gui.facade import AutomatonGuiFacade
+from evomachine.gui.autostrat_config import AutoStratModelConfig
 from evomachine.gui.protocol import GuiCommandType, GuiRequest
 from evomachine.strategy_generation.files import StrategyFileStore
 from evomachine.strategy_generation.preview import GenerationPreview
@@ -28,15 +29,83 @@ def finish_generation(facade):
     pytest.fail("Generation did not finish")
 
 
+def test_model_config_validates_provider_model_and_endpoint_without_exposing_key() -> None:
+    config = AutoStratModelConfig(
+        provider="anthropic",
+        model="claude-test",
+        api_key="private-key",
+        base_url="https://models.example.test",
+    )
+
+    assert config.qualified_model == "anthropic:claude-test"
+    assert config.public_payload() == {
+        "enabled": True,
+        "preset": "custom",
+        "provider": "anthropic",
+        "model": "claude-test",
+        "base_url": "https://models.example.test",
+    }
+    assert "private-key" not in repr(config)
+    with pytest.raises(ValueError, match="provider prefix"):
+        AutoStratModelConfig(
+            provider="anthropic",
+            model="anthropic:claude-test",
+            api_key="key",
+        )
+    with pytest.raises(ValueError, match="valid HTTP"):
+        AutoStratModelConfig(
+            provider="openai-compatible",
+            model="local-model",
+            api_key="key",
+            base_url="not-a-url",
+        )
+
+
+@pytest.mark.parametrize(
+    ("provider", "expected_type"),
+    [
+        ("openai-compatible", "OpenAIChatModel"),
+        ("anthropic", "AnthropicModel"),
+    ],
+)
+def test_generation_constructs_the_selected_provider(provider, expected_type) -> None:
+    from evomachine.gui.strategy_generation import _create_model
+
+    model = _create_model(AutoStratModelConfig(
+        provider=provider,
+        model="test-model",
+        api_key="test-key",
+        base_url="https://models.example.test",
+    ))
+
+    assert type(model).__name__ == expected_type
+
+
+def test_explicit_environment_model_does_not_inherit_robin_endpoint(monkeypatch) -> None:
+    from evomachine.gui.strategy_generation import model_config_from_environment
+
+    monkeypatch.setenv("AUTOSTRAT_MODEL_ID", "another-model")
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "key")
+
+    config = model_config_from_environment()
+
+    assert config.model == "another-model"
+    assert config.base_url is None
+
+
 def test_background_generation_does_not_lock_hardware_and_requires_explicit_set(monkeypatch):
     from evomachine.gui import strategy_generation
 
     verified = _verified("initialise\nstep\n    terminate\nfinalise\n")
     started, release = threading.Event(), threading.Event()
 
-    def generate(prompt, cancel_event):
+    def generate(prompt, cancel_event, *, model_config=None):
         assert prompt == "finish"
         assert not cancel_event.is_set()
+        assert model_config.provider == "openai-compatible"
+        assert model_config.model == "qwen3.6"
+        assert model_config.api_key == "session-key"
         started.set()
         assert release.wait(3)
         return GenerationPreview(elapsed_seconds=1, verified=verified)
@@ -44,7 +113,7 @@ def test_background_generation_does_not_lock_hardware_and_requires_explicit_set(
     monkeypatch.setattr(strategy_generation, "generate_cancellable", generate)
     automaton = FakeAutomaton()
     facade = AutomatonGuiFacade(automaton)
-    facade.autostrat_enabled = True  # Model requests below are mocked.
+    request(facade, GuiCommandType.AUTOSTRAT_CONFIGURE, api_key="session-key")
     try:
         first = request(facade, GuiCommandType.STRATEGY_GENERATE, prompt="finish")
         assert first.ok and started.wait(1)
@@ -78,8 +147,9 @@ def test_background_generation_does_not_lock_hardware_and_requires_explicit_set(
 def test_failed_generation_has_diagnostics_and_cannot_be_installed(monkeypatch, exception):
     from evomachine.gui import strategy_generation
 
-    def generate(prompt, cancel_event):
+    def generate(prompt, cancel_event, *, model_config=None):
         assert not cancel_event.is_set()
+        assert model_config is None
         if exception:
             raise ValueError("Missing model configuration")
         return GenerationPreview(elapsed_seconds=1, error=RuntimeError("Rejected candidate"))
@@ -105,7 +175,11 @@ def test_generation_worker_has_event_loop_and_reuses_preview_diagnostics(monkeyp
         assert not asyncio.get_event_loop().is_closed()
         return verified
 
-    monkeypatch.setattr(strategy_generation, "create_pipeline", lambda: SimpleNamespace(run=run))
+    monkeypatch.setattr(
+        strategy_generation,
+        "create_pipeline",
+        lambda model_config=None: SimpleNamespace(run=run),
+    )
     previews = []
     thread = threading.Thread(target=lambda: previews.append(strategy_generation.generate("finish")))
     thread.start()
@@ -139,8 +213,9 @@ def test_generation_can_be_cancelled_without_waiting_for_model_completion(monkey
 
     started = threading.Event()
 
-    def generate(prompt, cancel_event):
+    def generate(prompt, cancel_event, *, model_config=None):
         assert prompt == "finish"
+        assert model_config is None
         started.set()
         assert cancel_event.wait(3)
         return GenerationPreview(elapsed_seconds=0, error=RuntimeError("cancelled"))
@@ -163,13 +238,46 @@ def test_blank_startup_key_disables_autostrat_even_with_inherited_key(monkeypatc
     monkeypatch.setenv("OPENAI_API_KEY", "inherited-test-key")
     facade = AutomatonGuiFacade(FakeAutomaton())
     response = request(facade, GuiCommandType.AUTOSTRAT_CONFIGURE, api_key="session-test-key")
-    assert response.payload == {"autostrat": {"enabled": True}}
-    assert os.environ["OPENAI_API_KEY"] == "session-test-key"
+    assert response.payload == {"autostrat": {
+        "enabled": True,
+        "preset": "robin-office-2",
+        "provider": "openai-compatible",
+        "model": "qwen3.6",
+        "base_url": "https://robin-office-2.tail32bb7.ts.net/v1",
+    }}
+    assert os.environ["OPENAI_API_KEY"] == "inherited-test-key"
+    assert "session-test-key" not in repr(facade.autostrat_model_config)
     response = request(facade, GuiCommandType.AUTOSTRAT_CONFIGURE, api_key="")
-    assert response.payload == {"autostrat": {"enabled": False}}
-    assert "OPENAI_API_KEY" not in os.environ
+    assert response.payload["autostrat"]["enabled"] is False
+    assert "api_key" not in response.payload["autostrat"]
+    assert os.environ["OPENAI_API_KEY"] == "inherited-test-key"
     assert not request(facade, GuiCommandType.STRATEGY_GENERATE, prompt="finish").ok
     assert request(facade, GuiCommandType.STRATEGY_SET, name="NoStrategy").ok
+
+
+def test_anthropic_session_configuration_is_explicit_and_secret_free() -> None:
+    facade = AutomatonGuiFacade(FakeAutomaton())
+
+    response = request(
+        facade,
+        GuiCommandType.AUTOSTRAT_CONFIGURE,
+        preset="custom",
+        provider="anthropic",
+        model="claude-test",
+        base_url=None,
+        api_key="anthropic-secret",
+    )
+
+    assert response.ok
+    assert response.payload == {"autostrat": {
+        "enabled": True,
+        "preset": "custom",
+        "provider": "anthropic",
+        "model": "claude-test",
+        "base_url": None,
+    }}
+    assert facade.autostrat_model_config.qualified_model == "anthropic:claude-test"
+    assert "anthropic-secret" not in repr(facade.autostrat_model_config)
 
 
 def test_user_authored_strategies_save_load_validate_and_install_without_api_key(tmp_path):

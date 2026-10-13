@@ -7,7 +7,7 @@ from typing import Any
 import numpy as np
 
 from evomachine.acquisition import FrameAcquisitionSettings
-from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT, gui_log_handler
+from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT, get_logger, gui_log_handler
 from evomachine.coordinates import Coordinate
 from evomachine.filemanager import FileManager
 from evomachine.frame import FrameMetaDataFactory
@@ -31,6 +31,7 @@ from evomachine.types import FocusAlgorithmType
 GuiRequestHandler = Callable[[Any, dict[str, Any]], dict[str, Any]]
 DMD_PATTERNS = DMD_BUILT_IN_PATTERNS
 MAX_Z_STACK_PLANES = 10000
+logger = get_logger(name=__name__)
 GUI_CAMERA_FOV_DIRECTION_DELTAS = {
     FovDirectionType.UP: (0.0, -1.0),
     FovDirectionType.DOWN: (0.0, 1.0),
@@ -558,6 +559,19 @@ def gui_led_state_to_payload(state: Any) -> dict[str, Any]:
     }
 
 
+def gui_led_manager_status_payload(facade: Any) -> dict[str, Any]:
+    """Serialize the available LEDs and each channel's current state."""
+    led_manager = facade.gui_led_manager()
+    available_leds = list(led_manager.get_available_leds())
+    return {
+        "leds": [led_type.name for led_type in available_leds],
+        "led_states": [
+            gui_led_state_to_payload(led_manager.get_led_state(led_type))
+            for led_type in available_leds
+        ],
+    }
+
+
 def gui_require_devices_initialised(facade: Any, control_name: str) -> None:
     """Reject hardware commands before the automaton has initialised devices."""
     if not facade.automaton.devices_is_initialised():
@@ -579,13 +593,57 @@ def gui_image_transport_probe(facade: Any, payload: dict[str, Any]) -> dict[str,
 def gui_initialise_devices(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     facade.gui_initialise_controllers()
     facade.automaton.initialise_devices()
-    return {**facade.gui_status_payload(), **facade.gui_controller_status_payload()}
+    acq_mngr = getattr(facade.automaton, "acq_mngr", None)
+    dmd = getattr(acq_mngr, "dmd", None)
+    synchronise_display_state = getattr(dmd, "synchronise_display_state", None)
+    if callable(synchronise_display_state):
+        try:
+            synchronise_display_state()
+        except Exception:
+            logger.exception("GUI initialisation: DMD display-state readback failed.")
+    response = {**facade.gui_status_payload(), **facade.gui_controller_status_payload()}
+    warnings: list[str] = []
+
+    def add_status(name: str, loader: Callable[[], dict[str, Any]]) -> None:
+        try:
+            response.update(loader())
+        except Exception as error:
+            message = f"{name}: {type(error).__name__}: {error}"
+            warnings.append(message)
+            logger.exception("GUI initialisation: %s status readback failed.", name)
+
+    focus_nav = getattr(facade.automaton, "focus_nav", None)
+    if getattr(focus_nav, "stage", None) is not None:
+        add_status("stage", lambda: facade.gui_stage_coordinates_payload(query_hardware=False))
+    if getattr(acq_mngr, "camera", None) is not None:
+        add_status("camera", lambda: {"camera": facade.gui_camera_status_payload()})
+    if getattr(acq_mngr, "led_manager", None) is not None:
+        add_status("LEDs", lambda: gui_led_manager_status_payload(facade))
+    filter_wheel = getattr(acq_mngr, "filter_wheel", None)
+    if filter_wheel is None:
+        filter_wheel = getattr(facade.automaton, "_filt_wheel", None)
+    if filter_wheel is not None:
+        add_status("filter wheel", lambda: {"filter_wheel": facade.gui_filter_wheel_status_payload()})
+    if dmd is not None:
+        add_status("DMD", lambda: {"dmd": facade.gui_dmd_status_payload()})
+    if getattr(focus_nav, "autofocus", None) is not None:
+        add_status("autofocus", lambda: {"autofocus": facade.gui_autofocus_status_payload()})
+    if getattr(focus_nav, "software_focus", None) is not None:
+        add_status(
+            "software focus",
+            lambda: {"software_focus": facade.gui_software_focus_status_payload()},
+        )
+    if warnings:
+        response["initialisation_warnings"] = warnings
+    return response
 
 
 def gui_stop(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     active_operation = facade.gui_operations.active()
     if active_operation is not None:
-        facade.gui_operations.cancel(active_operation["kind"])
+        facade.gui_operations.cancel_active()
+        if active_operation["kind"] == "autofocus_calibration":
+            facade.gui_autofocus().mark_calibration_cancelled()
     facade.automaton.stop()
     response = facade.gui_status_payload()
     if active_operation is not None:
@@ -595,6 +653,27 @@ def gui_stop(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
 def gui_shutdown(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
+    active_operation = facade.gui_operations.active()
+    if active_operation is not None:
+        facade.gui_operations.cancel_active()
+        if active_operation["kind"] == "autofocus_calibration":
+            facade.gui_autofocus().mark_calibration_cancelled()
+        try:
+            facade.automaton.stop()
+        except Exception as error:
+            errors.append(f"operation halt: {type(error).__name__}: {error}")
+        if not facade.gui_operations.wait_for_completion(active_operation["kind"], timeout=5.0):
+            errors.append(
+                f"operation {active_operation['kind']} did not stop within 5 seconds"
+            )
+    generation_operation = facade.strategy_generation.active()
+    if generation_operation is not None:
+        facade.strategy_generation.cancel_active()
+        if not facade.strategy_generation.wait_for_completion(
+                generation_operation["kind"],
+                timeout=5.0,
+        ):
+            errors.append("strategy generation did not stop within 5 seconds")
     try:
         facade.automaton.shutdown()
     except Exception as error:
@@ -644,9 +723,12 @@ def gui_fov_move(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     fov_id = int(payload["fov_id"])
 
     def run(cancel_event, report):
-        del cancel_event
         report(0.0, f"Moving to FoV {fov_id} and applying its focus policy.")
-        record = facade.automaton.focus_nav.move(fov_id=fov_id, manage_focus=True)
+        record = facade.automaton.focus_nav.move(
+            fov_id=fov_id,
+            manage_focus=True,
+            stop_event=cancel_event,
+        )
         return {
             "focus_navigation": gui_focus_navigation_result_payload(facade, record),
             "coordinate": gui_coordinate_to_payload(
@@ -675,9 +757,12 @@ def gui_stage_get_coordinates(facade: Any, payload: dict[str, Any]) -> dict[str,
 
 def _start_stage_movement(facade: Any, target: Coordinate) -> dict[str, Any]:
     def run(cancel_event, report):
-        del cancel_event
         report(0.0, "Moving stage.")
+        if cancel_event.is_set():
+            return None
         facade.gui_stage().move(target=target, block=True)
+        if cancel_event.is_set():
+            return None
         return facade.gui_stage_coordinates_payload(query_hardware=True)
 
     return {"operation": facade.gui_operations.start("stage_movement", run)}
@@ -860,8 +945,7 @@ def gui_filter_wheel_set(facade: Any, payload: dict[str, Any]) -> dict[str, Any]
 
 def gui_led_list(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "LED")
-    led_manager = facade.gui_led_manager()
-    return {"leds": [led_type.name for led_type in led_manager.get_available_leds()]}
+    return gui_led_manager_status_payload(facade)
 
 
 def gui_led_set(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -931,8 +1015,7 @@ def gui_dmd_load_pattern(facade: Any, payload: dict[str, Any]) -> dict[str, Any]
         raise ValueError("DMD pattern filename must be a non-empty string.")
     dmd = facade.gui_dmd()
     facade._loaded_dmd_pattern = None
-    facade._last_dmd_preview = None
-    pattern_array = dmd.load_image(filename, display_image=False)
+    dmd.load_image(filename, display_image=False)
     info = dmd.get_loaded_image_info()
     if info is None:
         raise RuntimeError("DMD did not report metadata for the loaded custom pattern.")
@@ -941,7 +1024,6 @@ def gui_dmd_load_pattern(facade: Any, payload: dict[str, Any]) -> dict[str, Any]
         "source_shape": list(info.source_shape),
         "coordinate_space": info.coordinate_space,
     }
-    facade._last_dmd_preview = gui_dmd_preview_payload(dmd=dmd, pattern_array=pattern_array)
     return {"dmd": facade.gui_dmd_status_payload()}
 
 
@@ -1046,9 +1128,11 @@ def gui_autofocus_initialise(facade: Any, payload: dict[str, Any]) -> dict[str, 
     gui_require_devices_initialised(facade, "autofocus")
     config = gui_autofocus_config_from_payload(payload)
     lock_after_calibration = gui_bool_from_payload(payload, "lock_after_initialise", False)
+    autofocus = facade.gui_autofocus()
+    autofocus.prepare_calibration()
 
     def run(cancel_event, report):
-        initialised = facade.gui_autofocus().run_calibration(
+        initialised = autofocus.run_calibration(
             config=config,
             lock_after_calibration=lock_after_calibration,
             stop_event=cancel_event,
@@ -1065,7 +1149,10 @@ def gui_autofocus_calibration_status(facade: Any, payload: dict[str, Any]) -> di
 
 
 def gui_autofocus_cancel_calibration(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    return {"operation": facade.gui_operations.cancel("autofocus_calibration")}
+    operation = facade.gui_operations.cancel("autofocus_calibration")
+    if operation["state"] == "running":
+        facade.gui_autofocus().mark_calibration_cancelled()
+    return {"operation": operation}
 
 
 def gui_autofocus_lock(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1336,7 +1423,11 @@ def gui_strategy_generate(facade: Any, payload: dict[str, Any]) -> dict[str, Any
 
     def run(cancel_event, report):
         report(0, "Generating and verifying strategy; hardware is unchanged.")
-        return generate_cancellable(request.strip(), cancel_event)
+        return generate_cancellable(
+            request.strip(),
+            cancel_event,
+            model_config=facade.autostrat_model_config,
+        )
 
     facade.strategy_generation.start("strategy_generation", run)
     return gui_strategy_generation_status(facade, {})
@@ -1348,21 +1439,15 @@ def gui_strategy_generation_cancel(facade: Any, payload: dict[str, Any]) -> dict
 
 
 def gui_autostrat_configure(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    import os
+    from evomachine.gui.autostrat_config import AutoStratModelConfig
 
     if facade.strategy_generation.active() is not None:
-        raise ValueError("Cannot change the API key while generation is running.")
-    key = payload.get("api_key", "")
-    if not isinstance(key, str):
-        raise TypeError("API key must be text.")
-    key = key.strip()
+        raise ValueError("Cannot change AutoStrat model configuration while generation is running.")
+    config = AutoStratModelConfig.from_payload(payload)
     # Backend session memory only: never write credentials to a file or response.
-    if key:
-        os.environ["OPENAI_API_KEY"] = key
-    else:
-        os.environ.pop("OPENAI_API_KEY", None)
-    facade.autostrat_enabled = bool(key)
-    return {"autostrat": {"enabled": facade.autostrat_enabled}}
+    facade.autostrat_model_config = config
+    facade.autostrat_enabled = config.enabled
+    return {"autostrat": config.public_payload()}
 
 
 def gui_strategy_generation_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:

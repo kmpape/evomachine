@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from PyQt5.QtWidgets import (
-    QComboBox,
     QGridLayout,
     QGroupBox,
     QLabel,
@@ -11,6 +10,7 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
+from evomachine.gui.panels.common import NoWheelComboBox
 
 
 class FilterWheelPanel(QGroupBox):
@@ -25,7 +25,7 @@ class FilterWheelPanel(QGroupBox):
         self.status_label = QLabel("Run Initialise Devices before using filter wheel controls.")
         self.status_label.setWordWrap(True)
         self.current_label = QLabel("current: -")
-        self.filter_combo = QComboBox()
+        self.filter_combo = NoWheelComboBox()
         self.refresh_button = QPushButton("Refresh")
         self.set_button = QPushButton("Set Position")
         self.configure_button = QPushButton("Configure")

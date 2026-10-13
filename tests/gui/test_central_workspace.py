@@ -20,7 +20,6 @@ from evomachine.gui.central_workspace import (
     fit_central_viewer,
     make_brightness_histogram,
     make_dmd_placeholder,
-    make_visual_workspace_stack,
     make_visual_workspace,
     percentile_contrast_limits,
     _content_rect,
@@ -148,14 +147,18 @@ def test_visual_workspace_panels_are_vertically_stacked() -> None:
     assert WORKSPACE_SHAPE[0] == DMD_RECT[1] + DMD_RECT[3] + MAIN_RECT[1]
 
 
-def test_visual_workspace_stack_has_one_dashboard_per_plane() -> None:
-    stack = np.arange(3 * 12, dtype=np.uint16).reshape(3, 3, 4)
+def test_central_workspace_keeps_one_dashboard_for_an_image_stack() -> None:
+    workspace = CentralVisualWorkspace.__new__(CentralVisualWorkspace)
+    workspace.camera_shape = (3, 4)
+    workspace.last_stack = np.arange(3 * 12, dtype=np.uint16).reshape(3, 3, 4)
+    workspace.last_image = workspace.last_stack[-1]
+    workspace.dmd_pattern = np.zeros((10, 20), dtype=np.uint8)
 
-    workspace_stack = make_visual_workspace_stack(image_stack=stack)
-    single_workspace = make_visual_workspace(last_image=stack[0])
+    dashboard = workspace._workspace_image()
 
-    assert workspace_stack.shape == (3, *single_workspace.shape)
-    assert workspace_stack.dtype == np.uint8
+    assert dashboard.ndim == 3
+    assert dashboard.shape[-1] == 3
+    assert dashboard.dtype == np.uint8
 
 
 def test_percentile_contrast_limits_ignore_sparse_outliers() -> None:

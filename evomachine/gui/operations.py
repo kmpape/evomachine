@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import threading
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -33,6 +34,7 @@ class GuiOperationManager:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._finished = threading.Condition(self._lock)
         self._operations: dict[str, GuiOperation] = {}
         self._active_kind: str | None = None
 
@@ -87,6 +89,33 @@ class GuiOperationManager:
                 return None
             return self._snapshot_locked(self._operations[self._active_kind])
 
+    def cancel_active(self) -> dict[str, Any] | None:
+        """Request cancellation of the active operation, if one exists."""
+        with self._lock:
+            if self._active_kind is None:
+                return None
+            operation = self._operations[self._active_kind]
+            if operation.state == "running":
+                operation.cancel_event.set()
+                operation.message = "Cancellation requested; waiting for a safe stopping point."
+            return self._snapshot_locked(operation)
+
+    def wait_for_completion(self, kind: str, timeout: float) -> bool:
+        """Wait up to timeout seconds for one operation to leave running state."""
+        if timeout < 0:
+            raise ValueError("Operation completion timeout must be non-negative.")
+        deadline = time.monotonic() + timeout
+        with self._finished:
+            operation = self._operations.get(kind)
+            if operation is None:
+                return True
+            while operation.state == "running":
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                self._finished.wait(timeout=remaining)
+            return True
+
     def _run(self, operation: GuiOperation, runner: OperationRunner) -> None:
         def report(progress: float, message: str) -> None:
             with self._lock:
@@ -119,6 +148,7 @@ class GuiOperationManager:
         operation.finished_at = _utc_now()
         if self._active_kind == operation.kind:
             self._active_kind = None
+        self._finished.notify_all()
 
     @staticmethod
     def _snapshot_locked(operation: GuiOperation) -> dict[str, Any]:

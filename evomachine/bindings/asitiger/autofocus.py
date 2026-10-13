@@ -133,12 +133,12 @@ class TigerAutofocusConfigFactory:
             Default CRISP configuration.
         """
         return TigerAutofocusConfig(
-            led_intensity=95,
-            loop_gain=5,
-            averaging=0,
-            update_rate=100,
-            objective_na=0.95,
-            lock_range=0.025,
+            led_intensity=70,
+            loop_gain=10,
+            averaging=5,
+            update_rate=10,
+            objective_na=0.9,
+            lock_range=0.1,
         )
 
     @staticmethod
@@ -156,12 +156,12 @@ class TigerAutofocusConfigFactory:
             Default oil-objective CRISP configuration.
         """
         return TigerAutofocusConfig(
-            led_intensity=95,
-            loop_gain=5,
-            averaging=0,
-            update_rate=100,
+            led_intensity=70,
+            loop_gain=10,
+            averaging=5,
+            update_rate=10,
             objective_na=1.4,
-            lock_range=0.025,
+            lock_range=0.1,
         )
 
 

@@ -4,7 +4,6 @@ import time
 
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
-    QDoubleSpinBox,
     QGridLayout,
     QGroupBox,
     QLabel,
@@ -14,6 +13,7 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
+from evomachine.gui.panels.common import NoWheelDoubleSpinBox
 from evomachine.types import LEDType
 
 
@@ -49,7 +49,7 @@ LED_BUTTON_LABELS = {
 }
 
 MANUAL_BRIGHTNESS_MAX = 100.0
-MANUAL_BRIGHTNESS_DEFAULT = 29.0
+MANUAL_BRIGHTNESS_DEFAULT = 10.0
 HIGH_BRIGHTNESS_THRESHOLD = 29.0
 DEFAULT_HIGH_BRIGHTNESS_DURATION_S = 3.0
 TIMED_LED_REFRESH_GRACE_MS = 100
@@ -72,7 +72,7 @@ class LedManagerPanel(QGroupBox):
         super().__init__("LEDManager", parent)
         self.controller = controller
         self.led_buttons: dict[LEDType, QPushButton] = {}
-        self.brightness_inputs: dict[LEDType, QDoubleSpinBox] = {}
+        self.brightness_inputs: dict[LEDType, NoWheelDoubleSpinBox] = {}
         self.available_leds: set[LEDType] = set()
         self._timed_led_stop_times: dict[LEDType, float] = {}
         self.devices_initialised = False
@@ -147,8 +147,8 @@ class LedManagerPanel(QGroupBox):
         return grid
 
     @staticmethod
-    def _brightness_input() -> QDoubleSpinBox:
-        box = QDoubleSpinBox()
+    def _brightness_input() -> NoWheelDoubleSpinBox:
+        box = NoWheelDoubleSpinBox()
         box.setRange(0.0, MANUAL_BRIGHTNESS_MAX)
         box.setDecimals(0)
         box.setSingleStep(1.0)

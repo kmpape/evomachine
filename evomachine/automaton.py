@@ -903,7 +903,10 @@ class Automaton:
             return None
         if target_fov_id == -1:
             target_fov_id = self.focus_nav.get_next_fov_id(fov_id=self.get_fov_id())
-        result = self.focus_nav.move(fov_id=target_fov_id)
+        result = self.focus_nav.move(
+            fov_id=target_fov_id,
+            stop_event=self._stop_event,
+        )
         if getattr(result, "skipped", False):
             self._skip_image_fov_id = target_fov_id
             self._skip_image_reason = getattr(result, "skip_reason", None)
@@ -1344,13 +1347,19 @@ class Automaton:
         -------
         None
         """
-        actions = [
-            ("camera live mode", lambda: self.acq_mngr.set_camera_live_mode(status=False)),
-            ("acquisition manager", self.acq_mngr.stop),
-        ]
+        actions = [("acquisition manager", self.acq_mngr.stop)]
+        if self._camera is not None and self._camera.is_initialised():
+            actions.insert(
+                0,
+                ("camera live mode", lambda: self.acq_mngr.set_camera_live_mode(status=False)),
+            )
         if self._swfocus is not None and callable(getattr(self._swfocus, "stop", None)):
             actions.append(("software focus", self._swfocus.stop))
-        if self._autofocus is not None and callable(getattr(self._autofocus, "unlock", None)):
+        if (
+                self._autofocus is not None
+                and self._autofocus.is_initialised()
+                and callable(getattr(self._autofocus, "unlock", None))
+        ):
             actions.append(("autofocus", self._autofocus.unlock))
 
         errors: list[str] = []

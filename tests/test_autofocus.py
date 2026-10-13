@@ -132,12 +132,12 @@ def test_tiger_autofocus_config_validation_and_factory_defaults() -> None:
     default_config = TigerAutofocusConfigFactory.default_config()
     assert isinstance(default_config, AutofocusCalibrationConfig)
     assert default_config.model_dump() == {
-        "averaging": 0,
-        "led_intensity": 95,
-        "lock_range": 0.025,
-        "loop_gain": 5,
-        "update_rate": 100,
-        "objective_na": 0.95,
+        "averaging": 5,
+        "led_intensity": 70,
+        "lock_range": 0.1,
+        "loop_gain": 10,
+        "update_rate": 10,
+        "objective_na": 0.9,
         "min_snr": 2,
         "min_error": 100,
     }
@@ -224,6 +224,34 @@ def test_autofocus_clears_previous_result_before_new_calibration(monkeypatch) ->
     result = autofocus.run_calibration()
 
     assert result.cancelled
+    assert autofocus.last_calibration_result == result
+
+
+def test_autofocus_prepared_calibration_keeps_cancellation_authoritative(monkeypatch) -> None:
+    autofocus = AutofocusFactory.create(
+        config=AutofocusConfig(binding=BindingType.VIRTUAL),
+        peripheral_controllers=_virtual_controller(),
+    )
+    autofocus.initialise()
+    autofocus._last_calibration_result = AutofocusCalibrationResult(success=True)
+    autofocus.prepare_calibration()
+    autofocus.mark_calibration_cancelled()
+
+    monkeypatch.setattr(
+        autofocus,
+        "_run_calibration",
+        lambda **_kwargs: AutofocusCalibrationResult(
+            success=True,
+            measurements={"snr": 10.0, "error": 200.0},
+        ),
+    )
+
+    result = autofocus.run_calibration()
+
+    assert not result.success
+    assert result.cancelled
+    assert result.failure_reason == "Calibration cancelled."
+    assert result.measurements == {"snr": 10.0, "error": 200.0}
     assert autofocus.last_calibration_result == result
 
 

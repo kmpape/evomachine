@@ -287,7 +287,8 @@ class FakeFocusNavigator(FocusNavigator):
         self.current_fov_id = UNKNOWN_FOV_ID
         self.fov_configs = fov_configs
 
-    def move(self, fov_id: int, manage_focus: bool = True):
+    def move(self, fov_id: int, manage_focus: bool = True, stop_event=None):
+        del stop_event
         """Record one move request."""
         self.moves.append(fov_id)
         self.current_fov_id = fov_id
@@ -644,7 +645,7 @@ def test_command_failure_is_delivered_to_strategy_and_stops_the_batch() -> None:
     automaton, _, focus_navigator, _, _, _ = make_automaton()
     strategy = automaton._strategy
     assert isinstance(strategy, FakeStrategy)
-    focus_navigator.move = lambda fov_id: (_ for _ in ()).throw(RuntimeError("stage blip"))
+    focus_navigator.move = lambda fov_id, stop_event=None: (_ for _ in ()).throw(RuntimeError("stage blip"))
     factory = CommandFactory(cfg=make_cfg())
     failed = factory.command_move(fov_id=1)
     skipped = factory.command_wait(duration=0)
@@ -1768,6 +1769,8 @@ def test_automaton_act_on_halt_uses_manager_paths() -> None:
         stop_event=Event(),
         shutdown_event=Event(),
     )
+    camera.initialise()
+    autofocus.initialise()
 
     automaton.act_on_halt()
 

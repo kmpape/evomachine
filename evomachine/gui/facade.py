@@ -13,6 +13,8 @@ from evomachine.gui.protocol import (
     GuiRequest,
     GuiResponse,
 )
+from evomachine.gui.image_payloads import array_to_preview_payload
+from evomachine.gui.autostrat_config import AutoStratModelConfig
 from evomachine.gui.operations import GuiOperationManager
 from evomachine.gui.request_map import GUI_REQUEST_HANDLERS, gui_coordinate_to_payload
 from evomachine.strategy_generation.files import StrategyFileStore
@@ -20,29 +22,11 @@ from evomachine.strategy_generation.files import StrategyFileStore
 
 logger = get_logger(name=__name__)
 
-_OPERATION_SAFE_COMMANDS = frozenset(
+_OPERATION_SAFE_MUTATING_COMMANDS = frozenset(
     {
-        GuiCommandType.PING,
-        GuiCommandType.STRATEGY_GENERATE,
-        GuiCommandType.STRATEGY_GENERATION_CANCEL,
-        GuiCommandType.AUTOSTRAT_CONFIGURE,
-        GuiCommandType.STRATEGY_GENERATION_STATUS,
-        GuiCommandType.AUTOSTRAT_STRATEGY_LIST,
-        GuiCommandType.AUTOSTRAT_STRATEGY_LOAD,
-        GuiCommandType.AUTOSTRAT_STRATEGY_SAVE,
-        GuiCommandType.AUTOSTRAT_STRATEGY_VALIDATE,
-        GuiCommandType.STOP,
-        GuiCommandType.LOGS_RECENT,
-        GuiCommandType.STAGE_STOP,
-        GuiCommandType.STAGE_MOVEMENT_STATUS,
-        GuiCommandType.FOV_MOVEMENT_STATUS,
-        GuiCommandType.ACQUISITION_Z_STACK_STATUS,
-        GuiCommandType.DMD_CALIBRATION_STATUS,
+        *ALWAYS_ALLOWED_MUTATING_COMMANDS,
         GuiCommandType.DMD_CANCEL_CALIBRATION,
-        GuiCommandType.AUTOFOCUS_CALIBRATION_STATUS,
         GuiCommandType.AUTOFOCUS_CANCEL_CALIBRATION,
-        GuiCommandType.SOFTWARE_FOCUS_STATUS,
-        GuiCommandType.SOFTWARE_FOCUS_OPERATION_STATUS,
     }
 )
 
@@ -62,6 +46,7 @@ class AutomatonGuiFacade:
         # Generation has no hardware access and must not lock out microscope controls.
         self.strategy_generation = GuiOperationManager()
         self.autostrat_enabled = False
+        self.autostrat_model_config: AutoStratModelConfig | None = None
         self._installed_generation_id: str | None = None
         self._installed_generated_strategy = None
         self._installed_autostrat_name: str | None = None
@@ -71,7 +56,11 @@ class AutomatonGuiFacade:
 
     def handle(self, request: GuiRequest) -> GuiResponse:
         active_operation = self.gui_operations.active()
-        if active_operation is not None and request.command not in _OPERATION_SAFE_COMMANDS:
+        if (
+                active_operation is not None
+                and request.command in MUTATING_COMMANDS
+                and request.command not in _OPERATION_SAFE_MUTATING_COMMANDS
+        ):
             return GuiResponse(
                 request_id=request.request_id,
                 ok=False,
@@ -401,6 +390,12 @@ class AutomatonGuiFacade:
 
     def gui_dmd_status_payload(self) -> dict[str, Any]:
         dmd = self.gui_dmd()
+        display_state = getattr(dmd, "last_display_state", None)
+        display_preview = (
+            None
+            if display_state is None
+            else array_to_preview_payload(display_state.image.T)
+        )
         calibration_filename = None
         if hasattr(dmd, "get_calibration_filename"):
             calibration_filename = dmd.get_calibration_filename()
@@ -417,7 +412,7 @@ class AutomatonGuiFacade:
                 current_file=calibration_filename
             ),
             "last_pattern": self._last_dmd_pattern,
-            "preview": self._last_dmd_preview,
+            "preview": display_preview or self._last_dmd_preview,
             "custom_pattern": self._loaded_dmd_pattern,
         }
 
@@ -434,11 +429,6 @@ class AutomatonGuiFacade:
         for calibration_directory in calibration_directories:
             if calibration_directory.exists():
                 candidates.extend(calibration_directory.glob("*.pkl"))
-        packaged_calibrations = (
-            EVOMACHINE_DIR / "evomachine" / "dmd_calibration_data.pkl",
-            EVOMACHINE_DIR / "dmd_calibration_data.pkl",
-        )
-        candidates.extend(path for path in packaged_calibrations if path.exists())
         if current_path is not None and current_path.exists():
             candidates.append(current_path)
 

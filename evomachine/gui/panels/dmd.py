@@ -7,7 +7,6 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
-    QComboBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -19,6 +18,7 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT
+from evomachine.gui.panels.common import NoWheelComboBox
 from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
 
 
@@ -72,7 +72,7 @@ class DmdPanel(QGroupBox):
             field_name: (minimum, maximum)
             for _label, field_name, _default, minimum, maximum in SHAPE_CONFIG_FIELDS
         }
-        self.calibration_file_combo = QComboBox()
+        self.calibration_file_combo = NoWheelComboBox()
         self.configure_pattern_button = QPushButton("Configure")
         self.configure_pattern_button.setToolTip("Configure the built-in DMD patterns.")
         self.select_custom_pattern_button = QPushButton("Choose File…")
@@ -153,6 +153,8 @@ class DmdPanel(QGroupBox):
             buttons[action_name] = button
             row, column = divmod(index, 2)
             grid.addWidget(button, row, column)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
         layout.addWidget(section_label)
         layout.addLayout(grid)
 
@@ -171,6 +173,8 @@ class DmdPanel(QGroupBox):
         grid = QGridLayout()
         grid.addWidget(self.select_custom_pattern_button, 0, 0)
         grid.addWidget(self.display_custom_pattern_button, 0, 1)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
         layout.addLayout(grid)
 
     def _add_calibration_section(self, layout: QVBoxLayout) -> None:
@@ -196,6 +200,8 @@ class DmdPanel(QGroupBox):
         grid.addWidget(self.load_calibration_button, 0, 1)
         grid.addWidget(self.show_calibration_plot_button, 1, 0, 1, 2)
         grid.addWidget(self.cancel_calibration_button, 2, 0, 1, 2)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
         layout.addLayout(grid)
         layout.addWidget(self.calibration_operation_label)
 

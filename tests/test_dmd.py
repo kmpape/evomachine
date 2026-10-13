@@ -500,6 +500,40 @@ def test_dmd_factory_creates_socket_pygame_and_virtual_wrappers(tmp_path):
     ), VirtualDmd)
 
 
+def test_virtual_dmd_tracks_its_current_display_state(tmp_path):
+    controller = VirtualDmdPeripheralController()
+    dmd = DmdFactory.create(
+        make_dmd_config(tmp_path, BindingType.VIRTUAL),
+        peripheral_controllers=[controller],
+    )
+    dmd.initialise()
+    initial_state = dmd.last_display_state
+    dmd.display_none()
+    blank_state = dmd.last_display_state
+
+    assert initial_state is not None
+    assert initial_state.is_full_display
+    assert np.all(initial_state.image == 255)
+    assert blank_state is not None
+    assert not blank_state.is_full_display
+    assert np.all(blank_state.image == 0)
+
+
+def test_virtual_dmd_can_mirror_controller_startup_without_overwriting_it(tmp_path):
+    controller = VirtualDmdPeripheralController()
+    dmd = DmdFactory.create(
+        make_dmd_config(tmp_path, BindingType.VIRTUAL),
+        peripheral_controllers=[controller],
+    )
+    controller.initialise()
+    dmd.synchronise_display_state()
+    state = dmd.last_display_state
+
+    assert state is not None
+    assert state.is_full_display
+    assert np.all(state.image == 255)
+
+
 def test_dmd_factory_raises_for_missing_controller():
     with pytest.raises(ValueError, match="EmDmdWindowPeripheralController is required"):
         DmdFactory.create(DmdConfig(binding=BindingType.EM_DMD_WINDOW), peripheral_controllers=[])
@@ -574,14 +608,34 @@ def test_em_dmd_window_binding_sends_transposed_image_bytes(tmp_path):
     assert fake_socket.sent[-1] == img.transpose().tobytes()
 
 
-def test_em_dmd_window_initialise_blanks_display_after_connection_test():
+def test_em_dmd_window_initialise_reads_white_default_without_overwriting_it():
     fake_socket = FakeSocket()
     controller = EmDmdWindowPeripheralController(socket_obj=fake_socket, debug_mode=False)
 
+    assert np.all(controller.get_display_image() == 255)
+
     controller.initialise()
 
-    assert len(fake_socket.sent) == 2
-    assert fake_socket.sent[-1] == np.zeros(DMD_WIDTH_HEIGHT, dtype=np.uint8).transpose().tobytes()
+    assert len(fake_socket.sent) == 1
+    assert np.all(controller.get_display_image() == 255)
+
+
+def test_em_dmd_window_dmd_initialise_mirrors_window_without_sending_image(tmp_path):
+    fake_socket = FakeSocket()
+    controller = EmDmdWindowPeripheralController(socket_obj=fake_socket, debug_mode=False)
+    dmd = EmDmdWindowDmd(
+        peripheral_ctrl=controller,
+        width_height_DMD=DMD_WIDTH_HEIGHT,
+        width_height_CAM=(2, 3),
+        calibration_file=make_calibration_file(tmp_path),
+    )
+    dmd.initialise()
+    state = dmd.last_display_state
+
+    assert len(fake_socket.sent) == 1
+    assert state is not None
+    assert state.is_full_display
+    assert np.all(state.image == 255)
 
 
 def test_pygame_binding_displays_through_pygame_controller(tmp_path):

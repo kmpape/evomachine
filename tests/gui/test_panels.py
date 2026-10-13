@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (
 from evomachine.gui.docks import controls as controls_module
 from evomachine.gui.docks.controls import EvoMachineControlsDock
 from evomachine.gui.panels.acquisition import (
+    ACQUISITION_LED_TYPES,
     FrameAcquisitionSettingsPanel,
     ManualAcquisitionPanel,
     OutputDirectoryPanel,
@@ -30,6 +31,12 @@ from evomachine.gui.panels.acquisition import (
 )
 from evomachine.gui.panels.autofocus import AutofocusPanel
 from evomachine.gui.panels.camera import CameraPanel
+from evomachine.gui.panels.common import (
+    NoWheelComboBox,
+    NoWheelDoubleSpinBox,
+    NoWheelSpinBox,
+)
+from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
 from evomachine.gui.panels.dmd import DmdPanel
 from evomachine.gui.panels.filterwheel import FilterWheelPanel
 from evomachine.gui.panels.leds import LedManagerPanel
@@ -42,6 +49,14 @@ from evomachine.types import FilterWheelType, LEDType
 
 
 _QT_APP: QApplication | None = None
+
+
+class FakeWheelEvent:
+    def __init__(self):
+        self.ignored = False
+
+    def ignore(self) -> None:
+        self.ignored = True
 
 
 class FakeController(QObject):
@@ -236,8 +251,12 @@ class FakeController(QObject):
     def cancel_strategy_generation(self):
         self.calls.append(("cancel_strategy_generation",))
 
-    def configure_autostrat(self, api_key):
-        self.calls.append(("configure_autostrat", api_key))
+    def configure_autostrat(
+            self, *, api_key, provider, model, base_url, preset
+    ):
+        self.calls.append(
+            ("configure_autostrat", api_key, provider, model, base_url, preset)
+        )
 
     def refresh_strategy_generation(self):
         self.calls.append(("refresh_strategy_generation",))
@@ -271,6 +290,39 @@ def _app():
     global _QT_APP
     _QT_APP = QApplication.instance() or _QT_APP or QApplication([])
     return _QT_APP
+
+
+def test_config_inputs_ignore_wheel_events() -> None:
+    _app()
+    dialog = ConfigDialog(
+        title="Wheel-safe inputs",
+        fields=[
+            ConfigFieldSpec("Integer", "integer", 3, kind="int"),
+            ConfigFieldSpec("Float", "float", 2.5, kind="float"),
+            ConfigFieldSpec(
+                "Choice",
+                "choice",
+                "second",
+                kind="choice",
+                choices=("first", "second"),
+            ),
+        ],
+    )
+    expected_types = {
+        "integer": NoWheelSpinBox,
+        "float": NoWheelDoubleSpinBox,
+        "choice": NoWheelComboBox,
+    }
+
+    for key, expected_type in expected_types.items():
+        widget = dialog._widgets[key]
+        event = FakeWheelEvent()
+        value_before = ConfigDialog._widget_value(widget)
+
+        assert isinstance(widget, expected_type)
+        widget.wheelEvent(event)
+        assert event.ignored
+        assert ConfigDialog._widget_value(widget) == value_before
 
 
 def test_controls_dock_keeps_main_controls_beside_workflow_tabs(monkeypatch) -> None:
@@ -456,10 +508,11 @@ def test_stage_panel_updates_absolute_position_and_targets_from_movement_result(
     )
 
     assert panel.coordinate_label.text() == (
-        "Current absolute position: x: 10.5, y: -20.25, z: 30.0"
+        "Current absolute position: x: 11, y: -20, z: 30"
     )
-    assert panel.absolute_x_input.value() == 10.5
-    assert panel.absolute_y_input.value() == -20.25
+    assert panel.absolute_x_input.decimals() == 0
+    assert panel.absolute_x_input.value() == 11
+    assert panel.absolute_y_input.value() == -20
     assert panel.absolute_z_input.value() == 30.0
 
 
@@ -608,6 +661,18 @@ def test_acquisition_config_does_not_offer_unknown_filter_wheel() -> None:
     filter_field = next(field for field in panel._config_fields() if field.key == "filter_wheel")
 
     assert FilterWheelType.UNKNOWN.name not in filter_field.choices
+
+
+def test_led_controls_and_acquisition_channels_default_to_ten_percent() -> None:
+    _app()
+    led_panel = LedManagerPanel(controller=FakeController())
+    acquisition_panel = FrameAcquisitionSettingsPanel()
+
+    assert all(spin_box.value() == 10.0 for spin_box in led_panel.brightness_inputs.values())
+    assert all(
+        acquisition_panel.config_values[acquisition_panel._led_brightness_key(led_type)] == 10.0
+        for led_type in ACQUISITION_LED_TYPES
+    )
 
 
 def test_z_stack_panel_sends_request() -> None:
@@ -864,7 +929,7 @@ def test_led_panel_toggles_one_led_off() -> None:
     panel.led_buttons[LEDType.LED_450_NM].setChecked(False)
 
     assert controller.calls == [
-        ("set_led", "LED_450_NM", 29.0, None),
+        ("set_led", "LED_450_NM", 10.0, None),
         ("disable_led", "LED_450_NM"),
     ]
 
@@ -1014,12 +1079,10 @@ def test_autofocus_panel_sends_lock_request() -> None:
     assert controller.calls == [("lock_autofocus",)]
 
 
-def test_autofocus_panel_resets_offset_only_while_ready_and_unlocked() -> None:
+def test_autofocus_panel_has_read_only_crisp_error_without_offset_reset_control() -> None:
     _app()
-    controller = FakeController()
-    panel = AutofocusPanel(controller=controller)
+    panel = AutofocusPanel(controller=FakeController())
     panel.update_lifecycle_status({"devices_initialised": True})
-    assert not panel.reset_offset_button.isEnabled()
 
     panel.update_status({
         "is_initialised": True,
@@ -1029,34 +1092,8 @@ def test_autofocus_panel_resets_offset_only_while_ready_and_unlocked() -> None:
         "live_error": 42,
         "calibration_result": {"success": True},
     })
-    assert panel.reset_offset_button.isEnabled()
-    assert panel.live_error_label.text() == "live focus error: 42"
-
-    panel.reset_offset_button.click()
-    assert controller.calls == [("reset_autofocus_offset",)]
-
-    panel.update_status({
-        "is_initialised": True,
-        "is_alive": True,
-        "is_locked": False,
-        "status": {"name": "READY", "value": "R"},
-        "live_error": 0,
-        "calibration_result": {"success": True},
-        "offset_reset": True,
-        "offset_reset_response": ":A",
-    })
-    assert panel.live_error_label.text() == "live focus error: 0"
-    assert panel.status_label.text() == (
-        "CRISP offset reset at the current focus. Controller response: :A"
-    )
-
-    panel.update_status({
-        "is_initialised": True,
-        "is_alive": True,
-        "is_locked": True,
-        "status": {"name": "IN_FOCUS", "value": "F"},
-    })
-    assert not panel.reset_offset_button.isEnabled()
+    assert not hasattr(panel, "reset_offset_button")
+    assert panel.live_error_label.text() == "Current CRISP error (last refresh): 42"
 
 
 def test_autofocus_panel_sends_config_request(monkeypatch) -> None:
@@ -1067,7 +1104,7 @@ def test_autofocus_panel_sends_config_request(monkeypatch) -> None:
     def edit_config(dialog):
         na_widget = dialog._widgets["objective_na"]
         assert na_widget.isEnabled()
-        assert na_widget.value() == 0.95
+        assert na_widget.value() == 0.9
         na_widget.setValue(1.4)
         dialog._widgets["led_intensity"].setValue(80)
         return dialog.Accepted
@@ -1081,12 +1118,12 @@ def test_autofocus_panel_sends_config_request(monkeypatch) -> None:
         (
             "configure_autofocus",
             {
-                "averaging": 0,
+                "averaging": 5,
                 "led_intensity": 80,
                 "objective_na": 1.4,
-                "lock_range": 0.025,
-                "loop_gain": 5,
-                "update_rate": 100,
+                "lock_range": 0.1,
+                "loop_gain": 10,
+                "update_rate": 10,
                 "min_error": 100,
                 "min_snr": 2.0,
             },
@@ -1106,19 +1143,20 @@ def test_autofocus_panel_sends_calibration_request() -> None:
             "initialise_autofocus",
             True,
             {
-                "averaging": 0,
-                "led_intensity": 95,
-                "lock_range": 0.025,
-                "loop_gain": 5,
-                "update_rate": 100,
+                "averaging": 5,
+                "led_intensity": 70,
+                "lock_range": 0.1,
+                "loop_gain": 10,
+                "update_rate": 10,
                 "min_error": 100,
-                "objective_na": 0.95,
+                "objective_na": 0.9,
                 "min_snr": 2.0,
             },
         ),
     ]
     assert panel.state_label.text() == "status: Calibrating"
     assert panel.diagnostics_label.text() == "calibration: in progress"
+    assert panel.calibration_stage_labels[0].text() == "● Apply configuration"
 
     panel.cancel_calibration_button.click()
     assert controller.calls[-1] == ("cancel_autofocus_calibration",)
@@ -1131,7 +1169,18 @@ def test_autofocus_panel_sends_calibration_request() -> None:
     })
     assert panel.state_label.text() == "status: Calibration cancelled"
     assert panel.diagnostics_label.text() == "calibration: cancelled"
+    assert panel.calibration_stage_labels[0].text() == "— Apply configuration"
     assert controller.calls[-1] == ("refresh_autofocus",)
+
+    panel.update_status({
+        "is_initialised": True,
+        "is_alive": True,
+        "is_locked": False,
+        "status": {"name": "READY", "value": "R"},
+        "calibration_result": {"success": True, "cancelled": False},
+    })
+    assert panel.state_label.text() == "status: Calibration cancelled"
+    assert panel.diagnostics_label.text() == "calibration: cancelled"
 
 
 def test_autofocus_panel_maps_crisp_status_and_displays_calibration_diagnostics() -> None:
@@ -1154,7 +1203,7 @@ def test_autofocus_panel_maps_crisp_status_and_displays_calibration_diagnostics(
     panel.update_status(payload)
     assert panel.state_label.text() == "status: Calibrated"
     assert "SNR 10" in panel.diagnostics_label.text()
-    assert "dither error 200" in panel.diagnostics_label.text()
+    assert "calibration measurement 200" in panel.diagnostics_label.text()
 
     payload["status"] = {"name": "ERROR", "value": "E"}
     panel.update_status(payload)
@@ -1577,6 +1626,15 @@ def test_fov_setup_panel_requires_endpoints_and_camera_spacing() -> None:
     assert panel.set_linear_start_button.isEnabled()
 
 
+def test_fov_setup_explains_selected_and_physical_fov_identity() -> None:
+    _app()
+    panel = FovSetupPanel(controller=FakeController())
+
+    assert "Selected FoV" in panel.fov_identity_hint.text()
+    assert "does not move" in panel.fov_identity_hint.text()
+    assert "physical position" in panel.fov_identity_hint.text()
+
+
 def test_fov_setup_uses_append_remove_last_and_read_only_rows() -> None:
     _app()
     controller = FakeController()
@@ -1745,20 +1803,60 @@ def test_fov_capture_ignores_unrelated_request_errors() -> None:
     panel.close()
 
 
-@pytest.mark.parametrize("key,accepted,expected", [("", True, ""), ("unused", False, ""), (" test-key ", True, "test-key")])
-def test_startup_api_key_prompt_is_masked_and_optional(monkeypatch, key, accepted, expected) -> None:
-    from PyQt5.QtWidgets import QInputDialog, QLineEdit
-    from evomachine.gui.napari_app import prompt_autostrat_api_key
+def test_startup_autostrat_dialog_prefills_robin_and_masks_key() -> None:
+    from PyQt5.QtWidgets import QLineEdit
+    from evomachine.gui.autostrat_dialog import AutoStratConfigurationDialog
+
+    _app()
+    dialog = AutoStratConfigurationDialog()
+
+    assert dialog.preset_combo.currentData() == "robin-office-2"
+    assert dialog.provider_combo.currentData() == "openai-compatible"
+    assert dialog.model_input.text() == "qwen3.6"
+    assert dialog.base_url_input.text() == "https://robin-office-2.tail32bb7.ts.net/v1"
+    assert dialog.api_key_input.echoMode() == QLineEdit.Password
+
+
+def test_startup_autostrat_dialog_clears_robin_values_for_anthropic() -> None:
+    from evomachine.gui.autostrat_dialog import AutoStratConfigurationDialog
+
+    _app()
+    dialog = AutoStratConfigurationDialog()
+
+    dialog.provider_combo.setCurrentIndex(
+        dialog.provider_combo.findData("anthropic")
+    )
+
+    assert dialog.preset_combo.currentData() == "custom"
+    assert dialog.model_input.text() == ""
+    assert dialog.base_url_input.text() == ""
+    assert "Anthropic" in dialog.base_url_input.placeholderText()
+
+
+@pytest.mark.parametrize("accepted,expected_key", [(True, "test-key"), (False, "")])
+def test_startup_autostrat_dialog_sends_session_configuration(
+        monkeypatch, accepted, expected_key
+) -> None:
+    from evomachine.gui.autostrat_dialog import (
+        AutoStratConfigurationDialog,
+        prompt_autostrat_configuration,
+    )
 
     _app()
     controller = FakeController()
 
-    def get_text(parent, title, message, echo_mode):
-        assert echo_mode == QLineEdit.Password
-        assert "Leave blank and press Enter" in message
-        assert "disable AI generation" in message
-        return key, accepted
+    def execute(dialog):
+        dialog.api_key_input.setText(" test-key ")
+        return dialog.Accepted if accepted else dialog.Rejected
 
-    monkeypatch.setattr(QInputDialog, "getText", get_text)
-    prompt_autostrat_api_key(controller)
-    assert controller.calls == [("configure_autostrat", expected)]
+    monkeypatch.setattr(AutoStratConfigurationDialog, "exec_", execute)
+    prompt_autostrat_configuration(controller)
+
+    assert controller.calls == [(
+        "configure_autostrat",
+        expected_key,
+        "openai-compatible",
+        "qwen3.6",
+        "https://robin-office-2.tail32bb7.ts.net/v1",
+        "robin-office-2",
+    )]

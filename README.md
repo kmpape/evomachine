@@ -268,8 +268,8 @@ uv run python scripts/launch_virtual_gui.py --port 0 --no-napari
 ### AutoStrat schema 9 integration
 
 In the GUI's Strategy Setup panel, choose **AutoStrat**, enter a prompt and click
-**Generate strategy**. Generation and semantic verification run on a background worker,
-independently of hardware operations. Review or edit the strategy code (or use **Expand DSL**) and
+**Generate strategy**. Generation and semantic verification run independently of hardware
+operations. Review or edit the strategy code (or use **Expand DSL**) and
 enable **Show generation diagnostics** for the same candidate/revision/error report as
 the quick notebook. Internal retry counts not exposed by AutoStrat are explicitly marked
 unavailable, not reported as zero.
@@ -288,14 +288,17 @@ eligibility until an accepted result is available. Generated acquisitions save t
 configured Output Folder. Detection/segmentation still require configured DeLTA models
 and a suitable segmentation channel; generation itself never loads those models.
 
-At GUI startup, an optional **masked API-key dialog** enables AI generation for that session.
-Leave it blank and press Enter, or Cancel, to disable generation; Python strategies, `.strat`
-editing, and hardware controls remain available. Skipping also disables use of any inherited
-environment key.
-The key is held in backend process memory only, not saved to a file or echoed in responses.
-Restart the GUI to enter a key after skipping. `OPENAI_BASE_URL` and `AUTOSTRAT_MODEL_ID`
-remain optional backend environment settings; defaults match the notebook's Robin endpoint
-and `qwen3.6` model. Use the default local GUI connection when supplying credentials.
+At GUI startup, the **AutoStrat model configuration** dialog selects a setup, provider,
+model, optional base URL and masked API key. **Robin Office 2** prefills its
+OpenAI-compatible endpoint and `qwen3.6` model; **Custom** supports another
+OpenAI-compatible endpoint or Anthropic. Leave the key blank or choose **Continue without
+AI** to disable generation; Python strategies, `.strat` editing and hardware controls remain
+available. The key is held in backend process memory only, is not saved, and is never echoed
+in status responses. The default local GUI connection should be used when supplying credentials.
+
+Notebook and other non-GUI callers may continue to use `AUTOSTRAT_MODEL_ID` with
+`OPENAI_API_KEY`/`OPENAI_BASE_URL`, or an `anthropic:` model with
+`ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL`.
 
 For a lean prompt → DSL test, open
 [`notebooks/quick_autostrat.ipynb`](notebooks/quick_autostrat.ipynb) with the EvoMachine

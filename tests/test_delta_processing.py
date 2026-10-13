@@ -356,7 +356,8 @@ def test_failed_or_wrong_fov_projection_does_not_record_or_retry():
 def test_processed_image_populates_collections_and_projects_one_pattern_per_fov(separate_detection):
     automaton, *_ = make_automaton(delta_processor=backend())
 
-    def move(fov_id, manage_focus=True):
+    def move(fov_id, manage_focus=True, stop_event=None):
+        del stop_event
         automaton.focus_nav.current_fov_id = fov_id
         return FocusNavigatorFovRecord(
             fov_id=fov_id,

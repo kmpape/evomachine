@@ -123,12 +123,14 @@ domain validation before Set can install it. Generation only prepares a candidat
 installs it; Start is an explicit separate action. A changed prompt invalidates the prior
 candidate for installation, and generation IDs prevent installing stale results.
 
-The startup prompt in `napari_app.py` sends an optional masked API key through
-`AUTOSTRAT_CONFIGURE`. Blank Enter/Cancel disables AI generation even if an environment
-key was inherited; local `.strat` workflows remain enabled. The key is held in backend process memory, not saved or returned
-in status. Do not log request payloads containing credentials. This RPC connection
-is not a credential-security boundary: use the default local connection; do not
-expose it on an untrusted network.
+The startup dialog sends a provider, model, optional base URL and masked API key through
+`AUTOSTRAT_CONFIGURE`. The Robin Office 2 preset contains only non-secret connection
+metadata; custom OpenAI-compatible and Anthropic sessions are supported. Blank Apply or
+Continue without AI disables generation even if an environment key was inherited; local
+`.strat` workflows remain enabled. The key is held in backend process memory, passed only
+to the disposable generation process, and is not saved or returned in status. Do not log
+request payloads containing credentials. This RPC connection is not a credential-security
+boundary: use the default local connection; do not expose it on an untrusted network.
 
 Model/endpoint configuration and generation pipeline construction live in
 `gui/strategy_generation.py`. Reuse `strategy_generation/preview.py` for notebook-

@@ -6,7 +6,6 @@ from typing import Any
 
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
-    QComboBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -17,6 +16,7 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.gui.image_payloads import IMAGE_TRANSPORT_SOCKET_TIFF
+from evomachine.gui.panels.common import NoWheelComboBox
 from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
 from evomachine.gui.panels.leds import LED_GROUPS, LED_LABELS
 from evomachine.types import FilterWheelType, LEDType
@@ -228,7 +228,7 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
         values.update({key: default for key, _label, default in cls.SETTINGS})
         for led_type in ACQUISITION_LED_TYPES:
             values[cls._led_enabled_key(led_type)] = False
-            values[cls._led_brightness_key(led_type)] = 29.0
+            values[cls._led_brightness_key(led_type)] = 10.0
         return values
 
     def _explicit_peripheral_payload(self) -> dict[str, Any]:
@@ -474,7 +474,7 @@ class SavedImageLoaderPanel(QGroupBox):
     def __init__(self, controller, parent: QWidget | None = None):
         super().__init__("Load Saved Images", parent)
         self.controller = controller
-        self.file_combo = QComboBox()
+        self.file_combo = NoWheelComboBox()
         self.loading_directory = ""
         self.force_socket_transport = False
         self.refresh_button = QPushButton("Refresh Images")

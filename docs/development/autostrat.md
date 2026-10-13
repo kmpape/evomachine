@@ -31,9 +31,9 @@ Initialise variables persist; step-local values are recreated on each step. Keep
 strategy calculations in the language where possible; retain acquisition results,
 tracking state and treatment history in the application.
 
-The GUI uses `gui/strategy_generation.py` and `GenerationPreview` to generate in a
-background worker, then installs an `AutoStratStrategy` only when Set Strategy is
-pressed. `StrategyGenerationService` is a separate programmatic entry point; its
+The GUI uses `gui/strategy_generation.py` and `GenerationPreview` in a disposable
+generation process, then installs an `AutoStratStrategy` only when Set Strategy is pressed.
+`StrategyGenerationService` is a separate programmatic entry point; its
 providers are shared and it is intended for one active strategy at a time. Do not
 assume it is the GUI's generation path.
 

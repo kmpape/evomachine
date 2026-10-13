@@ -369,8 +369,25 @@ class EvoMachineGuiController(QObject):
     def cancel_strategy_generation(self) -> None:
         self._send(GuiCommandType.STRATEGY_GENERATION_CANCEL)
 
-    def configure_autostrat(self, api_key: str) -> None:
-        self._send(GuiCommandType.AUTOSTRAT_CONFIGURE, {"api_key": api_key})
+    def configure_autostrat(
+            self,
+            *,
+            api_key: str,
+            provider: str,
+            model: str,
+            base_url: str | None,
+            preset: str,
+    ) -> None:
+        self._send(
+            GuiCommandType.AUTOSTRAT_CONFIGURE,
+            {
+                "api_key": api_key,
+                "provider": provider,
+                "model": model,
+                "base_url": base_url,
+                "preset": preset,
+            },
+        )
 
     def refresh_strategy_generation(self) -> None:
         self._send(GuiCommandType.STRATEGY_GENERATION_STATUS)
@@ -466,6 +483,9 @@ class EvoMachineGuiController(QObject):
             self.filter_wheel_status_received.emit(payload["filter_wheel"])
         if "leds" in payload:
             self.led_list_received.emit(payload["leds"])
+        if "led_states" in payload:
+            for state in payload["led_states"]:
+                self.led_state_received.emit(state)
         if "state" in payload:
             self.led_state_received.emit(payload["state"])
         if "dmd" in payload:

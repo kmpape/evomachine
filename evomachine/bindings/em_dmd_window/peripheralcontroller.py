@@ -75,6 +75,13 @@ class EmDmdWindowPeripheralController(SocketPeripheralController):
         self.connect_socket: bool = socket_obj is None if connect_socket is None else connect_socket
         self.s: Any = socket_obj or socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._process: subprocess.Popen | None = process
+        # em_dmd_window paints INIT_VALUE=255 before accepting a socket
+        # connection, so its observable startup state is full white.
+        self._display_image: np.ndarray | None = np.full(
+            DMD_WIDTH_HEIGHT,
+            255,
+            dtype=np.uint8,
+        )
         self.errors: list[str] = []
         super().__init__(name=name, close_on_shutdown=close_on_shutdown)
 
@@ -93,6 +100,13 @@ class EmDmdWindowPeripheralController(SocketPeripheralController):
         if self.debug_mode:
             return
         self.s.sendall(img.transpose().tobytes())
+        self._display_image = np.ascontiguousarray(img).copy()
+
+    def get_display_image(self) -> np.ndarray | None:
+        """Return the most recently known image shown by the DMD window."""
+        if self._display_image is None:
+            return None
+        return self._display_image.copy()
 
     def _get_socket_controller(self) -> EmDmdWindowPeripheralController:
         return self
@@ -141,11 +155,10 @@ class EmDmdWindowPeripheralController(SocketPeripheralController):
             self._connect_socket()
             if not self._connection_test():
                 return False
-            # The standalone display process starts white. Send an explicit
-            # black frame as soon as the socket handshake succeeds so the
-            # physical DMD and EvoMachine's initial blank state agree.
-            self.send_image(np.zeros(DMD_WIDTH_HEIGHT, dtype=np.uint8))
-            logger.info("EmDmdWindowPeripheralController.initialise: DMD display blanked.")
+            # The DMD window defines its own post-handshake state as full
+            # white. Record that state for GUI readback without overwriting it.
+            self._display_image = np.full(DMD_WIDTH_HEIGHT, 255, dtype=np.uint8)
+            logger.info("EmDmdWindowPeripheralController.initialise: DMD display is full white.")
             return True
         except Exception as error:
             msg = f"Error initialising DMD socket backend: {error}"

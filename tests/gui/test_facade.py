@@ -188,6 +188,7 @@ class FakeDmd:
         self.image = None
         self.pattern_warps = []
         self.loaded_image_info = None
+        self.synchronise_display_state_count = 0
 
     def is_initialised(self):
         return True
@@ -200,6 +201,9 @@ class FakeDmd:
 
     def is_calibrated(self):
         return self.calibrated
+
+    def synchronise_display_state(self):
+        self.synchronise_display_state_count += 1
 
     def get_calibration_filename(self):
         return self.calibration_filename
@@ -299,6 +303,8 @@ class FakeAutofocus:
         self.calls = []
         self.last_calibration_result = None
         self.live_error = 25.0
+        self.calibration_prepared = False
+        self.calibration_cancelled_marked = False
 
     def is_initialised(self):
         self.last_calibration_result = AutofocusCalibrationResult(
@@ -337,9 +343,25 @@ class FakeAutofocus:
             progress_callback(0.5, "calibrating")
         self.calls.append(("run_calibration", config, lock_after_calibration))
         self.status = AutoFocusStatusType.READY
+        self.last_calibration_result = AutofocusCalibrationResult(
+            success=True,
+            measurements={"snr": 10.0, "error": 200.0},
+        )
         if lock_after_calibration:
             self.lock()
-        return True
+        return self.last_calibration_result
+
+    def prepare_calibration(self):
+        self.calibration_prepared = True
+        self.last_calibration_result = None
+
+    def mark_calibration_cancelled(self):
+        self.calibration_cancelled_marked = True
+        self.last_calibration_result = AutofocusCalibrationResult(
+            success=False,
+            failure_reason="Calibration cancelled.",
+            cancelled=True,
+        )
 
     def initialise_autofocus(self, config=None, lock_after_initialise=False):
         return self.run_calibration(config=config, lock_after_calibration=lock_after_initialise)
@@ -590,7 +612,7 @@ def test_long_dmd_operation_can_be_polled_cancelled_and_followed_by_requests() -
     assert status.payload["operation"]["state"] == "running"
     assert status.payload["operation"]["progress"] == 0.5
     assert facade.handle(GuiRequest(command=GuiCommandType.PING)).ok
-    assert not facade.handle(GuiRequest(command=GuiCommandType.DMD_STATUS)).ok
+    assert facade.handle(GuiRequest(command=GuiCommandType.DMD_STATUS)).ok
     assert not facade.handle(
         GuiRequest(command=GuiCommandType.AUTOFOCUS_INITIALISE)
     ).ok
@@ -1013,7 +1035,39 @@ def test_facade_initialise_devices_initialises_controllers_first() -> None:
     assert automaton.devices_initialised is True
     assert shared_controller.initialise_count == 1
     assert dmd_controller.initialise_count == 1
+    assert automaton.acq_mngr.dmd.synchronise_display_state_count == 1
+    assert response.payload["coordinate"] == {"x": 1, "y": 2, "z": 3, "channel_id": 0}
+    assert response.payload["camera"]["name"] == "Fake Camera"
+    assert response.payload["leds"] == ["LED_450_NM"]
+    assert response.payload["led_states"] == [{
+        "led": "LED_450_NM",
+        "brightness": 0.0,
+        "is_on": False,
+        "stop_time": None,
+    }]
+    assert response.payload["filter_wheel"]["current_filter"]["name"] == "NO_FILTER"
+    assert response.payload["dmd"]["name"] == "Fake DMD"
+    assert response.payload["autofocus"]["name"] == "Fake Autofocus"
+    assert response.payload["software_focus"]["available"] is True
     assert [controller["connected"] for controller in response.payload["controllers"]] == [True, True]
+
+
+def test_facade_initialise_devices_keeps_optional_status_failures_as_warnings(monkeypatch) -> None:
+    automaton = FakeAutomaton(devices_initialised=False)
+    facade = AutomatonGuiFacade(automaton)
+    monkeypatch.setattr(
+        facade,
+        "gui_autofocus_status_payload",
+        lambda: (_ for _ in ()).throw(RuntimeError("CRISP not ready")),
+    )
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.INITIALISE_DEVICES))
+
+    assert response.ok
+    assert automaton.devices_initialised is True
+    assert response.payload["initialisation_warnings"] == [
+        "autofocus: RuntimeError: CRISP not ready"
+    ]
 
 
 def test_facade_shutdown_closes_controllers_and_reports_status() -> None:
@@ -1108,6 +1162,49 @@ def test_facade_handles_autofocus_requests() -> None:
     response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_DISABLE))
     assert response.ok
     assert response.payload["autofocus"]["status"]["name"] == "IDLE"
+
+
+def test_facade_autofocus_cancellation_is_recorded_as_cancelled() -> None:
+    automaton = FakeAutomaton()
+    autofocus = automaton.focus_nav.autofocus
+    facade = AutomatonGuiFacade(automaton)
+    started = threading.Event()
+
+    def blocking_calibration(
+            config=None,
+            lock_after_calibration=False,
+            stop_event=None,
+            progress_callback=None,
+    ):
+        started.set()
+        if progress_callback is not None:
+            progress_callback(0.45, "Running CRISP log calibration.")
+        assert stop_event is not None
+        assert stop_event.wait(1.0)
+        result = AutofocusCalibrationResult(
+            success=False,
+            failure_reason="Calibration cancelled.",
+            cancelled=True,
+        )
+        autofocus.last_calibration_result = result
+        return result
+
+    autofocus.run_calibration = blocking_calibration
+    response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_INITIALISE))
+    assert response.ok
+    assert started.wait(1.0)
+
+    response = facade.handle(
+        GuiRequest(command=GuiCommandType.AUTOFOCUS_CANCEL_CALIBRATION)
+    )
+    assert response.ok
+    assert autofocus.calibration_cancelled_marked
+    assert wait_for_operation(facade, "autofocus_calibration")["state"] == "cancelled"
+
+    response = facade.handle(GuiRequest(command=GuiCommandType.AUTOFOCUS_STATUS))
+    result = response.payload["autofocus"]["calibration_result"]
+    assert result["success"] is False
+    assert result["cancelled"] is True
 
 
 def test_facade_handles_software_focus_requests() -> None:
@@ -1211,6 +1308,38 @@ def test_blocking_software_focus_keeps_ping_and_stop_responsive() -> None:
     assert wait_for_operation(facade, "software_focus")["state"] == "cancelled"
 
 
+def test_stop_cancels_focus_navigation_before_focus_work_continues() -> None:
+    automaton = FakeAutomaton()
+    facade = AutomatonGuiFacade(automaton)
+    started = threading.Event()
+
+    def blocking_move(fov_id, manage_focus=True, stop_event=None):
+        del manage_focus
+        started.set()
+        assert stop_event is not None
+        stop_event.wait(timeout=1)
+        return SimpleNamespace(
+            fov_id=fov_id,
+            is_locked=False,
+            refocusing=False,
+            software_focus_status=FocusStatusType.UNKNOWN,
+            skipped=True,
+            skip_reason="Focus navigation cancelled.",
+        )
+
+    automaton.focus_nav.move = blocking_move
+    response = facade.handle(GuiRequest(
+        command=GuiCommandType.FOV_MOVE,
+        payload={"fov_id": 0},
+    ))
+
+    assert response.ok
+    assert started.wait(timeout=1)
+    assert facade.handle(GuiRequest(command=GuiCommandType.STAGE_STATUS)).ok
+    assert facade.handle(GuiRequest(command=GuiCommandType.STOP)).ok
+    assert wait_for_operation(facade, "focus_navigation")["state"] == "cancelled"
+
+
 def test_stop_remains_responsive_during_long_z_stack() -> None:
     automaton = FakeAutomaton()
     facade = AutomatonGuiFacade(automaton)
@@ -1234,6 +1363,41 @@ def test_stop_remains_responsive_during_long_z_stack() -> None:
     stop_response = facade.handle(GuiRequest(command=GuiCommandType.STOP))
     assert stop_response.ok
     assert wait_for_operation(facade, "z_stack_acquisition")["state"] == "cancelled"
+
+
+def test_shutdown_cancels_long_z_stack_before_closing_controllers() -> None:
+    automaton = FakeAutomaton()
+    facade = AutomatonGuiFacade(automaton)
+    started = threading.Event()
+
+    def blocking_z_stack(frame_metadata, z_coordinates, settings=None, stop_event=None):
+        del frame_metadata, z_coordinates, settings
+        started.set()
+        assert stop_event is not None
+        stop_event.wait(timeout=1)
+        return Frame(
+            frame_metadata=[SimpleNamespace(fov_id=0)],
+            array=np.zeros((1, 1, 1)),
+            saved_paths=[None],
+        )
+
+    automaton.acq_mngr.take_z_stack = blocking_z_stack
+    response = facade.handle(GuiRequest(
+        command=GuiCommandType.ACQUISITION_TAKE_Z_STACK,
+        payload={"start_z": 0, "end_z": 1, "step_z": 1, "image_transport": IMAGE_TRANSPORT_RAW},
+    ))
+
+    assert response.ok
+    assert started.wait(timeout=1)
+    assert facade.handle(GuiRequest(command=GuiCommandType.CONTROLLER_STATUS)).ok
+    shutdown = facade.handle(GuiRequest(command=GuiCommandType.SHUTDOWN))
+    assert shutdown.ok
+    assert wait_for_operation(facade, "z_stack_acquisition")["state"] == "cancelled"
+    assert automaton.shutdown_count == 1
+    assert all(
+        controller["connected"] is False
+        for controller in shutdown.payload["controllers"]
+    )
 
 
 def test_second_stage_movement_is_rejected_until_first_stops() -> None:

@@ -36,7 +36,9 @@ class HardwareGuiRuntimeSettings:
     filter_card_address: int = 8
     dmd_width: int = DMD_WIDTH_HEIGHT[0]
     dmd_height: int = DMD_WIDTH_HEIGHT[1]
-    dmd_calibration_file: Path = EVOMACHINE_DIR / "evomachine" / "dmd_calibration_data.pkl"
+    dmd_calibration_file: Path = (
+        EVOMACHINE_DIR / "calibration_data" / "dmd" / "dmd_calibration_data_2025-08-14_v2.pkl"
+    )
     output_directory: Path = DATA_DIR
     use_dmd: bool = True
     use_kwr103: bool = True

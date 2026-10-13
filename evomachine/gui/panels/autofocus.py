@@ -18,25 +18,34 @@ from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
 class AutofocusPanel(QGroupBox):
     """Hardware autofocus controls."""
 
+    CALIBRATION_STAGES = (
+        ("Apply configuration", 0.0),
+        ("Set offset", 0.25),
+        ("Log calibration", 0.45),
+        ("Dither calibration", 0.70),
+        ("Set gain", 0.90),
+        ("Return to Ready", 0.99),
+    )
+
     CONFIG_FIELDS = (
-        ConfigFieldSpec("Averaging", "averaging", 0, kind="int", minimum=0, maximum=99),
-        ConfigFieldSpec("LED intensity", "led_intensity", 95, kind="int", minimum=2, maximum=100),
+        ConfigFieldSpec("Averaging", "averaging", 5, kind="int", minimum=0, maximum=99),
+        ConfigFieldSpec("LED intensity", "led_intensity", 70, kind="int", minimum=2, maximum=100),
         ConfigFieldSpec(
             "Lock range",
             "lock_range",
-            0.025,
+            0.1,
             kind="float",
             minimum=0.001,
             maximum=0.999,
             decimals=3,
             single_step=0.005,
         ),
-        ConfigFieldSpec("Loop gain", "loop_gain", 5, kind="int", minimum=1, maximum=100),
-        ConfigFieldSpec("Update rate", "update_rate", 100, kind="int", minimum=0, maximum=1000),
+        ConfigFieldSpec("Loop gain", "loop_gain", 10, kind="int", minimum=1, maximum=100),
+        ConfigFieldSpec("Update rate", "update_rate", 10, kind="int", minimum=0, maximum=1000),
         ConfigFieldSpec(
             "Objective NA",
             "objective_na",
-            0.95,
+            0.9,
             kind="float",
             minimum=0.01,
             maximum=9.999,
@@ -53,7 +62,14 @@ class AutofocusPanel(QGroupBox):
             decimals=2,
             single_step=0.1,
         ),
-        ConfigFieldSpec("Minimum error", "min_error", 100, kind="int", minimum=0, maximum=100000),
+        ConfigFieldSpec(
+            "Minimum absolute calibration measurement",
+            "min_error",
+            100,
+            kind="int",
+            minimum=0,
+            maximum=100000,
+        ),
     )
 
     def __init__(self, controller, parent: QWidget | None = None):
@@ -62,12 +78,13 @@ class AutofocusPanel(QGroupBox):
         self.devices_initialised = False
         self.strategy_running = False
         self.calibration_running = False
-        self.autofocus_ready = False
+        self.calibration_progress = 0.0
+        self.calibration_terminal_state: str | None = None
         self.autofocus_locked = False
         self.status_label = QLabel("Run Initialise Devices before using autofocus controls.")
         self.status_label.setWordWrap(True)
         self.state_label = QLabel("status: -")
-        self.live_error_label = QLabel("live focus error: -")
+        self.live_error_label = QLabel("Current CRISP error (last refresh): -")
         self.diagnostics_label = QLabel("calibration: -")
         self.diagnostics_label.setWordWrap(True)
         self.locked_label = QLabel("locked: -")
@@ -86,11 +103,6 @@ class AutofocusPanel(QGroupBox):
         self.run_calibration_button.setToolTip("Run CRISP autofocus calibration.")
         self.lock_button = QPushButton("Lock")
         self.unlock_button = QPushButton("Unlock")
-        self.reset_offset_button = QPushButton("Reset Offset at Current Focus")
-        self.reset_offset_button.setToolTip(
-            "While CRISP is calibrated, Ready and unlocked, make the current focal "
-            "position the reference used by the next Lock command."
-        )
         self.cancel_calibration_button = QPushButton("Stop")
         self.cancel_calibration_button.setToolTip("Stop CRISP autofocus calibration.")
         self.calibration_operation_label = QLabel("operation: -")
@@ -105,8 +117,18 @@ class AutofocusPanel(QGroupBox):
         buttons.addWidget(self.lock_after_calibration_checkbox, 1, 1)
         buttons.addWidget(self.lock_button, 2, 0)
         buttons.addWidget(self.unlock_button, 2, 1)
-        buttons.addWidget(self.reset_offset_button, 3, 0, 1, 2)
-        buttons.addWidget(self.cancel_calibration_button, 4, 0, 1, 2)
+        buttons.addWidget(self.cancel_calibration_button, 3, 0, 1, 2)
+        buttons.setColumnStretch(0, 1)
+        buttons.setColumnStretch(1, 1)
+
+        stages_group = QGroupBox("Calibration stages")
+        stages_layout = QVBoxLayout()
+        self.calibration_stage_labels: list[QLabel] = []
+        for stage_name, _start_progress in self.CALIBRATION_STAGES:
+            stage_label = QLabel(f"○ {stage_name}")
+            self.calibration_stage_labels.append(stage_label)
+            stages_layout.addWidget(stage_label)
+        stages_group.setLayout(stages_layout)
 
         layout = QVBoxLayout()
         layout.addWidget(self.status_label)
@@ -116,6 +138,7 @@ class AutofocusPanel(QGroupBox):
         layout.addWidget(self.locked_label)
         layout.addWidget(self.note_label)
         layout.addWidget(self.calibration_operation_label)
+        layout.addWidget(stages_group)
         layout.addLayout(buttons)
         self.setLayout(layout)
 
@@ -124,7 +147,6 @@ class AutofocusPanel(QGroupBox):
         self.run_calibration_button.clicked.connect(self._run_calibration)
         self.lock_button.clicked.connect(self._lock_autofocus)
         self.unlock_button.clicked.connect(self._unlock_autofocus)
-        self.reset_offset_button.clicked.connect(self._reset_offset)
         self.cancel_calibration_button.clicked.connect(self._cancel_calibration)
         self.calibration_poll_timer.timeout.connect(
             self.controller.refresh_autofocus_calibration_operation
@@ -134,6 +156,7 @@ class AutofocusPanel(QGroupBox):
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
         self.controller.strategy_status_received.connect(self.update_strategy_status)
         self.controller.response_error.connect(self._show_error)
+        self._update_calibration_stages("pending", 0.0)
         self._sync_controls_enabled()
 
     @classmethod
@@ -197,7 +220,10 @@ class AutofocusPanel(QGroupBox):
         self.state_label.setStyleSheet(self._state_style("Calibrating"))
         self.diagnostics_label.setText("calibration: in progress")
         self.calibration_running = True
+        self.calibration_progress = 0.0
+        self.calibration_terminal_state = None
         self.calibration_operation_label.setText("operation: starting")
+        self._update_calibration_stages("running", 0.0)
         self.calibration_poll_timer.start()
         self._sync_controls_enabled()
         self.controller.initialise_autofocus(
@@ -211,8 +237,11 @@ class AutofocusPanel(QGroupBox):
         state = str(operation.get("state", "-"))
         message = operation.get("message") or ""
         self.calibration_operation_label.setText(f"operation: {state} — {message}")
+        self.calibration_progress = float(operation.get("progress", self.calibration_progress))
         self.calibration_running = state == "running"
+        self._update_calibration_stages(state, self.calibration_progress)
         if not self.calibration_running:
+            self.calibration_terminal_state = state
             self.calibration_poll_timer.stop()
             if state == "failed" and operation.get("error"):
                 self.status_label.setText(str(operation["error"]))
@@ -246,27 +275,19 @@ class AutofocusPanel(QGroupBox):
         self.status_label.setText("Unlocking autofocus.")
         self.controller.unlock_autofocus()
 
-    def _reset_offset(self) -> None:
-        if not self._ensure_devices_initialised():
-            return
-        self.status_label.setText("Resetting CRISP offset at the current focus.")
-        self.controller.reset_autofocus_offset()
-
     def update_status(self, payload: dict) -> None:
         status = payload.get("status", {})
         status_name = status.get("name") if isinstance(status, dict) else status
         self.autofocus_locked = bool(payload.get("is_locked"))
         calibration_result = payload.get("calibration_result")
-        self.autofocus_ready = (
-            status_name == "READY"
-            and isinstance(calibration_result, dict)
-            and bool(calibration_result.get("success"))
-        )
-        display_state = (
-            "Calibrating"
-            if self.calibration_running
-            else self._display_state(status_name, calibration_result)
-        )
+        if self.calibration_running:
+            display_state = "Calibrating"
+        elif self.calibration_terminal_state == "cancelled":
+            display_state = "Calibration cancelled"
+        elif self.calibration_terminal_state == "failed":
+            display_state = "Calibration failed"
+        else:
+            display_state = self._display_state(status_name, calibration_result)
         self.status_label.setText(
             f"initialised: {payload.get('is_initialised')}, alive: {payload.get('is_alive')}"
         )
@@ -274,23 +295,20 @@ class AutofocusPanel(QGroupBox):
         self.state_label.setStyleSheet(self._state_style(display_state))
         live_error = payload.get("live_error")
         self.live_error_label.setText(
-            "live focus error: unavailable"
+            "Current CRISP error (last refresh): unavailable"
             if live_error is None
-            else f"live focus error: {live_error:g}"
+            else f"Current CRISP error (last refresh): {live_error:g}"
         )
-        diagnostics = (
-            "calibration: in progress"
-            if self.calibration_running
-            else self._diagnostics_text(calibration_result, payload.get("config"))
-        )
+        if self.calibration_running:
+            diagnostics = "calibration: in progress"
+        elif self.calibration_terminal_state == "cancelled":
+            diagnostics = "calibration: cancelled"
+        elif self.calibration_terminal_state == "failed":
+            diagnostics = "calibration: failed"
+        else:
+            diagnostics = self._diagnostics_text(calibration_result, payload.get("config"))
         self.diagnostics_label.setText(diagnostics)
         self.locked_label.setText(f"locked: {self.autofocus_locked}")
-        if payload.get("offset_reset"):
-            response = payload.get("offset_reset_response")
-            response_text = "" if response is None else f" Controller response: {response}"
-            self.status_label.setText(
-                f"CRISP offset reset at the current focus.{response_text}"
-            )
         config = payload.get("config")
         if isinstance(config, dict):
             self._update_config_values(config)
@@ -336,11 +354,6 @@ class AutofocusPanel(QGroupBox):
             self.unlock_button,
         ):
             widget.setEnabled(manual_controls_enabled)
-        self.reset_offset_button.setEnabled(
-            manual_controls_enabled
-            and self.autofocus_ready
-            and not self.autofocus_locked
-        )
         self.refresh_button.setEnabled(self.devices_initialised and not self.calibration_running)
         self.cancel_calibration_button.setEnabled(self.calibration_running)
 
@@ -420,7 +433,40 @@ class AutofocusPanel(QGroupBox):
             parts.append(f"SNR {measurements['snr']:g}{suffix}")
         if "error" in measurements:
             suffix = f" (minimum absolute {config['min_error']:g})" if config.get("min_error") is not None else ""
-            parts.append(f"dither error {measurements['error']:g}{suffix}")
+            parts.append(f"calibration measurement {measurements['error']:g}{suffix}")
         if calibration_result.get("failure_reason"):
             parts.append(str(calibration_result["failure_reason"]))
         return "; ".join(parts)
+
+    def _update_calibration_stages(self, state: str, progress: float) -> None:
+        """Render calibration progress without inferring completion from CRISP status."""
+        if state == "completed":
+            stage_states = ["completed"] * len(self.CALIBRATION_STAGES)
+        elif state == "pending":
+            stage_states = ["pending"] * len(self.CALIBRATION_STAGES)
+        else:
+            current_index = 0
+            for index, (_name, start_progress) in enumerate(self.CALIBRATION_STAGES):
+                if progress >= start_progress:
+                    current_index = index
+            stage_states = [
+                "completed" if index < current_index else "pending"
+                for index in range(len(self.CALIBRATION_STAGES))
+            ]
+            stage_states[current_index] = state if state in {"cancelled", "failed"} else "active"
+
+        styles = {
+            "pending": ("○", ""),
+            "active": ("●", "font-weight: 600; color: #42a5f5;"),
+            "completed": ("✓", "font-weight: 600; color: #4caf50;"),
+            "cancelled": ("—", "font-weight: 600; color: #ffb74d;"),
+            "failed": ("✕", "font-weight: 600; color: #ef5350;"),
+        }
+        for label, (stage_name, _start_progress), stage_state in zip(
+            self.calibration_stage_labels,
+            self.CALIBRATION_STAGES,
+            stage_states,
+        ):
+            marker, stylesheet = styles[stage_state]
+            label.setText(f"{marker} {stage_name}")
+            label.setStyleSheet(stylesheet)

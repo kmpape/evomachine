@@ -17,6 +17,12 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from evomachine.gui.panels.common import (
+    NoWheelComboBox,
+    NoWheelDoubleSpinBox,
+    NoWheelSpinBox,
+)
+
 
 @dataclass(frozen=True)
 class ConfigFieldSpec:
@@ -98,7 +104,7 @@ class ConfigDialog(QDialog):
             widget.setEnabled(field.editable)
             return widget
         if field.kind == "int":
-            widget = QSpinBox()
+            widget = NoWheelSpinBox()
             widget.setRange(
                 int(field.minimum if field.minimum is not None else -2147483647),
                 int(field.maximum if field.maximum is not None else 2147483647),
@@ -108,7 +114,7 @@ class ConfigDialog(QDialog):
             widget.setEnabled(field.editable)
             return widget
         if field.kind == "float":
-            widget = QDoubleSpinBox()
+            widget = NoWheelDoubleSpinBox()
             widget.setRange(
                 float(field.minimum if field.minimum is not None else -1e12),
                 float(field.maximum if field.maximum is not None else 1e12),
@@ -119,7 +125,7 @@ class ConfigDialog(QDialog):
             widget.setEnabled(field.editable)
             return widget
         if field.kind == "choice":
-            widget = QComboBox()
+            widget = NoWheelComboBox()
             for choice in field.choices:
                 widget.addItem(choice, choice)
             index = widget.findData(field.value)

@@ -92,6 +92,9 @@ class Autofocus(Peripheral):
         self._check_alive: bool = check_alive
         self.config: AutofocusConfig | None = None
         self._last_calibration_result: AutofocusCalibrationResult | None = None
+        self._calibration_result_lock = threading.Lock()
+        self._calibration_prepared = False
+        self._calibration_cancel_requested = False
 
     def _require_ready(self, action: str) -> None:
         """
@@ -268,15 +271,53 @@ class Autofocus(Peripheral):
             self.name,
             lock_after_calibration,
         )
-        self._last_calibration_result = None
+        with self._calibration_result_lock:
+            if self._calibration_prepared:
+                self._calibration_prepared = False
+            else:
+                self._calibration_cancel_requested = False
+                self._last_calibration_result = None
         result = self._run_calibration(
             config=config,
             lock_after_calibration=lock_after_calibration,
             stop_event=stop_event,
             progress_callback=progress_callback,
         )
-        self._last_calibration_result = result
+        with self._calibration_result_lock:
+            if self._calibration_cancel_requested or (
+                stop_event is not None and stop_event.is_set()
+            ):
+                result = AutofocusCalibrationResult(
+                    success=False,
+                    measurements=dict(result.measurements),
+                    failure_reason="Calibration cancelled.",
+                    cancelled=True,
+                )
+            self._last_calibration_result = result
         return result
+
+    def prepare_calibration(self) -> None:
+        """Clear stale results before a background calibration worker starts."""
+        with self._calibration_result_lock:
+            self._calibration_prepared = True
+            self._calibration_cancel_requested = False
+            self._last_calibration_result = None
+
+    def mark_calibration_cancelled(self) -> None:
+        """Make cancellation authoritative over an earlier successful result."""
+        with self._calibration_result_lock:
+            self._calibration_cancel_requested = True
+            measurements = (
+                {}
+                if self._last_calibration_result is None
+                else dict(self._last_calibration_result.measurements)
+            )
+            self._last_calibration_result = AutofocusCalibrationResult(
+                success=False,
+                measurements=measurements,
+                failure_reason="Calibration cancelled.",
+                cancelled=True,
+            )
 
     def initialise_autofocus(
             self,
@@ -303,7 +344,8 @@ class Autofocus(Peripheral):
     @property
     def last_calibration_result(self) -> AutofocusCalibrationResult | None:
         """Return the most recent calibration outcome, if calibration has run."""
-        return self._last_calibration_result
+        with self._calibration_result_lock:
+            return self._last_calibration_result
 
     def lock(self) -> None:
         """

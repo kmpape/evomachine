@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import pickle as pkl
+import threading
 from typing import Any, Literal
 
 import cv2
@@ -347,9 +348,18 @@ class LoadedDmdImageInfo:
     coordinate_space: Literal["camera", "dmd"]
 
 
+@dataclass(frozen=True, slots=True)
+class DmdDisplayState:
+    """Most recently applied native DMD image and its full-screen status."""
+
+    image: np.ndarray
+    is_full_display: bool
+
+
 class Dmd(Peripheral):
-    """  TODO(CODEX): Modify doc if needed with implemented changes.
-    Class for communicating with the DMD. After calling initialise(), communicate with the DMD using following
+    """Class for communicating with the DMD.
+
+    After calling initialise(), communicate with the DMD using following
     functions:
     - display_full():           Full illumination
     - display_none():           No illumination
@@ -421,10 +431,9 @@ class Dmd(Peripheral):
         self._is_full_display: bool = False
         self._loaded_img: np.ndarray | None = None
         self._loaded_img_info: LoadedDmdImageInfo | None = None
+        self._display_state_lock = threading.Lock()
+        self._last_display_state: DmdDisplayState | None = None
         default_calibration_file = EVOMACHINE_DIR / "calibration_data" / "dmd" / "dmd_calibration_data_2025-08-14_v2.pkl"
-        packaged_calibration_file = EVOMACHINE_DIR / "evomachine" / "dmd_calibration_data.pkl"
-        if not default_calibration_file.exists() and packaged_calibration_file.exists():
-            default_calibration_file = packaged_calibration_file
         self._calib_file: Path = calibration_file or default_calibration_file
         self._calib_data: DmdCalibrationData | None = None
         self._homography_mat: np.ndarray | None = None
@@ -535,6 +544,22 @@ class Dmd(Peripheral):
     def is_full_display(self) -> bool:
         """Return whether the most recent display state was full white."""
         return self._is_full_display
+
+    @property
+    def last_display_state(self) -> DmdDisplayState | None:
+        """Return the most recent successfully applied native DMD state."""
+        with self._display_state_lock:
+            return self._last_display_state
+
+    def _record_display_state(self, image: np.ndarray, *, is_full_display: bool) -> None:
+        """Record a successfully applied native DMD pattern for GUI readback."""
+        displayed = np.ascontiguousarray(image).copy()
+        displayed.setflags(write=False)
+        with self._display_state_lock:
+            self._last_display_state = DmdDisplayState(
+                image=displayed,
+                is_full_display=bool(is_full_display),
+            )
 
     def get_calibration_filename(self) -> Path:
         """Return the configured calibration filename."""

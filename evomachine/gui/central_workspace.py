@@ -237,31 +237,6 @@ def make_visual_workspace(
     return np.asarray(pil_canvas)
 
 
-def make_visual_workspace_stack(
-        *,
-        image_stack: np.ndarray,
-        camera_shape: tuple[int, int] = DEFAULT_CAMERA_DISPLAY_SHAPE,
-    dmd_pattern: np.ndarray | None = None,
-    show_last_image: bool = True,
-) -> np.ndarray:
-    """Compose a stack of central visual dashboards, one per acquired plane."""
-    if image_stack.ndim == 2:
-        planes = image_stack[np.newaxis, ...]
-    elif image_stack.ndim == 3 or (image_stack.ndim == 4 and image_stack.shape[-1] in {3, 4}):
-        planes = image_stack
-    else:
-        raise ValueError(f"Expected image stack, received shape {image_stack.shape}.")
-    return np.stack([
-        make_visual_workspace(
-            last_image=plane,
-            camera_shape=camera_shape,
-            dmd_pattern=dmd_pattern,
-            show_last_image=show_last_image,
-        )
-        for plane in planes
-    ], axis=0)
-
-
 class CentralVisualWorkspace:
     """Own the Napari central visual layer used by the EvoMachine GUI."""
 
@@ -335,13 +310,6 @@ class CentralVisualWorkspace:
             layer.data = self._workspace_image()
 
     def _workspace_image(self) -> np.ndarray:
-        if self.last_stack is not None:
-            return make_visual_workspace_stack(
-                image_stack=self.last_stack,
-                camera_shape=self.camera_shape,
-                dmd_pattern=self.dmd_pattern,
-                show_last_image=False,
-            )
         return make_visual_workspace(
             last_image=self.last_image,
             camera_shape=self.camera_shape,
