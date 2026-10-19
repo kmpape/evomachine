@@ -301,7 +301,7 @@ class Automaton:
             logger.info(f"Automaton.initialise: found {len(self._fovs)} initialised positions...")
 
         # Initialise focus
-        self.initialise_fov_focus()
+        self.initialise_fov_focus(use_autofocus=use_autofocus)
 
         # Take reference frames on each channel
         logger.info(f"Automaton.initialise: taking reference frames on all channels and all positions...")
@@ -732,8 +732,10 @@ class Automaton:
             logger.warning(f"manage_autofocus: received autofocus status {AutoFocusStatusType.OUT_OF_FOCUS}. Waiting "
                            f"{wait_s} seconds before proceeding.")
             time.sleep(wait_s)
+            status = self.cam.autofocus_get_status()
         is_locked = self.cam.autofocus_is_locked()
-        if not is_locked:
+        status = self.cam.autofocus_get_status() #copy and pasted this line to try and resolve a status not associated with a value error - YX
+        if not is_locked or status == AutoFocusStatusType.OUT_OF_FOCUS:
             logger.warning(f"manage_autofocus: lost autofocus lock on fov_id={curr_fov_id} and Z coordinate "
                            f"self.cam.get_coordinates(['Z'])['Z'].")
             max_num_trials_reached = False
@@ -1286,7 +1288,7 @@ class Automaton:
         if not toggle_autofocus:
             self.cam.move_to_pos(i_pos=pos_id)
         else:
-            msg = f"Toggling autofocus to move from pos_id {old_pos_id} " \
+            msg = f"automaton._move_to_pos:Toggling autofocus to move from pos_id {old_pos_id} " \
                   f"({self._fovs_full_coords[old_pos_id] if old_pos_id is not None else '?'}) to " \
                   f"{pos_id} ({self._fovs_full_coords[pos_id]})."
             logger.info(msg)
@@ -1298,7 +1300,7 @@ class Automaton:
             is_success = self.cam.autofocus_initialise(
                 user_input=False,
             )
-            msg = f"Re-initialised autofocus after move. Successful: {is_success}"
+            msg = f"automaton._move_to_pos: Re-initialised autofocus after move. Successful: {is_success}"
             logger.info(msg)
             time.sleep(3)  # give the tiger box some time to update the autofocus status
             self.cam.autofocus_lock()
@@ -1308,6 +1310,24 @@ class Automaton:
         if do_manage_autofocus:
             # Note: even when autofocus disabled, manage_autofocus records the current Z coordinate
             self.manage_autofocus(curr_fov_id=self._curr_fov_id)
+
+        if not self._use_autofocus:
+            logger.warning(f"automaton._move_to_pos: running software focus because self._use_autofocus={self._use_autofocus}.")
+            self._run_software_focus(cfg_focus=self.cam.cfg.focus, curr_fov_id=pos_id)
+            software_focus_success = self.cam.get_software_focus_status() == FocusStatusType.IN_FOCUS
+            if not software_focus_success:
+                logger.error(f"automaton._move_to_pos: Received bad FocusStatusType="
+                             f"{self.cam.get_software_focus_status()}. Halting execution.")
+                self.shutdown()
+                return
+            focused_z = self.cam.get_coordinates(["Z"])["Z"]
+            self._fovs[pos_id].z = focused_z
+            if not self.cam.set_pos_id_to_coordinate(self._fovs, use_autofocus=False):
+                logger.error("automaton._move_to_pos:Could not update camera position list after software focus.")
+                self.shutdown()
+                return
+            self._fovs_full_coords[pos_id].z = focused_z
+            
 
     def _take_image(
             self,

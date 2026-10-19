@@ -10,7 +10,7 @@ from pycromanager import Core, Studio
 import skimage
 from serial import SerialException
 
-import com_ports
+# import com_ports
 from asitiger.command import CRISPState
 from asitiger.status import CRISPStatus
 import asitiger.tigercontroller
@@ -1641,6 +1641,7 @@ class EvoCamera(AbstractCamera):
             i_chan: Union[LEDType, None],
             brightness: float = 29,
     ) -> bool:
+        time.sleep(0.5)
         z_coord = self.focus_Z_coords[ipos]
         self.move_to(coordinate={'Z': z_coord}, block=True)
         image_raw = self.get_frame(
