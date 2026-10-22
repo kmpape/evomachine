@@ -1183,6 +1183,68 @@ def test_autofocus_panel_sends_calibration_request() -> None:
     assert panel.diagnostics_label.text() == "calibration: cancelled"
 
 
+def test_autofocus_panel_retries_status_timeout_without_marking_calibration_complete() -> None:
+    _app()
+    controller = FakeController()
+    panel = AutofocusPanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+    panel.run_calibration_button.click()
+
+    controller.request_error.emit(
+        GuiCommandType.AUTOFOCUS_CALIBRATION_STATUS,
+        "TimeoutError: timed out",
+    )
+
+    assert panel.calibration_running
+    assert panel.calibration_poll_timer.isActive()
+    assert "retrying" in panel.status_label.text()
+    assert panel.calibration_stage_labels[0].text() != "✓ Apply configuration"
+
+
+def test_autofocus_panel_keeps_tracking_after_start_response_timeout() -> None:
+    _app()
+    controller = FakeController()
+    panel = AutofocusPanel(controller=controller)
+    panel.update_lifecycle_status({"devices_initialised": True})
+    panel.run_calibration_button.click()
+
+    controller.request_error.emit(
+        GuiCommandType.AUTOFOCUS_INITIALISE,
+        "TimeoutError: timed out",
+    )
+
+    assert panel.calibration_running
+    assert panel.calibration_terminal_state is None
+    assert panel.calibration_poll_timer.isActive()
+    assert "checking backend state" in panel.status_label.text()
+    assert not any(label.text().startswith("✓ ") for label in panel.calibration_stage_labels)
+
+
+def test_autofocus_panel_does_not_turn_green_after_calibration_failure() -> None:
+    _app()
+    panel = AutofocusPanel(controller=FakeController())
+    panel.update_operation_status({
+        "kind": "autofocus_calibration",
+        "state": "failed",
+        "progress": 0.7,
+        "message": "Failed.",
+        "error": "TimeoutError: Tiger did not respond",
+    })
+
+    panel.update_status({
+        "is_initialised": True,
+        "is_alive": True,
+        "is_locked": False,
+        "status": {"name": "READY", "value": "R"},
+        "calibration_result": {"success": True, "cancelled": False},
+    })
+
+    assert panel.state_label.text() == "status: Calibration failed"
+    assert panel.diagnostics_label.text() == "calibration: failed"
+    assert any(label.text().startswith("✕ ") for label in panel.calibration_stage_labels)
+    assert not all(label.text().startswith("✓ ") for label in panel.calibration_stage_labels)
+
+
 def test_autofocus_panel_maps_crisp_status_and_displays_calibration_diagnostics() -> None:
     _app()
     panel = AutofocusPanel(controller=FakeController())

@@ -784,6 +784,10 @@ class Automaton:
         completed_commands: list[AutomatonCommand] = []
         command_errors: list[Exception] = []
         for command in self.next_commands:
+            # Service status, log and stop requests at every safe boundary. A
+            # strategy batch can contain many hardware commands, so waiting
+            # until the whole batch completes can otherwise starve the GUI.
+            self.gui_process_requests()
             if self.stopped() or (not finalise and self.strategy_has_stopped()):
                 return
             command.command_data = None
@@ -866,6 +870,7 @@ class Automaton:
             command.command_execution_time = time.time()
             command.fov_id = self.get_fov_id()
             completed_commands.append(command)
+            self.gui_process_requests()
         self.last_commands = completed_commands
         if not finalise:
             self.next_commands = self._strategy.callback(

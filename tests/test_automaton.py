@@ -1306,6 +1306,21 @@ def test_automaton_move_next_wraps_registered_fov_order() -> None:
     assert automaton.get_fov_id() == 7
 
 
+def test_strategy_batch_services_gui_requests_between_hardware_commands() -> None:
+    automaton, *_ = make_automaton()
+    automaton.initialise(fovs={0: Coordinate(0, 0, 0), 1: Coordinate(1, 0, 0)})
+    processed: list[int] = []
+    automaton.gui_set_request_processor(lambda budget: processed.append(budget))
+    automaton.next_commands = [
+        CommandFactory(cfg=make_cfg()).command_move(fov_id=0),
+        CommandFactory(cfg=make_cfg()).command_move(fov_id=1),
+    ]
+
+    automaton._process()
+
+    assert len(processed) == 4
+
+
 def test_automaton_image_uses_frame_metadata_and_updates_buffers() -> None:
     """
     Check IMAGE command delegates to FrameAcquisitionManager and stores frames.

@@ -136,6 +136,23 @@ ALWAYS_ALLOWED_MUTATING_COMMANDS = frozenset(
     }
 )
 
+# These handlers only read completed snapshots or thread-safe operation state.
+# Serving them on the socket thread keeps progress, logs and strategy previews
+# responsive while the Automaton thread is inside a long hardware command.
+RESPONSIVE_READ_COMMANDS = frozenset(
+    {
+        GuiCommandType.LOGS_RECENT,
+        GuiCommandType.FOV_MOVEMENT_STATUS,
+        GuiCommandType.ACQUISITION_Z_STACK_STATUS,
+        GuiCommandType.DMD_CALIBRATION_STATUS,
+        GuiCommandType.AUTOFOCUS_CALIBRATION_STATUS,
+        GuiCommandType.SOFTWARE_FOCUS_OPERATION_STATUS,
+        GuiCommandType.STAGE_MOVEMENT_STATUS,
+        GuiCommandType.STRATEGY_STATUS,
+        GuiCommandType.STRATEGY_GENERATION_STATUS,
+    }
+)
+
 @dataclass(kw_only=True)
 class GuiRequest:
     """One typed request from a GUI client to the automaton process."""

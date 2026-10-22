@@ -16,6 +16,7 @@ class ApplicationLogPanel(QWidget):
             raise ValueError("ApplicationLogPanel history_limit must be a positive integer.")
         self.controller = controller
         self.latest_sequence = 0
+        self._request_pending = False
 
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
@@ -28,6 +29,7 @@ class ApplicationLogPanel(QWidget):
         self.setLayout(layout)
 
         self.controller.logs_received.connect(self.update_logs)
+        self.controller.request_error.connect(self._request_failed)
 
         self.poll_timer = QTimer(self)
         self.poll_timer.setInterval(500)
@@ -36,9 +38,13 @@ class ApplicationLogPanel(QWidget):
         self.refresh()
 
     def refresh(self) -> None:
+        if self._request_pending:
+            return
+        self._request_pending = True
         self.controller.refresh_logs(after_sequence=self.latest_sequence)
 
     def update_logs(self, payload: dict) -> None:
+        self._request_pending = False
         records = payload.get("records", [])
         for record in records:
             sequence = int(record["sequence"])
@@ -53,6 +59,11 @@ class ApplicationLogPanel(QWidget):
         if records:
             scrollbar = self.log_view.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
+
+    def _request_failed(self, command, _error: str) -> None:
+        """Allow polling to recover after a failed log request."""
+        if getattr(command, "value", command) == "logs.recent":
+            self._request_pending = False
 
     @staticmethod
     def _render_record(record: dict) -> str:
