@@ -346,11 +346,11 @@ class AbstractCamera:
     def move_to(self, coordinate: Union[Dict[str, int], Coordinate], block: Optional[bool] = False):
         raise NotImplementedError()
 
-    def move_to_pos(self, i_pos: int, block: bool = True) -> None:
+    def move_to_pos(self, i_pos: int, block: bool = True, use_autofocus: bool = True) -> None:
         if i_pos not in self._pos_id_to_coordinate:
             raise StageError("Position index {} out of range".format(i_pos),
                              ErrorCode.ERROR_STAGE_COORDINATES)
-        success = self._move_stage_to_pos(i_pos=i_pos, block=block)
+        success = self._move_stage_to_pos(i_pos=i_pos, block=block, use_autofocus=use_autofocus)
         if not success:
             raise StageError("Fault moving to position={}.".format(i_pos), ErrorCode.ERROR_STAGE_MOVEMENT)
         self._curr_pos = i_pos
@@ -595,6 +595,7 @@ class AbstractCamera:
             self,
             i_pos: int,
             block: bool = True,
+            use_autofocus: bool = True,
     ) -> bool:
         raise NotImplementedError()
 
@@ -692,6 +693,7 @@ class TestCamera(AbstractCamera):
             self,
             i_pos: int,
             block: bool = True,
+            use_autofocus: bool = True,
     ) -> bool:
         logger.info("TestCamera._move_stage_to_pos: moving to pos={} (block={})".format(i_pos, block))
         if self.pos_to_filename is not None:
@@ -1167,19 +1169,26 @@ class EvoCamera(AbstractCamera):
             self,
             i_pos: int,
             block: bool = True,
+            use_autofocus: bool = True,
     ) -> bool:
-        return self._move_stage_to_coord(self._pos_id_to_coordinate[i_pos].to_dict(), block=block)
+        return self._move_stage_to_coord(
+            self._pos_id_to_coordinate[i_pos].to_dict(),
+            block=block,
+            use_autofocus=use_autofocus,
+        )
 
     def _move_stage_to_coord(
             self,
             coordinates: Dict[str, int],
             block: bool = True,
+            use_autofocus: bool = True,
     ) -> bool:
         answer = None
         if self._tiger_is_alive:
             answer = self.tiger.move(coordinates=coordinates)
             if block:
-                self.tiger.wait_until_idle(card_address_crisp=self.card_address_crisp)
+                card_address_crisp = self.card_address_crisp if use_autofocus else None
+                self.tiger.wait_until_idle(card_address_crisp=card_address_crisp)
         else:
             logger.error(msg=f"EvoCamera._move_stage_to_coord: Tiger is not alive. "
                              f"Check ASI Tiger box and serial connection.")
@@ -1537,7 +1546,7 @@ class EvoCamera(AbstractCamera):
                     f"coordinate after focus={focus_best_coordinate / 10} μm. "
                     f"Focus status is {self.get_software_focus_status()} and curve status is "
                     f"{self.get_software_focus_curve_status()}. Finalising software_focus.")
-        self._move_stage_to_coord({'Z': focus_best_coordinate})
+        self._move_stage_to_coord({'Z': focus_best_coordinate}, use_autofocus=False)
         self.set_led(i_chan=self._focus_old_channel)
 
         if debug_save:

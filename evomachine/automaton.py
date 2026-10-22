@@ -1286,7 +1286,7 @@ class Automaton:
                 (self._fovs[old_pos_id].get_channel_id() != self._fovs[self._curr_fov_id].get_channel_id())
         )
         if not toggle_autofocus:
-            self.cam.move_to_pos(i_pos=pos_id)
+            self.cam.move_to_pos(i_pos=pos_id, use_autofocus=self._use_autofocus)
         else:
             msg = f"automaton._move_to_pos:Toggling autofocus to move from pos_id {old_pos_id} " \
                   f"({self._fovs_full_coords[old_pos_id] if old_pos_id is not None else '?'}) to " \
