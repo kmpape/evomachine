@@ -19,7 +19,7 @@ from delta.rt import PositionRT
 from delta.rttypes import TrackingSetting
 
 from evomachine.acquisition import AbstractCamera, EvoCamera, EvoCamerav3
-from evomachine.commands import AutomatonCommand, CommandFactory
+from evomachine.commands import AutomatonCommand, CommandFactory, ZStackResult
 from evomachine.config import ConfigFocus, ConfigImageProcessor, EVO_GUI_LOGGING_LEVEL, get_logger, EVOMACHINE_DIR,\
     USE_DMD_SOCKET
 from evomachine.coordinates import Coordinate
@@ -1039,7 +1039,7 @@ class Automaton:
             if self.stopped():
                 logger.warning(f"Automaton.process: stopping process at {str(cmd)}.")
                 return
-            cmd.command_data = None  # Overwritten by AutomatonCommandType.IMAGE
+            cmd.command_data = None  # Overwritten by commands that return acquisition data.
 
             if cmd.command_type == AutomatonCommandType.MOVE:
                 self._move_to_pos(pos_id=cmd.command_args)
@@ -1067,6 +1067,19 @@ class Automaton:
                 self.stop()
                 cmd.command_execution_time = time.time()
                 return
+
+            elif cmd.command_type == AutomatonCommandType.Z_STACK:
+                cmd.command_data = self._take_z_stack(
+                    channels=cmd.command_args['channels'],
+                    exposure_time=cmd.command_args['exposure_time'],
+                    brightness=cmd.command_args['brightness'],
+                    filter_wheel=cmd.command_args['filter_wheel'],
+                    rel_range=cmd.command_args['rel_range'],
+                    step_size=cmd.command_args['step_size'],
+                    pattern=cmd.command_args['pattern'],
+                    filename_suffix=cmd.command_args['filename_suffix'],
+                    reset_led=cmd.command_args['reset_led'],
+                )
 
             elif cmd.command_type == AutomatonCommandType.IMAGE:
                 if self._mmc_live_mode_is_on:  # noqa
@@ -1412,6 +1425,189 @@ class Automaton:
                 return
             self._fovs_full_coords[pos_id].z = focused_z
             
+
+    def _take_z_stack(
+            self,
+            channels: list[LEDType],
+            exposure_time: int,
+            brightness: list[int | float],
+            filter_wheel: FilterWheelType | list[FilterWheelType] | None,
+            rel_range: int | None,
+            step_size: int | None,
+            pattern: np.ndarray | None,
+            filename_suffix: str | None,
+            reset_led: bool,
+    ) -> ZStackResult:
+        """Acquire and save a Z stack without updating experiment image buffers.
+
+        Parameters
+        ----------
+        channels : list[LEDType]
+            Illumination channels acquired at each Z plane.
+        exposure_time : int
+            Camera exposure time in milliseconds.
+        brightness : list[int | float]
+            Per-channel LED brightness values.
+        filter_wheel : FilterWheelType | list[FilterWheelType] | None
+            Shared, per-channel, or unchanged filter-wheel setting.
+        rel_range : int | None
+            Maximum signed Z offset, falling back to the focus configuration when ``None``.
+        step_size : int | None
+            Z spacing, falling back to the focus configuration when ``None``.
+        pattern : np.ndarray | None
+            DMD pattern to display, or ``None`` to display the full DMD.
+        filename_suffix : str | None
+            Optional user suffix included before each plane's signed Z offset.
+        reset_led : bool
+            Restore the previous LED channel after each acquired frame.
+
+        Returns
+        -------
+        ZStackResult
+            Recorded center Z, successfully acquired coordinates, and saved file paths.
+        """
+        resolved_range = self.cam.cfg.focus.rel_range if rel_range is None else rel_range
+        resolved_step = self.cam.cfg.focus.step_size if step_size is None else step_size
+        if (
+                not isinstance(resolved_range, int) or isinstance(resolved_range, bool) or
+                resolved_range <= 0 or resolved_range >= 2000
+        ):
+            raise ValueError(f"Automaton._take_z_stack: invalid rel_range={resolved_range}.")
+        if (
+                not isinstance(resolved_step, int) or isinstance(resolved_step, bool) or
+                resolved_step <= 0 or resolved_step > resolved_range
+        ):
+            raise ValueError(f"Automaton._take_z_stack: invalid step_size={resolved_step}.")
+
+        self.set_cam_live_mode(False)
+        center_z = self.cam.get_coordinates(['Z'])['Z']
+        positive_offsets = list(range(resolved_step, resolved_range + 1, resolved_step))
+        z_offsets = [-offset for offset in reversed(positive_offsets)] + [0] + positive_offsets
+        z_coordinates = [center_z + offset for offset in z_offsets]
+        invalid_coordinates = [
+            z_coordinate for z_coordinate in z_coordinates
+            if self.cam.coordinate_is_out_of_bounds({'Z': z_coordinate})
+        ]
+        if invalid_coordinates:
+            raise ValueError(
+                f"Automaton._take_z_stack: Z coordinates are out of bounds: {invalid_coordinates}."
+            )
+
+        try:
+            save_directory = Path(self.cam.cfg.path_to_save)
+        except TypeError as error:
+            raise ValueError("Automaton._take_z_stack: camera save path is not configured.") from error
+        if not save_directory.exists() or not save_directory.is_dir():
+            raise ValueError(f"Automaton._take_z_stack: save directory does not exist: {save_directory}.")
+
+        if isinstance(filter_wheel, list):
+            filter_wheels = filter_wheel
+        else:
+            filter_wheels = [filter_wheel] * len(channels)
+
+        saved_filenames: list[str] = []
+        acquired_coordinates: list[float] = []
+        acquisition_error: Exception | None = None
+        cleanup_errors: list[tuple[str, Exception]] = []
+        autofocus_enabled = self._use_autofocus
+
+        try:
+            if autofocus_enabled:
+                self.cam.autofocus_unlock()
+
+            if pattern is None:
+                self._dmd.display_full()
+            else:
+                self._dmd.display_image(img=pattern)
+            time.sleep(0.5)  # Match IMAGE command settling behaviour.
+
+            if self.cam.get_exposure() != exposure_time:
+                self.cam.set_exposure(exposure_time=exposure_time)
+
+            for z_offset, z_coordinate in zip(z_offsets, z_coordinates):
+                if self.stopped() or self.has_shutdown():
+                    logger.warning("Automaton._take_z_stack: interrupted before completing all planes.")
+                    break
+
+                self.cam.move_to(coordinate={'Z': z_coordinate}, block=True)
+                for channel, channel_brightness, wheel in zip(channels, brightness, filter_wheels):
+                    if wheel is not None and self.cam.get_filter_wheel() != wheel:
+                        self.cam.set_filter_wheel(filter_type=wheel)
+                        self.sleep(duration=1)
+
+                    frame = self.cam.get_frame(
+                        i_chan=channel,
+                        brightness=channel_brightness,
+                        normalise=False,
+                        reset_led=reset_led,
+                        disable_led=False,
+                    )
+                    if frame is None:
+                        raise RuntimeError(
+                            f"Automaton._take_z_stack: camera returned no frame at Z={z_coordinate}, "
+                            f"channel={channel}."
+                        )
+
+                    base_filename = self.cam.get_filename(
+                        i_pos=self._curr_fov_id,
+                        i_channel=channel,
+                        filter_wheel=wheel,
+                    )
+                    stack_suffix = f"_{self._strategy.callback_counter}"
+                    if filename_suffix is not None:
+                        stack_suffix += filename_suffix
+                    stack_suffix += f"_zstack_dz{z_offset:+05d}"
+                    saved_filename = self.cam.add_filename_suffix(
+                        filename=base_filename,
+                        filename_suffix=stack_suffix,
+                    )
+                    self.cam.save_frame(
+                        frame=frame,
+                        filename=base_filename,
+                        filename_suffix=stack_suffix,
+                    )
+                    saved_filenames.append(str(save_directory / saved_filename))
+                acquired_coordinates.append(z_coordinate)
+        except Exception as error:
+            acquisition_error = error
+        finally:
+            for cleanup_name, cleanup_action in [
+                    ('disable LED', self.cam.disable_led),
+                    ('clear DMD', self._dmd.display_none),
+            ]:
+                try:
+                    cleanup_action()
+                except Exception as error:
+                    cleanup_errors.append((cleanup_name, error))
+
+            z_restored = False
+            try:
+                self.cam.move_to(coordinate={'Z': center_z}, block=True)
+                z_restored = True
+            except Exception as error:
+                cleanup_errors.append(('restore Z', error))
+
+            if autofocus_enabled:
+                if z_restored:
+                    try:
+                        self.cam.autofocus_lock()
+                    except Exception as error:
+                        cleanup_errors.append(('relock autofocus', error))
+                else:
+                    logger.error("Automaton._take_z_stack: autofocus remains unlocked because Z restoration failed.")
+
+        for cleanup_name, cleanup_error in cleanup_errors:
+            logger.error(f"Automaton._take_z_stack: failed to {cleanup_name}: {cleanup_error}.")
+        if acquisition_error is not None:
+            raise acquisition_error.with_traceback(acquisition_error.__traceback__)
+        if cleanup_errors:
+            raise RuntimeError("Automaton._take_z_stack: failed to restore hardware state.") from cleanup_errors[0][1]
+
+        return ZStackResult(
+            center_z=center_z,
+            z_coordinates=acquired_coordinates,
+            filenames=saved_filenames,
+        )
 
     def _take_image(
             self,

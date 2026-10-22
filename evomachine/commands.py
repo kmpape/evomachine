@@ -76,6 +76,25 @@ class AutomatonCommand:
                f"with args {self._format_args(self.command_args)}."
 
 
+@dataclass(frozen=True)
+class ZStackResult:
+    """Describe the files and coordinates produced by a Z-stack command.
+
+    Parameters
+    ----------
+    center_z : float
+        Stage Z coordinate recorded before the stack started, in 0.1 micrometre units.
+    z_coordinates : list[float]
+        Successfully acquired plane coordinates in acquisition order.
+    filenames : list[str]
+        Saved image paths ordered by plane and then by channel.
+    """
+
+    center_z: float
+    z_coordinates: list[float]
+    filenames: list[str]
+
+
 class CommandFactory:
     """
     Factory class for creating AutomatonCommand. Each command type will produce certain output data that will be
@@ -249,6 +268,107 @@ class CommandFactory:
         return AutomatonCommand(
             command_type=AutomatonCommandType.IMAGE,
             command_args=command_args,
+            command_id=self.get_next_id(),
+            command_creation_time=time(),
+        )
+
+    def command_z_stack(
+            self,
+            channels: list[LEDType],
+            exposure_time: int,
+            brightness: int | float | list[int | float] = 10,
+            filter_wheel: FilterWheelType | list[FilterWheelType] | None = None,
+            rel_range: int | None = None,
+            step_size: int | None = None,
+            pattern: np.ndarray | None = None,
+            filename_suffix: str | None = None,
+            reset_led: bool = False,
+    ) -> AutomatonCommand:
+        """Create a command that acquires and saves a Z stack.
+
+        Parameters
+        ----------
+        channels : list[LEDType]
+            Non-empty list of illumination channels acquired at every Z plane.
+        exposure_time : int
+            Camera exposure time in milliseconds.
+        brightness : int | float | list[int | float]
+            Brightness in the range [0, 100], either shared or specified per channel.
+        filter_wheel : FilterWheelType | list[FilterWheelType] | None
+            Optional filter-wheel setting shared by all channels or specified per channel.
+        rel_range : int | None
+            Maximum signed Z offset in 0.1 micrometre units, or ``None`` to use ``ConfigFocus.rel_range``.
+        step_size : int | None
+            Positive Z spacing in 0.1 micrometre units, or ``None`` to use ``ConfigFocus.step_size``.
+        pattern : np.ndarray | None
+            Optional DMD pattern; ``None`` displays the full DMD.
+        filename_suffix : str | None
+            Optional suffix inserted before the Z-stack offset in every filename.
+        reset_led : bool
+            Restore the previous LED channel after acquiring each frame.
+
+        Returns
+        -------
+        AutomatonCommand
+            A validated command whose result is a :class:`ZStackResult`.
+        """
+        if not isinstance(channels, list) or not channels or not all(
+                isinstance(channel, LEDType) for channel in channels
+        ):
+            raise TypeError("CommandFactory.command_z_stack: channels must be a non-empty list of LEDType.")
+        if not isinstance(exposure_time, int) or isinstance(exposure_time, bool) or exposure_time <= 0:
+            raise TypeError("CommandFactory.command_z_stack: exposure_time must be a positive integer.")
+
+        brightness_values = brightness if isinstance(brightness, list) else [brightness] * len(channels)
+        if len(brightness_values) != len(channels) or any(
+                not isinstance(value, (int, float)) or isinstance(value, bool) or not 0 <= value <= 100
+                for value in brightness_values
+        ):
+            raise TypeError(
+                "CommandFactory.command_z_stack: brightness must be in [0, 100] and match channels when a list."
+            )
+
+        if isinstance(filter_wheel, list):
+            if len(filter_wheel) != len(channels) or not all(
+                    isinstance(value, FilterWheelType) for value in filter_wheel
+            ):
+                raise TypeError(
+                    "CommandFactory.command_z_stack: filter_wheel must match channels when supplied as a list."
+                )
+        elif filter_wheel is not None and not isinstance(filter_wheel, FilterWheelType):
+            raise TypeError(
+                "CommandFactory.command_z_stack: filter_wheel must be a FilterWheelType, list, or None."
+            )
+
+        for name, value in [('rel_range', rel_range), ('step_size', step_size)]:
+            if value is not None and (
+                    not isinstance(value, int) or isinstance(value, bool) or value <= 0
+            ):
+                raise TypeError(f"CommandFactory.command_z_stack: {name} must be a positive integer or None.")
+        if rel_range is not None and rel_range >= 2000:
+            raise ValueError("CommandFactory.command_z_stack: rel_range must be smaller than 2000.")
+        if rel_range is not None and step_size is not None and step_size > rel_range:
+            raise ValueError("CommandFactory.command_z_stack: step_size cannot exceed rel_range.")
+        if pattern is not None and not isinstance(pattern, np.ndarray):
+            raise TypeError("CommandFactory.command_z_stack: pattern must be a numpy array or None.")
+        if filename_suffix is not None and not isinstance(filename_suffix, str):
+            raise TypeError("CommandFactory.command_z_stack: filename_suffix must be a string or None.")
+        if not isinstance(reset_led, bool):
+            raise TypeError("CommandFactory.command_z_stack: reset_led must be a bool.")
+
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.Z_STACK,
+            command_args={
+                'channels': channels,
+                'exposure_time': exposure_time,
+                'brightness': list(brightness_values),
+                'filter_wheel': filter_wheel,
+                'rel_range': rel_range,
+                'step_size': step_size,
+                'pattern': pattern,
+                'filename_suffix': filename_suffix,
+                'reset_led': reset_led,
+            },
             command_id=self.get_next_id(),
             command_creation_time=time(),
         )

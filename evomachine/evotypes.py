@@ -96,6 +96,7 @@ class AutomatonCommandType(EvoType):
     ROI_DATA = auto()
     SEG_DATA = auto()
     AUTOFOCUS_DATA = auto()
+    Z_STACK = auto()
 
 
 class FocusStatusType(EvoType):
