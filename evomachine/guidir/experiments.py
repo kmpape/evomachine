@@ -46,6 +46,7 @@ class ExperimentWorker(EvoWorkerTemplate):
         self._field_of_views: Union[None, Dict[int, Coordinate]] = None
         self._cropping_boxes: Union[None, List[delta.utils.CroppingBox]] = None
         self._stage_limits: Union[None, Dict[str, Tuple[float, float]]] = None
+        self._focus_curves_available: bool = False
         self.queue_manager.request(
             req_str='self.cam.get_stage_limits',
             kwargs_dict={},
@@ -112,22 +113,61 @@ class ExperimentWorker(EvoWorkerTemplate):
         logger.info(f"Extracted {len(coordinates)} coordinates: {coordinates}")
         return coordinates
 
-    def initialise_automaton_focus(self, data: Any = None, is_init_all: bool = False, use_autofocus: bool = False):
+    def initialise_automaton_focus(
+            self,
+            data: Any = None,
+            is_init_all: bool = False,
+            use_autofocus: bool = False,
+            use_software_focus: bool = True,
+            use_software_focus_initialisation: bool = False,
+    ):
+        """Request focus initialisation using the selected automatic focus mode.
+
+        Parameters
+        ----------
+        data : Any
+            Result from a preceding asynchronous request, or ``None`` for a direct request.
+        is_init_all : bool
+            Continue the complete initialization chain after focus initialization.
+        use_autofocus : bool
+            Use hardware autofocus and ignore the software-focus flags.
+        use_software_focus : bool
+            Enable initial and recurring software focus when autofocus is disabled.
+        use_software_focus_initialisation : bool
+            Enable software focus during initialization only.
+
+        Returns
+        -------
+        None
+            Queues focus initialization and its appropriate callback.
+        """
         if isinstance(data, Exception):
             logger.error(f"initialise_automaton_focus: Exception encountered. Aborting.")
             self.enable_disable_next_buttons(None, [0, 8], [1, 2, 3, 4, 5, 6, 7])
             return
+        self._focus_curves_available = (
+            not use_autofocus and
+            (use_software_focus or use_software_focus_initialisation)
+        )
+        focus_kwargs = {
+            'use_autofocus': use_autofocus,
+            'use_software_focus': use_software_focus,
+            'use_software_focus_initialisation': use_software_focus_initialisation,
+        }
         if not is_init_all:
             self.queue_manager.request(
                 req_str='self.initialise_fov_focus',
-                kwargs_dict={'use_autofocus': use_autofocus},
+                kwargs_dict=focus_kwargs,
                 callback=self.enable_disable_next_buttons,
-                callback_args=([2, 6], [3, 4, 5, 7],),
+                callback_args=(
+                    [2, 6] if self._focus_curves_available else [2],
+                    [3, 4, 5, 7] if self._focus_curves_available else [3, 4, 5, 6, 7],
+                ),
             )
         else:
             self.queue_manager.request(
                 req_str='self.initialise_fov_focus',
-                kwargs_dict={'use_autofocus': use_autofocus},
+                kwargs_dict=focus_kwargs,
                 callback=self.initialise_automaton_references,
                 callback_args=(True,),
             )
@@ -179,7 +219,31 @@ class ExperimentWorker(EvoWorkerTemplate):
             cropping_boxes: Optional[List[EvoCroppingBox]] = None,
             is_init_all: bool = False,
             use_autofocus: bool = False,
+            use_software_focus: bool = True,
+            use_software_focus_initialisation: bool = False,
     ):
+        """Queue FoV initialization using recorded positions and a focus policy.
+
+        Parameters
+        ----------
+        read_in_positions : Dict[int, Dict[str, Union[None, Dict[str, Union[float, int]]]]]
+            Recorded path endpoints used to generate FoV coordinates.
+        cropping_boxes : Optional[List[EvoCroppingBox]]
+            Optional cropping boxes applied to each generated FoV.
+        is_init_all : bool
+            Continue the complete initialization chain after FoV initialization.
+        use_autofocus : bool
+            Use hardware autofocus and ignore the software-focus flags.
+        use_software_focus : bool
+            Enable initial and recurring software focus when autofocus is disabled.
+        use_software_focus_initialisation : bool
+            Enable software focus during initialization only.
+
+        Returns
+        -------
+        None
+            Queues FoV initialization when the recorded coordinates are valid.
+        """
         logger.debug(f"ExperimentWorker.initialise_automaton_field_of_views: {read_in_positions}.")
         coordinates = self.get_positions_from_dict(read_in_positions)
         # cropping_boxes_one_fov = ExperimentWorker.make_delta_cropping_boxes(cropping_indices)
@@ -198,6 +262,8 @@ class ExperimentWorker(EvoWorkerTemplate):
                     'field_of_views': self._field_of_views,
                     'cropping_boxes': self._cropping_boxes,
                     'use_autofocus': use_autofocus,
+                    'use_software_focus': use_software_focus,
+                    'use_software_focus_initialisation': use_software_focus_initialisation,
                 },
                 callback=self.enable_disable_next_buttons,
                 callback_args=([1], [2, 3, 4, 5, 6, 7, 9],),
@@ -209,9 +275,16 @@ class ExperimentWorker(EvoWorkerTemplate):
                     'field_of_views': self._field_of_views,
                     'cropping_boxes': self._cropping_boxes,
                     'use_autofocus': use_autofocus,
+                    'use_software_focus': use_software_focus,
+                    'use_software_focus_initialisation': use_software_focus_initialisation,
                 },
                 callback=self.initialise_automaton_focus,
-                callback_args=(True, use_autofocus),
+                callback_args=(
+                    True,
+                    use_autofocus,
+                    use_software_focus,
+                    use_software_focus_initialisation,
+                ),
             )
 
     def initialise_all(
@@ -219,12 +292,36 @@ class ExperimentWorker(EvoWorkerTemplate):
             read_in_positions: Dict[int, Dict[str, Union[None, Dict[str, Union[float, int]]]]],
             cropping_boxes: Optional[List[EvoCroppingBox]] = None,
             use_autofocus: bool = False,
+            use_software_focus: bool = True,
+            use_software_focus_initialisation: bool = False,
     ):
+        """Queue complete initialization using the selected focus policy.
+
+        Parameters
+        ----------
+        read_in_positions : Dict[int, Dict[str, Union[None, Dict[str, Union[float, int]]]]]
+            Recorded path endpoints used to generate FoV coordinates.
+        cropping_boxes : Optional[List[EvoCroppingBox]]
+            Optional cropping boxes applied to each generated FoV.
+        use_autofocus : bool
+            Use hardware autofocus and ignore the software-focus flags.
+        use_software_focus : bool
+            Enable initial and recurring software focus when autofocus is disabled.
+        use_software_focus_initialisation : bool
+            Enable software focus during initialization only.
+
+        Returns
+        -------
+        None
+            Starts the chained initialization workflow.
+        """
         self.initialise_automaton_field_of_views(
             read_in_positions=read_in_positions,
             cropping_boxes=cropping_boxes,
             is_init_all=True,
             use_autofocus=use_autofocus,
+            use_software_focus=use_software_focus,
+            use_software_focus_initialisation=use_software_focus_initialisation,
         )
 
     def enable_after_init_all(self, data: Any):
@@ -235,7 +332,12 @@ class ExperimentWorker(EvoWorkerTemplate):
             req_str='self.save_state',
             kwargs_dict={'filename_suffix': 'GUI'},
         )
-        self.signal_enable_button.emit([4, 6, 7])
+        enabled_buttons = [4, 7]
+        if self._focus_curves_available:
+            enabled_buttons.append(6)
+        self.signal_enable_button.emit(enabled_buttons)
+        if not self._focus_curves_available:
+            self.signal_disable_button.emit([6])
         self.signal_set_button_color.emit([0, 1, 2, 3], "green")
         self.signal_set_button_color.emit([8], "lightgray")
 
@@ -370,8 +472,23 @@ class ExperimentPanel(EvoPanelTemplate):
         self.read_in_clear_button = self.make_button(text="Clear Paths", func=self.clear_param, font=VERYSMALL)
         self.focus_curves_button = self.make_button(text="Focus Curves", func=self.show_focus_curves, font=VERYSMALL)
         self.use_autofocus: bool = True
+        self.use_software_focus: bool = True
+        self.use_software_focus_initialisation: bool = False
         self.autofocus_checkbox = self.make_checkbox(text="Use autofocus", font=SMALL, set_true=self.use_autofocus,
                                                      func=self.toggle_autofocus)
+        self.software_focus_checkbox = self.make_checkbox(
+            text="Use software focus",
+            font=SMALL,
+            set_true=self.use_software_focus,
+            func=self.toggle_software_focus,
+        )
+        self.software_focus_initialisation_checkbox = self.make_checkbox(
+            text="Software focus at init",
+            font=SMALL,
+            set_true=self.use_software_focus_initialisation,
+            func=self.toggle_software_focus_initialisation,
+        )
+        self._update_focus_control_state()
         self.position_dialog_button = self.make_button(text="FoVs", func=self.show_position_dialog, font=VERYSMALL)
         self.strategy_label = self.make_label(text="???", font=VERYSMALL)
         self._automaton_is_initialised: bool = False
@@ -387,6 +504,8 @@ class ExperimentPanel(EvoPanelTemplate):
         self.layout.addWidget(self.init_positions_button, 2, 0, 1, 1)
         self.layout.addWidget(self.init_focus_button, 3, 0, 1, 1)
         self.layout.addWidget(self.autofocus_checkbox, 3, 1, 1, 1)
+        self.layout.addWidget(self.software_focus_checkbox, 3, 2, 1, 1)
+        self.layout.addWidget(self.software_focus_initialisation_checkbox, 3, 3, 1, 1)
         self.layout.addWidget(self.init_references_button, 4, 0, 1, 1)
         self.layout.addWidget(self.init_processors_button, 5, 0, 1, 1)
         self.layout.addWidget(self.init_all_button, 6, 0, 1, 1)
@@ -421,7 +540,9 @@ class ExperimentPanel(EvoPanelTemplate):
                    self.focus_curves_button,        # 6
                    self.position_dialog_button,     # 7
                    self.init_all_button,            # 8
-                   self.autofocus_checkbox]         # 9
+                   self.autofocus_checkbox,         # 9
+                   self.software_focus_checkbox,    # 10
+                   self.software_focus_initialisation_checkbox]  # 11
         self.worker_buttons = ButtonWorker(
             queue_manager=queue_manager,
             button_list=buttons,
@@ -486,12 +607,23 @@ class ExperimentPanel(EvoPanelTemplate):
             self.signal_disable_button.emit([0, 8])
 
     def init_focus(self):
+        """Initialise experiment focus using the currently selected focus policy.
+
+        Returns
+        -------
+        None
+            Queues focus initialization and updates the initialization controls.
+        """
         self._automaton_is_initialised = False
         self.init_focus_button.setStyleSheet("background-color: orange;")
         self.init_references_button.setStyleSheet("background-color: lightgray;")
         self.init_processors_button.setStyleSheet("background-color: lightgray;")
-        self.signal_disable_button.emit([9])
-        self.worker.initialise_automaton_focus(use_autofocus=self.use_autofocus)
+        self.signal_disable_button.emit([9, 10, 11])
+        self.worker.initialise_automaton_focus(
+            use_autofocus=self.use_autofocus,
+            use_software_focus=self.use_software_focus,
+            use_software_focus_initialisation=self.use_software_focus_initialisation,
+        )
         self.signal_set_button_color.emit([1], "orange")
         self.signal_set_button_color.emit([2, 3], "lightgray")
 
@@ -507,23 +639,41 @@ class ExperimentPanel(EvoPanelTemplate):
         self.worker.initialise_automaton_references()
 
     def init_all(self):
+        """Initialise all experiment components using the selected focus policy.
+
+        Returns
+        -------
+        None
+            Starts the complete asynchronous initialization chain.
+        """
         self._automaton_is_initialised = True
         self.signal_set_button_color.emit([0, 1, 2, 3, 8], "orange")
-        self.signal_disable_button.emit([9])
+        self.signal_disable_button.emit([9, 10, 11])
         self.worker.initialise_all(
             read_in_positions=self.read_in_positions,
             cropping_boxes=[b for b in self.cropping_boxes.values() if b is not None],
             use_autofocus=self.use_autofocus,
+            use_software_focus=self.use_software_focus,
+            use_software_focus_initialisation=self.use_software_focus_initialisation,
         )
 
     def init_positions(self):
+        """Initialise FoV positions using the selected focus policy.
+
+        Returns
+        -------
+        None
+            Queues FoV initialization and locks the focus controls.
+        """
         self._automaton_is_initialised = False
         self.signal_set_button_color.emit([0], "orange")
-        self.signal_disable_button.emit([9])
+        self.signal_disable_button.emit([9, 10, 11])
         self.worker.initialise_automaton_field_of_views(
             read_in_positions=self.read_in_positions,
             cropping_boxes=[b for b in self.cropping_boxes.values() if b is not None],
             use_autofocus=self.use_autofocus,
+            use_software_focus=self.use_software_focus,
+            use_software_focus_initialisation=self.use_software_focus_initialisation,
         )
 
     def start_acquisition(self):
@@ -564,8 +714,26 @@ class ExperimentPanel(EvoPanelTemplate):
         # self.stop_button.setEnabled(False)
 
     def read_focus_data(self, data: AutomatonCommand):
-        if not self.use_autofocus:
+        """Store focus diagnostics and update controls when focus data arrives.
+
+        Parameters
+        ----------
+        data : AutomatonCommand
+            Focus data emitted by the Automaton after focus initialization.
+
+        Returns
+        -------
+        None
+            Stores the data and updates focus-related button states.
+        """
+        if not self.use_autofocus and (
+                self.use_software_focus or self.use_software_focus_initialisation
+        ):
             self.signal_set_button_color.emit([1, 6], "green")
+        else:
+            self.signal_set_button_color.emit([1], "green")
+            self.signal_set_button_color.emit([6], "lightgray")
+            self.signal_disable_button.emit([6])
         self.focus_data = data.command_args
         logger.debug("Received focus data.")
 
@@ -589,13 +757,25 @@ class ExperimentPanel(EvoPanelTemplate):
         }
 
     def show_focus_curves(self):
-        if self.use_autofocus:
-            logger.error("show_focus_curves: using autofocus. Returning.")
+        """Display focus curves when initialization generated software-focus data.
+
+        Returns
+        -------
+        None
+            Opens the focus-curve window or returns when usable curve data is unavailable.
+        """
+        if self.use_autofocus or not (
+                self.use_software_focus or self.use_software_focus_initialisation
+        ):
+            logger.error("show_focus_curves: no initial software-focus data is expected. Returning.")
             return
-        if self.focus_data is None:
+        if not self.focus_data or not self.focus_data.get('focus_curves'):
             logger.error("show_focus_curves: missing data. Returning.")
             return
         focus_curves = self.focus_data['focus_curves']
+        if any(curve is None for curve in focus_curves.values()):
+            logger.error("show_focus_curves: focus curves are incomplete. Returning.")
+            return
         focus_prev_stack = self.focus_data['focus_prev_stack']
         focus_stack = self.focus_data['focus_stack']
         focus_prev_z_coords = self.focus_data['focus_prev_z_coords']
@@ -644,10 +824,65 @@ class ExperimentPanel(EvoPanelTemplate):
         self.pos_dialog.open()
 
     def toggle_autofocus(self, state):
-        if state == Qt.Checked:
-            self.use_autofocus = True
-        else:
-            self.use_autofocus = False
+        """Update autofocus state and software-focus control availability.
+
+        Parameters
+        ----------
+        state : int
+            Qt checkbox state for hardware autofocus.
+
+        Returns
+        -------
+        None
+            Updates the stored selection and enabled controls.
+        """
+        self.use_autofocus = state == Qt.Checked
+        self._update_focus_control_state()
+
+    def toggle_software_focus(self, state):
+        """Update recurring software-focus state and initialization-control availability.
+
+        Parameters
+        ----------
+        state : int
+            Qt checkbox state for recurring software focus.
+
+        Returns
+        -------
+        None
+            Updates the stored selection and enabled controls.
+        """
+        self.use_software_focus = state == Qt.Checked
+        self._update_focus_control_state()
+
+    def toggle_software_focus_initialisation(self, state):
+        """Update whether software focus runs only during initialization.
+
+        Parameters
+        ----------
+        state : int
+            Qt checkbox state for initialization-only software focus.
+
+        Returns
+        -------
+        None
+            Updates the stored initialization-only selection.
+        """
+        self.use_software_focus_initialisation = state == Qt.Checked
+
+    def _update_focus_control_state(self):
+        """Enable only the focus controls relevant to the selected mode.
+
+        Returns
+        -------
+        None
+            Updates checkbox availability without changing their checked values.
+        """
+        software_focus_controls_enabled = not self.use_autofocus
+        self.software_focus_checkbox.setEnabled(software_focus_controls_enabled)
+        self.software_focus_initialisation_checkbox.setEnabled(
+            software_focus_controls_enabled and not self.use_software_focus
+        )
 
     @pyqtSlot(int, int, EvoCroppingBox)  # noqa
     def update_cropping_boxes(self, fov_id: int, box_id: int, cropping_box: Union[EvoCroppingBox, None]):

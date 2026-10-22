@@ -113,6 +113,10 @@ class Automaton:
         "List indexed by i_pos w. reference image array: channels x pxl_vert x pxl_horiz. In camera format."
         self._use_autofocus: bool = False
         "If true, only X & Y coordinates are used in the position list."
+        self._use_software_focus: bool = True
+        "If true and autofocus is disabled, run software focus after position moves."
+        self._use_software_focus_initialisation: bool = False
+        "If true, run software focus while initialising FoVs when recurring software focus is disabled."
         self._fov_list_is_initialised: bool = False
         "Set to true after initialise_field_of_view_list."
         self._focus_is_initialised: bool = False
@@ -258,7 +262,9 @@ class Automaton:
             self,
             field_of_views: dict[int, Coordinate] | None = None,
             cropping_boxes: dict[int, list[EvoCroppingBox]] | None = None,
-            use_autofocus: bool = False
+            use_autofocus: bool = False,
+            use_software_focus: bool = True,
+            use_software_focus_initialisation: bool = False,
     ):
         """
         Initialises automaton for strategy execution. Can be called more than once.
@@ -270,11 +276,15 @@ class Automaton:
         cropping_boxes : dict[int, list[EvoCroppingBox]] | None
             Optional cropping boxes to split one field of view into several positions.
         use_autofocus : bool
-            Flag indicating if autofocus is used. Uses software focus for each field of view to determine Z once
-            otherwise.
+            Use hardware autofocus. This takes precedence over both software-focus flags.
+        use_software_focus : bool
+            Run software focus during initialisation and after each position move when autofocus is disabled.
+        use_software_focus_initialisation : bool
+            Run software focus only during initialisation when autofocus and recurring software focus are disabled.
         Returns
         -------
-
+        None
+            Initialises the configured field of views, focus mode, reference frames, and position processors.
         """
         logger.info("Automaton.initialise: starting...")
 
@@ -286,6 +296,8 @@ class Automaton:
 
         # Initialise field of views
         self._use_autofocus = use_autofocus
+        self._use_software_focus = use_software_focus
+        self._use_software_focus_initialisation = use_software_focus_initialisation
 
         if field_of_views is not None:
             logger.info(f"Automaton.initialise: initialising {len(field_of_views)} FoVs...")
@@ -293,6 +305,8 @@ class Automaton:
                 field_of_views=field_of_views,
                 cropping_boxes=cropping_boxes,
                 use_autofocus=use_autofocus,
+                use_software_focus=use_software_focus,
+                use_software_focus_initialisation=use_software_focus_initialisation,
             )
         elif not self._fov_list_is_initialised:
             raise ConfigError(message="Automaton.initialise: FoV list is not initialised.",
@@ -301,7 +315,11 @@ class Automaton:
             logger.info(f"Automaton.initialise: found {len(self._fovs)} initialised positions...")
 
         # Initialise focus
-        self.initialise_fov_focus(use_autofocus=use_autofocus)
+        self.initialise_fov_focus(
+            use_autofocus=use_autofocus,
+            use_software_focus=use_software_focus,
+            use_software_focus_initialisation=use_software_focus_initialisation,
+        )
 
         # Take reference frames on each channel
         logger.info(f"Automaton.initialise: taking reference frames on all channels and all positions...")
@@ -447,13 +465,37 @@ class Automaton:
             field_of_views: dict[int, Coordinate],
             cropping_boxes: dict[int, list[EvoCroppingBox]] | None = None,
             use_autofocus: bool = False,
+            use_software_focus: bool = True,
+            use_software_focus_initialisation: bool = False,
     ):
+        """Initialise FoV coordinates and configure their Z-coordinate policy.
+
+        Parameters
+        ----------
+        field_of_views : dict[int, Coordinate]
+            Coordinates keyed by FoV identifier.
+        cropping_boxes : dict[int, list[EvoCroppingBox]] | None
+            Optional cropping boxes for each FoV.
+        use_autofocus : bool
+            Remove Z coordinates from the movement list and use hardware autofocus.
+        use_software_focus : bool
+            Enable recurring software focus when hardware autofocus is disabled.
+        use_software_focus_initialisation : bool
+            Enable a software-focus scan during focus initialisation only.
+
+        Returns
+        -------
+        None
+            Stores the FoV list and sends the movement coordinates to the camera.
+        """
         self._fov_list_is_initialised = False
         self._focus_is_initialised = False
         self._position_processors_is_initialised = []
         self._strategy_is_initialised = False
         self._reference_frames_is_initialised = False
         self._use_autofocus = use_autofocus
+        self._use_software_focus = use_software_focus
+        self._use_software_focus_initialisation = use_software_focus_initialisation
         if use_autofocus:
             if not self.cam.autofocus_is_locked():
                 msg = "Automaton.initialise_field_of_view_list: autofocus is not locked. Lock autofocus or uncheck" \
@@ -485,14 +527,24 @@ class Automaton:
 
         # Check positions
         z_coord = self.cam.get_coordinates(['Z'])['Z']
+        use_fixed_z = not (
+            use_autofocus or use_software_focus or use_software_focus_initialisation
+        )
+        if use_fixed_z:
+            logger.info(
+                f"Automaton.initialise_field_of_view_list: fixing every FoV at current stage Z={z_coord}."
+            )
         self.focus_prev_z_coords = np.zeros(len(self._fovs))
-        for i_fov, coord in enumerate(self._fovs.values()):
-            if (not use_autofocus) and (not coord.has_z()):
+        for i_fov, (fov_id, coord) in enumerate(self._fovs.items()):
+            if use_fixed_z:
+                coord.z = z_coord
+                self._fovs_full_coords[fov_id].z = z_coord
+            elif (not use_autofocus) and (not coord.has_z()):
                 coord.z = z_coord
             elif use_autofocus:
                 coord.z = None
             if self.cam.coordinate_is_out_of_bounds(coordinate=coord):
-                msg = f"Automaton.initialise_field_of_view_list: {Coordinate} for FoV {i_fov} is out of bounds " \
+                msg = f"Automaton.initialise_field_of_view_list: {Coordinate} for FoV {fov_id} is out of bounds " \
                       f"({self.cam.get_stage_limits()})."
                 raise ConfigError(message=msg, error_code=ErrorCode.ERROR_DEVICE_CONFIG)
             self.focus_prev_z_coords[i_fov] = coord.z if not use_autofocus else z_coord
@@ -529,13 +581,43 @@ class Automaton:
         )
         logger.info(f"Automaton.initialise_field_of_view_list: initialisation done.")
 
-    def initialise_fov_focus(self, cfg_focus: ConfigFocus | None = None, use_autofocus: bool = False):
+    def initialise_fov_focus(
+            self,
+            cfg_focus: ConfigFocus | None = None,
+            use_autofocus: bool = False,
+            use_software_focus: bool = True,
+            use_software_focus_initialisation: bool = False,
+    ):
+        """Initialise focus data and optionally focus every field of view.
+
+        Parameters
+        ----------
+        cfg_focus : ConfigFocus | None
+            Software-focus configuration, or ``None`` to use the camera configuration.
+        use_autofocus : bool
+            Use hardware autofocus and skip initial software focus.
+        use_software_focus : bool
+            Run initial software focus and enable software focus after position moves.
+        use_software_focus_initialisation : bool
+            Run initial software focus when recurring software focus is disabled.
+
+        Returns
+        -------
+        None
+            Initialises focus diagnostics and updates each focused FoV's Z coordinate.
+        """
         if not self._fov_list_is_initialised:
             raise ConfigError("Automaton.initialise_fov_focus: FoV list is not initialised.", ErrorCode.ERROR_CONFIG)
         if not self.devices_is_initialised():
             raise ConfigError("Automaton.initialise_fov_focus: Devices not initialised.", ErrorCode.ERROR_CONFIG)
         self.set_cam_live_mode(False)
         self._use_autofocus = use_autofocus
+        self._use_software_focus = use_software_focus
+        self._use_software_focus_initialisation = use_software_focus_initialisation
+        initialise_software_focus = (
+            not self._use_autofocus and
+            (self._use_software_focus or self._use_software_focus_initialisation)
+        )
 
         cfg_focus = self.cam.cfg.focus if cfg_focus is None else cfg_focus
         self.focus_curves = {i_fov: None for i_fov in self._fovs.keys()}
@@ -543,15 +625,17 @@ class Automaton:
         self.focus_stack = np.zeros((*self.cam.cfg.image.shape, len(self._fovs)))
         if self._use_autofocus:
             logger.info(f"Automaton.initialise_fov_focus: Using autofocus instead.")
-        else:
+        elif initialise_software_focus:
             self.cam.disable_led()
             self.cam.disable_live_mode()
             self._dmd.display_full()
             logger.info(f"Automaton.initialise_fov_focus with configuration {cfg_focus}")
+        else:
+            logger.info("Automaton.initialise_fov_focus: Retaining the fixed stage Z without a focus scan.")
         for i_fov, coord in self._fovs.items():
             if self._use_autofocus:
                 coord.z = None
-            else:
+            elif initialise_software_focus:
                 logger.info(f"Automaton.initialise_fov_focus: initialising FoV {i_fov+1} of {len(self._fovs)}.")
                 if self.stopped():
                     logger.warning("Automaton.initialise_position_list: stopping initialisation.")
@@ -1311,8 +1395,8 @@ class Automaton:
             # Note: even when autofocus disabled, manage_autofocus records the current Z coordinate
             self.manage_autofocus(curr_fov_id=self._curr_fov_id)
 
-        if not self._use_autofocus:
-            logger.warning(f"automaton._move_to_pos: running software focus because self._use_autofocus={self._use_autofocus}.")
+        if not self._use_autofocus and self._use_software_focus:
+            logger.warning("automaton._move_to_pos: running recurring software focus.")
             self._run_software_focus(cfg_focus=self.cam.cfg.focus, curr_fov_id=pos_id)
             software_focus_success = self.cam.get_software_focus_status() == FocusStatusType.IN_FOCUS
             if not software_focus_success:
