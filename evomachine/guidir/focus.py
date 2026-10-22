@@ -141,6 +141,22 @@ class FocusPanel(EvoPanelTemplate):
                           self.make_lineedit(text=str(int(self.cfg_focus.step_size)),
                                              func=self.update_param, param='step_size')],
             'algorithm': [self.make_label(text="Algorithm", font=SMALL), self.algorithm_dropdown],
+            'cell_radius': [self.make_label(text="FFT cell radius [px]", font=SMALL),
+                            self.make_lineedit(text=str(self.cfg_focus.cell_radius),
+                                               func=self.update_param, param='cell_radius')],
+            'downsample': [self.make_label(text="FFT downsample", font=SMALL),
+                           self.make_lineedit(text=str(self.cfg_focus.downsample),
+                                              func=self.update_param, param='downsample')],
+            'order': [self.make_label(text="FFT filter order", font=SMALL),
+                      self.make_lineedit(text=str(self.cfg_focus.order),
+                                         func=self.update_param, param='order')],
+            'saturation': [self.make_label(text="FFT saturation", font=SMALL),
+                           self.make_lineedit(text=str(self.cfg_focus.saturation),
+                                              func=self.update_param, param='saturation')],
+            'normalize_brightness': [self.make_label(text="FFT normalize brightness", font=SMALL),
+                                     self.make_lineedit(text=str(self.cfg_focus.normalize_brightness),
+                                                        func=self.update_param,
+                                                        param='normalize_brightness')],
         }
         self.start_button = self.make_button(text="Start", font=SMALL, func=self.stop_crisp)
         self.start_button.setEnabled(True)

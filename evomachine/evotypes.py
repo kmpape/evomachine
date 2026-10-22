@@ -124,6 +124,7 @@ class FocusAlgorithmType(EvoType):
     LAPLACIAN_VAR = auto()
     SQUARED_GRAD_AVG = auto()
     STEEL = auto()
+    BANDPASS_FFT = auto()
 
 
 class LEDType(EvoType):

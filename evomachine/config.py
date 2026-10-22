@@ -311,6 +311,16 @@ class ConfigFocus:
     "Box to crop out image area to focus on."
     user_input: bool | None = True
     "Ask for user input before configuring and starting software focus."
+    cell_radius: float = 20.0
+    "Approximate in-focus cell radius in full-resolution pixels for the bandpass FFT algorithm."
+    downsample: int = 4
+    "Positive integer stride applied before the FFT."
+    order: int = 4
+    "Butterworth filter order for the bandpass FFT algorithm."
+    saturation: float | None = None
+    "Optional upper intensity clip for the bandpass FFT algorithm."
+    normalize_brightness: bool = True
+    "Normalise the bandpass FFT score by mean intensity squared."
 
     @staticmethod
     def get_attr_from_str(attr_name: str, attr_value_str: str) \
@@ -323,8 +333,17 @@ class ConfigFocus:
             return FocusAlgorithmType.from_string(attr_value_str)
         elif attr_name == 'focus_channel':
             return LEDType(int(attr_value_str))
-        elif attr_name == 'brightness':
+        elif attr_name in ['brightness', 'cell_radius']:
             return float(attr_value_str)
+        elif attr_name == 'saturation':
+            return None if attr_value_str.strip().lower() == 'none' else float(attr_value_str)
+        elif attr_name == 'normalize_brightness':
+            normalized_value = attr_value_str.strip().lower()
+            if normalized_value == 'true':
+                return True
+            elif normalized_value == 'false':
+                return False
+            raise ValueError("normalize_brightness must be True or False.")
         else:
             return int(attr_value_str)
 
@@ -344,6 +363,16 @@ class ConfigFocus:
                 and (attr_value >= 0) and (attr_value <= 29)
         elif attr_name == 'user_input':
             return isinstance(attr_value, bool)
+        elif attr_name == 'cell_radius':
+            return isinstance(attr_value, (int, float)) and not isinstance(attr_value, bool) and attr_value > 0
+        elif attr_name in ['downsample', 'order']:
+            return isinstance(attr_value, int) and not isinstance(attr_value, bool) and attr_value > 0
+        elif attr_name == 'saturation':
+            return attr_value is None or (
+                isinstance(attr_value, (int, float)) and not isinstance(attr_value, bool) and attr_value > 0
+            )
+        elif attr_name == 'normalize_brightness':
+            return isinstance(attr_value, bool)
         else:
             return False
 
@@ -360,6 +389,16 @@ class ConfigFocus:
             raise TypeError(f"brightness must be an int or float in [0, 29]. Provided {self.brightness}.")
         if not self.attr_is_valid('algorithm', self.algorithm):
             raise TypeError(f"algorithm must be an instance of FocusAlgorithmType. Provided {self.algorithm}.")
+        if not self.attr_is_valid('cell_radius', self.cell_radius):
+            raise TypeError(f"cell_radius must be a positive number. Provided {self.cell_radius}.")
+        if not self.attr_is_valid('downsample', self.downsample):
+            raise TypeError(f"downsample must be a positive int. Provided {self.downsample}.")
+        if not self.attr_is_valid('order', self.order):
+            raise TypeError(f"order must be a positive int. Provided {self.order}.")
+        if not self.attr_is_valid('saturation', self.saturation):
+            raise TypeError(f"saturation must be None or a positive number. Provided {self.saturation}.")
+        if not self.attr_is_valid('normalize_brightness', self.normalize_brightness):
+            raise TypeError(f"normalize_brightness must be bool. Provided {self.normalize_brightness}.")
 
     def copy(self):
         return ConfigFocus(**self.__dict__)

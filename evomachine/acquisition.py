@@ -902,6 +902,11 @@ class TestCamera(AbstractCamera):
             algorithm=self._cfg_focus.algorithm,
             rowshift=rowshift,
             colshift=colshift,
+            cell_radius=self._cfg_focus.cell_radius,
+            downsample=self._cfg_focus.downsample,
+            order=self._cfg_focus.order,
+            saturation=self._cfg_focus.saturation,
+            normalize_brightness=self._cfg_focus.normalize_brightness,
         )
         return True
 
@@ -1660,6 +1665,11 @@ class EvoCamera(AbstractCamera):
             algorithm=self._cfg_focus.algorithm,
             rowshift=rowshift,
             colshift=colshift,
+            cell_radius=self._cfg_focus.cell_radius,
+            downsample=self._cfg_focus.downsample,
+            order=self._cfg_focus.order,
+            saturation=self._cfg_focus.saturation,
+            normalize_brightness=self._cfg_focus.normalize_brightness,
         )
         return True
 
