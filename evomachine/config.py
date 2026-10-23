@@ -300,6 +300,9 @@ class ConfigFocus:
     "Step size for Z-movement of stage in 1/10 μm, e.g., step_size=1 -> stage moves in 0.1 μm."
     brightness: float
     "Brightness value in (1,29) for LED brightness during focus."
+    
+    filter_wheel: FilterWheelType = FilterWheelType.FILTER #AD edit
+    "Filter wheel position to use during focus." #AD edit
 
     algorithm: FocusAlgorithmType = FocusAlgorithmType.STEEL
     "Algorithm used to focus. See FocusAlgorithmType for available algorithms."

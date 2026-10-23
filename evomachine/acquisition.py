@@ -1639,6 +1639,7 @@ class EvoCamera(AbstractCamera):
         self.focus_scores = np.zeros(len(self.focus_Z_coords))
         self.focus_stack = np.zeros(shape=(*self.cfg.image.shape, len(self.focus_Z_coords)), dtype=np.float64)
         self.disable_led()
+        self.set_filter_wheel(self._cfg_focus.filter_wheel) #AD edit
         self.focus_prev_image = self.display_save_frame(
             i_chan=self._cfg_focus.focus_channel,
             path_to_save=False,
