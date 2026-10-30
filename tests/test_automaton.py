@@ -721,7 +721,8 @@ def test_failed_strategy_finalisation_falls_back_to_abort_semantics() -> None:
 
 def test_autostrat_resumes_multiple_initial_and_final_commands() -> None:
     from tests.test_strategy_generation_integration import _domain, _verified
-    from evomachine.strategy_generation import AutoStratStrategy, MicroscopyCommandAdapter
+    from evomachine.strategy_generation.microscopy import MicroscopyCommandAdapter
+    from evomachine.strategy_generation.strategy import AutoStratStrategy
 
     automaton, *_ = make_automaton()
     strategy = AutoStratStrategy(
@@ -748,7 +749,8 @@ def test_autostrat_resumes_multiple_initial_and_final_commands() -> None:
 def test_autostrat_arithmetic_failure_after_command_aborts_without_finalise() -> None:
     from tests.test_strategy_generation_integration import _domain, _verified
     from autostrat.language.evaluator import ArithmeticEvaluationError
-    from evomachine.strategy_generation import AutoStratStrategy, MicroscopyCommandAdapter
+    from evomachine.strategy_generation.microscopy import MicroscopyCommandAdapter
+    from evomachine.strategy_generation.strategy import AutoStratStrategy
 
     automaton, acquisition, *_ = make_automaton()
     strategy = AutoStratStrategy(

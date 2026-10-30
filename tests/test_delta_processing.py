@@ -15,13 +15,13 @@ from evomachine.delta_processing import (
     TargetedProjectionError,
     TrenchState,
 )
-from evomachine.strategy_generation import (
-    AutoStratStrategy,
+from evomachine.strategy_generation.microscopy import (
     MicroscopyCollectionProvider,
     MicroscopyCommandAdapter,
     MicroscopyObservationProvider,
     MicroscopyRuntimeErrorProvider,
 )
+from evomachine.strategy_generation.strategy import AutoStratStrategy
 from evomachine.types import LEDType
 from evomachine.runtime_errors import CommandExecutionError
 from evomachine.navigation import FocusNavigatorFovRecord, FovConfig

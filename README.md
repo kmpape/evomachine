@@ -21,9 +21,9 @@ Dependencies are managed with [uv](https://docs.astral.sh/uv/) and specified in 
 
 From the `evomachine` repo root:
 ```bash
-uv sync --no-sources --no-dev
+uv sync --locked --no-sources --no-dev
 ```
-which will create a new `.venv` virtual environment and install all required dependencies.
+which will create a new `.venv` virtual environment and install evomachine plus exactly the versions pinned in `uv.lock`, nothing more. `--locked` makes the command fail instead of silently re-resolving if the lockfile is out of date, and `--no-sources` makes the sibling repos come from the git tags pinned in `pyproject.toml` rather than from local checkouts. The committed `uv.lock` is produced in this mode (`uv lock --no-sources`); a plain development `uv sync` re-locks against the local siblings, and that change to `uv.lock` should not be committed.
 
 Depending on the hardware backends in use, you may also need the extra
 dependencies, see [Extra dependencies](#extra-dependencies).
@@ -63,6 +63,14 @@ uv sync --no-sources --extra pvcam   # production
 ```
 
 It builds against the proprietary PVCAM SDK, which must already be installed on the system. See the `pvcam` [repository](https://github.com/Photometrics/PyVCAM) for more information.
+
+#### **`autostrat`**
+
+AutoStrat-backed strategy generation (the "Strategy" tab in the GUI). It lives in a separate private repository, so it is an optional extra: the application starts and runs without it and strategy generation reports that the extra is missing. Install with:
+```bash
+uv sync --extra autostrat   # add to a dev environment
+uv sync --locked --no-sources --no-dev --extra autostrat   # production
+```
 
 #### **`em_dmd_window`**
 

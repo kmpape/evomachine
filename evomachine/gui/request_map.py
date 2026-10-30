@@ -1300,10 +1300,11 @@ def gui_autostrat_strategy_save(facade: Any, payload: dict[str, Any]) -> dict[st
 def _gui_autostrat_strategy_from_source(facade: Any, source: str):
     from autostrat import load_domain_pack
     from evomachine.domain_packs import MICROSCOPY_DOMAIN_PACK_PATH
-    from evomachine.strategy_generation import (
-        AutoStratStrategy, MicroscopyCommandAdapter, MicroscopyCollectionProvider,
+    from evomachine.strategy_generation.microscopy import (
+        MicroscopyCommandAdapter, MicroscopyCollectionProvider,
         MicroscopyObservationProvider, MicroscopyRuntimeErrorProvider,
     )
+    from evomachine.strategy_generation.strategy import AutoStratStrategy
 
     return AutoStratStrategy.from_source(
         cfg=facade.gui_strategy_config().updated(preproc_enabled=True),
@@ -1469,10 +1470,11 @@ def gui_strategy_generation_status(facade: Any, payload: dict[str, Any]) -> dict
 def gui_generated_strategy_set(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     from autostrat import load_domain_pack
     from evomachine.domain_packs import MICROSCOPY_DOMAIN_PACK_PATH
-    from evomachine.strategy_generation import (
-        AutoStratStrategy, MicroscopyCommandAdapter, MicroscopyCollectionProvider,
+    from evomachine.strategy_generation.microscopy import (
+        MicroscopyCommandAdapter, MicroscopyCollectionProvider,
         MicroscopyObservationProvider, MicroscopyRuntimeErrorProvider,
     )
+    from evomachine.strategy_generation.strategy import AutoStratStrategy
     from evomachine.strategy_generation.preview import GenerationPreview
 
     if not facade.autostrat_enabled:

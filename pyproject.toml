@@ -44,8 +44,6 @@ dependencies = [
     "delta2 @ git+ssh://git@gitlab.com/kmpape/de-lta-rt.git@v2.1.0.dev1",  # tag created of the `dev_main` branch
     "asitiger @ git+https://github.com/kmpape/asitiger.git@v0.1.0",  # public repo: HTTPS needs no auth
     "syncboard @ git+ssh://git@github.com/kmpape/sync_board.git@v0.1.1-signals",
-    # Pin the schema-9 collection/runtime API for reproducible CI installs.
-    "autostrat @ git+ssh://git@github-autostrat/Liam-Metcalf/AutoStrat.git@c0693bd59155fc4c49f7dfa9b04754938d3bed07",
 ]
 
 [project.optional-dependencies]
@@ -58,6 +56,12 @@ dependencies = [
 # this is an opt-in extra rather than a core dependency, so the default install
 # does not break on machines without the SDK.
 pvcam = ["pyvcam>=2.2.4"]
+# AutoStrat-backed strategy generation (the "Strategy" GUI tab). Optional so a
+# release can be installed without access to the AutoStrat repository; without
+# it the rest of the application works and strategy generation reports that the
+# extra is missing. Install with `uv sync --extra autostrat`.
+# Pin the schema-9 collection/runtime API for reproducible installs.
+autostrat = ["autostrat @ git+ssh://git@github.com/Liam-Metcalf/AutoStrat.git@c0693bd59155fc4c49f7dfa9b04754938d3bed07"]
 
 [tool.uv]
 # Transitive pin: aicsimageio (pulled in via delta2) requires zarr <2.16, and

@@ -25,18 +25,20 @@ from evomachine.delta_processing import ProjectionExposureError
 from evomachine.image_processing_config import ImageProcessorConfigFactory
 from evomachine.navigation import FocusNavigatorFovRecord, FovConfig
 from evomachine.strategy import AbstractStrategy
-from evomachine.strategy_generation import (
-    AutoStratStrategy,
+from evomachine.strategy_generation.interfaces import (
     CommandAdapter,
     CommandBuildContext,
+    EmptyRuntimeErrorProvider,
+    RuntimeErrorProvider,
+)
+from evomachine.strategy_generation.microscopy import (
     MicroscopyCommandAdapter,
     MicroscopyCollectionProvider,
     MicroscopyObservationProvider,
     MicroscopyRuntimeErrorProvider,
-    RuntimeErrorProvider,
-    StrategyGenerationService,
 )
-from evomachine.strategy_generation.interfaces import EmptyRuntimeErrorProvider
+from evomachine.strategy_generation.service import StrategyGenerationService
+from evomachine.strategy_generation.strategy import AutoStratStrategy
 from evomachine.strategy_generation.preview import generate_preview
 from evomachine.strategy_generation.runtime import (
     ActiveRuntimeError,
