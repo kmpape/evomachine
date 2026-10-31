@@ -190,9 +190,28 @@ Other useful top-level folders in the main repository:
 - `tests/`: pytest coverage for the package. Run `pytest tests` to execute test suite.
 - `scripts/`: runnable hardware and workflow scripts.
 - `notebooks/`: interactive notebooks for smoke tests and exploratory work.
-- `calibrations/`, `data/`, `delta_models/`, and `images/`:
-  runtime inputs, outputs, models, calibration data, and strategy files.  
-  Note: some folders are only created when starting the software.
+- `calibrations/`, `data/`, `delta_models/`:
+  runtime inputs, models and calibration data.
+
+Acquired frames, log files and AutoStrat strategies saved from the GUI all go under one data directory, which is the checkout itself unless configured otherwise, see [Data directory](#data-directory).
+
+## Data directory
+
+Everything evomachine writes at runtime lives under one data directory: `images/` for acquired frames, `logs/` for log files and `strategies/autostrat/` for strategies saved from the GUI.
+
+The directory is resolved at startup from two optional TOML files, with the later one winning:
+
+1. `/etc/evomachine/config.toml`, defaults for every user of one microscope computer.
+2. `~/.config/evomachine/config.toml`, one user's own choice.
+
+If neither sets it, the data directory is this folder, which is the historical layout and the default with no configuration. Both files share one schema:
+
+```toml
+[paths]
+data_dir = "/scratch/$USER/microscope-data"
+```
+
+The code lives in `evomachine/settings.py`.
 
 ## Running the GUI
 
@@ -284,7 +303,7 @@ unavailable, not reported as zero.
 
 AutoStrat strategy code can also be written directly in the editor. Use **Validate** before
 **Set Strategy**. **Save** and **Save As** persist plain UTF-8 `.strat` files under
-`strategies/autostrat`; the saved-strategy selector loads them back into the editor. An API
+`strategies/autostrat/` in the [data directory](#data-directory); the saved-strategy selector loads them back into the editor. An API
 key is only required for AI generation, not for editing, loading, validating, or running a
 saved strategy. The original fixed choices are labelled **Python Strategies** in the GUI.
 

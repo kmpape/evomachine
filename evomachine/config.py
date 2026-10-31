@@ -6,10 +6,12 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from evomachine.gui.log_buffer import GuiLogBufferHandler
+from evomachine.settings import SETTINGS
 
-# Path to large data storage to store logs and files
+# The code checkout: read-only resources such as calibration data and example strategies.
 EVOMACHINE_DIR: Path = Path(__file__).resolve().parents[1]
-DATA_DIR = EVOMACHINE_DIR / "images"
+# Where acquired frames are written. Configurable, see evomachine/settings.py.
+DATA_DIR: Path = SETTINGS.images_dir
 DMD_WIDTH_HEIGHT = (2716, 1600)
 CAM_WIDTH_HEIGHT = (3200, 3200)
 
@@ -358,7 +360,7 @@ def _log_filename(logging_config: EvoLoggingConfig = DEFAULT_LOGGING_CONFIG) -> 
 
 # Add a file handler for consolidated logging
 filename = _log_filename()
-LOG_DIR = EVOMACHINE_DIR / "logs"
+LOG_DIR: Path = SETTINGS.log_dir
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 file_handler = RotatingFileHandler(LOG_DIR / filename, maxBytes=1000000, backupCount=20)
 file_handler.setFormatter(EVO_FORMATTER)

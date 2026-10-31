@@ -2,6 +2,7 @@ from pathlib import Path
 import logging
 
 import evomachine.config as evomachine_config
+from evomachine.settings import SETTINGS
 from evomachine.bindings.em_dmd_window.peripheralcontroller import EM_DMD_PROGRAM_PATH
 from tests.binding_test_config import BindingTestConfig
 
@@ -11,12 +12,25 @@ WORKSPACE_ROOT = EVOMACHINE_REPO.parent
 SYNC_BOARD_REPO = WORKSPACE_ROOT / "sync_board"
 
 
-def test_evomachine_config_uses_repository_log_folder():
+def test_evomachine_config_logs_under_the_configured_data_dir():
     log_path = Path(evomachine_config.file_handler.baseFilename)
 
-    assert log_path.parent == EVOMACHINE_REPO / "logs"
+    assert log_path.parent == SETTINGS.log_dir
     assert log_path.parent.exists()
     assert "/home/hslab/" not in str(log_path)
+
+
+def test_evomachine_config_data_dir_is_the_configured_images_dir():
+    assert evomachine_config.DATA_DIR == SETTINGS.images_dir
+
+
+def test_settings_default_to_the_repository_when_no_file_is_configured():
+    from evomachine.settings import DEFAULT_DATA_DIR
+
+    assert DEFAULT_DATA_DIR == EVOMACHINE_REPO
+    if not SETTINGS.source_files:
+        assert SETTINGS.log_dir == EVOMACHINE_REPO / "logs"
+        assert SETTINGS.images_dir == EVOMACHINE_REPO / "images"
 
 
 def test_syncboard_serialconnection_uses_repository_log_folder():
