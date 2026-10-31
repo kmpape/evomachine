@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from autostrat.language.evaluator import CollectionSelection
 from evomachine.delta_processing import (
     DeltaProcessor,
     DeltaProcessingError,
@@ -15,19 +14,30 @@ from evomachine.delta_processing import (
     TargetedProjectionError,
     TrenchState,
 )
-from evomachine.strategy_generation.microscopy import (
-    MicroscopyCollectionProvider,
-    MicroscopyCommandAdapter,
-    MicroscopyObservationProvider,
-    MicroscopyRuntimeErrorProvider,
-)
-from evomachine.strategy_generation.strategy import AutoStratStrategy
 from evomachine.types import LEDType
 from evomachine.runtime_errors import CommandExecutionError
 from evomachine.navigation import FocusNavigatorFovRecord, FovConfig
 from evomachine.coordinates import Coordinate
 from tests.test_automaton import make_automaton, make_cfg, FakeFovProcessor
-from tests.test_strategy_generation_integration import _domain, _verified
+
+# AutoStrat is an optional extra. Most of this module exercises the DeLTA boundary alone;
+# only the tests marked `requires_autostrat` need the strategy-generation layer on top.
+try:
+    from autostrat.language.evaluator import CollectionSelection
+    from evomachine.strategy_generation.microscopy import (
+        MicroscopyCollectionProvider,
+        MicroscopyCommandAdapter,
+        MicroscopyObservationProvider,
+        MicroscopyRuntimeErrorProvider,
+    )
+    from evomachine.strategy_generation.strategy import AutoStratStrategy
+    from tests.test_strategy_generation_integration import _domain, _verified
+except ModuleNotFoundError:
+    AUTOSTRAT_INSTALLED = False
+else:
+    AUTOSTRAT_INSTALLED = True
+
+requires_autostrat = pytest.mark.skipif(not AUTOSTRAT_INSTALLED, reason="AutoStrat extra is not installed")
 
 
 class FakePosition:
@@ -93,6 +103,7 @@ def process(processor, state, positions, ids, when, fov_id=0):
 
 
 @pytest.mark.parametrize("duration, valid", [(100, True), (100.1, False), (0, False)])
+@requires_autostrat
 def test_roi_exposure_limit(duration, valid):
     from autostrat.exceptions import StrategyValidationError
 
@@ -127,6 +138,7 @@ def test_stable_trenches_multiple_fovs_and_finite_measurements():
     assert state.fovs[4].rois[0].measurement.growth_rate is None
 
 
+@requires_autostrat
 def test_missing_mother_is_invalid_not_zero_or_last_good_value():
     processor, state, positions, ids = backend(), MicroscopyState(), {}, {}
     process(processor, state, positions, ids, 1)
@@ -325,6 +337,7 @@ def test_targeted_projection_records_only_confirmed_completion(stop_event):
     assert trench.treatment_count == 1
 
 
+@requires_autostrat
 def test_failed_or_wrong_fov_projection_does_not_record_or_retry():
     automaton, _, _, _, leds, dmd = make_automaton()
     command = targeted_command(automaton)
@@ -353,6 +366,7 @@ def test_failed_or_wrong_fov_projection_does_not_record_or_retry():
 
 
 @pytest.mark.parametrize("separate_detection", [False, True])
+@requires_autostrat
 def test_processed_image_populates_collections_and_projects_one_pattern_per_fov(separate_detection):
     automaton, *_ = make_automaton(delta_processor=backend())
 
@@ -436,6 +450,7 @@ def test_explicit_clear_and_unauthorised_selection_never_expose():
     assert automaton.runtime_failure_history
 
 
+@requires_autostrat
 def test_pack_has_no_scheduler_or_experiment_specific_guidance():
     domain = _domain()
     assert "schedule_fov" not in domain.commands

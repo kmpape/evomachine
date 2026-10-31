@@ -4,6 +4,9 @@ from dataclasses import dataclass
 
 import pytest
 
+# AutoStrat is an optional extra; these tests only make sense with it installed.
+pytest.importorskip("autostrat")
+
 from autostrat.language.evaluator import StrategyExecution
 from autostrat.language.parser import parse_strategy
 from autostrat.language.validator import validate_strategy

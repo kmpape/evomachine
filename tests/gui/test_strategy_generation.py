@@ -6,6 +6,9 @@ import time
 
 import pytest
 
+# AutoStrat is an optional extra; these tests only make sense with it installed.
+pytest.importorskip("autostrat")
+
 from evomachine.gui.facade import AutomatonGuiFacade
 from evomachine.gui.autostrat_config import AutoStratModelConfig
 from evomachine.gui.protocol import GuiCommandType, GuiRequest

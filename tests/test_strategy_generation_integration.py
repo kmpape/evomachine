@@ -7,6 +7,9 @@ from threading import current_thread
 import numpy as np
 import pytest
 
+# AutoStrat is an optional extra; these tests only make sense with it installed.
+pytest.importorskip("autostrat")
+
 from autostrat import load_domain_pack
 from autostrat.generation import GeneratedStrategy, Prompt
 from autostrat.language.evaluator import ArithmeticEvaluationError
