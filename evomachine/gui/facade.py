@@ -6,6 +6,7 @@ from time import perf_counter
 from typing import Any
 
 from evomachine.config import EVOMACHINE_DIR, get_logger
+from evomachine.settings import SETTINGS
 from evomachine.gui.protocol import (
     ALWAYS_ALLOWED_MUTATING_COMMANDS,
     MUTATING_COMMANDS,
@@ -50,9 +51,7 @@ class AutomatonGuiFacade:
         self._installed_generation_id: str | None = None
         self._installed_generated_strategy = None
         self._installed_autostrat_name: str | None = None
-        self.autostrat_strategy_store = StrategyFileStore(
-            EVOMACHINE_DIR / "strategies" / "autostrat"
-        )
+        self.autostrat_strategy_store = StrategyFileStore(SETTINGS.autostrat_strategies_dir)
 
     def handle(self, request: GuiRequest) -> GuiResponse:
         active_operation = self.gui_operations.active()
