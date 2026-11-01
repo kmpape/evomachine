@@ -25,19 +25,27 @@ def test_runtime_factory_spec_requires_module_and_function() -> None:
         raise AssertionError("expected ValueError")
 
 
-def test_hardware_gui_runtime_accepts_micromanager_camera() -> None:
-    camera = SimpleNamespace(name="camera", config=SimpleNamespace(binding=BindingType.MMC))
+@pytest.mark.parametrize("binding", [BindingType.MMC, BindingType.PVCAM])
+def test_hardware_gui_runtime_accepts_real_cameras(binding) -> None:
+    camera = SimpleNamespace(name="camera", config=SimpleNamespace(binding=binding))
     automaton = SimpleNamespace(acq_mngr=SimpleNamespace(camera=camera))
 
-    launchers._require_hardware_gui_mmc_camera(automaton)
+    launchers._require_hardware_gui_camera(automaton)
 
 
-def test_hardware_gui_runtime_rejects_pvcam_camera() -> None:
-    camera = SimpleNamespace(name="camera", config=SimpleNamespace(binding=BindingType.PVCAM))
+def test_hardware_gui_runtime_rejects_virtual_camera() -> None:
+    camera = SimpleNamespace(name="camera", config=SimpleNamespace(binding=BindingType.VIRTUAL))
     automaton = SimpleNamespace(acq_mngr=SimpleNamespace(camera=camera))
 
-    with pytest.raises(RuntimeError, match="BindingType.MMC"):
-        launchers._require_hardware_gui_mmc_camera(automaton)
+    with pytest.raises(RuntimeError, match="BindingType.MMC or BindingType.PVCAM"):
+        launchers._require_hardware_gui_camera(automaton)
+
+
+def test_hardware_gui_runtime_requires_a_camera() -> None:
+    automaton = SimpleNamespace(acq_mngr=SimpleNamespace(camera=None))
+
+    with pytest.raises(RuntimeError, match="must provide an acquisition camera"):
+        launchers._require_hardware_gui_camera(automaton)
 
 
 def test_hardware_gui_has_default_runtime_factory() -> None:

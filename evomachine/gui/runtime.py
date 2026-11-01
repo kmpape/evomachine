@@ -8,7 +8,17 @@ from typing import Any
 
 import numpy as np
 
+from evomachine.bindings.asitiger.card_addresses import CARD_ADDRESS_CRISP, CARD_ADDRESS_LED
 from evomachine.config import CAM_WIDTH_HEIGHT, DATA_DIR, DMD_WIDTH_HEIGHT, EVOMACHINE_DIR
+
+HARDWARE_GUI_CAMERA_BINDINGS = ("MMC", "PVCAM")
+"""Camera bindings the hardware GUI accepts: Micro-Manager through pycromanager, or PVCAM through pyvcam."""
+
+TIGER_LED_CHANNELS = ("X", "Y", "Z", "F")
+"""Axis letters an ASI Tiger LED card accepts as output channels."""
+
+PVCAM_FRAME_TIMEOUT_MS = 10_000
+"""Frame wait used for the PVCAM camera; the binding default (1 s) is shorter than long exposures."""
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -34,6 +44,11 @@ class HardwareGuiRuntimeSettings:
     stage_min_z_um: float = -1000.0
     stage_max_z_um: float = 1000.0
     filter_card_address: int = 8
+    crisp_card_address: int = CARD_ADDRESS_CRISP
+    led_card_address: int = CARD_ADDRESS_LED
+    tiger_led_channel: str = "Y"
+    camera_binding: str = "MMC"
+    use_syncboard: bool = True
     dmd_width: int = DMD_WIDTH_HEIGHT[0]
     dmd_height: int = DMD_WIDTH_HEIGHT[1]
     dmd_calibration_file: Path = (
@@ -60,6 +75,22 @@ class HardwareGuiRuntimeSettings:
             if minimum > 0 or maximum < 0:
                 raise ValueError(
                     f"HardwareGuiRuntimeSettings: stage {axis} limits must include the startup zero."
+                )
+        if self.camera_binding not in HARDWARE_GUI_CAMERA_BINDINGS:
+            raise ValueError(
+                "HardwareGuiRuntimeSettings: camera_binding must be one of "
+                f"{HARDWARE_GUI_CAMERA_BINDINGS}, received {self.camera_binding!r}."
+            )
+        if self.tiger_led_channel not in TIGER_LED_CHANNELS:
+            raise ValueError(
+                "HardwareGuiRuntimeSettings: tiger_led_channel must be one of "
+                f"{TIGER_LED_CHANNELS}, received {self.tiger_led_channel!r}."
+            )
+        for name in ("filter_card_address", "crisp_card_address", "led_card_address"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(
+                    f"HardwareGuiRuntimeSettings: {name} must be a non-negative int, received {value!r}."
                 )
 
     @classmethod
@@ -88,6 +119,13 @@ class HardwareGuiRuntimeSettings:
             stage_min_z_um=_env_float("EVOMACHINE_GUI_STAGE_MIN_Z_UM", defaults.stage_min_z_um),
             stage_max_z_um=_env_float("EVOMACHINE_GUI_STAGE_MAX_Z_UM", defaults.stage_max_z_um),
             filter_card_address=_env_int("EVOMACHINE_GUI_FILTER_CARD_ADDRESS", defaults.filter_card_address),
+            crisp_card_address=_env_int("EVOMACHINE_GUI_CRISP_CARD_ADDRESS", defaults.crisp_card_address),
+            led_card_address=_env_int("EVOMACHINE_GUI_LED_CARD_ADDRESS", defaults.led_card_address),
+            tiger_led_channel=os.getenv(
+                "EVOMACHINE_GUI_TIGER_LED_CHANNEL", defaults.tiger_led_channel
+            ).strip().upper(),
+            camera_binding=os.getenv("EVOMACHINE_GUI_CAMERA_BINDING", defaults.camera_binding).strip().upper(),
+            use_syncboard=_env_bool("EVOMACHINE_GUI_USE_SYNCBOARD", defaults.use_syncboard),
             dmd_width=_env_int("EVOMACHINE_GUI_DMD_WIDTH", defaults.dmd_width),
             dmd_height=_env_int("EVOMACHINE_GUI_DMD_HEIGHT", defaults.dmd_height),
             dmd_calibration_file=_env_path(
@@ -106,6 +144,30 @@ class HardwareGuiRuntimeSettings:
     @property
     def dmd_size(self) -> tuple[int, int]:
         return self.dmd_width, self.dmd_height
+
+    @property
+    def camera_binding_type(self):
+        """Return the configured camera binding as a BindingType."""
+        from evomachine.bindings.binding_types import BindingType
+
+        return BindingType[self.camera_binding]
+
+    @property
+    def camera_binding_options(self) -> dict[str, Any]:
+        """Return the CameraFactory options specific to the configured camera binding."""
+        if self.camera_binding == "PVCAM":
+            return {"frame_timeout_ms": PVCAM_FRAME_TIMEOUT_MS}
+        return {
+            "camera_device": self.camera_device,
+            "readout_mode_property": self.readout_mode_property,
+        }
+
+    @property
+    def software_focus_led(self):
+        """Return the LED software focus images with: 515 nm on the SyncBoard, else the Tiger overhead LED."""
+        from evomachine.types import LEDType
+
+        return LEDType.LED_515_NM if self.use_syncboard else LEDType.LED_OVERHEAD_TIGER
 
     @property
     def stage_bounds(self):
@@ -359,7 +421,11 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
     from evomachine.types import FilterWheelType, FocusAlgorithmType, LEDType
 
     settings = settings or HardwareGuiRuntimeSettings.from_env()
-    syncboard_port = _resolve_serial_port(settings.syncboard_port, settings.syncboard_hwid, "SyncBoard")
+    syncboard_port = (
+        _resolve_serial_port(settings.syncboard_port, settings.syncboard_hwid, "SyncBoard")
+        if settings.use_syncboard
+        else None
+    )
     tiger_port = _resolve_serial_port(settings.tiger_port, settings.tiger_hwid, "ASI Tiger")
     kwr103_port = (
         _resolve_serial_port(settings.kwr103_port, settings.kwr103_hwid, "KWR103")
@@ -367,13 +433,15 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
         else None
     )
 
-    syncboard_controller = PeripheralControllerFactory.create(
-        SerialPeripheralControllerConfig(
-            binding=BindingType.SYNCBOARD,
-            port=syncboard_port,
-            initialise=False,
-        ),
-    )
+    syncboard_controller = None
+    if syncboard_port is not None:
+        syncboard_controller = PeripheralControllerFactory.create(
+            SerialPeripheralControllerConfig(
+                binding=BindingType.SYNCBOARD,
+                port=syncboard_port,
+                initialise=False,
+            ),
+        )
     tiger_controller = PeripheralControllerFactory.create(
         SerialPeripheralControllerConfig(
             binding=BindingType.ASI_TIGER,
@@ -381,6 +449,8 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
             initialise=False,
         ),
         card_address_filter_wheel=settings.filter_card_address,
+        card_address_crisp=settings.crisp_card_address,
+        card_address_led=settings.led_card_address,
         stage_limits=settings.tiger_stage_limits,
     )
     kwr103_controller = None
@@ -395,7 +465,7 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
 
     camera = CameraFactory.create(
         CameraConfig(
-            binding=BindingType.MMC,
+            binding=settings.camera_binding_type,
             image=ImageConfigType(
                 pxl_horiz=settings.camera_width,
                 pxl_vert=settings.camera_height,
@@ -405,30 +475,34 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
             sensor_pixel_size_um=6.5,
             objective_config=ObjectiveConfigTypeFactory.default_hardware(),
         ),
-        camera_device=settings.camera_device,
-        readout_mode_property=settings.readout_mode_property,
+        **settings.camera_binding_options,
     )
-    syncboard_led_source = LedFactory.create(
-        LedConfig(
-            binding=BindingType.SYNCBOARD,
-            available_leds=[
-                LEDType.LED_385_NM,
-                LEDType.LED_450_NM,
-                LEDType.LED_515_NM,
-                LEDType.LED_565_NM,
-                LEDType.LED_645_NM,
-            ],
-        ),
-        peripheral_controllers=syncboard_controller,
-    )
+    led_sources = []
+    if syncboard_controller is not None:
+        led_sources.append(
+            LedFactory.create(
+                LedConfig(
+                    binding=BindingType.SYNCBOARD,
+                    available_leds=[
+                        LEDType.LED_385_NM,
+                        LEDType.LED_450_NM,
+                        LEDType.LED_515_NM,
+                        LEDType.LED_565_NM,
+                        LEDType.LED_645_NM,
+                    ],
+                ),
+                peripheral_controllers=syncboard_controller,
+            )
+        )
     tiger_led_source = LedFactory.create(
         LedConfig(
             binding=BindingType.ASI_TIGER,
             available_leds=[LEDType.LED_OVERHEAD_TIGER],
+            led_to_internal={LEDType.LED_OVERHEAD_TIGER: settings.tiger_led_channel},
         ),
         peripheral_controllers=tiger_controller,
     )
-    led_sources = [syncboard_led_source, tiger_led_source]
+    led_sources.append(tiger_led_source)
     if kwr103_controller is not None:
         kwr103_led_source = LedFactory.create(
             LedConfig(
@@ -501,7 +575,7 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
         config=SoftwareFocusConfig(
             focus_frames=[
                 FrameMetaDataFactory.default(
-                    leds={LEDType.LED_515_NM: 29},
+                    leds={settings.software_focus_led: 29},
                     exposure=settings.camera_exposure_ms,
                     fov_id=0,
                 )
