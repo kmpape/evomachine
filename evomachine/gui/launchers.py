@@ -58,9 +58,10 @@ def _load_runtime_factory(spec: str) -> Callable[[], Any]:
     return factory
 
 
-def _require_hardware_gui_mmc_camera(automaton: Any) -> None:
+def _require_hardware_gui_camera(automaton: Any) -> None:
     from evomachine.bindings.binding_types import BindingType
 
+    accepted = {BindingType.MMC, BindingType.PVCAM}
     acq_mngr = getattr(automaton, "acq_mngr", None)
     camera = getattr(acq_mngr, "camera", None) or getattr(automaton, "_camera", None)
     if camera is None:
@@ -68,11 +69,12 @@ def _require_hardware_gui_mmc_camera(automaton: Any) -> None:
 
     config = getattr(camera, "config", None)
     binding = getattr(config, "binding", None)
-    if binding != BindingType.MMC:
+    if binding not in accepted:
         camera_name = getattr(camera, "name", type(camera).__name__)
         binding_name = getattr(binding, "name", str(binding))
+        accepted_names = " or ".join(f"BindingType.{item.name}" for item in sorted(accepted, key=lambda b: b.name))
         raise RuntimeError(
-            "Hardware GUI camera must use BindingType.MMC (Micro-Manager); "
+            f"Hardware GUI camera must use {accepted_names} (a real camera); "
             f"{camera_name} is configured with {binding_name}."
         )
 
@@ -108,7 +110,7 @@ def _hardware_automaton_process(runtime_spec: str, host: str, port: int, ready_q
     try:
         factory = _load_runtime_factory(runtime_spec)
         automaton = factory()
-        _require_hardware_gui_mmc_camera(automaton)
+        _require_hardware_gui_camera(automaton)
         _serve_automaton(automaton, host=host, port=port, ready_queue=ready_queue)
     except Exception as error:
         ready_queue.put({"error": f"{type(error).__name__}: {error}"})
