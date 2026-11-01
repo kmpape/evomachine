@@ -217,10 +217,22 @@ The code lives in `evomachine/settings.py`.
 
 ### Hardware GUI on the microscope computer
 
-Start Micro-Manager with the microscope configuration loaded. Then run:
+The hardware GUI is wired for a particular microscope through `EVOMACHINE_GUI_*`
+environment variables (all read in `evomachine/gui/runtime.py`); with none set it
+describes microscope 1. On microscope 1, start Micro-Manager with the microscope
+configuration loaded. Then run:
 
 ```bash
 cd /home/hslab/workspace_python/evomachine_refactor/evomachine
+.venv/bin/python scripts/launch_hardware_gui.py
+```
+
+On spyro the camera is driven directly through PVCAM, the SyncBoard is not in use,
+and the Tiger cards sit at different addresses. Those settings live in
+`/opt/microscope/configs/spyro/evomachine-gui.env`; source it first:
+
+```bash
+set -a; . /opt/microscope/configs/spyro/evomachine-gui.env; set +a
 .venv/bin/python scripts/launch_hardware_gui.py
 ```
 
@@ -231,9 +243,22 @@ For an IDE Run button:
 - Script: `scripts/launch_hardware_gui.py`
 - Run it as a Python file, not as a module.
 
-The hardware runtime uses the Micro-Manager camera, SyncBoard LEDs, ASI Tiger
-stage/filter/autofocus and overhead LED, KWR103 overhead light, and EM DMD
-window. Serial ports are detected from their USB hardware IDs.
+The hardware runtime uses a Micro-Manager or PVCAM camera, SyncBoard LEDs, ASI
+Tiger stage/filter/autofocus and overhead LED, KWR103 overhead light, and EM DMD
+window. Serial ports are detected from their USB hardware IDs. The machine-specific
+choices and their defaults:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `EVOMACHINE_GUI_CAMERA_BINDING` | `MMC` | `MMC` (Micro-Manager through pycromanager, needs Micro-Manager running) or `PVCAM` (pyvcam, needs the `pvcam` extra) |
+| `EVOMACHINE_GUI_USE_SYNCBOARD` | on | off: no SyncBoard is opened and the Tiger overhead LED is the only LED |
+| `EVOMACHINE_GUI_USE_DMD`, `EVOMACHINE_GUI_USE_KWR103` | on | off: that device is not opened |
+| `EVOMACHINE_GUI_CRISP_CARD_ADDRESS` | `2` | Tiger card running CRISP |
+| `EVOMACHINE_GUI_LED_CARD_ADDRESS`, `EVOMACHINE_GUI_TIGER_LED_CHANNEL` | `7`, `Y` | Tiger card and output channel of the overhead LED |
+| `EVOMACHINE_GUI_FILTER_CARD_ADDRESS` | `8` | Tiger filter-wheel card |
+| `EVOMACHINE_GUI_SYNCBOARD_PORT`, `EVOMACHINE_GUI_TIGER_PORT`, `EVOMACHINE_GUI_KWR103_PORT` | by USB ID | exact serial port, when the USB ID lookup is ambiguous |
+
+Query a Tiger's cards with `BU X` and `N` over its serial port to fill in the addresses.
 
 The default RAMM optical setup uses a Nikon Plan Apo lambda D 40x/0.95
 objective (MRD70470) and a Teledyne Kinetix 3200 x 3200 sensor with 6.5 um
@@ -241,10 +266,11 @@ pixels. This gives 0.1625 um per sample pixel and a 520 um square camera field
 of view. The separate 60x/1.4 oil-objective preset remains available for other
 setups.
 
-The hardware GUI zeroes the ASI Tiger stage at its startup position. Relative
-and field-of-view movements then use that Tiger coordinate system and are
-checked against the configured software limits. The deployment defaults can be
-overridden before launch with:
+The hardware GUI zeroes the ASI Tiger stage when its devices are initialised
+from the GUI (the position the stage is in at that moment becomes zero).
+Relative and field-of-view movements then use that Tiger coordinate system and
+are checked against the configured software limits. The deployment defaults can
+be overridden before launch with:
 
 ```bash
 export EVOMACHINE_GUI_STAGE_MIN_X_UM=-8000
