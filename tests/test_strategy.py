@@ -479,6 +479,7 @@ def test_strategy_discovery_and_creation_use_name_file_pair() -> None:
     "MCherryGfpImagingStrategy",
     "DmdProjectFullFovStrategy",
     "DmdProjectByRoiStrategy",
+    "TimelapseStrategy",
 ])
 def test_builtin_imaging_strategies_surface_failures_without_restarting(strategy_name):
     definitions = {item.name: item for item in list_strategy_definitions()}
