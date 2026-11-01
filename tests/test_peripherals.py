@@ -160,6 +160,13 @@ class FakeTigerController:
         self.halt_was_called = True
 
 
+class BusyTigerController(FakeTigerController):
+    """Replies like a Tiger right after a halt: a NAK byte the status parser rejects."""
+
+    def status(self):
+        raise ValueError("'\\x15B' is not a valid Status")
+
+
 class UnresponsiveTigerController(FakeTigerController):
     def status(self):
         time.sleep(self.connection.connection.timeout)
@@ -337,6 +344,12 @@ def test_tiger_peripheral_controller_owns_card_addresses():
     assert custom.card_address_crisp == 3
     assert custom.card_address_led == 4
     assert custom.card_address_filter_wheel == 5
+
+
+def test_tiger_health_check_treats_an_unparsable_reply_as_alive():
+    controller = TigerPeripheralController(tiger=BusyTigerController())
+
+    assert controller.is_alive()
 
 
 def test_tiger_health_check_uses_bounded_serial_timeout_and_restores_it():

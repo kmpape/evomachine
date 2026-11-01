@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any
 
@@ -13,6 +14,8 @@ from evomachine.bindings.asitiger.card_addresses import (
     CARD_ADDRESS_LED,
 )
 from evomachine.config import configure_binding_loggers
+
+logger = logging.getLogger(__name__)
 
 
 class TigerPeripheralController(SerialPeripheralController):
@@ -130,6 +133,23 @@ class TigerPeripheralController(SerialPeripheralController):
         return self._check_is_alive()
 
     def _check_is_alive(self) -> bool:
+        """
+        Return whether the Tiger answers a status query within the health-check timeout.
+
+        Any answer counts, including one the asitiger parser rejects: for a short time
+        after a halt the Tiger replies to ``/`` with a NAK "busy" byte instead of a status
+        letter, which raises ValueError although the controller is plainly responding.
+        Only transport failures (no reply, closed port) mean the controller is gone.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        bool
+            True when the Tiger replied, False when it did not.
+        """
         serial_connection = getattr(getattr(self.tiger, "connection", None), "connection", None)
         original_timeout = getattr(serial_connection, "timeout", None)
         timeout_is_configurable = serial_connection is not None and hasattr(serial_connection, "timeout")
@@ -137,6 +157,10 @@ class TigerPeripheralController(SerialPeripheralController):
             if timeout_is_configurable:
                 serial_connection.timeout = self.health_check_timeout_s
             self.tiger.status()
+            return True
+        except ValueError:
+            logger.debug("TigerPeripheralController: %s replied to the status query with an unparsable "
+                         "value (busy after a halt?); treating it as alive.", self.name)
             return True
         except Exception:
             return False
