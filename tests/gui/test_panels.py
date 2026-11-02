@@ -556,7 +556,7 @@ def test_narrow_control_columns_use_compact_action_labels() -> None:
     assert dmd.load_calibration_button.text() == "Load"
     assert dmd.show_calibration_plot_button.text() == "Show Plot"
     assert autofocus.run_calibration_button.text() == "Calibrate"
-    assert autofocus.lock_after_calibration_checkbox.text() == "Lock afterwards"
+    assert not hasattr(autofocus, "lock_after_calibration_checkbox")
     assert fovs.add_button.text() == "Add current"
     assert fovs.remove_button.text() == "Remove last"
     assert not hasattr(fovs, "use_autofocus_checkbox")
@@ -1134,14 +1134,13 @@ def test_autofocus_panel_sends_calibration_request() -> None:
     controller = FakeController()
     panel = AutofocusPanel(controller=controller)
     panel.update_lifecycle_status({"devices_initialised": True})
-    panel.lock_after_calibration_checkbox.setChecked(True)
 
     panel.run_calibration_button.click()
 
     assert controller.calls == [
         (
             "initialise_autofocus",
-            True,
+            False,
             {
                 "averaging": 5,
                 "led_intensity": 70,
@@ -1470,6 +1469,7 @@ def test_peripheral_panels_lock_unsafe_controls_while_strategy_runs() -> None:
     unsafe_controls = (
         stage.configure_button,
         stage.move_button,
+        stage.stop_button,
         camera.configure_button,
         camera.acquire_frame_button,
         filter_wheel.configure_button,
@@ -1487,7 +1487,6 @@ def test_peripheral_panels_lock_unsafe_controls_while_strategy_runs() -> None:
     )
     safe_controls = (
         stage.refresh_button,
-        stage.stop_button,
         camera.refresh_button,
         filter_wheel.refresh_button,
         leds.refresh_button,

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
-    QCheckBox,
     QGridLayout,
     QGroupBox,
     QLabel,
@@ -91,11 +90,6 @@ class AutofocusPanel(QGroupBox):
         self.note_label = muted_label("CRISP configuration values are applied before calibration.")
         self.note_label.setWordWrap(True)
         self.config_values = self._default_config_values()
-        self.lock_after_calibration_checkbox = QCheckBox("Lock afterwards")
-        self.lock_after_calibration_checkbox.setToolTip(
-            "Lock the hardware autofocus after calibration succeeds."
-        )
-        self.lock_after_calibration_checkbox.setChecked(False)
 
         self.refresh_button = QPushButton("Refresh")
         self.configure_button = QPushButton("Configure")
@@ -113,8 +107,7 @@ class AutofocusPanel(QGroupBox):
         buttons = QGridLayout()
         buttons.addWidget(self.refresh_button, 0, 0)
         buttons.addWidget(self.configure_button, 0, 1)
-        buttons.addWidget(self.run_calibration_button, 1, 0)
-        buttons.addWidget(self.lock_after_calibration_checkbox, 1, 1)
+        buttons.addWidget(self.run_calibration_button, 1, 0, 1, 2)
         buttons.addWidget(self.lock_button, 2, 0)
         buttons.addWidget(self.unlock_button, 2, 1)
         buttons.addWidget(self.cancel_calibration_button, 3, 0, 1, 2)
@@ -227,7 +220,7 @@ class AutofocusPanel(QGroupBox):
         self.calibration_poll_timer.start()
         self._sync_controls_enabled()
         self.controller.initialise_autofocus(
-            lock_after_initialise=self.lock_after_calibration_checkbox.isChecked(),
+            lock_after_initialise=False,
             config=self._config_payload(),
         )
 
@@ -352,7 +345,6 @@ class AutofocusPanel(QGroupBox):
         for widget in (
             self.configure_button,
             self.run_calibration_button,
-            self.lock_after_calibration_checkbox,
             self.lock_button,
             self.unlock_button,
         ):

@@ -300,7 +300,7 @@ class StagePanel(QGroupBox):
         self.origin_button.setEnabled(z_controls_enabled)
         self.configure_button.setEnabled(self.devices_initialised and not self.strategy_running)
         self.refresh_button.setEnabled(self.devices_initialised and not self.movement_running)
-        self.stop_button.setEnabled(self.devices_initialised)
+        self.stop_button.setEnabled(self.devices_initialised and not self.strategy_running)
 
     def _config_fields(self) -> list[ConfigFieldSpec]:
         return [
