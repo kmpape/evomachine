@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
-    QCheckBox,
     QGridLayout,
     QGroupBox,
     QLabel,
@@ -91,11 +90,6 @@ class AutofocusPanel(QGroupBox):
         self.note_label = muted_label("CRISP configuration values are applied before calibration.")
         self.note_label.setWordWrap(True)
         self.config_values = self._default_config_values()
-        self.lock_after_calibration_checkbox = QCheckBox("Lock afterwards")
-        self.lock_after_calibration_checkbox.setToolTip(
-            "Lock the hardware autofocus after calibration succeeds."
-        )
-        self.lock_after_calibration_checkbox.setChecked(False)
 
         self.refresh_button = QPushButton("Refresh")
         self.configure_button = QPushButton("Configure")
@@ -113,8 +107,7 @@ class AutofocusPanel(QGroupBox):
         buttons = QGridLayout()
         buttons.addWidget(self.refresh_button, 0, 0)
         buttons.addWidget(self.configure_button, 0, 1)
-        buttons.addWidget(self.run_calibration_button, 1, 0)
-        buttons.addWidget(self.lock_after_calibration_checkbox, 1, 1)
+        buttons.addWidget(self.run_calibration_button, 1, 0, 1, 2)
         buttons.addWidget(self.lock_button, 2, 0)
         buttons.addWidget(self.unlock_button, 2, 1)
         buttons.addWidget(self.cancel_calibration_button, 3, 0, 1, 2)
@@ -155,7 +148,7 @@ class AutofocusPanel(QGroupBox):
         self.controller.operation_status_received.connect(self.update_operation_status)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
         self.controller.strategy_status_received.connect(self.update_strategy_status)
-        self.controller.response_error.connect(self._show_error)
+        self.controller.request_error.connect(self._show_request_error)
         self._update_calibration_stages("pending", 0.0)
         self._sync_controls_enabled()
 
@@ -227,7 +220,7 @@ class AutofocusPanel(QGroupBox):
         self.calibration_poll_timer.start()
         self._sync_controls_enabled()
         self.controller.initialise_autofocus(
-            lock_after_initialise=self.lock_after_calibration_checkbox.isChecked(),
+            lock_after_initialise=False,
             config=self._config_payload(),
         )
 
@@ -245,6 +238,9 @@ class AutofocusPanel(QGroupBox):
             self.calibration_poll_timer.stop()
             if state == "failed" and operation.get("error"):
                 self.status_label.setText(str(operation["error"]))
+                self.state_label.setText("status: Calibration failed")
+                self.state_label.setStyleSheet(self._state_style("Calibration failed"))
+                self.diagnostics_label.setText("calibration: failed")
             elif state == "cancelled":
                 self.status_label.setText("Autofocus calibration cancelled.")
                 self.state_label.setText("status: Calibration cancelled")
@@ -349,7 +345,6 @@ class AutofocusPanel(QGroupBox):
         for widget in (
             self.configure_button,
             self.run_calibration_button,
-            self.lock_after_calibration_checkbox,
             self.lock_button,
             self.unlock_button,
         ):
@@ -357,16 +352,32 @@ class AutofocusPanel(QGroupBox):
         self.refresh_button.setEnabled(self.devices_initialised and not self.calibration_running)
         self.cancel_calibration_button.setEnabled(self.calibration_running)
 
-    def _show_error(self, error: str) -> None:
-        calibration_request = self.status_label.text().startswith("Running autofocus calibration")
-        if calibration_request:
+    def _show_request_error(self, command, error: str) -> None:
+        command_value = getattr(command, "value", command)
+        if command_value == "autofocus.calibration_status" and self.calibration_running:
+            self.status_label.setText(f"Calibration status refresh failed; retrying: {error}")
+            return
+        if command_value == "autofocus.cancel_calibration" and self.calibration_running:
+            self.status_label.setText(f"Calibration cancellation request failed: {error}")
+            return
+        if command_value == "autofocus.initialise_autofocus":
+            if "timeout" in error.lower() and self.calibration_running:
+                self.status_label.setText(
+                    f"Calibration start response timed out; checking backend state: {error}"
+                )
+                return
             self.calibration_running = False
+            self.calibration_terminal_state = "failed"
             self.calibration_poll_timer.stop()
+            self._update_calibration_stages("failed", self.calibration_progress)
+            self.state_label.setText("status: Calibration failed")
+            self.state_label.setStyleSheet(self._state_style("Calibration failed"))
+            self.diagnostics_label.setText("calibration: failed")
             self._sync_controls_enabled()
         if (
             "autofocus" in error.lower()
             or self.status_label.text().endswith("autofocus.")
-            or calibration_request
+            or str(command_value).startswith("autofocus.")
         ):
             self.status_label.setText(error)
 

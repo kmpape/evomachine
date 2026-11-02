@@ -12,11 +12,16 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
+from evomachine.config import get_logger
 from evomachine.gui.facade import AutomatonGuiFacade
 from evomachine.gui.image_payloads import IMAGE_TRANSPORT_CHOICES, IMAGE_TRANSPORT_ENV, normalise_image_transport
-from evomachine.gui.protocol import GUI_HOST_ENV, GUI_PORT_ENV, GuiCommandType
+from evomachine.gui.protocol import (
+    GUI_HOST_ENV,
+    GUI_PORT_ENV,
+    RESPONSIVE_READ_COMMANDS,
+    GuiCommandType,
+)
 from evomachine.gui.socket_transport import GuiRpcServer, GuiSocketClient
-from evomachine.config import get_logger
 
 
 DEFAULT_HOST = "127.0.0.1"
@@ -79,7 +84,12 @@ def _require_hardware_gui_mmc_camera(automaton: Any) -> None:
 
 def _serve_automaton(automaton, host: str, port: int, ready_queue) -> None:
     facade = AutomatonGuiFacade(automaton=automaton)
-    server = GuiRpcServer(handler=facade, host=host, port=port)
+    server = GuiRpcServer(
+        handler=facade,
+        host=host,
+        port=port,
+        responsive_commands=RESPONSIVE_READ_COMMANDS,
+    )
     bound_host, bound_port = server.start()
     automaton.gui_set_request_processor(server.process_pending)
     ready_queue.put((bound_host, bound_port))

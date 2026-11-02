@@ -5,14 +5,16 @@ import queue
 import socket
 import struct
 import threading
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from evomachine.gui.protocol import GuiRequest, GuiResponse, response_from_exception
+from evomachine.gui.protocol import GuiCommandType, GuiRequest, GuiResponse, response_from_exception
 
 
 HEADER_SIZE = 4
 MAX_PACKET_SIZE = 512 * 1024 * 1024
+DEFAULT_RPC_TIMEOUT_SECONDS = 30.0
 
 
 class GuiRequestHandler(Protocol):
@@ -69,13 +71,15 @@ class GuiRpcServer:
             host: str = "127.0.0.1",
             port: int = 0,
             accept_timeout: float = 0.1,
-            response_timeout: float = 30.0,
+            response_timeout: float = DEFAULT_RPC_TIMEOUT_SECONDS,
+            responsive_commands: Collection[GuiCommandType] = (),
     ):
         self.handler = handler
         self.host = host
         self.port = port
         self.accept_timeout = accept_timeout
         self.response_timeout = response_timeout
+        self.responsive_commands = frozenset(responsive_commands)
         self._jobs: "queue.Queue[RpcJob]" = queue.Queue()
         self._stop_event = threading.Event()
         self._server_socket: socket.socket | None = None
@@ -154,9 +158,12 @@ class GuiRpcServer:
             while not self._stop_event.is_set():
                 try:
                     request = GuiRequest.from_dict(receive_packet(client_socket))
-                    job = RpcJob(request=request)
-                    self._jobs.put(job)
-                    response = job.response_queue.get(timeout=self.response_timeout)
+                    if request.command in self.responsive_commands:
+                        response = self.handler.handle(request)
+                    else:
+                        job = RpcJob(request=request)
+                        self._jobs.put(job)
+                        response = job.response_queue.get(timeout=self.response_timeout)
                     send_packet(client_socket, response.to_dict())
                 except (ConnectionError, socket.timeout):
                     break
@@ -172,7 +179,12 @@ class GuiRpcServer:
 class GuiSocketClient:
     """Small synchronous TCP client used by tests and the Qt worker."""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 0, timeout: float = 5.0):
+    def __init__(
+            self,
+            host: str = "127.0.0.1",
+            port: int = 0,
+            timeout: float = DEFAULT_RPC_TIMEOUT_SECONDS,
+    ):
         self.host = host
         self.port = port
         self.timeout = timeout

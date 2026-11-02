@@ -6,12 +6,43 @@ import time
 import pytest
 
 from evomachine.gui.protocol import GuiCommandType, GuiRequest, GuiResponse
-from evomachine.gui.socket_transport import GuiRpcServer, GuiSocketClient
+from evomachine.gui.socket_transport import (
+    DEFAULT_RPC_TIMEOUT_SECONDS,
+    GuiRpcServer,
+    GuiSocketClient,
+)
 
 
 class EchoHandler:
     def handle(self, request: GuiRequest) -> GuiResponse:
         return GuiResponse(request_id=request.request_id, ok=True, payload={"command": request.command.value})
+
+
+def test_client_and_server_share_hardware_safe_default_timeout() -> None:
+    client = GuiSocketClient()
+    server = GuiRpcServer(handler=EchoHandler())
+
+    assert client.timeout == DEFAULT_RPC_TIMEOUT_SECONDS
+    assert server.response_timeout == DEFAULT_RPC_TIMEOUT_SECONDS
+
+
+def test_responsive_read_bypasses_blocked_automaton_queue() -> None:
+    server = GuiRpcServer(
+        handler=EchoHandler(),
+        port=0,
+        responsive_commands={GuiCommandType.STRATEGY_STATUS},
+    )
+    host, port = server.start()
+
+    try:
+        with GuiSocketClient(host=host, port=port, timeout=0.1) as client:
+            response = client.request(GuiCommandType.STRATEGY_STATUS)
+    finally:
+        server.stop()
+
+    assert response.ok
+    assert response.payload == {"command": GuiCommandType.STRATEGY_STATUS.value}
+    assert server.process_pending(max_jobs=1) == 0
 
 
 def test_strategy_wait_keeps_status_and_stop_requests_responsive() -> None:

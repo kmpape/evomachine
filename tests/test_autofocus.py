@@ -255,6 +255,29 @@ def test_autofocus_prepared_calibration_keeps_cancellation_authoritative(monkeyp
     assert autofocus.last_calibration_result == result
 
 
+def test_autofocus_records_failed_result_when_calibration_raises(monkeypatch) -> None:
+    autofocus = AutofocusFactory.create(
+        config=AutofocusConfig(binding=BindingType.VIRTUAL),
+        peripheral_controllers=_virtual_controller(),
+    )
+    autofocus.initialise()
+    autofocus._last_calibration_result = AutofocusCalibrationResult(success=True)
+
+    def fail_calibration(**_kwargs):
+        raise TimeoutError("Tiger did not respond")
+
+    monkeypatch.setattr(autofocus, "_run_calibration", fail_calibration)
+
+    with pytest.raises(TimeoutError, match="Tiger did not respond"):
+        autofocus.run_calibration()
+
+    result = autofocus.last_calibration_result
+    assert result is not None
+    assert not result.success
+    assert not result.cancelled
+    assert result.failure_reason == "TimeoutError: Tiger did not respond"
+
+
 def test_autofocus_factory_rejects_unsupported_valid_binding() -> None:
     """
     Check shared BindingType values are scoped to autofocus factory support.

@@ -277,12 +277,28 @@ class Autofocus(Peripheral):
             else:
                 self._calibration_cancel_requested = False
                 self._last_calibration_result = None
-        result = self._run_calibration(
-            config=config,
-            lock_after_calibration=lock_after_calibration,
-            stop_event=stop_event,
-            progress_callback=progress_callback,
-        )
+        try:
+            result = self._run_calibration(
+                config=config,
+                lock_after_calibration=lock_after_calibration,
+                stop_event=stop_event,
+                progress_callback=progress_callback,
+            )
+        except Exception as error:
+            with self._calibration_result_lock:
+                cancelled = self._calibration_cancel_requested or (
+                    stop_event is not None and stop_event.is_set()
+                )
+                self._last_calibration_result = AutofocusCalibrationResult(
+                    success=False,
+                    failure_reason=(
+                        "Calibration cancelled."
+                        if cancelled
+                        else f"{type(error).__name__}: {error}"
+                    ),
+                    cancelled=cancelled,
+                )
+            raise
         with self._calibration_result_lock:
             if self._calibration_cancel_requested or (
                 stop_event is not None and stop_event.is_set()
