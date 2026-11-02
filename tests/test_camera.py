@@ -674,6 +674,44 @@ def test_pvcam_camera_factory_with_injected_pyvcam_objects() -> None:
     assert fake_camera.timeout_ms == 123
 
 
+@pytest.mark.parametrize(
+    ("exposure_ms", "expected"),
+    [(200.0, 200), (99.6, 100), (0.2, 1), (44, 44)],
+)
+def test_pvcam_camera_rounds_exposure_to_whole_milliseconds(exposure_ms, expected) -> None:
+    """
+    Check that PVCAMCamera hands pyvcam an int exposure, as its C layer requires.
+
+    Parameters
+    ----------
+    exposure_ms
+        Exposure requested through the evomachine camera API.
+    expected
+        Integer millisecond exposure pyvcam must receive.
+
+    Returns
+    -------
+    None
+    """
+    image = _image_config()
+    fake_camera = FakePVCameraDevice(shape=image.shape)
+    FakePVCameraClass.fake_camera = fake_camera
+    camera = CameraFactory.create(
+        CameraConfig(binding=BindingType.PVCAM, image=image, default_exposure_time=exposure_ms),
+        pvc_module=FakePVCModule(),
+        camera_class=FakePVCameraClass,
+    )
+
+    camera.initialise()
+    assert fake_camera.exp_time == expected
+    assert isinstance(fake_camera.exp_time, int)
+
+    camera.set_exposure(exposure_ms)
+    assert fake_camera.exp_time == expected
+    assert isinstance(fake_camera.exp_time, int)
+    camera.finalise()
+
+
 def test_mmc_snapshot_disables_live_before_acquiring(monkeypatch):
     image = _image_config()
     core = FakeMMCCore(shape=image.shape)

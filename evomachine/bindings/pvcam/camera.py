@@ -186,6 +186,11 @@ class PVCAMCamera(Camera):
         """
         Set PVCAM exposure time.
 
+        pyvcam hands the exposure to the PVCAM C library as an unsigned
+        integer, so a float (the GUI's exposure field, the runtime's default
+        of 200.0 ms) makes pvc.start_seq fail with "Invalid parameters.".
+        The value is rounded to whole milliseconds, with a floor of 1 ms.
+
         Parameters
         ----------
         exposure_time
@@ -195,7 +200,7 @@ class PVCAMCamera(Camera):
         -------
         None
         """
-        self.camera.exp_time = exposure_time
+        self.camera.exp_time = max(1, int(round(exposure_time)))
 
     def _set_readout_mode(self, readout_mode: CameraReadoutMode) -> None:
         """
