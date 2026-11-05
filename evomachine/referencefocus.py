@@ -48,6 +48,7 @@ class ReferenceProfileFocusConfig:
     algorithm_kwargs: dict[str, Any] = field(default_factory=dict)
     smoothing: float | None = None
     acquisition_settings: FrameAcquisitionSettings = field(default_factory=FrameAcquisitionSettings)
+    allow_peak_reset: bool = False
 
     def __post_init__(self) -> None:
         if not np.isfinite(self.calibration_range) or not np.isfinite(self.calibration_step):
@@ -80,6 +81,8 @@ class ReferenceProfileFocusResult:
     matches: tuple[FocusShiftResult, ...]
     focus_status: FocusStatusType
     failure_reason: str | None = None
+    reference_reset: bool = False
+    correction_applied: bool = False
 
     @property
     def recovery_attempted(self) -> bool:
@@ -102,6 +105,7 @@ class ReferenceProfileFocus:
             raise ValueError("Reference-profile focus requires a stage.")
         self.acquisition_manager = acquisition_manager
         self._stop_event = threading.Event()
+        self.process_events = None
         self.update_config(config)
 
     @property
@@ -165,6 +169,23 @@ class ReferenceProfileFocus:
         self.pending_reference = None
         return self.reference
 
+    def refit_reference(self, smoothing: float | None) -> ReferenceProfile:
+        if self.calibration_scan is None:
+            raise RuntimeError("Capture a reference before refitting its spline.")
+        previous = self.pending_reference or self.reference
+        profile = fit_reference_profile(
+            self.calibration_scan.z_coordinates,
+            self.calibration_scan.focus_scores,
+            focus_z=previous.focus_z,
+            smoothing=smoothing,
+        )
+        self._config = replace(self._config, smoothing=smoothing)
+        self._stop_event = threading.Event()
+        self.last_result = None
+        self.pending_reference = profile
+        self.reference = None
+        return profile
+
     def _scan(self, centre: float, offsets, fov_id: int) -> ReferenceFocusScan:
         self._check_cancelled()
         z = centre + np.asarray(offsets, dtype=float)
@@ -179,6 +200,7 @@ class ReferenceProfileFocus:
                 z_coordinates=targets,
                 settings=config.acquisition_settings,
                 stop_event=self._stop_event,
+                step_callback=self.process_events,
             )
         except RuntimeError:
             self._check_cancelled()
@@ -192,7 +214,7 @@ class ReferenceProfileFocus:
         return ReferenceFocusScan(z, scores, frame)
 
     def run(
-        self, fov_id: int, stop_event: threading.Event | None = None
+        self, fov_id: int, stop_event: threading.Event | None = None, *, apply: bool = True
     ) -> ReferenceProfileFocusResult:
         if self.reference is None:
             raise RuntimeError("Reference calibration must be accepted before focusing.")
@@ -235,14 +257,67 @@ class ReferenceProfileFocus:
                         "Estimated focal Z exceeds the stage bounds.",
                     )
                     return self.last_result
-                stage.move(target=target, block=True)
+                if apply:
+                    stage.move(target=target, block=True)
                 self._check_cancelled()
                 break
         accepted = matches[-1].accepted
+        if not accepted and config.allow_peak_reset and apply:
+            reset = self._reset_at_peak(centre, fov_id, scans, matches)
+            if reset is not None:
+                self.last_result = reset
+                return reset
         self.last_result = ReferenceProfileFocusResult(
             tuple(scans),
             tuple(matches),
             FocusStatusType.IN_FOCUS if accepted else FocusStatusType.BAD_FOCUS_CURVE,
             None if accepted else "; ".join(matches[-1].rejection_reasons),
+            correction_applied=accepted and apply,
         )
         return self.last_result
+
+    def _reset_at_peak(self, centre, fov_id, scans, matches):
+        """One opt-in attempt; callers fork shared references before using this."""
+        from evomachine.softwarefocus import SoftwareFocus
+        from evomachine.types import FocusCurveType
+
+        config = self._config
+        positive = np.r_[
+            np.arange(0, config.calibration_range, config.calibration_step),
+            config.calibration_range,
+        ]
+        offsets = np.r_[-positive[:0:-1], positive]
+        try:
+            locating = self._scan(centre, offsets, fov_id)
+            scans.append(locating)
+            scores = locating.focus_scores
+            if SoftwareFocus._get_focus_curve_type(
+                scores
+            ) != FocusCurveType.HAS_GLOBAL_MAXIMUM or np.std(
+                scores
+            ) < config.search.min_relative_variation * np.mean(abs(scores)):
+                return None
+            peak_z = float(locating.z_coordinates[np.argmax(scores)])
+            calibration = self._scan(peak_z, offsets, fov_id)
+            scans.append(calibration)
+            profile = fit_reference_profile(
+                calibration.z_coordinates,
+                calibration.focus_scores,
+                focus_z=peak_z,
+                smoothing=config.smoothing,
+            )
+        except (ReferenceFocusOutOfRange, ValueError):
+            return None
+        self._check_cancelled()
+        self.acquisition_manager.stage.move(target=Coordinate(None, None, peak_z), block=True)
+        self._check_cancelled()
+        self.reference = profile
+        self.pending_reference = None
+        self.calibration_scan = calibration
+        return ReferenceProfileFocusResult(
+            tuple(scans),
+            tuple(matches),
+            FocusStatusType.IN_FOCUS,
+            reference_reset=True,
+            correction_applied=True,
+        )

@@ -37,7 +37,7 @@ from evomachine.runtime_errors import (
 )
 from evomachine.softwarefocus import SoftwareFocus
 from evomachine.strategy import AbstractStrategy
-from evomachine.types import AutomatonCommandType, FocusMode, LEDType
+from evomachine.types import AutomatonCommandType, LEDType
 from evomachine.utils import normalise_frame
 
 logger = get_logger(name=__name__)
@@ -173,6 +173,8 @@ class Automaton:
         "Current strategy step counter reserved for future strategy bookkeeping."
         self._fovs: dict[int, Coordinate] = {}
         "Registered field-of-view coordinates keyed by FoV ID."
+        self._configured_fov_focus_configs: dict[int, FovConfig] = {}
+        "Explicit FoV focus overrides retained when replacing the strategy."
         self._fov_to_roi: dict[int, list[int]] = {}
         "ROI IDs keyed by FoV ID for strategy command validation and projection."
         self._cropping_boxes: dict[int, list[Any]] = {}
@@ -545,10 +547,12 @@ class Automaton:
         if focus_config is not None:
             self.focus_nav.update_config(config=focus_config)
             use_autofocus = focus_config.use_autofocus
-        configured_fovs = {} if fov_configs is None else dict(fov_configs)
+        self._configured_fov_focus_configs = {} if fov_configs is None else dict(fov_configs)
+        configured_fovs = {}
         if self._strategy is not None:
             self._initialise_strategy()
             configured_fovs.update(self._strategy.initial_fov_configs())
+        configured_fovs.update(self._configured_fov_focus_configs)
         self.focus_nav.initialise_fovs(
             fov_id_to_coordinate=self._fovs,
             use_autofocus=use_autofocus,
@@ -585,7 +589,9 @@ class Automaton:
         self._command_section = "initialise"
         if self._fov_list_is_initialised:
             self._initialise_strategy()
-            for fov_id, fov_config in self._strategy.initial_fov_configs().items():
+            configs = dict(self._strategy.initial_fov_configs())
+            configs.update(self._configured_fov_focus_configs)
+            for fov_id, fov_config in configs.items():
                 self.focus_nav.update_fov_config(fov_id=fov_id, fov_config=fov_config)
 
     def initialise_devices(self) -> None:
@@ -1362,7 +1368,7 @@ class Automaton:
             actions.append(("software focus", self._swfocus.stop))
         reference_focus = getattr(self.focus_nav, "reference_focus", None)
         if reference_focus is not None:
-            actions.append(("reference focus", reference_focus.stop))
+            actions.append(("reference focus", self.focus_nav.stop_reference_focus))
         if (
                 self._autofocus is not None
                 and self._autofocus.is_initialised()
@@ -1487,7 +1493,7 @@ class Automaton:
         if not self._strategy_is_initialised:
             raise RuntimeError("Automaton.start_strategy: strategy is not initialised.")
         focus_config = getattr(self.focus_nav, "config", None)
-        if getattr(focus_config, "focus_mode", FocusMode.STANDARD) == FocusMode.REFERENCE_PROFILE:
+        if focus_config is not None:
             self.focus_nav.validate_ready()
         self._validate_strategy_command_requirements()
         preparation_errors: list[str] = []
@@ -1523,6 +1529,8 @@ class Automaton:
                     "Cannot start strategy because autofocus could not be disabled: "
                     f"{type(error).__name__}: {error}"
                 ) from error
+        if focus_config is not None:
+            self.focus_nav.prepare_run()
         self._stop_event.clear()
         self._strategy_cleanup_done = False
         self._start_strategy_event.set()

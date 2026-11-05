@@ -74,6 +74,9 @@ class FakeController(QObject):
     dmd_calibration_points_received = pyqtSignal(dict)
     autofocus_status_received = pyqtSignal(dict)
     software_focus_status_received = pyqtSignal(dict)
+    focus_defaults_received = pyqtSignal(dict)
+    strategy_focus_received = pyqtSignal(dict)
+    reference_focus_received = pyqtSignal(dict)
     operation_status_received = pyqtSignal(dict)
     logs_received = pyqtSignal(dict)
     strategies_received = pyqtSignal(list)
@@ -91,6 +94,30 @@ class FakeController(QObject):
     def __init__(self):
         super().__init__()
         self.calls = []
+
+    def refresh_focus_defaults(self):
+        pass
+
+    def refresh_reference_focus(self):
+        pass
+
+    def configure_reference_focus(self, config):
+        self.calls.append(("configure_reference_focus", config))
+
+    def run_reference_focus(self, action="run"):
+        self.calls.append(("run_reference_focus", action))
+
+    def edit_reference_focus(self, action, smoothing=None):
+        self.calls.append(("edit_reference_focus", action, smoothing))
+
+    def cancel_reference_focus(self):
+        self.calls.append(("cancel_reference_focus",))
+
+    def refresh_reference_operation(self):
+        self.calls.append(("refresh_reference_operation",))
+
+    def decide_strategy_reference(self, identifier, accepted):
+        self.calls.append(("decide_strategy_reference", identifier, accepted))
 
     def refresh_stage(self):
         self.calls.append(("refresh_stage",))
@@ -328,7 +355,8 @@ def test_config_inputs_ignore_wheel_events() -> None:
 def test_controls_dock_keeps_main_controls_beside_workflow_tabs(monkeypatch) -> None:
     _app()
 
-    class StubController:
+    class StubController(QObject):
+        strategy_focus_received = pyqtSignal(dict)
         def close(self) -> None:
             pass
 
@@ -351,6 +379,9 @@ def test_controls_dock_keeps_main_controls_beside_workflow_tabs(monkeypatch) -> 
         def _build_strategy_tab(self) -> QWidget:
             return self._placeholder()
 
+        def _build_focus_tab(self) -> QWidget:
+            return self._placeholder()
+
     monkeypatch.setattr(controls_module, "EvoMachineGuiController", StubController)
 
     dock = StubControlsDock()
@@ -369,8 +400,9 @@ def test_controls_dock_keeps_main_controls_beside_workflow_tabs(monkeypatch) -> 
     assert [dock.workflow_tabs.tabText(index) for index in range(dock.workflow_tabs.count())] == [
         "Acquisition",
         "Strategy",
+        "Focus",
     ]
-    assert seen_controllers == [dock.controller, dock.controller, dock.controller]
+    assert seen_controllers == [dock.controller] * 4
 
 
 def test_scrollable_control_column_wraps_labels_and_sizes_buttons_for_font() -> None:

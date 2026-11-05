@@ -6,6 +6,9 @@ projection, strategies, and real-time processing workflows.
 
 ## Developer guides
 
+- [Focus workflows](docs/development/focus.md): manual Focus tab, strategy modes,
+  reference calibration, plot review and recovery.
+
 - [Extending AutoStrat integration](docs/development/autostrat.md): commands,
   observations, collections, runtime errors, and domain-pack examples.
 - [Extending the GUI](docs/development/gui.md): panels, RPC operations, background

@@ -183,8 +183,7 @@ def test_mode_defaults_to_standard_and_can_be_changed(setup):
 def test_strategy_start_requires_acceptance_and_stop_cancels_reference_focus(setup):
     navigator, reference, _, _, _, _ = setup
     automaton, *_ = make_automaton()
-    automaton.focus_nav.config = navigator.config
-    automaton.focus_nav.reference_focus = reference
+    automaton.focus_nav = navigator
     with pytest.raises(RuntimeError, match="accept"):
         automaton.start_strategy()
     assert not automaton.strategy_has_started()
@@ -193,3 +192,54 @@ def test_strategy_start_requires_acceptance_and_stop_cancels_reference_focus(set
     assert automaton.strategy_has_started()
     automaton.stop()
     assert reference._stop_event.is_set()
+
+
+def test_strategy_initial_reference_uses_saved_z_and_requests_review(setup):
+    navigator, reference, camera, stage, _, _ = setup
+    navigator._fov_states[1].coordinate.z = 123.75
+    camera.focus_z = 123.75
+    reviewed = []
+    navigator.review_reference = lambda profile, fov_id, event: reviewed.append((profile.focus_z, fov_id)) or True
+    result = navigator.move(1)
+    assert reviewed == [(123.75, 1)]
+    assert reference.reference.focus_z == 123.75
+    assert not result.skipped
+
+
+def test_standard_saved_z_initialisation_calibrates_crisp_without_peak_search(setup):
+    navigator, _, _, stage, software, crisp = setup
+    navigator._fov_states[0].coordinate.z = 123.75
+    navigator.update_config(FocusNavigatorConfig(use_autofocus=True, initialise_from_first_fov_z=True))
+    result = navigator.move(0)
+    assert stage.get_coordinates().z == 123.75
+    assert result.is_locked
+    assert software.runs == []
+    assert "initialise:None" in crisp.history
+
+
+def test_mixed_modes_preserve_global_policy(setup):
+    from evomachine.navigation import FovConfig
+    navigator, _, _, stage, _, _ = setup
+    _calibrate(navigator)
+    navigator._fov_states[0].coordinate.z = 120.25
+    navigator.update_config(FocusNavigatorConfig())
+    navigator.update_fov_config(1, FovConfig(focus_mode=FocusMode.REFERENCE_PROFILE))
+    assert not navigator.move(0).skipped
+    result = navigator.move(1)
+    assert result.software_focus_status == FocusStatusType.IN_FOCUS
+    assert navigator.config.focus_mode == FocusMode.STANDARD
+    assert not navigator.move(0).skipped
+    assert stage.get_coordinates().z == 120.25
+
+
+def test_peak_reset_is_opt_in_and_local_to_failed_fov(setup):
+    navigator, reference, camera, _, _, _ = setup
+    reference.update_config(replace(reference.config, allow_peak_reset=True))
+    original = _calibrate(navigator)
+    camera.flat_frames = 30
+    result = navigator.move(1)
+    assert not result.skipped
+    assert navigator.last_reference_focus.last_result.reference_reset
+    assert reference.reference is original
+    assert navigator.reference_for_fov(1).reference.focus_z != original.focus_z
+    assert navigator.reference_for_fov(0).reference is original

@@ -1,6 +1,8 @@
 # Extending the EvoMachine GUI
 
 See [AutoStrat integration](autostrat.md) for generated commands and observations.
+See [Focus workflows](focus.md) for manual/strategy isolation, mode-specific settings,
+reference review and autofocus recovery.
 This guide covers the current PyQt5/Napari GUI and its application boundary.
 
 ## Request and response path
@@ -18,7 +20,7 @@ singleton into a panel or make blocking socket/model calls from a button handler
 | File | What to change there |
 | --- | --- |
 | `evomachine/gui/panels/` | Widgets, input collection, display and control enablement |
-| `gui/docks/controls.py` | Compose panels into the main controls/acquisition/strategy tabs |
+| `gui/docks/controls.py` | Compose panels into main controls and Acquisition/Strategy/Focus tabs |
 | `gui/controller.py` | Request methods, Qt signals and response routing |
 | `gui/protocol.py` | Allowlisted command enum, request/response dataclasses and mutation policy |
 | `gui/request_map.py` | Validated backend handlers and `GUI_REQUEST_HANDLERS` registration |
@@ -137,6 +139,20 @@ Model/endpoint configuration and generation pipeline construction live in
 compatible diagnostics. UI labels say “strategy code”; internal DSL names need
 not be renamed. GUI generation runs in a disposable process so Cancel and the
 `AUTOSTRAT_GENERATION_TIMEOUT_SECONDS` limit can stop a stalled model request.
+
+## Focus panels and configuration
+
+Manual CRISP and software-focus panels live in the RHS Focus tab, alongside the
+reference-profile panel. The Strategy tab owns global and per-FoV mode selection.
+Use `ConfigForm` inside larger editors and `ConfigDialog` for simple modal forms.
+A mode change selects a whole editor page; retain inactive page values.
+
+Manual configuration/results are independent of strategy state. FoV setup must not
+subscribe to manual software-focus status as a source of strategy defaults. Load
+strategy defaults using the focus-defaults endpoint instead. Strategy references
+are captured at saved FoV Zs on first use, with acceptance before imaging. The
+review command accepts only the current candidate ID. Preserve its limited
+mutation gate and the safe request-processing boundaries in acquisition loops.
 
 ## Lifecycle rules to preserve
 
