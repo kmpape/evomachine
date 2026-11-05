@@ -37,7 +37,7 @@ from evomachine.runtime_errors import (
 )
 from evomachine.softwarefocus import SoftwareFocus
 from evomachine.strategy import AbstractStrategy
-from evomachine.types import AutomatonCommandType, LEDType
+from evomachine.types import AutomatonCommandType, FocusMode, LEDType
 from evomachine.utils import normalise_frame
 
 logger = get_logger(name=__name__)
@@ -1360,6 +1360,9 @@ class Automaton:
             )
         if self._swfocus is not None and callable(getattr(self._swfocus, "stop", None)):
             actions.append(("software focus", self._swfocus.stop))
+        reference_focus = getattr(self.focus_nav, "reference_focus", None)
+        if reference_focus is not None:
+            actions.append(("reference focus", reference_focus.stop))
         if (
                 self._autofocus is not None
                 and self._autofocus.is_initialised()
@@ -1483,6 +1486,9 @@ class Automaton:
             raise RuntimeError("Automaton.start_strategy: strategy is required.")
         if not self._strategy_is_initialised:
             raise RuntimeError("Automaton.start_strategy: strategy is not initialised.")
+        focus_config = getattr(self.focus_nav, "config", None)
+        if getattr(focus_config, "focus_mode", FocusMode.STANDARD) == FocusMode.REFERENCE_PROFILE:
+            self.focus_nav.validate_ready()
         self._validate_strategy_command_requirements()
         preparation_errors: list[str] = []
         try:
