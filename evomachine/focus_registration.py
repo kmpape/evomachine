@@ -4,7 +4,8 @@ Z values are in micrometres. Fit a reference about the manually selected focus,
 inspect it with ``plot_reference_profile`` and ``plt.show()``, then explicitly
 call ``estimate_focus_shift`` with subsequent measurements. Nothing runs or
 accepts a reference automatically when its plot is closed.
-Use the same image metric, ROI and acquisition settings for both sets of scores.
+Always score whole images, using the same metric and acquisition settings for
+both sets of scores.
 """
 
 from __future__ import annotations
@@ -80,10 +81,10 @@ def score_focus_stack(
     algorithm: FocusAlgorithmType = FocusAlgorithmType.SQUARED_GRAD_AVG,
     algorithm_kwargs: dict[str, Any] | None = None,
 ) -> NDArray[np.float64]:
-    """Score a Z-first ``(planes, height, width)`` stack with an existing metric.
+    """Score whole images in a Z-first ``(planes, height, width)`` stack.
 
-    Supply cropped images if an ROI is wanted. Convert each plane to float before
-    scoring to avoid unsigned subtraction/squaring overflow in gradient metrics.
+    Convert each plane to float before scoring to avoid unsigned
+    subtraction/squaring overflow in gradient metrics.
     Existing autofocus defaults and implementations are unaffected.
     """
     stack = np.asarray(images)
