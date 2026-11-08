@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, auto
 import logging
+import math
 from time import time
 from typing import Any
 
@@ -262,6 +263,49 @@ class CommandFactory:
         return AutomatonCommand(
             command_type=AutomatonCommandType.IMAGE,
             command_args=command_args,
+            command_id=self.get_next_id(),
+            command_creation_time=time(),
+        )
+
+    def command_z_stack(
+            self,
+            frame_metadata: FrameMetaData,
+            relative_range: int | float,
+            step_size: int | float,
+            save: bool = False,
+    ) -> AutomatonCommand:
+        """Create an acquisition-only Z-stack command centred at execution-time Z.
+
+        Args:
+            frame_metadata: Single FrameMetaData reused at every Z position.
+            relative_range: Positive half-range in stage coordinate units.
+            step_size: Positive spacing, no greater than relative_range.
+            save: Boolean controlling saving through the acquisition manager.
+
+        Returns:
+            AutomatonCommand capturing the centre, positive steps, then negative
+            steps within the range. Callback data follows IMAGE's structure.
+            The acquisition manager restores Z unless cancellation is set.
+        """
+        if not isinstance(frame_metadata, FrameMetaData):
+            raise TypeError("command_z_stack: frame_metadata must be one FrameMetaData.")
+        if not isinstance(save, bool):
+            raise TypeError("command_z_stack: save must be a bool.")
+        for name, value in (("relative_range", relative_range), ("step_size", step_size)):
+            if type(value) not in (int, float):
+                raise TypeError(f"command_z_stack: {name} must be an int or float.")
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(f"command_z_stack: {name} must be finite and positive.")
+        if step_size > relative_range:
+            raise ValueError("command_z_stack: step_size must not exceed relative_range.")
+        return AutomatonCommand(
+            command_type=AutomatonCommandType.Z_STACK,
+            command_args={
+                "frame_metadata": frame_metadata,
+                "relative_range": relative_range,
+                "step_size": step_size,
+                "save": save,
+            },
             command_id=self.get_next_id(),
             command_creation_time=time(),
         )

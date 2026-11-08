@@ -129,6 +129,7 @@ class AutomatonCommandType(EvoType):
     ABORT_STRATEGY = auto()
     CLEAR_PROJECTION_TARGETS = auto()
     SELECT_PROJECTION_ROI = auto()
+    Z_STACK = auto()
 
 
 # TODO(Codex): rename as SoftwareFocusStatusType
