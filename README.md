@@ -231,6 +231,36 @@ export EVOMACHINE_GUI_STAGE_MAX_Z_UM=1000
 These values are in micrometres relative to the startup zero and must be set to
 the microscope's confirmed safe travel region before hardware use.
 
+#### Z-stacks in Python strategies
+
+Declare `AutomatonCommandType.Z_STACK` in your strategy's
+`register_automaton_commands()` and return a command built with:
+
+```python
+self.command_factory.command_z_stack(
+    frame_metadata=metadata,
+    relative_range=10,
+    step_size=3,
+    save=True,
+)
+```
+
+One `FrameMetaData` supplies the acquisition settings at every plane. The
+range is a half-range around the hardware Z read when the command executes,
+in stage coordinate units. Range and step must be finite and positive, with
+step no greater than range. Capture order is the centre, positive steps, then
+negative steps: this example uses offsets `0, 3, 6, 9, -3, -6, -9`. Only complete
+steps within the range are included; divisibility is not required.
+
+The command reuses `FrameAcquisitionManager.take_z_stack()`, including its
+restoration behavior: starting Z is restored after completion or acquisition
+failure, but not when the stop event is set. It preserves existing synchronous
+acquisition and GUI request scheduling. The callback receives IMAGE-style
+`command_data`: `img` contains `[stack_array]`, with per-plane `frame_metadata`
+and `saved_paths`. The completed stack is available through the existing GUI
+preview. This command performs no DeLTA detection or segmentation; it retains
+ROI registrations but invalidates current processing measurements.
+
 #### Acquisition output folder
 
 Manual images, z-stacks, and strategy images use one local output folder. In

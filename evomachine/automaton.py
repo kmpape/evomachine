@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable
 import copy
+import math
 from multiprocessing import Event
 from pathlib import Path
 import time
@@ -50,6 +51,7 @@ class Automaton:
         AutomatonCommandType.MOVE: ("focus_nav", "_stage"),
         AutomatonCommandType.UPDATE_FOV_CONFIG: ("focus_nav", "_stage"),
         AutomatonCommandType.IMAGE: ("acq_mngr", "_camera", "_led_mngr"),
+        AutomatonCommandType.Z_STACK: ("acq_mngr", "_camera", "_led_mngr", "_stage"),
         AutomatonCommandType.LIVE_MODE: ("acq_mngr", "_camera", "_led_mngr"),
         AutomatonCommandType.PROJECT: ("_dmd", "_led_mngr"),
         AutomatonCommandType.PROJECT_ROI: ("_dmd", "_led_mngr"),
@@ -433,6 +435,8 @@ class Automaton:
         """
         missing_requirements: set[str] = set()
         for command_type in self._registered_strategy_commands():
+            if command_type is AutomatonCommandType.Z_STACK and self.acq_mngr.stage is None:
+                missing_requirements.add("Z_STACK: acquisition manager stage")
             for attribute_name in self._COMMAND_REQUIREMENTS[command_type]:
                 if getattr(self, attribute_name) is None:
                     device_name = self._REQUIREMENT_LABELS.get(attribute_name, attribute_name)
@@ -795,6 +799,8 @@ class Automaton:
                     command.command_data = self._execute_update_fov_config(command=command)
                 elif command.command_type == AutomatonCommandType.IMAGE:
                     command.command_data = self._execute_image(command=command)
+                elif command.command_type == AutomatonCommandType.Z_STACK:
+                    command.command_data = self._execute_z_stack(command=command)
                 elif command.command_type == AutomatonCommandType.PROJECT:
                     command.command_data = self._execute_project(command=command)
                 elif command.command_type == AutomatonCommandType.PROJECT_ROI:
@@ -1008,6 +1014,69 @@ class Automaton:
                 detect_rois=detect_rois, segment=segment,
             )
         return command_data
+
+    def _execute_z_stack(self, command: AutomatonCommand) -> dict[str, Any]:
+        """Acquire a centred Z-stack using the acquisition manager's Z handling.
+
+        Args:
+            command: Z_STACK command carrying one FrameMetaData, relative_range,
+                step_size in stage units, and a boolean save flag.
+
+        Returns:
+            IMAGE-compatible callback data containing the stack, per-plane
+            metadata and saved paths, or the existing skipped-image payload.
+            Starting Z is restored by the manager unless cancellation is set.
+        """
+        self._require_runtime_devices(
+            AutomatonCommandType.Z_STACK, ("acq_mngr", "_camera", "_led_mngr", "_stage")
+        )
+        stage = self.acq_mngr.stage
+        if stage is None:
+            raise RuntimeError("Z_STACK requires an acquisition manager stage.")
+        if self._strategy is None:
+            raise RuntimeError("Automaton._execute_z_stack: strategy is required.")
+        args = command.command_args
+        metadata = args["frame_metadata"]
+        if not isinstance(metadata, FrameMetaData):
+            raise TypeError("Automaton._execute_z_stack: frame_metadata must be FrameMetaData.")
+        metadata.callback_id = self._strategy.callback_counter
+        if metadata.fov_id < 0:
+            metadata.fov_id = self.get_fov_id()
+        self.processing_state.invalidate(self.get_fov_id())
+        if metadata.fov_id == self._skip_image_fov_id:
+            return {
+                "skipped": True,
+                "skip_reason": self._skip_image_reason,
+                "frame_metadata": [metadata],
+                "saved_paths": [None],
+            }
+        centre_z = stage.get_coordinates(query_hardware=True).z
+        if centre_z is None:
+            raise RuntimeError("Z_STACK requires a current stage Z coordinate.")
+        relative_range, step_size = args["relative_range"], args["step_size"]
+        ratio = relative_range / step_size
+        nearest = round(ratio)
+        # Include mathematically exact endpoints such as 0.3 / 0.1 despite
+        # floating-point division rounding just below an integer.
+        count = (
+            nearest
+            if math.isclose(ratio, nearest, rel_tol=0, abs_tol=1e-12)
+            else math.floor(ratio)
+        )
+        positive = [min(index * step_size, relative_range) for index in range(1, count + 1)]
+        offsets = [0, *positive, *(-offset for offset in positive)]
+        frame = self.acq_mngr.take_z_stack(
+            frame_metadata=metadata,
+            z_coordinates=[Coordinate(None, None, centre_z + offset) for offset in offsets],
+            settings=FrameAcquisitionSettings(save=args["save"]),
+            stop_event=self._stop_event,
+        )
+        self._store_frame(frame=frame)
+        return {
+            "img": [frame.array],
+            "frame_metadata": frame.frame_metadata,
+            "saved_paths": frame.saved_paths,
+        }
 
     def _store_frame(self, frame: Frame) -> None:
         """
