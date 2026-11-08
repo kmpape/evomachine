@@ -131,6 +131,12 @@ def _match_payload(match):
 
 
 def _attempt_payload(profile, scan, match, label):
+    """Expose raw samples and optional display alignment/scaling.
+
+    Offsets are relative to the scan centre; subtracting the candidate shift
+    aligns them with reference zero. A positive gain and baseline fit rescales
+    scores for plotting only. Neither transform changes matching or stage Z.
+    """
     offsets = scan.z_coordinates - scan.centre_z
     aligned = offsets - match.candidate_shift if match.candidate_shift is not None else offsets
     display_scores = scan.focus_scores
@@ -200,6 +206,13 @@ class ReferenceReview:
 
 
 class FocusGuiState:
+    """Keep manual experiments separate from strategy focus configuration/results.
+
+    Hardware remains shared. Strategy review waits service queued GUI requests
+    on the strategy thread at safe boundaries; decisions identify the current
+    candidate and never execute hardware operations on the socket thread.
+    """
+
     def __init__(self, facade):
         self.facade = facade
         self.manual_software = None
@@ -254,6 +267,7 @@ class FocusGuiState:
         return self.manual_reference
 
     def review_strategy_reference(self, profile, fov_id, stop_event):
+        """Wait for this strategy candidate's acceptance, rejection or cancellation."""
         review = ReferenceReview(uuid4().hex, fov_id, curve_payload(profile))
         with self.lock:
             self.review = review

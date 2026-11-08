@@ -36,7 +36,12 @@ class ReferenceFocusOutOfRange(ValueError):
 
 @dataclass(frozen=True)
 class SamplingPlan:
-    """Symmetric image positions, optionally denser around the scan centre."""
+    """Symmetric image positions in µm, optionally denser around the scan centre.
+
+    Outer and central grids are merged without duplicates. Their steps control
+    image acquisition; the separate ShiftSearchConfig step controls only the
+    numerical Pearson search and does not acquire additional images.
+    """
 
     half_range: float = 20.0
     step: float = 5.0
@@ -44,6 +49,7 @@ class SamplingPlan:
     central_step: float = 0.5
 
     def offsets(self) -> tuple[float, ...]:
+        """Return increasing offsets including zero and both range endpoints."""
         values = (self.half_range, self.step, self.central_step)
         if not all(np.isfinite(value) and value > 0 for value in values):
             raise ValueError("Sampling range and steps must be finite and greater than zero.")
@@ -153,6 +159,15 @@ class ReferenceProfileFocus:
         return deepcopy(self._config)
 
     def update_config(self, config: ReferenceProfileFocusConfig) -> None:
+        """Keep references compatible with the changed settings.
+
+        Scan/search, saving and future calibration range/step edits retain the
+        accepted profile. Smoothing/metric changes refit cached images into a
+        candidate requiring acceptance. Imaging changes retain the old curve
+        for inspection but require a new capture before it can be accepted.
+        Compare resolved scorer parameters so omitted defaults do not cause
+        a refit when configuration is round-tripped through the GUI.
+        """
         previous = getattr(self, "_config", None)
         if previous is not None:
             old_scorer = create_software_focus_algorithm(
@@ -234,6 +249,12 @@ class ReferenceProfileFocus:
         return float(z)
 
     def calibrate(self, stop_event: threading.Event | None = None) -> ReferenceProfile:
+        """Capture a candidate around current Z, which defines the manual zero.
+
+        Zero need not be the score maximum. A completed scan restores its
+        starting Z; cancellation leaves the stopped position. The caller must
+        inspect the returned curve and call accept_reference before focusing.
+        """
         centre = self._begin(stop_event)
         self.clear_reference()
         config = self._config
@@ -321,6 +342,14 @@ class ReferenceProfileFocus:
     def run(
         self, fov_id: int, stop_event: threading.Event | None = None, *, apply: bool = True
     ) -> ReferenceProfileFocusResult:
+        """Try sparse then recovery sampling, correcting Z only for an accepted match.
+
+        apply=False still moves through the sampling positions and acquires
+        images, without applying a correction or rebuilding the reference.
+        Completed scans restore starting Z; cancellation leaves the stopped
+        position. Results retain scans and rejected matches for diagnostics.
+        Peak resetting requires both apply and explicit opt-in.
+        """
         if self.reference is None:
             raise RuntimeError("Reference calibration must be accepted before focusing.")
         centre = self._begin(stop_event)

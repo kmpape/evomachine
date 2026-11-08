@@ -1,8 +1,6 @@
 # Extending the EvoMachine GUI
 
 See [AutoStrat integration](autostrat.md) for generated commands and observations.
-See [Focus workflows](focus.md) for manual/strategy isolation, mode-specific settings,
-reference review and autofocus recovery.
 This guide covers the current PyQt5/Napari GUI and its application boundary.
 
 ## Request and response path
@@ -26,6 +24,7 @@ singleton into a panel or make blocking socket/model calls from a button handler
 | `gui/request_map.py` | Validated backend handlers and `GUI_REQUEST_HANDLERS` registration |
 | `gui/facade.py` | Shared application access, status payloads and safety gates |
 | `gui/operations.py` | Background operation state, progress and cooperative cancellation |
+| `gui/focus.py` | Focus configuration transport, independent manual state and strategy reference review |
 | `gui/runtime.py` | Virtual and hardware application construction |
 | `gui/central_workspace.py` | Image/plot presentation in the central workspace |
 
@@ -146,13 +145,38 @@ Manual CRISP and software-focus panels live in the RHS Focus tab, alongside the
 reference-profile panel. The Strategy tab owns global and per-FoV mode selection.
 Use `ConfigForm` inside larger editors and `ConfigDialog` for simple modal forms.
 A mode change selects a whole editor page; retain inactive page values.
+FoVs can inherit the global mode or select their own, with optional settings
+overrides. The manual Focus tab does not change these strategy settings.
+
+`panels/focus_settings.py` owns the mode-specific editors. Reference sampling uses
+`SamplingEditor`: generated outer range/step, optional denser centre, exact-position
+preview, and Custom mode for irregular lists. Image sampling controls acquisition;
+the matching range/step controls numerical Pearson candidates, not additional images.
+Preserve custom positions and fractional shift bounds when round-tripping settings.
+
+Applying unchanged configuration or editing scan/search settings must retain an
+accepted reference. `ReferenceProfileFocus.update_config` owns compatibility:
+smoothing/metric changes refit cached images for review; changed imaging settings
+keep the old curve visible but require a new capture. Panels should display the
+backend's acceptance, calibration-needed flag and explanatory message.
+
+`panels/reference_focus.py` embeds the dark Matplotlib plots. Latest samples appear
+as crosses over the reference; alignment and score scaling affect display only.
+Show sparse/recovery outcomes and rejection reasons, retaining rejected correlations
+for inspection. Explain undefined correlations instead of presenting a silent empty
+plot. Numeric curves cross JSON as lists, with unsupported correlations represented
+by null; hardware objects and image stacks remain in the application process.
 
 Manual configuration/results are independent of strategy state. FoV setup must not
 subscribe to manual software-focus status as a source of strategy defaults. Load
 strategy defaults using the focus-defaults endpoint instead. Strategy references
 are captured at saved FoV Zs on first use, with acceptance before imaging. The
 review command accepts only the current candidate ID. Preserve its limited
-mutation gate and the safe request-processing boundaries in acquisition loops.
+mutation gate. Manual scans use `GuiOperationManager`; strategy-owned scans service
+GUI requests between completed planes, and reference-review waits service requests
+on the strategy thread. Keep status and Stop responsive without running hardware
+from the socket thread. Cancellation checks run at safe boundaries; an active
+device call may need to finish before cancellation takes effect.
 
 ## Lifecycle rules to preserve
 

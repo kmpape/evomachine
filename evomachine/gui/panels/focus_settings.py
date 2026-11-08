@@ -244,7 +244,12 @@ class SoftwareEditor(QWidget):
 
 
 class SamplingEditor(QWidget):
-    """Generate image Z positions or preserve an explicitly supplied custom list."""
+    """Generate image Z positions or preserve an explicitly supplied custom list.
+
+    Infer generated controls only when they reproduce every saved position;
+    otherwise keep Custom mode so opening a dialog cannot change an irregular
+    scan. Preview includes the exact image count and generated positions.
+    """
 
     def __init__(self, offsets):
         super().__init__()

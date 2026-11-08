@@ -35,6 +35,13 @@ _SAMPLE_COLOR = "#f28eb1"
 
 
 class FocusCurves(QWidget):
+    """Plot reference, latest sample crosses and both Pearson attempts.
+
+    Alignment and score-scaling controls affect display only, including for
+    rejected candidates. Undefined correlations show a reason instead of a
+    fabricated curve; the sampled points remain available for inspection.
+    """
+
     def __init__(self, parent=None, *, show_match=True):
         super().__init__(parent)
         palette = self.palette()
