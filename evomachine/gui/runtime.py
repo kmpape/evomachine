@@ -304,12 +304,16 @@ def build_virtual_automaton():
             acquisition_settings=None,
             rel_range=15,
             step_size=5,
-            algorithm=FocusAlgorithmType.STEEL,
-            algorithm_kwargs={"rowshift": 1, "colshift": 1, "normalise": True},
+            algorithm=FocusAlgorithmType.SQUARED_GRAD_AVG,
+            algorithm_kwargs={},
             cropping_box=None,
         ),
     )
-    focus_nav = FocusNavigator(stage=stage, autofocus=autofocus, software_focus=software_focus)
+    from evomachine.referencefocus import ReferenceProfileFocus, ReferenceProfileFocusConfig
+    reference_focus = ReferenceProfileFocus(acq_mngr, ReferenceProfileFocusConfig(
+        focus_frame=software_focus.default_config.focus_frames[0]))
+    focus_nav = FocusNavigator(stage=stage, autofocus=autofocus, software_focus=software_focus,
+                              reference_focus=reference_focus)
     cfg = ImageProcessorConfigFactory.default_config(
         channels=[
             LEDType.LED_385_NM,
@@ -509,12 +513,16 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
             acquisition_settings=None,
             rel_range=100,
             step_size=5,
-            algorithm=FocusAlgorithmType.STEEL,
-            algorithm_kwargs={"rowshift": 1, "colshift": 1, "normalise": True},
+            algorithm=FocusAlgorithmType.SQUARED_GRAD_AVG,
+            algorithm_kwargs={},
             cropping_box=None,
         ),
     )
-    focus_nav = FocusNavigator(stage=stage, autofocus=autofocus, software_focus=software_focus)
+    from evomachine.referencefocus import ReferenceProfileFocus, ReferenceProfileFocusConfig
+    reference_focus = ReferenceProfileFocus(acq_mngr, ReferenceProfileFocusConfig(
+        focus_frame=software_focus.default_config.focus_frames[0]))
+    focus_nav = FocusNavigator(stage=stage, autofocus=autofocus, software_focus=software_focus,
+                              reference_focus=reference_focus)
     proj_mngr = None
     if dmd is not None:
         proj_mngr = ProjectionManager(

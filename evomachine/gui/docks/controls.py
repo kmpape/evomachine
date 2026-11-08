@@ -31,6 +31,7 @@ from evomachine.gui.panels.dmd import DmdPanel
 from evomachine.gui.panels.filterwheel import FilterWheelPanel
 from evomachine.gui.panels.leds import LedManagerPanel
 from evomachine.gui.panels.software_focus import SoftwareFocusPanel
+from evomachine.gui.panels.reference_focus import ReferenceFocusPanel, StrategyReferenceDialog
 from evomachine.gui.panels.stage import StagePanel
 from evomachine.gui.panels.strategy import FovSetupPanel, StrategySetupPanel
 
@@ -65,6 +66,9 @@ class EvoMachineControlsDock(QWidget):
         workflow_tabs = QTabWidget()
         workflow_tabs.addTab(self._scrollable_tab(self._build_acquisition_tab()), "Acquisition")
         workflow_tabs.addTab(self._scrollable_tab(self._build_strategy_tab()), "Strategy")
+        workflow_tabs.addTab(self._scrollable_tab(self._build_focus_tab()), "Focus")
+        self._reference_review_dialog = None
+        self.controller.strategy_focus_received.connect(self._review_reference)
 
         controls_splitter = QSplitter(Qt.Horizontal)
         controls_splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -121,10 +125,29 @@ class EvoMachineControlsDock(QWidget):
         layout.addWidget(CameraPanel(controller=self.controller))
         layout.addWidget(DmdPanel(controller=self.controller))
         layout.addWidget(FilterWheelPanel(controller=self.controller))
-        layout.addWidget(AutofocusPanel(controller=self.controller))
-        layout.addWidget(SoftwareFocusPanel(controller=self.controller))
         layout.addStretch(1)
         widget.setLayout(layout)
+        return widget
+
+    def _review_reference(self, payload):
+        review = payload.get("review")
+        if review is None or self._reference_review_dialog is not None:
+            return
+        dialog = StrategyReferenceDialog(self.controller, review, self)
+        self._reference_review_dialog = dialog
+        def finished(_):
+            self._reference_review_dialog = None
+            dialog.deleteLater()
+        dialog.finished.connect(finished)
+        dialog.open()
+
+    def _build_focus_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.addWidget(AutofocusPanel(controller=self.controller))
+        layout.addWidget(SoftwareFocusPanel(controller=self.controller))
+        layout.addWidget(ReferenceFocusPanel(controller=self.controller))
+        layout.addStretch(1)
         return widget
 
     def _build_acquisition_tab(self) -> QWidget:

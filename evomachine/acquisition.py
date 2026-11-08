@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from collections.abc import Callable
 from pathlib import Path
 import threading
 import time
@@ -99,6 +100,7 @@ class FrameAcquisitionManager:
         self.dmd = dmd
         self.file_manager = file_manager
         self.stage = stage
+        self.step_callback = None
         self.default_settings = self._validate_settings(settings=default_settings)
 
     def update_settings(
@@ -213,6 +215,7 @@ class FrameAcquisitionManager:
             z_coordinates: list[Coordinate],
             settings: FrameAcquisitionSettings | None = None,
             stop_event: threading.Event | None = None,
+            step_callback: Callable[[], None] | None = None,
     ) -> Frame:
         """
         Acquire frames at a sequence of Z coordinates and restore the original Z.
@@ -230,6 +233,8 @@ class FrameAcquisitionManager:
         stop_event
             Optional cancellation event checked at safe boundaries between stage
             movement and frame acquisition.
+        step_callback
+            Optional callback after each completed plane, for servicing GUI requests.
 
         Returns
         -------
@@ -265,6 +270,9 @@ class FrameAcquisitionManager:
                 captured_metadata.extend(frame.frame_metadata)
                 frames.extend(frame.array[index] for index in range(frame.array.shape[0]))
                 saved_paths.extend(frame.saved_paths)
+                callback = step_callback or self.step_callback
+                if callback is not None:
+                    callback()
         finally:
             if stop_event is None or not stop_event.is_set():
                 self.stage.move(target=Coordinate(None, None, previous_coordinate.z), block=True)

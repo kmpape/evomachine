@@ -90,7 +90,7 @@ class SoftwareFocusPanel(QGroupBox):
         if values["step_size"] > values["rel_range"]:
             self.status_label.setText("Software-focus step size cannot exceed its relative range.")
             return
-        self.status_label.setText("Applying shared software-focus settings…")
+        self.status_label.setText("Applying manual software-focus settings…")
         self.controller.configure_software_focus(values)
 
     def update_status(self, payload: dict) -> None:

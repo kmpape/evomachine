@@ -25,7 +25,8 @@ from evomachine.types import FovDirectionType
 from evomachine.gui.protocol import GuiCommandType
 from evomachine.navigation import FovConfig, FocusNavigatorConfig, FocusNavigatorFovRecord
 from evomachine.softwarefocus import SoftwareFocusConfig
-from evomachine.types import FocusAlgorithmType
+from evomachine.types import FocusAlgorithmType, FocusMode
+from evomachine.gui import focus as focus_handlers
 
 
 GuiRequestHandler = Callable[[Any, dict[str, Any]], dict[str, Any]]
@@ -315,13 +316,14 @@ def gui_fovs_from_payload(payload: dict[str, Any]) -> dict[int, Coordinate]:
 def gui_software_focus_config_from_payload(
         facade: Any,
         payload: dict[str, Any] | None,
+        *, manual: bool = False,
 ) -> SoftwareFocusConfig | None:
     """Apply GUI scan overrides to the backend's complete software-focus config."""
     if payload is None:
         return None
     if not isinstance(payload, dict):
         raise TypeError("Software-focus config payload must be a dict.")
-    base = facade.gui_software_focus().default_config
+    base = (facade.gui_software_focus() if manual else facade.gui_strategy_software_focus()).default_config
     updates: dict[str, Any] = {}
     if "rel_range" in payload:
         updates["rel_range"] = int(payload["rel_range"])
@@ -349,86 +351,97 @@ def gui_software_focus_config_from_payload(
             for key, value in base.algorithm_kwargs.items()
             if key in allowed_kwargs
         }
+    if "algorithm_kwargs" in payload:
+        updates["algorithm_kwargs"] = dict(payload["algorithm_kwargs"])
+    if "focus_frames" in payload:
+        updates["focus_frames"] = [focus_handlers.frame_from_payload(frame, base.focus_frames[0])
+                                  for frame in payload["focus_frames"]]
+    if "acquisition_settings" in payload:
+        updates["acquisition_settings"] = FrameAcquisitionSettings(**payload["acquisition_settings"])
+    updates["cropping_box"] = None
     return base.updated(**updates)
 
 
-def gui_fov_config_from_payload(
-        facade: Any,
-        payload: dict[str, Any] | None,
-) -> FovConfig:
-    """Build one per-FoV focus policy from a GUI payload."""
+def _standard_focus_config(facade, payload, base=None):
+    if not isinstance(payload, dict):
+        raise TypeError("Focus navigation config payload must be a dict.")
+    base = base or FocusNavigatorConfig(use_autofocus=True)
+    bool_fields = ("use_autofocus", "refocus", "refocus_using_software_focus",
+                   "refocus_on_all_fovs", "toggle_autofocus_on_channel_change",
+                   "initialise_from_first_fov_z")
+    values = {key: gui_bool_from_payload(payload, key, getattr(base, key)) for key in bool_fields}
+    values.update(max_refocus_trials=int(payload.get("max_refocus_trials", base.max_refocus_trials)),
+                  out_of_focus_wait_s=float(payload.get("out_of_focus_wait_s", base.out_of_focus_wait_s)),
+                  post_autofocus_wait_s=float(payload.get("post_autofocus_wait_s", base.post_autofocus_wait_s)),
+                  post_move_wait_s=float(payload.get("post_move_wait_s", base.post_move_wait_s)))
+    values["default_fov_config"] = gui_fov_config_from_payload(
+        facade, payload.get("default_fov_config"), base=base.default_fov_config)
+    values["autofocus_initialise_config"] = (
+        gui_autofocus_config_from_payload({"config": payload["autofocus"]})
+        if payload.get("autofocus") is not None else base.autofocus_initialise_config)
+    return FocusNavigatorConfig(**values)
+
+
+def gui_fov_config_from_payload(facade, payload, *, base=None, standard=None):
+    base = base or FovConfig()
     if payload is None:
-        return FovConfig()
+        return base
     if not isinstance(payload, dict):
         raise TypeError("FoV focus config payload must be a dict.")
-    bool_fields = (
-        "lock_autofocus_during_arrival_move",
-        "lock_autofocus_on_fov",
-        "lock_autofocus_during_departure_move",
-        "run_software_focus_on_arrival",
-    )
-    values: dict[str, Any] = {}
-    for field_name in bool_fields:
-        if field_name in payload:
-            values[field_name] = gui_bool_from_payload(payload, field_name, False)
+    from dataclasses import replace
+    if "override_settings" in payload and not isinstance(payload["override_settings"], bool):
+        raise ValueError("override_settings must be boolean.")
+    mode_name = payload.get("focus_mode", "INHERIT")
+    try:
+        mode = None if mode_name == "INHERIT" else FocusMode[mode_name]
+    except (KeyError, TypeError) as error:
+        raise ValueError("Unknown FoV focus mode.") from error
+    if payload.get("override_settings") is False:
+        return replace(base, focus_mode=mode)
+    flags = payload.get("default_fov_config", payload)
+    keys = ("lock_autofocus_during_arrival_move", "lock_autofocus_on_fov",
+            "lock_autofocus_during_departure_move", "run_software_focus_on_arrival")
+    values = {key: gui_bool_from_payload(flags, key, getattr(base, key)) for key in keys}
+    values["focus_mode"] = mode
     values["software_focus_config"] = gui_software_focus_config_from_payload(
-        facade, payload.get("software_focus")
-    )
-    autofocus_payload = payload.get("autofocus")
-    if autofocus_payload is not None:
+        facade, payload.get("software_focus"))
+    if payload.get("autofocus") is not None:
         values["autofocus_initialise_config"] = gui_autofocus_config_from_payload(
-            {"config": autofocus_payload}
-        )
+            {"config": payload["autofocus"]})
+    if "override_settings" in payload:
+        values["navigator_config"] = _standard_focus_config(facade, payload, standard)
+        if payload.get("reference_profile") is not None:
+            values["reference_focus_config"] = focus_handlers.reference_from_payload(
+                payload["reference_profile"], facade.automaton.focus_nav.reference_focus.config)
     return FovConfig(**values)
 
 
-def gui_focus_navigator_config_from_payload(
-        facade: Any,
-        payload: dict[str, Any],
-) -> tuple[FocusNavigatorConfig | None, dict[int, FovConfig] | None]:
-    """Build global and per-FoV focus policies from FoV initialisation data."""
+def gui_focus_navigator_config_from_payload(facade, payload):
+    from dataclasses import replace
     config_payload = payload.get("focus_config")
-    fov_rows = payload.get("fovs", [])
+    standard = _standard_focus_config(facade, config_payload) if config_payload is not None else None
+    rows = payload.get("fovs", [])
     fov_configs = {
-        int(row["fov_id"]): gui_fov_config_from_payload(facade, row["focus_config"])
-        for row in fov_rows
-        if isinstance(row, dict) and row.get("focus_config") is not None
-    }
-    if config_payload is None:
+        int(row["fov_id"]): gui_fov_config_from_payload(
+            facade, row["focus_config"], base=standard.default_fov_config if standard else None,
+            standard=standard)
+        for row in rows if isinstance(row, dict) and row.get("focus_config") is not None}
+    if standard is None:
         return None, fov_configs or None
-    if not isinstance(config_payload, dict):
-        raise TypeError("Focus navigation config payload must be a dict.")
-    bool_defaults = {
-        "use_autofocus": True,
-        "refocus": True,
-        "refocus_using_software_focus": True,
-        "refocus_on_all_fovs": False,
-        "toggle_autofocus_on_channel_change": True,
-    }
-    values: dict[str, Any] = {
-        field_name: gui_bool_from_payload(config_payload, field_name, default)
-        for field_name, default in bool_defaults.items()
-    }
-    values.update({
-        "max_refocus_trials": int(config_payload.get("max_refocus_trials", 10)),
-        "out_of_focus_wait_s": float(config_payload.get("out_of_focus_wait_s", 10)),
-        "post_autofocus_wait_s": float(config_payload.get("post_autofocus_wait_s", 3)),
-        "post_move_wait_s": float(config_payload.get("post_move_wait_s", 1)),
-        "default_fov_config": gui_fov_config_from_payload(
-            facade, config_payload.get("default_fov_config")
-        ),
-    })
-    autofocus_payload = config_payload.get("autofocus")
-    if autofocus_payload is not None:
-        values["autofocus_initialise_config"] = gui_autofocus_config_from_payload(
-            {"config": autofocus_payload}
-        )
-    software_config = gui_software_focus_config_from_payload(
-        facade, config_payload.get("software_focus")
-    )
-    if software_config is not None:
-        facade.gui_software_focus().update_config(config=software_config)
-    return FocusNavigatorConfig(**values), fov_configs or None
+    try:
+        mode = FocusMode[config_payload.get("focus_mode", "STANDARD")]
+    except (KeyError, TypeError) as error:
+        raise ValueError("Unknown global focus mode.") from error
+    software = gui_software_focus_config_from_payload(facade, config_payload.get("software_focus"))
+    if software is not None:
+        facade.gui_strategy_software_focus().update_config(software)
+    if config_payload.get("reference_profile") is not None:
+        facade.focus_state.reference()  # Ensure both independent components exist.
+        focus = facade.automaton.focus_nav.reference_focus
+        focus.update_config(focus_handlers.reference_from_payload(config_payload["reference_profile"], focus.config))
+    facade.automaton.focus_nav.standard_config = standard
+    return replace(standard, focus_mode=mode,
+                   use_autofocus=False if mode == FocusMode.REFERENCE_PROFILE else standard.use_autofocus), fov_configs or None
 
 
 def gui_focus_navigation_result_payload(
@@ -740,7 +753,8 @@ def gui_fov_move(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def gui_fov_movement_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    return {"operation": _require_operation_status(facade, "focus_navigation")}
+    return {"operation": _require_operation_status(facade, "focus_navigation"),
+            "strategy_focus": facade.focus_state.strategy_status()}
 
 
 def gui_stage_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1120,12 +1134,14 @@ def gui_autofocus_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]
 
 def gui_autofocus_configure(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "autofocus")
+    facade.focus_state.invalidate_hardware_focus()
     configured = facade.gui_autofocus().apply_config(config=gui_autofocus_config_from_payload(payload))
     return {"autofocus": {**facade.gui_autofocus_status_payload(), "configured": bool(configured)}}
 
 
 def gui_autofocus_initialise(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "autofocus")
+    facade.focus_state.invalidate_hardware_focus()
     config = gui_autofocus_config_from_payload(payload)
     lock_after_calibration = gui_bool_from_payload(payload, "lock_after_initialise", False)
     autofocus = facade.gui_autofocus()
@@ -1170,6 +1186,7 @@ def gui_autofocus_unlock(facade: Any, payload: dict[str, Any]) -> dict[str, Any]
 def gui_autofocus_reset_offset(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     """Reset CRISP's lock reference at the current calibrated focal position."""
     gui_require_devices_initialised(facade, "autofocus")
+    facade.focus_state.invalidate_hardware_focus()
     response = facade.gui_autofocus().reset_offset()
     autofocus_payload = facade.gui_autofocus_status_payload()
     autofocus_payload.update({
@@ -1195,6 +1212,7 @@ def gui_software_focus_run(facade: Any, payload: dict[str, Any]) -> dict[str, An
     fov_id = payload.get("fov_id")
     def run(cancel_event, report):
         report(0.0, "Running software focus.")
+        facade.focus_state.prepare_manual_scan()
         result = facade.gui_software_focus().run(
             fov_id=None if fov_id is None else int(fov_id),
             stop_event=cancel_event,
@@ -1211,9 +1229,9 @@ def gui_software_focus_run(facade: Any, payload: dict[str, Any]) -> dict[str, An
 
 
 def gui_software_focus_configure(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    """Update the global software-focus defaults shared by manual and strategy focus."""
+    """Update the independent manual software-focus settings."""
     gui_require_devices_initialised(facade, "software focus")
-    config = gui_software_focus_config_from_payload(facade, payload.get("config"))
+    config = gui_software_focus_config_from_payload(facade, payload.get("config"), manual=True)
     if config is None:
         raise ValueError("Software-focus configuration is required.")
     facade.gui_software_focus().update_config(config=config)
@@ -1232,7 +1250,8 @@ def _require_operation_status(facade: Any, kind: str) -> dict[str, Any]:
 
 
 def gui_strategy_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    response: dict[str, Any] = {"strategy": facade.gui_strategy_status_payload()}
+    response: dict[str, Any] = {"strategy": facade.gui_strategy_status_payload(),
+                                "strategy_focus": facade.focus_state.strategy_status()}
     frame_sequence = int(getattr(facade.automaton, "_latest_frame_sequence", 0))
     frame = getattr(facade.automaton, "_latest_frame", None)
     if frame is not None and frame_sequence > facade._last_strategy_frame_sequence:
@@ -1511,6 +1530,14 @@ def gui_strategy_stop(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
+    GuiCommandType.FOCUS_DEFAULTS: focus_handlers.focus_defaults,
+    GuiCommandType.REFERENCE_FOCUS_STATUS: focus_handlers.manual_reference_status,
+    GuiCommandType.REFERENCE_FOCUS_CONFIGURE: focus_handlers.manual_reference_configure,
+    GuiCommandType.REFERENCE_FOCUS_RUN: focus_handlers.manual_reference_run,
+    GuiCommandType.REFERENCE_FOCUS_EDIT: focus_handlers.manual_reference_edit,
+    GuiCommandType.REFERENCE_FOCUS_CANCEL: focus_handlers.manual_reference_cancel,
+    GuiCommandType.REFERENCE_FOCUS_OPERATION: focus_handlers.manual_reference_operation,
+    GuiCommandType.STRATEGY_REFERENCE_DECIDE: focus_handlers.strategy_reference_decide,
     GuiCommandType.PING: gui_ping,
     GuiCommandType.IMAGE_TRANSPORT_PROBE: gui_image_transport_probe,
     GuiCommandType.INITIALISE_DEVICES: gui_initialise_devices,
