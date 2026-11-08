@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import numpy as np
 
 from PyQt5.QtWidgets import (
     QCheckBox,
@@ -11,6 +12,7 @@ from PyQt5.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -22,6 +24,7 @@ from PyQt5.QtWidgets import (
 
 from evomachine.acquisition import FrameAcquisitionSettings
 from evomachine.focus_registration import ShiftSearchConfig
+from evomachine.referencefocus import SamplingPlan
 from evomachine.gui.panels.common import NoWheelComboBox
 from evomachine.gui.panels.config_dialog import ConfigFieldSpec as F, ConfigForm
 from evomachine.types import FilterWheelType, LEDType
@@ -240,6 +243,122 @@ class SoftwareEditor(QWidget):
         )
 
 
+class SamplingEditor(QWidget):
+    """Generate image Z positions or preserve an explicitly supplied custom list."""
+
+    def __init__(self, offsets):
+        super().__init__()
+        self.mode = NoWheelComboBox()
+        self.mode.addItems(["Generated positions", "Custom positions"])
+        plan = self._infer_plan(offsets)
+        self.form = ConfigForm(
+            [
+                F(
+                    "Outer range ±Z (µm)",
+                    "half_range",
+                    plan.half_range if plan else 20,
+                    kind="float",
+                    minimum=0.001,
+                ),
+                F(
+                    "Outer image step (µm)",
+                    "step",
+                    plan.step if plan else 5,
+                    kind="float",
+                    minimum=0.001,
+                    single_step=0.5,
+                ),
+                F(
+                    "Denser centre",
+                    "dense",
+                    plan is not None and plan.central_range is not None,
+                    kind="bool",
+                ),
+                F(
+                    "Central range ±Z (µm)",
+                    "central_range",
+                    (plan.central_range if plan else None) or 5,
+                    kind="float",
+                    minimum=0.001,
+                    enabled_when_key="dense",
+                ),
+                F(
+                    "Central image step (µm)",
+                    "central_step",
+                    plan.central_step
+                    if plan and plan.central_range is not None
+                    else min(0.5, plan.step / 2)
+                    if plan
+                    else 0.5,
+                    kind="float",
+                    minimum=0.001,
+                    single_step=0.1,
+                    enabled_when_key="dense",
+                ),
+            ]
+        )
+        self.custom = QLineEdit(", ".join(f"{value:g}" for value in offsets))
+        self.custom.setPlaceholderText("Z offsets in µm, separated by commas")
+        self.pages = QStackedWidget()
+        self.pages.addWidget(self.form)
+        self.pages.addWidget(self.custom)
+        self.preview = QLabel()
+        self.preview.setWordWrap(True)
+        self.mode.setCurrentIndex(0 if plan else 1)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.mode)
+        layout.addWidget(self.pages)
+        layout.addWidget(self.preview)
+        self.mode.currentIndexChanged.connect(self._refresh)
+        self.custom.textChanged.connect(self._refresh)
+        for widget in self.form._widgets.values():
+            signal = widget.toggled if isinstance(widget, QCheckBox) else widget.valueChanged
+            signal.connect(self._refresh)
+        self._refresh()
+
+    @staticmethod
+    def _infer_plan(offsets):
+        values = np.asarray(offsets, dtype=float)
+        if values.size < 5 or not np.allclose(values, -values[::-1]):
+            return None
+        positive = values[values > 0]
+        if not np.any(values == 0) or not positive.size:
+            return None
+        coarse = float(np.max(np.diff(values)))
+        fine = float(positive[0])
+        end = fine
+        for value in positive[1:]:
+            if not np.isclose(value - end, fine):
+                break
+            end = float(value)
+        dense = fine < coarse and not np.isclose(fine, coarse)
+        plan = SamplingPlan(float(values[-1]), coarse, end if dense else None, fine)
+        generated = plan.offsets()
+        return plan if len(generated) == len(values) and np.allclose(generated, values) else None
+
+    def values(self):
+        if self.mode.currentIndex() == 0:
+            values = self.form.values()
+            dense = values.pop("dense")
+            if not dense:
+                values["central_range"] = None
+            return list(SamplingPlan(**values).offsets())
+        values = [float(item.strip()) for item in self.custom.text().split(",")]
+        if len(values) < 5 or not np.all(np.isfinite(values)) or np.any(np.diff(values) <= 0):
+            raise ValueError("Custom sampling needs at least five increasing, finite Z offsets.")
+        return values
+
+    def _refresh(self, *_):
+        self.pages.setCurrentIndex(self.mode.currentIndex())
+        try:
+            values = self.values()
+            self.preview.setText(
+                f"{len(values)} images: " + ", ".join(f"{value:g}" for value in values)
+            )
+        except (ValueError, TypeError) as error:
+            self.preview.setText(str(error))
+
+
 class ReferenceEditor(QWidget):
     def __init__(self, config=None):
         super().__init__()
@@ -253,21 +372,21 @@ class ReferenceEditor(QWidget):
                     F(
                         "Range ±Z (µm)",
                         "calibration_range",
-                        config.get("calibration_range", 100),
+                        config.get("calibration_range", 40),
                         kind="float",
                         minimum=0.001,
                     ),
                     F(
                         "Z step (µm)",
                         "calibration_step",
-                        config.get("calibration_step", 5),
+                        config.get("calibration_step", 1),
                         kind="float",
                         minimum=0.001,
                     ),
                     F(
                         "Automatic smoothing (GCV)",
                         "automatic",
-                        config.get("smoothing") is None,
+                        config.get("smoothing", 0) is None,
                         kind="bool",
                     ),
                     F(
@@ -282,21 +401,26 @@ class ReferenceEditor(QWidget):
                 ]
             ),
         )
+        hint = QLabel(
+            "Sampling selects where images are captured. Matching tests Z corrections against the spline; it acquires no extra images."
+        )
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        self.sparse_samples = _group(
+            layout,
+            "Sparse images",
+            SamplingEditor(config.get("sample_offsets", SamplingPlan().offsets())),
+        )
+        self.recovery_samples = _group(
+            layout,
+            "Recovery images",
+            SamplingEditor(config.get("recovery_offsets", SamplingPlan(central_range=5).offsets())),
+        )
         self.samples = _group(
             layout,
             "Sampling and recovery",
             ConfigForm(
                 [
-                    F(
-                        "Sparse Z offsets (µm, comma separated)",
-                        "sample_offsets",
-                        config.get("sample_offsets", list(range(-40, 41, 10))),
-                    ),
-                    F(
-                        "Recovery Z offsets (µm, comma separated)",
-                        "recovery_offsets",
-                        config.get("recovery_offsets", list(range(-50, 51, 5))),
-                    ),
                     F(
                         "Allow highest-peak reset after failed recovery",
                         "allow_peak_reset",
@@ -313,16 +437,27 @@ class ReferenceEditor(QWidget):
         layout.addWidget(hint)
         self.searches = {}
         for key, title, defaults in (
-            ("search", "Sparse matching", vars(ShiftSearchConfig())),
+            (
+                "search",
+                "Sparse matching — candidate corrections",
+                vars(ShiftSearchConfig(shift_min=-20, shift_max=20, shift_step=0.1)),
+            ),
             (
                 "recovery_search",
-                "Recovery matching",
-                vars(ShiftSearchConfig(shift_min=-50, shift_max=50)),
+                "Recovery matching — candidate corrections",
+                vars(ShiftSearchConfig(shift_min=-20, shift_max=20, shift_step=0.1)),
             ),
         ):
             values = dict(defaults) | config.get(key, {})
             self.searches[key] = _group(
-                layout, title, ConfigForm([_field(k, v) for k, v in values.items()])
+                layout,
+                title,
+                ConfigForm(
+                    [
+                        _field(k, float(v), single_step=0.01 if k.startswith("min_") else 0.1)
+                        for k, v in values.items()
+                    ]
+                ),
             )
         self.metric = _group(layout, "Image score", MetricEditor(config))
         self.frame = _group(
@@ -338,11 +473,24 @@ class ReferenceEditor(QWidget):
         values = self.calibration.values()
         values["smoothing"] = None if values.pop("automatic") else values["smoothing"]
         values |= self.samples.values() | self.metric.values()
-        for key in ("sample_offsets", "recovery_offsets"):
-            values[key] = [float(item.strip()) for item in values[key].split(",")]
+        for key, title, editor in (
+            ("sample_offsets", "Sparse images", self.sparse_samples),
+            ("recovery_offsets", "Recovery images", self.recovery_samples),
+        ):
+            try:
+                values[key] = editor.values()
+            except (ValueError, TypeError) as error:
+                raise ValueError(f"{title}: {error}") from error
         for key, form in self.searches.items():
             values[key] = form.values()
-            ShiftSearchConfig(**values[key])
+            try:
+                ShiftSearchConfig(**values[key])
+            except ValueError as error:
+                raise ValueError(
+                    f"{'Sparse' if key == 'search' else 'Recovery'} matching: {error}"
+                ) from error
+        if not 0 < values["calibration_step"] <= values["calibration_range"] / 2:
+            raise ValueError("Calibration needs a positive Z step and at least five planes.")
         return values | dict(
             focus_frame=self.frame.values(), acquisition_settings=self.acquisition.values()
         )
@@ -483,6 +631,11 @@ class ReferenceSettingsDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setWidget(self.editor)
         layout = QVBoxLayout(self)
+        note = QLabel(
+            "Scan/search edits keep the accepted reference. Smoothing or metric changes refit cached images for review. Changed imaging settings require a new calibration; the old curve remains visible."
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
         layout.addWidget(scroll)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)

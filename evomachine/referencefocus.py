@@ -21,6 +21,9 @@ from evomachine.focus_registration import (
 )
 from evomachine.frame import Frame, FrameMetaData
 from evomachine.types import FocusAlgorithmType, FocusStatusType
+from evomachine.bindings.software_focus.software_focus_algorithms import (
+    create_software_focus_algorithm,
+)
 
 
 class ReferenceFocusCancelled(RuntimeError):
@@ -32,21 +35,56 @@ class ReferenceFocusOutOfRange(ValueError):
 
 
 @dataclass(frozen=True)
+class SamplingPlan:
+    """Symmetric image positions, optionally denser around the scan centre."""
+
+    half_range: float = 20.0
+    step: float = 5.0
+    central_range: float | None = None
+    central_step: float = 0.5
+
+    def offsets(self) -> tuple[float, ...]:
+        values = (self.half_range, self.step, self.central_step)
+        if not all(np.isfinite(value) and value > 0 for value in values):
+            raise ValueError("Sampling range and steps must be finite and greater than zero.")
+        if self.central_range is not None and not 0 < self.central_range <= self.half_range:
+            raise ValueError("The denser centre must fit inside the outer sampling range.")
+        if self.central_range is not None and self.central_step >= self.step:
+            raise ValueError("The central image step must be smaller than the outer image step.")
+        if self.half_range / self.step > 2500 or (
+            self.central_range is not None and self.central_range / self.central_step > 2500
+        ):
+            raise ValueError("Sampling would acquire too many images; increase the Z step.")
+        positive = np.r_[np.arange(0, self.half_range, self.step), self.half_range]
+        if self.central_range is not None:
+            positive = np.r_[
+                positive, np.arange(0, self.central_range, self.central_step), self.central_range
+            ]
+        offsets = np.unique(np.round(np.r_[-positive, positive], 9))
+        offsets[offsets == 0] = 0.0
+        if offsets.size < 5:
+            raise ValueError("Use a smaller image step to acquire at least five Z positions.")
+        return tuple(float(value) for value in offsets)
+
+
+@dataclass(frozen=True)
 class ReferenceProfileFocusConfig:
     """Whole-image acquisition and scan settings; all Z distances are in micrometres."""
 
     focus_frame: FrameMetaData
-    calibration_range: float = 100.0
-    calibration_step: float = 5.0
-    sample_offsets: tuple[float, ...] = tuple(range(-40, 41, 10))
-    recovery_offsets: tuple[float, ...] = tuple(range(-50, 51, 5))
-    search: ShiftSearchConfig = field(default_factory=ShiftSearchConfig)
+    calibration_range: float = 40.0
+    calibration_step: float = 1.0
+    sample_offsets: tuple[float, ...] = SamplingPlan().offsets()
+    recovery_offsets: tuple[float, ...] = SamplingPlan(central_range=5).offsets()
+    search: ShiftSearchConfig = field(
+        default_factory=lambda: ShiftSearchConfig(shift_min=-20, shift_max=20, shift_step=0.1)
+    )
     recovery_search: ShiftSearchConfig = field(
-        default_factory=lambda: ShiftSearchConfig(shift_min=-50, shift_max=50)
+        default_factory=lambda: ShiftSearchConfig(shift_min=-20, shift_max=20, shift_step=0.1)
     )
     algorithm: FocusAlgorithmType = FocusAlgorithmType.SQUARED_GRAD_AVG
     algorithm_kwargs: dict[str, Any] = field(default_factory=dict)
-    smoothing: float | None = None
+    smoothing: float | None = 0.0
     acquisition_settings: FrameAcquisitionSettings = field(default_factory=FrameAcquisitionSettings)
     allow_peak_reset: bool = False
 
@@ -73,6 +111,7 @@ class ReferenceFocusScan:
     z_coordinates: np.ndarray
     focus_scores: np.ndarray
     frame: Frame
+    centre_z: float
 
 
 @dataclass
@@ -94,7 +133,7 @@ class ReferenceProfileFocus:
 
     ``calibrate()`` returns a candidate for ``plot_reference_profile``. Call
     ``accept_reference()`` after inspecting the plot, before running autofocus.
-    Changing configuration clears calibration. One frame is acquired per Z;
+    Scan/search edits retain calibration. One frame is acquired per Z;
     all scoring uses the whole image. Acquisition settings can enable saving.
     """
 
@@ -110,18 +149,74 @@ class ReferenceProfileFocus:
 
     @property
     def config(self) -> ReferenceProfileFocusConfig:
-        """Return a snapshot; use update_config so changes invalidate calibration."""
+        """Return a snapshot; use update_config to preserve compatible calibration."""
         return deepcopy(self._config)
 
     def update_config(self, config: ReferenceProfileFocusConfig) -> None:
+        previous = getattr(self, "_config", None)
+        if previous is not None:
+            old_scorer = create_software_focus_algorithm(
+                previous.algorithm, **previous.algorithm_kwargs
+            )
+            new_scorer = create_software_focus_algorithm(
+                config.algorithm, **config.algorithm_kwargs
+            )
+            scoring_changed = type(old_scorer) is not type(new_scorer) or vars(old_scorer) != vars(
+                new_scorer
+            )
+            capture_changed = any(
+                getattr(previous.focus_frame, key) != getattr(config.focus_frame, key)
+                for key in ("exposure", "filter_wheel", "leds")
+            ) or not np.array_equal(
+                previous.focus_frame.dmd_pattern, config.focus_frame.dmd_pattern
+            )
+            capture_changed |= (
+                previous.acquisition_settings.normalise != config.acquisition_settings.normalise
+            )
+            profile = self.pending_reference or self.reference
+            if (
+                profile is not None
+                and not capture_changed
+                and not self.needs_calibration
+                and (scoring_changed or previous.smoothing != config.smoothing)
+            ):
+                scores = score_focus_stack(
+                    self.calibration_scan.frame.array,
+                    algorithm=config.algorithm,
+                    algorithm_kwargs=config.algorithm_kwargs,
+                )
+                fitted = fit_reference_profile(
+                    self.calibration_scan.z_coordinates,
+                    scores,
+                    focus_z=profile.focus_z,
+                    smoothing=config.smoothing,
+                )
+                self.calibration_scan.focus_scores = scores
+                self.pending_reference, self.reference = fitted, None
+                self._stop_event = threading.Event()
+                self.last_result = None
+                self.reference_message = (
+                    "Reference refitted from cached images. Inspect and accept it again."
+                )
+            elif profile is not None and capture_changed:
+                self.pending_reference, self.reference = profile, None
+                self.needs_calibration = True
+                self.reference_message = "Imaging settings changed. Curve retained; capture a new reference before focusing."
+            elif profile is not None and not self.needs_calibration:
+                self.reference_message = (
+                    "Reference retained. Updated settings apply to the next scan."
+                )
         self._config = deepcopy(config)
-        self.clear_reference()
+        if previous is None:
+            self.clear_reference()
 
     def clear_reference(self) -> None:
         self.reference: ReferenceProfile | None = None
         self.pending_reference: ReferenceProfile | None = None
         self.calibration_scan: ReferenceFocusScan | None = None
         self.last_result: ReferenceProfileFocusResult | None = None
+        self.needs_calibration = False
+        self.reference_message: str | None = None
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -162,14 +257,23 @@ class ReferenceProfileFocus:
         return self.pending_reference
 
     def accept_reference(self) -> ReferenceProfile:
+        if self.needs_calibration:
+            raise RuntimeError(
+                "Imaging settings changed. Capture a new reference before accepting it."
+            )
         if self.pending_reference is None:
             raise RuntimeError("Capture and inspect a reference before accepting it.")
         self._check_cancelled()
         self.reference = self.pending_reference
         self.pending_reference = None
+        self.reference_message = None
         return self.reference
 
     def refit_reference(self, smoothing: float | None) -> ReferenceProfile:
+        if self.needs_calibration:
+            raise RuntimeError(
+                "Capture a new reference with the current imaging settings before refitting."
+            )
         if self.calibration_scan is None:
             raise RuntimeError("Capture a reference before refitting its spline.")
         previous = self.pending_reference or self.reference
@@ -184,6 +288,7 @@ class ReferenceProfileFocus:
         self.last_result = None
         self.pending_reference = profile
         self.reference = None
+        self.reference_message = "Spline refitted. Inspect and accept the reference again."
         return profile
 
     def _scan(self, centre: float, offsets, fov_id: int) -> ReferenceFocusScan:
@@ -211,7 +316,7 @@ class ReferenceProfileFocus:
         scores = score_focus_stack(
             frame.array, algorithm=config.algorithm, algorithm_kwargs=config.algorithm_kwargs
         )
-        return ReferenceFocusScan(z, scores, frame)
+        return ReferenceFocusScan(z, scores, frame, centre)
 
     def run(
         self, fov_id: int, stop_event: threading.Event | None = None, *, apply: bool = True
@@ -314,6 +419,8 @@ class ReferenceProfileFocus:
         self.reference = profile
         self.pending_reference = None
         self.calibration_scan = calibration
+        self.needs_calibration = False
+        self.reference_message = None
         return ReferenceProfileFocusResult(
             tuple(scans),
             tuple(matches),

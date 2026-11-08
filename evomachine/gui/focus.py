@@ -104,7 +104,7 @@ def reference_from_payload(payload, base):
 def curve_payload(profile):
     if profile is None:
         return None
-    grid = np.linspace(profile.z_offsets[0], profile.z_offsets[-1], 501)
+    grid = np.linspace(profile.z_offsets[0], profile.z_offsets[-1], 1001)
     return dict(
         focus_z=profile.focus_z,
         z=profile.z_offsets.tolist(),
@@ -115,13 +115,59 @@ def curve_payload(profile):
     )
 
 
+def _match_payload(match):
+    return dict(
+        accepted=bool(match and match.accepted),
+        rejection_reasons=list(match.rejection_reasons) if match else [],
+        shift=match.candidate_shift if match else None,
+        correlation=match.peak_correlation if match else None,
+        peak_margin=match.peak_margin if match else None,
+        peak_width=match.peak_width if match else None,
+        shifts=match.shifts.tolist() if match else [],
+        correlations=[float(x) if np.isfinite(x) else None for x in match.correlations]
+        if match
+        else [],
+    )
+
+
+def _attempt_payload(profile, scan, match, label):
+    offsets = scan.z_coordinates - scan.centre_z
+    aligned = offsets - match.candidate_shift if match.candidate_shift is not None else offsets
+    display_scores = scan.focus_scores
+    scaled = False
+    if (
+        profile is not None
+        and aligned.min() >= profile.z_offsets[0]
+        and aligned.max() <= profile.z_offsets[-1]
+    ):
+        expected = profile.evaluate(aligned)
+        scale, baseline = np.linalg.lstsq(
+            np.column_stack([expected, np.ones(expected.size)]), scan.focus_scores, rcond=None
+        )[0]
+        if scale > 1e-12 and np.ptp(expected) > 1e-12:
+            display_scores = (scan.focus_scores - baseline) / scale
+            scaled = True
+    return dict(
+        label=label,
+        offsets=offsets.tolist(),
+        aligned_offsets=aligned.tolist(),
+        scores=scan.focus_scores.tolist(),
+        display_scores=display_scores.tolist(),
+        scaled=scaled,
+        **_match_payload(match),
+    )
+
+
 def reference_status(focus):
     result = focus.last_result
     match = result.matches[-1] if result and result.matches else None
+    profile = focus.pending_reference or focus.reference
     return dict(
         config=reference_payload(focus.config),
         accepted=focus.reference is not None,
-        curve=curve_payload(focus.pending_reference or focus.reference),
+        needs_calibration=focus.needs_calibration,
+        message=focus.reference_message,
+        curve=curve_payload(profile),
         result=None
         if result is None
         else dict(
@@ -130,14 +176,16 @@ def reference_status(focus):
             recovery_attempted=result.recovery_attempted,
             reference_reset=result.reference_reset,
             correction_applied=result.correction_applied,
-            shift=match.candidate_shift if match else None,
-            correlation=match.peak_correlation if match else None,
-            peak_margin=match.peak_margin if match else None,
-            peak_width=match.peak_width if match else None,
-            shifts=match.shifts.tolist() if match else [],
-            correlations=[float(x) if np.isfinite(x) else None for x in match.correlations]
-            if match
-            else [],
+            method="peak reset"
+            if result.reference_reset
+            else "recovery"
+            if len(result.matches) > 1
+            else "sparse",
+            **_match_payload(match),
+            attempts=[
+                _attempt_payload(profile, scan, attempt, "Sparse" if index == 0 else "Recovery")
+                for index, (scan, attempt) in enumerate(zip(result.scans, result.matches))
+            ],
         ),
     )
 

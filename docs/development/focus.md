@@ -13,21 +13,39 @@ independent of strategy configurations and reference profiles.
 2. In Focus → Reference Profile Focus, configure the imaging, scoring and scan
    settings. Whole images are always scored. The default image metric is squared
    gradient average; all existing metrics remain selectable.
-3. Choose **Calibrate at current Z**. The initial scan defaults to ±100 µm at
-   5 µm steps. The starting Z defines reference zero, even if the score curve has
+3. Choose **Calibrate at current Z**. The initial scan defaults to ±40 µm at
+   1 µm steps. The starting Z defines reference zero, even if the score curve has
    a higher peak elsewhere. The stage returns to the starting Z after capture.
-4. Inspect the measured points and fitted spline. Automatic smoothing uses GCV;
-   disable it to set lambda. **Refit cached reference** updates the fit without
+4. Inspect the measured points and fitted spline. The default lambda is zero;
+   enable automatic smoothing to use GCV. **Refit cached reference** updates the fit without
    acquiring more images. Refitting requires acceptance again.
 5. **Accept reference**, then use **Test match (no correction)** to acquire
    samples and inspect correlation without applying the estimated correction.
    **Run focus** applies a correction only when the match passes its checks.
+   The latest sample scores appear as pink crosses on the reference. The plot
+   controls can align crosses to the candidate shift and rescale scores using a
+   positive gain and baseline fit, so brightness differences do not obscure shape.
+   Turn these off to inspect raw scores at offsets relative to the scan centre.
+   Plot alignment never moves the stage or changes acceptance.
 6. The plot toolbar can save the figure. Acquisition settings can save raw focus
    images through the existing output directory/file manager.
 
 Manual experiments do not replace the strategy's references or settings. Manual
 hardware actions are disabled during strategy execution. Read-only inspection
 remains available. Stop/Cancel is cooperative between acquisition steps.
+
+Opening Configure or editing sampling, matching, saving, or the next calibration's
+range/step preserves the accepted reference. A smoothing/metric change refits
+cached calibration images and asks for acceptance again without reacquisition.
+Exposure, illumination, filter, DMD, or camera-normalisation changes retain the
+old curve for inspection but require a new capture before it can be used again.
+
+Image sampling and the Pearson search are separate. **Generated positions** uses
+an outer range and image step, with an optional denser central range/step. The
+preview shows the exact positions and image count. **Custom positions** preserves
+irregular lists. The central region is optional; broader coverage of the curve's
+slopes is still needed to distinguish shifts. Matching range/step controls only
+the candidate corrections evaluated against the spline; it acquires no images.
 
 ## Strategy configuration
 
@@ -68,9 +86,22 @@ software focus on arrival for that FoV using its override.
 ### Subsequent movement and recovery
 
 Reference-mode arrivals move XY while preserving current Z. Sparse sampling is
-followed by a denser/wider scan when matching is rejected. With the defaults this
-means 9 samples at −40…+40 µm in 10 µm increments, then 21 samples at −50…+50 µm
-in 5 µm increments. These are provisional, editable experimental settings.
+followed by denser sampling when matching is rejected. The defaults are nine
+sparse images at −20…+20 µm in 5 µm increments. Recovery uses the same outer
+positions plus a ±5 µm centre at 0.5 µm spacing (27 images total). Both shift
+searches cover ±20 µm at 0.1 µm increments, with minimum correlation 0.9.
+Sampling and matching settings remain provisional and editable.
+
+The whole shifted sample set must fit inside the measured reference: a ±40 µm
+reference with ±20 µm samples supports shifts up to ±20 µm. Unsupported candidates
+are not extrapolated. Errors report actual reference/sample ranges, candidate
+counts, correlation thresholds, competing peaks, or boundary failures.
+
+Status identifies sparse success, recovery success, or both attempts failing.
+The correlation plot retains both attempts, including rejected ones. Low score
+variation still permits diagnostic correlations, but blocks correction. Constant
+scores have undefined Pearson correlation; the graph explains this instead of
+remaining silently empty. Sample crosses remain visible on rejected attempts.
 
 If both attempts fail, the FoV is skipped and the existing imaging skip path
 suppresses its images. Device failures propagate instead of becoming bad matches.

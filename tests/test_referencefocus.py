@@ -8,7 +8,11 @@ from evomachine.acquisition import FrameAcquisitionManager
 from evomachine.coordinates import Coordinate, CoordinateBounds
 from evomachine.frame import FrameMetaData
 from evomachine.navigation import FocusNavigator, FocusNavigatorConfig
-from evomachine.referencefocus import ReferenceProfileFocus, ReferenceProfileFocusConfig
+from evomachine.referencefocus import (
+    ReferenceProfileFocus,
+    ReferenceProfileFocusConfig,
+    SamplingPlan,
+)
 from evomachine.types import FocusMode, FocusStatusType
 from tests.test_acquisition import FakeLedManager
 from tests.test_automaton import make_automaton
@@ -76,7 +80,7 @@ def test_calibration_preserves_manual_z_and_requires_acceptance(setup):
     navigator, reference, _, stage, _, _ = setup
     profile = navigator.calibrate_reference()
     assert profile.focus_z == stage.get_coordinates().z == 120.25
-    assert reference.calibration_scan.frame.array.shape == (41, 4, 3)
+    assert reference.calibration_scan.frame.array.shape == (81, 4, 3)
     assert profile.z_offsets[np.argmax(profile.focus_scores)] != 0
     moves = len(stage.moves)
     with pytest.raises(RuntimeError, match="accept"):
@@ -116,7 +120,9 @@ def test_recovery_scan_can_resolve_failed_sparse_match(setup):
 def test_failure_skips_fov_and_next_move_can_focus(setup):
     navigator, reference, camera, stage, _, _ = setup
     _calibrate(navigator)
-    camera.flat_frames = 30
+    camera.flat_frames = len(reference.config.sample_offsets) + len(
+        reference.config.recovery_offsets
+    )
     result = navigator.move(1)
     assert result.skipped
     assert len(reference.last_result.matches) == 2
@@ -161,12 +167,49 @@ def test_camera_failure_is_not_treated_as_a_bad_match(setup):
     assert stage.get_coordinates().z == 120.25
 
 
-def test_configuration_changes_require_recalibration(setup):
+def test_smoothing_change_refits_cached_data_for_review(setup):
     navigator, reference, _, _, _, _ = setup
     _calibrate(navigator)
+    scan = reference.calibration_scan
     reference.update_config(replace(reference.config, smoothing=10))
+    assert reference.calibration_scan is scan
+    assert reference.pending_reference is not None
     with pytest.raises(RuntimeError, match="accept"):
         navigator.validate_ready()
+    reference.accept_reference()
+    navigator.validate_ready()
+
+
+def test_scan_and_search_edits_preserve_accepted_reference(setup):
+    navigator, reference, _, stage, _, _ = setup
+    profile = _calibrate(navigator)
+    moves = len(stage.moves)
+    reference.update_config(
+        replace(
+            reference.config,
+            calibration_range=50,
+            calibration_step=2,
+            sample_offsets=SamplingPlan(step=10).offsets(),
+            search=replace(reference.config.search, min_correlation=0.95),
+        )
+    )
+    assert reference.reference is profile
+    assert reference.calibration_scan is not None
+    assert len(stage.moves) == moves
+    navigator.validate_ready()
+
+
+def test_imaging_changes_retain_curve_but_require_new_capture(setup):
+    navigator, reference, _, _, _, _ = setup
+    profile = _calibrate(navigator)
+    reference.update_config(
+        replace(reference.config, focus_frame=replace(reference.config.focus_frame, exposure=30))
+    )
+    assert reference.reference is None
+    assert reference.pending_reference is profile
+    assert reference.needs_calibration
+    with pytest.raises(RuntimeError, match="Capture a new reference"):
+        reference.accept_reference()
 
 
 def test_mode_defaults_to_standard_and_can_be_changed(setup):
@@ -199,7 +242,9 @@ def test_strategy_initial_reference_uses_saved_z_and_requests_review(setup):
     navigator._fov_states[1].coordinate.z = 123.75
     camera.focus_z = 123.75
     reviewed = []
-    navigator.review_reference = lambda profile, fov_id, event: reviewed.append((profile.focus_z, fov_id)) or True
+    navigator.review_reference = lambda profile, fov_id, event: (
+        reviewed.append((profile.focus_z, fov_id)) or True
+    )
     result = navigator.move(1)
     assert reviewed == [(123.75, 1)]
     assert reference.reference.focus_z == 123.75
@@ -209,7 +254,9 @@ def test_strategy_initial_reference_uses_saved_z_and_requests_review(setup):
 def test_standard_saved_z_initialisation_calibrates_crisp_without_peak_search(setup):
     navigator, _, _, stage, software, crisp = setup
     navigator._fov_states[0].coordinate.z = 123.75
-    navigator.update_config(FocusNavigatorConfig(use_autofocus=True, initialise_from_first_fov_z=True))
+    navigator.update_config(
+        FocusNavigatorConfig(use_autofocus=True, initialise_from_first_fov_z=True)
+    )
     result = navigator.move(0)
     assert stage.get_coordinates().z == 123.75
     assert result.is_locked
@@ -219,6 +266,7 @@ def test_standard_saved_z_initialisation_calibrates_crisp_without_peak_search(se
 
 def test_mixed_modes_preserve_global_policy(setup):
     from evomachine.navigation import FovConfig
+
     navigator, _, _, stage, _, _ = setup
     _calibrate(navigator)
     navigator._fov_states[0].coordinate.z = 120.25
@@ -236,7 +284,9 @@ def test_peak_reset_is_opt_in_and_local_to_failed_fov(setup):
     navigator, reference, camera, _, _, _ = setup
     reference.update_config(replace(reference.config, allow_peak_reset=True))
     original = _calibrate(navigator)
-    camera.flat_frames = 30
+    camera.flat_frames = len(reference.config.sample_offsets) + len(
+        reference.config.recovery_offsets
+    )
     result = navigator.move(1)
     assert not result.skipped
     assert navigator.last_reference_focus.last_result.reference_reset

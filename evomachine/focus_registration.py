@@ -158,7 +158,11 @@ class ShiftSearchConfig:
             _finite_number(value, name)
         span = self.shift_max - self.shift_min
         if span <= 0 or not 0 < self.shift_step <= span / 2:
-            raise ValueError("Shift bounds must increase and include at least three grid points.")
+            raise ValueError(
+                f"Shift minimum ({self.shift_min:g}) must be below maximum ({self.shift_max:g}); "
+                f"step ({self.shift_step:g}) must be positive and no larger than half that range. "
+                "For example: min -20, max 20, step 0.1 µm."
+            )
         if span / self.shift_step > 100_000:
             raise ValueError("Shift grid must contain at most 100001 regularly spaced points.")
         if not -1 <= self.min_correlation <= 1 or not 0 <= self.min_peak_margin <= 2:
@@ -220,19 +224,32 @@ def estimate_focus_shift(
         return FocusShiftResult(None, None, None, None, None, (reason,), shifts, correlations)
 
     measured = _unit_variation(scores)
-    if measured is None or np.std(scores) < config.min_relative_variation * np.mean(abs(scores)):
+    if measured is None:
         return rejected("Insufficient measured score variation.")
+    low_variation = np.std(scores) < config.min_relative_variation * np.mean(abs(scores))
     offsets = z - current_z
+    in_range = 0
     for index, shift in enumerate(shifts):
         positions = offsets - shift
         if positions.min() < reference.z_offsets[0] or positions.max() > reference.z_offsets[-1]:
             continue
+        in_range += 1
         expected = _unit_variation(reference.evaluate(positions))
         if expected is not None:
             correlations[index] = np.clip(np.dot(measured, expected), -1, 1)
     valid = np.flatnonzero(np.isfinite(correlations))
     if valid.size < 3:
-        return rejected("Insufficient valid shift candidates inside the reference range.")
+        hint = (
+            "Widen reference calibration or reduce the image-sampling range."
+            if in_range < 3
+            else "Reference scores are flat at these sample positions."
+        )
+        return rejected(
+            f"Only {valid.size} usable shift candidates ({in_range} within the reference); "
+            "at least 3 are needed. "
+            f"Reference: {reference.z_offsets[0]:g} to {reference.z_offsets[-1]:g} µm; "
+            f"sample offsets: {offsets.min():g} to {offsets.max():g} µm. {hint}"
+        )
     best = int(valid[np.argmax(correlations[valid])])
     peak = float(correlations[best])
     landscape = np.where(np.isfinite(correlations), correlations, -np.inf)
@@ -245,18 +262,25 @@ def estimate_focus_shift(
         left -= 1
     while right < valid[-1] and correlations[right + 1] >= peak - 0.01:
         right += 1
-    reasons = []
+    reasons = ["Insufficient measured score variation."] if low_variation else []
     if peak < config.min_correlation:
-        reasons.append("Correlation is below the acceptance threshold.")
+        reasons.append(
+            f"Best correlation {peak:.3f} is below the required {config.min_correlation:.3f}."
+        )
     if np.ptp(correlations[valid]) <= 1e-6:
         reasons.append("Correlation landscape is flat; shift is not identifiable.")
     if margin is not None and margin < config.min_peak_margin:
-        reasons.append("Competing correlation peaks are ambiguous.")
+        reasons.append(
+            f"Competing peaks are ambiguous: margin {margin:.3f}, required {config.min_peak_margin:.3f}."
+        )
     if (
         min(shifts[best] - shifts[valid[0]], shifts[valid[-1]] - shifts[best])
         <= config.boundary_margin
     ):
-        reasons.append("Best shift is at or near the valid search boundary.")
+        reasons.append(
+            f"Best shift {shifts[best]:g} µm is near the usable search boundary "
+            f"({shifts[valid[0]]:g} to {shifts[valid[-1]]:g} µm)."
+        )
     shift = float(shifts[best])
     return FocusShiftResult(
         shift,

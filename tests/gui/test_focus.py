@@ -1,6 +1,8 @@
 """Focused checks for manual isolation, strategy review and mode-specific forms."""
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
+import json
 import os
 from time import monotonic, sleep
 from types import SimpleNamespace
@@ -66,9 +68,9 @@ def test_manual_settings_do_not_change_strategy(facade):
     settings = reference_payload(facade.focus_state.reference().config)
     settings["calibration_range"] = 80
     _request(facade, GuiCommandType.REFERENCE_FOCUS_CONFIGURE, config=settings)
-    assert nav.reference_focus.config.calibration_range == 100
+    assert nav.reference_focus.config.calibration_range == 40
     defaults = _request(facade, GuiCommandType.FOCUS_DEFAULTS)["focus_defaults"]
-    assert defaults["reference_profile"]["calibration_range"] == 100
+    assert defaults["reference_profile"]["calibration_range"] == 40
 
 
 def test_manual_calibration_refit_and_test_leave_strategy_reference_untouched(facade, setup):
@@ -87,6 +89,105 @@ def test_manual_calibration_refit_and_test_leave_strategy_reference_untouched(fa
     assert not manual.last_result.correction_applied
     assert stage.get_coordinates().z == 120.25
     assert nav.reference_focus.reference is None
+
+
+@pytest.mark.skipif(os.environ.get("EVOMACHINE_GUI_RUN_QT_TESTS") != "1", reason="Qt opt-in")
+def test_generated_sampling_config_retains_reference_and_overlays_samples(facade, setup):
+    from tests.gui.test_panels import _app, FakeController
+    from evomachine.gui.panels.focus_settings import ReferenceSettingsDialog, SamplingEditor
+    from evomachine.gui.panels.reference_focus import ReferenceFocusPanel
+
+    _app()
+    manual = facade.focus_state.reference()
+    manual.calibrate()
+    original = manual.accept_reference()
+    dialog = ReferenceSettingsDialog(reference_payload(manual.config))
+    values = dialog.values()
+    assert values["search"]["shift_step"] == values["recovery_search"]["shift_step"] == 0.1
+    _request(facade, GuiCommandType.REFERENCE_FOCUS_CONFIGURE, config=values)
+    assert manual.reference is original  # Includes implicit metric defaults on round-trip.
+    samples = dialog.editor.sparse_samples
+    assert samples.mode.currentIndex() == 0 and len(samples.values()) == 9
+    samples.form._widgets["dense"].setChecked(True)
+    samples.form._widgets["central_step"].setValue(1)
+    assert samples.values() == [-20, -15, -10, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 10, 15, 20]
+    dialog.editor.searches["search"]._widgets["shift_min"].setValue(-19.5)
+    assert dialog.values()["search"]["shift_min"] == -19.5
+    _request(facade, GuiCommandType.REFERENCE_FOCUS_CONFIGURE, config=dialog.values())
+    assert manual.reference is original
+    custom = [-20, -10, -7, -5, -4, -3, -2, -1.5, -1, -0.5, 0, 0.5, 1, 1.5, 2, 3, 4, 5, 7, 10, 20]
+    editor = SamplingEditor(custom)
+    assert editor.mode.currentIndex() == 1 and editor.values() == custom
+    setup[2].focus_z += 2
+    _request(facade, GuiCommandType.REFERENCE_FOCUS_RUN, action="test")
+    assert facade.gui_operations.wait_for_completion("reference_focus", 3)
+    payload = _request(facade, GuiCommandType.REFERENCE_FOCUS_STATUS)["reference_focus"]
+    json.dumps(payload, allow_nan=False)
+    panel = ReferenceFocusPanel(FakeController())
+    panel.update_status(payload)
+    assert "via sparse matching" in panel.label.text()
+    latest = payload["result"]["attempts"][-1]
+    crosses = panel.curves.reference.lines[-1]
+    assert crosses.get_marker() == "x"
+    assert list(crosses.get_xdata()) == pytest.approx(latest["aligned_offsets"])
+    panel.curves.align_samples.setChecked(False)
+    panel.curves.scale_samples.setChecked(False)
+    assert list(panel.curves.reference.lines[-1].get_xdata()) == latest["offsets"]
+    assert list(panel.curves.reference.lines[-1].get_ydata()) == latest["scores"]
+    panel.close()
+    dialog.close()
+
+
+@pytest.mark.skipif(os.environ.get("EVOMACHINE_GUI_RUN_QT_TESTS") != "1", reason="Qt opt-in")
+@pytest.mark.parametrize("failure", ["flat", "variation", "overlap", "recovery"])
+def test_matching_diagnostics_show_attempts_and_reason(facade, setup, failure):
+    from tests.gui.test_panels import _app, FakeController
+    from evomachine.gui.panels.reference_focus import ReferenceFocusPanel
+
+    _app()
+    manual = facade.focus_state.reference()
+    if failure == "variation":
+        manual.update_config(
+            replace(
+                manual.config,
+                search=replace(manual.config.search, min_relative_variation=10),
+                recovery_search=replace(manual.config.recovery_search, min_relative_variation=10),
+            )
+        )
+    elif failure == "overlap":
+        manual.update_config(replace(manual.config, calibration_range=20))
+    manual.calibrate()
+    manual.accept_reference()
+    setup[2].flat_frames = (
+        len(manual.config.sample_offsets) + len(manual.config.recovery_offsets)
+        if failure == "flat"
+        else len(manual.config.sample_offsets)
+        if failure == "recovery"
+        else 0
+    )
+    _request(facade, GuiCommandType.REFERENCE_FOCUS_RUN, action="test")
+    assert facade.gui_operations.wait_for_completion("reference_focus", 3)
+    payload = _request(facade, GuiCommandType.REFERENCE_FOCUS_STATUS)["reference_focus"]
+    json.dumps(payload, allow_nan=False)
+    assert len(payload["result"]["attempts"]) == 2
+    assert not payload["result"]["correction_applied"]
+    assert setup[3].get_coordinates().z == 120.25
+    panel = ReferenceFocusPanel(FakeController())
+    panel.update_status(payload)
+    assert panel.curves.reference.lines[-1].get_marker() == "x"
+    if failure == "recovery":
+        assert "via recovery matching" in panel.label.text()
+    else:
+        assert "Sparse and recovery matching failed" in panel.label.text()
+        assert "Sparse:" in panel.label.text() and "Recovery:" in panel.label.text()
+        if failure == "flat":
+            assert "Correlation unavailable" in panel.curves.correlation.texts[0].get_text()
+        elif failure == "overlap":
+            assert "Only 1 usable shift candidates" in panel.label.text()
+            assert panel.curves.correlation.lines[0].get_marker() == "."
+        else:
+            assert panel.curves.correlation.lines
+    panel.close()
 
 
 def test_strategy_waits_for_current_review_acceptance(facade, setup):
