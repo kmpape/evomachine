@@ -1231,6 +1231,50 @@ def _require_operation_status(facade: Any, kind: str) -> dict[str, Any]:
     return status
 
 
+def gui_delta_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """Serialize existing per-FOV DeLTA results without running any processing.
+
+    Args:
+        facade: GUI facade owning the automaton and its existing FOV processors.
+        payload: Unused read-only request arguments.
+
+    Returns:
+        JSON-safe full snapshot with fixed boxes, rotation in degrees and drift
+        in DeLTA's (x, y) pixel convention. Unavailable corrections are None.
+    """
+    automaton = facade.automaton
+    failed = automaton._delta_processor._failed
+    fovs = []
+    for fov_id in automaton._fovs:
+        position = automaton._fov_processors.get(fov_id)
+        entry = {
+            "fov_id": fov_id, "status": "not_run", "boxes": [],
+            "rotation_degrees": None, "drift_xy": None, "image_shape": None,
+        }
+        if fov_id in failed:
+            entry["status"] = "failed"
+        elif position is not None:
+            boxes = position.roi_boxes
+            entry["boxes"] = [
+                {"roi_id": roi_id, "xtl": int(box.xtl), "ytl": int(box.ytl),
+                 "xbr": int(box.xbr), "ybr": int(box.ybr)}
+                for roi_id, box in enumerate(boxes)
+            ]
+            entry["status"] = "ready" if entry["boxes"] else "empty"
+            config = position.config
+            angle = getattr(position, "rotate", None)
+            if config.rotation_correction and angle is not None and np.isfinite(angle):
+                entry["rotation_degrees"] = float(angle)
+            drift = getattr(position, "drift_values", [])
+            if config.drift_correction and drift and all(np.isfinite(value) for value in drift[-1]):
+                entry["drift_xy"] = [float(value) for value in drift[-1]]
+            reference = position.reference
+            if reference is not None:
+                entry["image_shape"] = list(reference.shape[-2:])
+        fovs.append(entry)
+    return {"delta": {"fovs": fovs}}
+
+
 def gui_strategy_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     response: dict[str, Any] = {"strategy": facade.gui_strategy_status_payload()}
     frame_sequence = int(getattr(facade.automaton, "_latest_frame_sequence", 0))
@@ -1567,6 +1611,7 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.SOFTWARE_FOCUS_RUN: gui_software_focus_run,
     GuiCommandType.SOFTWARE_FOCUS_OPERATION_STATUS: gui_software_focus_operation_status,
     GuiCommandType.STRATEGY_STATUS: gui_strategy_status,
+    GuiCommandType.DELTA_STATUS: gui_delta_status,
     GuiCommandType.STRATEGY_GENERATE: gui_strategy_generate,
     GuiCommandType.STRATEGY_GENERATION_CANCEL: gui_strategy_generation_cancel,
     GuiCommandType.AUTOSTRAT_CONFIGURE: gui_autostrat_configure,

@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
+from PyQt5.QtCore import QObject, QThread, QTimer, pyqtSignal, pyqtSlot
 
 from evomachine.config import get_logger
 from evomachine.gui.image_payloads import (
@@ -61,6 +61,7 @@ class EvoMachineGuiController(QObject):
     acquisition_directory_received = pyqtSignal(dict)
     acquisition_loading_directory_received = pyqtSignal(str)
     frame_received = pyqtSignal(dict)
+    delta_status_received = pyqtSignal(dict)
     filter_wheel_status_received = pyqtSignal(dict)
     led_list_received = pyqtSignal(list)
     led_state_received = pyqtSignal(dict)
@@ -99,6 +100,9 @@ class EvoMachineGuiController(QObject):
         self._worker: RpcClientWorker | None = None
         self._closed = False
         self._request_commands: dict[str, GuiCommandType] = {}
+        self._delta_poll_timer = QTimer(self)
+        self._delta_poll_timer.setInterval(250)
+        self._delta_poll_timer.timeout.connect(self.refresh_delta_status)
         if start_worker:
             self._thread = QThread()
             self._worker = RpcClientWorker(client=self.client)
@@ -107,11 +111,13 @@ class EvoMachineGuiController(QObject):
             self._worker.response_ready.connect(self._handle_response)
             self._worker.request_failed.connect(self._handle_request_failure)
             self._thread.start()
+            self._delta_poll_timer.start()
 
     def close(self) -> None:
         if self._closed:
             return
         self._closed = True
+        self._delta_poll_timer.stop()
         self._request_shutdown_before_close()
         if self._worker is not None:
             self._worker.close()
@@ -157,6 +163,11 @@ class EvoMachineGuiController(QObject):
 
     def shutdown_automaton(self) -> None:
         self._send(GuiCommandType.SHUTDOWN)
+
+    def refresh_delta_status(self) -> None:
+        """Poll existing DeLTA results, unless closed or a poll is outstanding."""
+        if not self._closed and GuiCommandType.DELTA_STATUS not in self._request_commands.values():
+            self._send(GuiCommandType.DELTA_STATUS)
 
     def refresh_controller_status(self) -> None:
         self._send(GuiCommandType.CONTROLLER_STATUS)
@@ -446,6 +457,8 @@ class EvoMachineGuiController(QObject):
             GuiCommandType.STRATEGY_GENERATION_CANCEL,
         }
         if not response.ok:
+            if command is GuiCommandType.DELTA_STATUS:
+                self.delta_status_received.emit({"fovs": []})
             if generation_response:
                 self.strategy_generation_received.emit({"state": "failed", "error": response.error})
                 return
@@ -455,6 +468,8 @@ class EvoMachineGuiController(QObject):
             self.response_error.emit(error)
             return
         payload = response.payload
+        if "delta" in payload:
+            self.delta_status_received.emit(payload["delta"])
         if "image_transport_probe" in payload:
             self._handle_image_transport_probe(payload["image_transport_probe"])
         if "coordinate" in payload:

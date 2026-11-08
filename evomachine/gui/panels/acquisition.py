@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
+    QCheckBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -20,6 +21,73 @@ from evomachine.gui.panels.common import NoWheelComboBox
 from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
 from evomachine.gui.panels.leds import LED_GROUPS, LED_LABELS
 from evomachine.types import FilterWheelType, LEDType
+
+if TYPE_CHECKING:
+    from evomachine.gui.central_workspace import CentralVisualWorkspace
+    from evomachine.gui.controller import EvoMachineGuiController
+
+
+class DeltaDisplayPanel(QGroupBox):
+    """GUI-only controls for numbered ROI boxes and image corrections."""
+
+    def __init__(
+        self, controller: EvoMachineGuiController,
+        workspace: CentralVisualWorkspace | None, parent: QWidget | None = None,
+    ):
+        """Create unchecked controls for the supplied controller and image workspace.
+
+        Args:
+            controller: Shared GUI controller delivering image and DeLTA responses.
+            workspace: Existing image workspace, or None without a viewer.
+            parent: Optional owning Qt widget.
+        """
+        super().__init__("DeLTA display", parent)
+        self.workspace = workspace
+        self.boxes_checkbox = QCheckBox("Show ROI boxes")
+        self.rotation_checkbox = QCheckBox("Apply rotation correction")
+        self.drift_checkbox = QCheckBox("Apply drift correction")
+        self.status_label = QLabel()
+        self.status_label.setWordWrap(True)
+        layout = QVBoxLayout(self)
+        for checkbox in (self.boxes_checkbox, self.rotation_checkbox, self.drift_checkbox):
+            layout.addWidget(checkbox)
+            checkbox.toggled.connect(self._apply_options)
+        layout.addWidget(self.status_label)
+        controller.frame_received.connect(self.update_status)
+        controller.delta_status_received.connect(self.update_status)
+        self.update_status()
+
+    def _apply_options(self) -> None:
+        """Apply checkbox preferences locally, without sending hardware requests."""
+        if self.workspace is not None:
+            self.workspace.set_delta_display_options(
+                show_boxes=self.boxes_checkbox.isChecked(),
+                rotation=self.rotation_checkbox.isChecked(),
+                drift=self.drift_checkbox.isChecked(),
+            )
+
+    def update_status(self, payload: dict | None = None) -> None:
+        """Refresh availability and the displayed FOV label after a GUI response.
+
+        Args:
+            payload: Image or DeLTA notification; results are read from the workspace.
+        """
+        result = self.workspace.current_delta_result() if self.workspace is not None else None
+        self.boxes_checkbox.setEnabled(self.workspace is not None)
+        self.rotation_checkbox.setEnabled(result is not None and result["rotation_degrees"] is not None)
+        self.drift_checkbox.setEnabled(result is not None and result["drift_xy"] is not None)
+        if self.workspace is None or self.workspace.displayed_fov_id is None:
+            self.status_label.setText("No FOV-associated image")
+            return
+        fov_id = self.workspace.displayed_fov_id
+        if result is None:
+            entry = self.workspace.delta_results.get(fov_id)
+            status = "Detection failed" if entry is not None and entry["status"] == "failed" else "DeLTA unavailable"
+            self.status_label.setText(f"FOV {fov_id}: {status}")
+            return
+        count = len(result["boxes"])
+        text = f"{count} ROIs detected" if count else "No ROIs detected"
+        self.status_label.setText(f"FOV {fov_id}: {text}. Latest available corrections for this FOV.")
 
 
 USE_CURRENT_MAIN_CONTROLS_KEY = "use_current_main_controls"

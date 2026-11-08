@@ -72,6 +72,7 @@ class GuiCommandType(str, Enum):
     SOFTWARE_FOCUS_OPERATION_STATUS = "software_focus.operation_status"
     STAGE_MOVEMENT_STATUS = "stage.movement_status"
     STRATEGY_STATUS = "strategy.status"
+    DELTA_STATUS = "delta.status"
     STRATEGY_GENERATE = "strategy.generate"
     STRATEGY_GENERATION_CANCEL = "strategy.generation_cancel"
     AUTOSTRAT_CONFIGURE = "strategy.configure_autostrat"
@@ -149,6 +150,7 @@ RESPONSIVE_READ_COMMANDS = frozenset(
         GuiCommandType.SOFTWARE_FOCUS_OPERATION_STATUS,
         GuiCommandType.STAGE_MOVEMENT_STATUS,
         GuiCommandType.STRATEGY_STATUS,
+        GuiCommandType.DELTA_STATUS,
         GuiCommandType.STRATEGY_GENERATION_STATUS,
     }
 )

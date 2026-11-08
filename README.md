@@ -288,6 +288,27 @@ and `saved_paths`. The completed stack is available through the existing GUI
 preview. This command performs no DeLTA detection or segmentation; it retains
 ROI registrations but invalidates current processing measurements.
 
+#### DeLTA display
+
+The Acquisition tab's **DeLTA display** controls can show numbered ROI boxes,
+apply rotation correction, and apply drift correction to the displayed image.
+All three options start off and affect display only. They do not enable DeLTA,
+change acquisition or saved pixels, or change DMD projection.
+
+The GUI polls existing per-FOV DeLTA results separately from images. Boxes follow
+the displayed image's FOV, even if the stage has since moved elsewhere. Boxes
+remain fixed; selected corrections transform the original image, rotation first
+and drift second. For stacks, the same latest available FOV parameters apply to
+each plane. Unavailable correction controls are disabled; valid zero corrections
+remain available. Results are the latest for that FOV and need not come from the
+displayed acquisition.
+
+No processing results, failed processing, or a reset clears old overlays. A
+successful detection with no boxes shows **No ROIs detected**. Images without
+a known FOV identity do not receive overlays or corrections. Correction flags and
+processing schedules remain controlled by the existing backend configuration;
+these controls only display whatever results it has produced.
+
 #### Acquisition output folder
 
 Manual images, z-stacks, and strategy images use one local output folder. In

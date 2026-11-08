@@ -93,6 +93,23 @@ Never pass a `VerifiedStrategy`, device, NumPy array or arbitrary Python object
 directly over the JSON RPC boundary. For images, reuse `image_payloads.py` and the
 existing negotiated image transport instead of adding another encoding.
 
+## DeLTA display polling
+
+`delta.status` is a read-only responsive request, polled by the shared controller
+every 250 ms with at most one outstanding request. It serializes the existing
+Automaton FOV processors directly; there is no parallel backend result cache.
+Responses contain a full `delta.fovs` list, including not-run, empty and failed
+FOVs, so clearing results also clears GUI overlays. Rotation is in degrees and
+drift is `(x, y)` in pixels, using DeLTA's application convention. Disabled or
+missing corrections are null; zero corrections are valid.
+
+`CentralVisualWorkspace` matches results to the displayed frame's `fov_id`, keeps
+original pixels, and applies selected rotation then drift through the existing
+DeLTA functions. ROI shapes and zero-based ID labels stay in reference coordinates
+and share the camera layer's scale and translation. Display preferences are local
+to the GUI. Polling never invokes processing or changes correction flags. No
+segmentation masks are included in this endpoint yet.
+
 ## Work that takes more than a moment
 
 Moving network I/O to the controller worker keeps Qt responsive, but a long

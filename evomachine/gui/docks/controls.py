@@ -18,6 +18,7 @@ from evomachine.gui.central_workspace import CentralVisualWorkspace
 from evomachine.gui.controller import EvoMachineGuiController
 from evomachine.gui.panels.acquisition import (
     AcquisitionStatusPanel,
+    DeltaDisplayPanel,
     FrameAcquisitionSettingsPanel,
     ManualAcquisitionPanel,
     OutputDirectoryPanel,
@@ -132,6 +133,7 @@ class EvoMachineControlsDock(QWidget):
         layout = QVBoxLayout()
         settings_panel = FrameAcquisitionSettingsPanel()
         layout.addWidget(settings_panel)
+        layout.addWidget(DeltaDisplayPanel(controller=self.controller, workspace=self.central_workspace))
         layout.addWidget(OutputDirectoryPanel(controller=self.controller))
         layout.addWidget(ManualAcquisitionPanel(
             controller=self.controller,

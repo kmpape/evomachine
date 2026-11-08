@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from evomachine.gui.protocol import GuiCommandType, GuiRequest, GuiResponse
+from evomachine.gui.protocol import GuiCommandType, GuiRequest, GuiResponse, RESPONSIVE_READ_COMMANDS
 from evomachine.gui.socket_transport import (
     DEFAULT_RPC_TIMEOUT_SECONDS,
     GuiRpcServer,
@@ -26,22 +26,24 @@ def test_client_and_server_share_hardware_safe_default_timeout() -> None:
     assert server.response_timeout == DEFAULT_RPC_TIMEOUT_SECONDS
 
 
-def test_responsive_read_bypasses_blocked_automaton_queue() -> None:
+@pytest.mark.parametrize("command", [GuiCommandType.STRATEGY_STATUS, GuiCommandType.DELTA_STATUS])
+def test_responsive_read_bypasses_blocked_automaton_queue(command: GuiCommandType) -> None:
+    """Read the supplied status command without servicing the automaton queue."""
     server = GuiRpcServer(
         handler=EchoHandler(),
         port=0,
-        responsive_commands={GuiCommandType.STRATEGY_STATUS},
+        responsive_commands=RESPONSIVE_READ_COMMANDS,
     )
     host, port = server.start()
 
     try:
         with GuiSocketClient(host=host, port=port, timeout=0.1) as client:
-            response = client.request(GuiCommandType.STRATEGY_STATUS)
+            response = client.request(command)
     finally:
         server.stop()
 
     assert response.ok
-    assert response.payload == {"command": GuiCommandType.STRATEGY_STATUS.value}
+    assert response.payload == {"command": command.value}
     assert server.process_pending(max_jobs=1) == 0
 
 

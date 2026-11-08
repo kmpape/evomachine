@@ -11,6 +11,7 @@ from evomachine.gui.image_payloads import array_from_preview_payload, stack_from
 
 VISUAL_WORKSPACE_LAYER = "Visual workspace"
 LAST_IMAGE_LAYER = "Last acquired image"
+ROI_BOXES_LAYER = "DeLTA ROI boxes"
 BRIGHTNESS_LAYER = "Brightness spectrum"
 DMD_LAYER = "DMD pattern"
 
@@ -247,6 +248,11 @@ class CentralVisualWorkspace:
         self.last_image: np.ndarray | None = None
         self.last_stack: np.ndarray | None = None
         self.dmd_pattern: np.ndarray | None = None
+        self.displayed_fov_id: int | None = None
+        self.delta_results: dict[int, dict[str, Any]] = {}
+        self.show_roi_boxes = False
+        self.apply_rotation = False
+        self.apply_drift = False
         self._setup_layer()
         self._connect_controller()
 
@@ -267,6 +273,7 @@ class CentralVisualWorkspace:
         self.controller.camera_status_received.connect(self.update_camera_status)
         self.controller.dmd_status_received.connect(self.update_dmd_status)
         self.controller.frame_received.connect(self.update_frame)
+        self.controller.delta_status_received.connect(self.update_delta_status)
 
     def update_camera_status(self, payload: dict) -> None:
         image_shape = payload.get("image_shape")
@@ -278,13 +285,13 @@ class CentralVisualWorkspace:
         self.last_stack = None
         self.last_image = image
         self._refresh()
-        self._update_camera_layer(image)
+        self._render_delta_display()
 
     def update_last_stack(self, stack: np.ndarray) -> None:
         self.last_stack = stack
         self.last_image = stack[-1]
         self._refresh()
-        self._update_camera_layer(stack)
+        self._render_delta_display()
 
     def update_dmd_pattern(self, pattern: np.ndarray) -> None:
         self.dmd_pattern = pattern
@@ -296,6 +303,13 @@ class CentralVisualWorkspace:
             self.update_dmd_pattern(preview)
 
     def update_frame(self, payload: dict) -> None:
+        """Display a frame payload, retaining its FOV ID for result matching.
+
+        Args:
+            payload: Existing frame response with optional FOV identity and pixels.
+        """
+        fov_id = payload.get("fov_id")
+        self.displayed_fov_id = fov_id if type(fov_id) is int and fov_id >= 0 else None
         stack_preview = stack_from_preview_payload(payload.get("stack_preview"))
         if stack_preview is not None:
             self.update_last_stack(stack_preview)
@@ -303,6 +317,97 @@ class CentralVisualWorkspace:
         preview = array_from_preview_payload(payload.get("preview"))
         if preview is not None:
             self.update_last_image(preview)
+
+    def update_delta_status(self, payload: dict) -> None:
+        """Replace the GUI cache with a full per-FOV polling snapshot.
+
+        Args:
+            payload: Wire-format results containing a list of FOV entries.
+        """
+        results = {entry["fov_id"]: entry for entry in payload["fovs"]}
+        if results != self.delta_results:
+            self.delta_results = results
+            self._render_delta_display()
+
+    def current_delta_result(self) -> dict[str, Any] | None:
+        """Return results matching the displayed FOV and image size, or None."""
+        result = self.delta_results.get(self.displayed_fov_id)
+        if result is None or result["status"] not in {"ready", "empty"} or self.last_image is None:
+            return None
+        shape = result.get("image_shape")
+        if shape is not None and tuple(shape) != self.last_image.shape[-2:]:
+            return None
+        return result
+
+    def set_delta_display_options(self, *, show_boxes: bool, rotation: bool, drift: bool) -> None:
+        """Set GUI-only display preferences and redraw from the original pixels.
+
+        Args:
+            show_boxes: Whether to draw fixed ROI rectangles and their IDs.
+            rotation: Whether to apply the available rotation angle to the image.
+            drift: Whether to apply the available drift after rotation.
+        """
+        self.show_roi_boxes = show_boxes
+        self.apply_rotation = rotation
+        self.apply_drift = drift
+        self._render_delta_display()
+
+    def _render_delta_display(self) -> None:
+        """Render selected corrections and fixed boxes without modifying raw pixels."""
+        result = self.current_delta_result()
+        source = self.last_stack if self.last_stack is not None else self.last_image
+        if source is not None:
+            angle = result.get("rotation_degrees") if result is not None and self.apply_rotation else None
+            drift = result.get("drift_xy") if result is not None and self.apply_drift else None
+            displayed = source
+            if angle is not None or drift is not None:
+                import cv2
+                from delta.imgops import affine_transform, correct_drift
+
+                planes = source[np.newaxis, ...] if source.ndim == 2 else source
+                corrected = []
+                for plane in planes:
+                    image = plane
+                    if angle is not None:
+                        image = affine_transform(
+                            image, angle=angle, order=1, border_mode=cv2.BORDER_CONSTANT,
+                        )
+                    if drift is not None:
+                        image = correct_drift(image, tuple(drift))
+                    corrected.append(image)
+                displayed = np.stack(corrected)
+                if source.ndim == 2:
+                    displayed = displayed[0]
+            self._update_camera_layer(displayed)
+        boxes = result["boxes"] if result is not None and self.show_roi_boxes else []
+        layer = self._layer(ROI_BOXES_LAYER)
+        if not boxes:
+            if layer is not None:
+                layer.data = []
+                layer.properties = {"roi_id": np.array([], dtype=int)}
+                layer.visible = False
+            return
+        rectangles = [
+            [[box["ytl"], box["xtl"]], [box["ytl"], box["xbr"]],
+             [box["ybr"], box["xbr"]], [box["ybr"], box["xtl"]]]
+            for box in boxes
+        ]
+        properties = {"roi_id": np.array([box["roi_id"] for box in boxes], dtype=int)}
+        if layer is None:
+            layer = self.viewer.add_shapes(
+                rectangles, name=ROI_BOXES_LAYER, shape_type="rectangle",
+                edge_color="yellow", face_color="transparent", edge_width=1,
+                properties=properties,
+                text={"string": "{roi_id}", "size": 10, "color": "yellow", "anchor": "upper_left"},
+            )
+            layer.editable = False
+        else:
+            layer.data = rectangles
+            layer.properties = properties
+        camera_layer = self._layer(LAST_IMAGE_LAYER)
+        layer.scale = camera_layer.scale[-2:]
+        layer.translate = camera_layer.translate[-2:]
+        layer.visible = True
 
     def _refresh(self) -> None:
         layer = self._layer(VISUAL_WORKSPACE_LAYER)
