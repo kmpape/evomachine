@@ -169,6 +169,13 @@ class FovDirectionType(EvoType):
     RIGHT = auto()
     HOME = auto()
 
+class FocusMode(EvoType):
+    """Navigator workflow; standard preserves existing CRISP/software focus policies."""
+
+    STANDARD = auto()
+    REFERENCE_PROFILE = auto()
+
+
 class FocusAlgorithmType(EvoType):
     """Software focus scoring algorithm selection used by focus configuration and routines."""
 

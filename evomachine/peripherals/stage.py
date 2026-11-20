@@ -500,8 +500,8 @@ class Stage(Peripheral):
         fov_id_to_coordinate
             Mapping from fov ID to stage Coordinate.
         use_autofocus
-            If True, registered coordinates must not contain Z. If False, they must
-            contain Z.
+            If True, hardware or software focus owns Z and registered coordinates
+            must not contain Z. If False, registered coordinates must contain Z.
 
         Returns
         -------

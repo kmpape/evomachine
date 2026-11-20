@@ -43,17 +43,15 @@ class ConfigFieldSpec:
     emphasized: bool = False
 
 
-class ConfigDialog(QDialog):
-    """Small modal dialog for editing simple config payload fields."""
+class ConfigForm(QWidget):
+    """Reusable form for editing simple config payload fields."""
 
     def __init__(
         self,
-        title: str,
         fields: list[ConfigFieldSpec],
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
-        self.setWindowTitle(title)
         self._fields = fields
         self._widgets: dict[str, QWidget] = {}
 
@@ -73,15 +71,8 @@ class ConfigDialog(QDialog):
         self._connect_dependency_widgets()
         self._sync_dependency_states()
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-
-        layout = QVBoxLayout()
+        layout = QVBoxLayout(self)
         layout.addLayout(form)
-        layout.addWidget(buttons)
-        self.setLayout(layout)
-        self.setMinimumWidth(360)
 
     def values(self) -> dict[str, Any]:
         values: dict[str, Any] = {}
@@ -186,3 +177,27 @@ class ConfigDialog(QDialog):
         if isinstance(value, list | tuple):
             return ", ".join(ConfigDialog._format_value(item) for item in value)
         return str(value)
+
+
+class ConfigDialog(QDialog):
+    """Modal wrapper around the reusable typed field form."""
+
+    def __init__(self, title: str, fields: list[ConfigFieldSpec], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self._form = ConfigForm(fields)
+        self._fields = fields
+        self._widgets = self._form._widgets
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self._form)
+        layout.addWidget(buttons)
+        self.setMinimumWidth(360)
+
+    def values(self):
+        return self._form.values()
+
+    _widget_value = staticmethod(ConfigForm._widget_value)
+    _format_value = staticmethod(ConfigForm._format_value)
