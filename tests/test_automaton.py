@@ -655,6 +655,7 @@ def test_command_failure_is_delivered_to_strategy_and_stops_the_batch() -> None:
     failed = factory.command_move(fov_id=1)
     skipped = factory.command_wait(duration=0)
     automaton.next_commands = [failed, skipped]
+    cursor = gui_log_handler.latest_sequence
 
     automaton._process()
 
@@ -665,6 +666,15 @@ def test_command_failure_is_delivered_to_strategy_and_stops_the_batch() -> None:
     assert supplied.original_error.args == ("stage blip",)
     assert skipped.command_execution_time is None
     assert automaton.runtime_failure_history == (supplied,)
+    errors = [
+        record
+        for record in gui_log_handler.records_after(cursor)
+        if record["level"] == "ERROR"
+    ]
+    assert len(errors) == 1
+    assert "MOVE" in errors[0]["message"]
+    assert "Traceback" in errors[0]["formatted"]
+    assert "RuntimeError: stage blip" in errors[0]["formatted"]
 
 
 def test_unexpected_callback_failure_aborts_and_is_recorded() -> None:

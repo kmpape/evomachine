@@ -872,6 +872,15 @@ class Automaton:
                     original_error=error,
                 )
                 self._runtime_failure_history.append(failure)
+                logger.exception(
+                    "Strategy %s command %s (id=%s, section=%s, FOV=%s) failed: %s",
+                    self.get_strategy_name(),
+                    command.command_type.name,
+                    command.command_id,
+                    command_section,
+                    command.fov_id,
+                    error,
+                )
                 if finalise or command.command_type in {
                     AutomatonCommandType.TERMINATE_STRATEGY,
                     AutomatonCommandType.ABORT_STRATEGY,
