@@ -14,7 +14,7 @@ from evomachine.delta_processing import ProjectionExposureError
 from evomachine.frame import Frame, FrameMetaData
 from evomachine.image_processing_config import ImageProcessorConfigFactory
 from evomachine.coordinates import Coordinate
-from evomachine.navigation import FocusNavigator, FovConfig
+from evomachine.navigation import FocusNavigatorConfig, FocusNavigator, FovConfig
 from evomachine.peripherals.dmd import (
     Dmd,
     DmdCalibrationConfig,
@@ -272,6 +272,11 @@ class FakeFocusNavigator(FocusNavigator):
         self.stage = stage if stage is not None else FakePeripheral()
         self.autofocus = autofocus
         self.software_focus = software_focus
+        self.reference_focus = None
+        self.config = FocusNavigatorConfig()
+        self._fov_states = {}
+        self._reference_by_fov = {}
+        self.review_reference = None
         self.moves: list[int] = []
         self.fovs: dict[int, Coordinate] = {}
         self.fov_order: list[int] = []
