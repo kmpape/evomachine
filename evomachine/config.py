@@ -411,7 +411,7 @@ def get_logger(
             f"get_logger: logging_config must be EvoLoggingConfig or None, received {type(logging_config)}."
         )
     logger = logging.getLogger(name)
-    for handler in logger.handlers:
+    for handler in list(logger.handlers):
         logger.removeHandler(handler)
     if is_binding:
         logger.setLevel(logging_config.binding_level)

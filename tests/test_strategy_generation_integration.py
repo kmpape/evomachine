@@ -399,6 +399,8 @@ def test_microscopy_runtime_errors_are_classified_with_diagnostics(
 
 
 def test_image_retry_exhaustion_automatically_continues() -> None:
+    from evomachine.config import gui_log_handler
+
     strategy = AutoStratStrategy(
         cfg=_cfg(),
         verified=_verified(
@@ -428,6 +430,7 @@ def test_image_retry_exhaustion_automatically_continues() -> None:
     )[0]
 
     returned_commands = []
+    cursor = gui_log_handler.latest_sequence
     for _ in range(3):
         failure = CommandExecutionError(
             command_id=command.command_id,
@@ -442,6 +445,17 @@ def test_image_retry_exhaustion_automatically_continues() -> None:
 
     assert [command.command_type for command in returned_commands] == [AutomatonCommandType.WAIT]
     assert [failure.retry_attempt for failure in strategy.failure_history] == [0, 1, 2]
+    warnings = [
+        record["message"]
+        for record in gui_log_handler.records_after(cursor)
+        if record["level"] == "WARNING"
+        and record["logger"] == "evomachine.strategy_generation.strategy"
+    ]
+    assert len(warnings) == 4
+    assert "retries used=0/2" in warnings[0]
+    assert "retries used=1/2" in warnings[1]
+    assert "retries used=2/2" in warnings[2]
+    assert "exhausted retries; action=continue" in warnings[3]
 
 
 def test_retry_preserves_interrupted_batch_tail_and_discards_old_tracking() -> None:

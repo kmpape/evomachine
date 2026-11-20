@@ -45,6 +45,39 @@ def test_gui_log_buffer_preserves_exact_terminal_format() -> None:
     assert record["level"] == "DEBUG"
 
 
+def test_reconfiguring_application_logger_does_not_duplicate_handlers() -> None:
+    """Verify repeated logger configuration retains one handler of each kind."""
+    from evomachine.config import file_handler, get_logger, gui_log_handler
+
+    logger = logging.getLogger("test.gui.reconfiguration")
+    original_handlers = list(logger.handlers)
+    original_level = logger.level
+    original_propagate = logger.propagate
+    first_stream_handler = None
+    try:
+        get_logger(logger.name, is_peripheral=True)
+        first_stream_handler = next(
+            handler for handler in logger.handlers if type(handler) is logging.StreamHandler
+        )
+        get_logger(logger.name, is_peripheral=True)
+
+        assert len(logger.handlers) == 3
+        assert sum(handler is file_handler for handler in logger.handlers) == 1
+        assert sum(handler is gui_log_handler for handler in logger.handlers) == 1
+        assert sum(type(handler) is logging.StreamHandler for handler in logger.handlers) == 1
+    finally:
+        if first_stream_handler is not None:
+            first_stream_handler.close()
+        for handler in list(logger.handlers):
+            logger.removeHandler(handler)
+            if type(handler) is logging.StreamHandler:
+                handler.close()
+        for handler in original_handlers:
+            logger.addHandler(handler)
+        logger.setLevel(original_level)
+        logger.propagate = original_propagate
+
+
 def test_gui_log_buffer_rejects_invalid_bounds_and_cursors() -> None:
     with pytest.raises(ValueError, match="positive integer"):
         GuiLogBufferHandler(capacity=0)
