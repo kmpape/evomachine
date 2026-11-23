@@ -17,6 +17,7 @@ from evomachine.gui.protocol import (
 from evomachine.gui.image_payloads import array_to_preview_payload
 from evomachine.gui.autostrat_config import AutoStratModelConfig
 from evomachine.gui.operations import GuiOperationManager
+from evomachine.gui.focus import FocusGuiState, software_payload
 from evomachine.gui.request_map import GUI_REQUEST_HANDLERS, gui_coordinate_to_payload
 from evomachine.strategy_generation.files import StrategyFileStore
 
@@ -44,6 +45,7 @@ class AutomatonGuiFacade:
         self._last_strategy_frame_sequence: int = 0
         self._last_strategy_projection_sequence: int = 0
         self.gui_operations = GuiOperationManager()
+        self.focus_state = FocusGuiState(self)
         # Generation has no hardware access and must not lock out microscope controls.
         self.strategy_generation = GuiOperationManager()
         self.autostrat_enabled = False
@@ -196,6 +198,19 @@ class AutomatonGuiFacade:
         return autofocus
 
     def gui_software_focus(self) -> Any:
+        from copy import deepcopy
+        from evomachine.softwarefocus import SoftwareFocus
+        from evomachine.types import FocusAlgorithmType
+        if self.focus_state.manual_software is None:
+            base = self.gui_strategy_software_focus()
+            if not isinstance(base, SoftwareFocus):
+                return base
+            config = deepcopy(base.default_config).updated(
+                cropping_box=None, algorithm=FocusAlgorithmType.SQUARED_GRAD_AVG, algorithm_kwargs={})
+            self.focus_state.manual_software = SoftwareFocus(base.acquisition_manager, config)
+        return self.focus_state.manual_software
+
+    def gui_strategy_software_focus(self) -> Any:
         focus_nav = getattr(self.automaton, "focus_nav", None)
         software_focus = getattr(focus_nav, "software_focus", None)
         if software_focus is None:
@@ -495,16 +510,11 @@ class AutomatonGuiFacade:
     def gui_software_focus_status_payload(self) -> dict[str, Any]:
         software_focus = self.gui_software_focus()
         config = getattr(software_focus, "default_config", None)
-        algorithm = getattr(config, "algorithm", None)
         return {
             "available": True,
             "config": None
             if config is None
-            else {
-                "rel_range": getattr(config, "rel_range", None),
-                "step_size": getattr(config, "step_size", None),
-                "algorithm": getattr(algorithm, "name", str(algorithm)),
-            },
+            else software_payload(config),
             "last_result": self._last_software_focus_result,
         }
 

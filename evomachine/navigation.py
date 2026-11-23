@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 import threading
 import time
 from typing import Any
 
 from evomachine.coordinates import Coordinate
+from evomachine.focus_registration import ReferenceProfile
 from evomachine.peripherals.autofocus import Autofocus
 from evomachine.peripherals.stage import Stage
+from evomachine.referencefocus import (
+    ReferenceFocusCancelled, ReferenceProfileFocus, ReferenceProfileFocusConfig,
+)
 from evomachine.softwarefocus import SoftwareFocus, SoftwareFocusConfig
-from evomachine.types import AutoFocusStatusType, FocusStatusType, UNKNOWN_FOV_ID
+from evomachine.types import AutoFocusStatusType, FocusMode, FocusStatusType, UNKNOWN_FOV_ID
 from evomachine.utils import validate_dataclass_fields
 
 
@@ -34,6 +39,10 @@ class FovConfig:
     "Optional fov-specific SoftwareFocusConfig."
     autofocus_initialise_config: Any | None = None
     "Optional binding-specific autofocus config for this fov."
+
+    focus_mode: FocusMode | None = None
+    navigator_config: FocusNavigatorConfig | None = None
+    reference_focus_config: ReferenceProfileFocusConfig | None = None
 
     def __post_init__(self) -> None:
         validate_dataclass_fields(
@@ -74,6 +83,9 @@ class FocusNavigatorConfig:
     "Optional binding-specific autofocus config passed to Autofocus.initialise_autofocus."
     default_fov_config: FovConfig = field(default_factory=FovConfig)
     "Default per-fov focus policy used when no fov-specific override is provided."
+    initialise_from_first_fov_z: bool = False
+    focus_mode: FocusMode = FocusMode.STANDARD
+    "Select existing focus policies or software-only reference-profile registration."
 
     def __post_init__(self) -> None:
         validate_dataclass_fields(
@@ -85,8 +97,12 @@ class FocusNavigatorConfig:
                 (self.refocus_on_all_fovs, bool),
                 (self.toggle_autofocus_on_channel_change, bool),
                 (self.default_fov_config, FovConfig),
+                (self.focus_mode, FocusMode),
+                (self.initialise_from_first_fov_z, bool),
             ],
         )
+        if self.focus_mode == FocusMode.REFERENCE_PROFILE and self.use_autofocus:
+            raise ValueError("Reference-profile mode requires use_autofocus=False.")
         if not isinstance(self.max_refocus_trials, int) or isinstance(self.max_refocus_trials, bool):
             raise TypeError(
                 f"FocusNavigatorConfig: max_refocus_trials must be int, received {type(self.max_refocus_trials)}."
@@ -159,6 +175,8 @@ class FocusNavigator:
             config: FocusNavigatorConfig | None = None,
             sleep_func: Callable[[float], None] = time.sleep,
             time_func: Callable[[], float] = time.time,
+            *,
+            reference_focus: ReferenceProfileFocus | None = None,
     ):
         """
         Initialise a focus navigator.
@@ -177,6 +195,8 @@ class FocusNavigator:
             Function used for wait periods, injected for tests.
         time_func
             Function used to timestamp Z records, injected for tests.
+        reference_focus
+            Optional acquisition-backed reference focus, selected explicitly by config.
 
         Returns
         -------
@@ -191,6 +211,9 @@ class FocusNavigator:
         self.stage: Stage = stage
         self.autofocus: Autofocus | None = autofocus
         self.software_focus: SoftwareFocus | None = software_focus
+        self.reference_focus = reference_focus
+        if reference_focus is not None and reference_focus.acquisition_manager.stage is not stage:
+            raise ValueError("FocusNavigator and reference_focus must share the same stage.")
         self.config: FocusNavigatorConfig = config if config is not None else FocusNavigatorConfig()
         if not isinstance(self.config, FocusNavigatorConfig):
             raise TypeError(
@@ -207,15 +230,118 @@ class FocusNavigator:
         self._current_fov_id: int | None = None
         self._num_refocus: int = 0
         self._active_autofocus_initialise_config: Any | None = None
+        self.standard_config: FocusNavigatorConfig | None = None
+        self._execution_config: FocusNavigatorConfig | None = None
+        self._reference_by_fov: dict[int, ReferenceProfileFocus] = {}
+        self._initial_focus_prepared = False
+        self.review_reference: Callable | None = None
+        self.last_reference_focus: ReferenceProfileFocus | None = None
 
     def update_config(self, config: FocusNavigatorConfig) -> None:
-        """Replace the runtime movement and focus policy."""
         if not isinstance(config, FocusNavigatorConfig):
-            raise TypeError(
-                "FocusNavigator.update_config: config must be FocusNavigatorConfig, "
-                f"received {type(config)}."
-            )
+            raise TypeError("config must be FocusNavigatorConfig.")
+        previous = self.config
         self.config = config
+        try:
+            if self._fov_states:
+                self._register_stage_fovs()
+        except Exception:
+            self.config = previous
+            raise
+
+    def effective_config(self, fov_id: int) -> FocusNavigatorConfig:
+        fov = self._fov_states[fov_id].fov_config
+        mode = fov.focus_mode if fov.focus_mode is not None else self.config.focus_mode
+        base = fov.navigator_config or (self.standard_config if mode == FocusMode.STANDARD else None) or self.config
+        return replace(base, focus_mode=mode,
+                       use_autofocus=False if mode == FocusMode.REFERENCE_PROFILE else base.use_autofocus)
+
+    @property
+    def _workflow_config(self) -> FocusNavigatorConfig:
+        return self._execution_config or self.config
+
+    @contextmanager
+    def _for_fov(self, fov_id: int):
+        previous = self._execution_config
+        self._execution_config = self.effective_config(fov_id)
+        try:
+            yield
+        finally:
+            self._execution_config = previous
+
+    def _register_stage_fovs(self) -> None:
+        owns_z = any(self.effective_config(fov_id).use_autofocus or
+                     self.effective_config(fov_id).focus_mode == FocusMode.REFERENCE_PROFILE
+                     for fov_id in self._fov_states)
+        coordinates = {fov_id: self._stage_registration_coordinate(state.coordinate, owns_z)
+                       for fov_id, state in self._fov_states.items()}
+        if not self.stage.set_fov_id_to_coordinate(coordinates, use_autofocus=owns_z):
+            raise RuntimeError("Stage rejected coordinates for the selected focus modes.")
+
+    def prepare_run(self) -> None:
+        self._initial_focus_prepared = False
+        self._active_autofocus_initialise_config = None
+        if self.review_reference is not None:
+            if self.reference_focus is not None:
+                self.reference_focus.clear_reference()
+            self._reference_by_fov.clear()
+
+    def reference_for_fov(self, fov_id: int) -> ReferenceProfileFocus:
+        if fov_id in self._reference_by_fov:
+            return self._reference_by_fov[fov_id]
+        base = self._require_reference_focus()
+        config = self._fov_states[fov_id].fov_config.reference_focus_config
+        if config is not None:
+            self._reference_by_fov[fov_id] = ReferenceProfileFocus(base.acquisition_manager, config)
+            self._reference_by_fov[fov_id].process_events = base.process_events
+            return self._reference_by_fov[fov_id]
+        return base
+
+    def stop_reference_focus(self) -> None:
+        for focus in (self.reference_focus, self.last_reference_focus, *self._reference_by_fov.values()):
+            if focus is not None:
+                focus.stop()
+
+    def _require_reference_focus(self) -> ReferenceProfileFocus:
+        if self.reference_focus is None:
+            raise RuntimeError("Reference-profile mode requires a reference_focus component.")
+        return self.reference_focus
+
+    def validate_ready(self) -> None:
+        ids = [fov_id for fov_id in self._fov_states
+               if self.effective_config(fov_id).focus_mode == FocusMode.REFERENCE_PROFILE]
+        if not ids and self.config.focus_mode == FocusMode.REFERENCE_PROFILE:
+            if self._require_reference_focus().reference is None and self.review_reference is None:
+                raise RuntimeError("Capture, inspect and accept a reference before starting.")
+        for fov_id in ids:
+            focus = self.reference_for_fov(fov_id)
+            if focus.reference is None and self.review_reference is None:
+                raise RuntimeError("Capture, inspect and accept a reference before starting.")
+            if focus.reference is None and self._fov_states[fov_id].coordinate.z is None:
+                raise RuntimeError(f"FoV {fov_id} needs a saved initial focal Z.")
+
+    def invalidate_hardware_focus(self) -> None:
+        self._active_autofocus_initialise_config = object()
+
+    def _disable_reference_autofocus(self) -> None:
+        if self.autofocus is not None:
+            if self.autofocus.is_locked():
+                self.autofocus.unlock()
+            self.autofocus.disable()
+            self._active_autofocus_initialise_config = None
+
+    def calibrate_reference(self, stop_event: threading.Event | None = None) -> ReferenceProfile:
+        """Capture a candidate reference at the manually selected Z for plot review."""
+        if self.config.focus_mode != FocusMode.REFERENCE_PROFILE:
+            raise RuntimeError("Select reference-profile mode before calibrating.")
+        focus = self._require_reference_focus()
+        self._check_cancelled(stop_event)
+        self._disable_reference_autofocus()
+        return focus.calibrate(stop_event=stop_event)
+
+    def accept_reference(self) -> ReferenceProfile:
+        """Accept the candidate after the caller has inspected its plot."""
+        return self._require_reference_focus().accept_reference()
 
     def initialise_fovs(
             self,
@@ -248,6 +374,12 @@ class FocusNavigator:
         )
         if autofocus_enabled != self.config.use_autofocus:
             self.config = replace(self.config, use_autofocus=autofocus_enabled)
+        focus_controls_z = autofocus_enabled or self.config.focus_mode == FocusMode.REFERENCE_PROFILE
+        if fov_configs:
+            focus_controls_z = focus_controls_z or any(
+                f.focus_mode == FocusMode.REFERENCE_PROFILE or
+                (f.navigator_config is not None and f.navigator_config.use_autofocus)
+                for f in fov_configs.values())
         if fov_configs is not None and not isinstance(fov_configs, dict):
             raise TypeError("FocusNavigator.initialise_fovs: fov_configs must be dict[int, FovConfig] or None.")
         states: dict[int, FocusNavigatorFovRecord] = {}
@@ -268,7 +400,7 @@ class FocusNavigator:
                 software_focus_configs[fov_id] = fov_config.software_focus_config
             stage_fovs[fov_id] = self._stage_registration_coordinate(
                 coordinate=coordinate,
-                use_autofocus=autofocus_enabled,
+                use_autofocus=focus_controls_z,
             )
         if fov_configs is not None:
             unknown_fov_ids = [fov_id for fov_id in fov_configs if fov_id not in fov_id_to_coordinate]
@@ -276,7 +408,7 @@ class FocusNavigator:
                 raise KeyError(f"FocusNavigator.initialise_fovs: unknown config fov IDs {unknown_fov_ids}.")
         if not self.stage.set_fov_id_to_coordinate(
                 fov_id_to_coordinate=stage_fovs,
-                use_autofocus=autofocus_enabled,
+                use_autofocus=focus_controls_z,
         ):
             raise RuntimeError("FocusNavigator.initialise_fovs: stage rejected fov coordinates.")
         self._fov_states = states
@@ -284,6 +416,8 @@ class FocusNavigator:
         self._current_fov_id = None
         self._num_refocus = 0
         self._active_autofocus_initialise_config = None
+        self._initial_focus_prepared = False
+        self._reference_by_fov.clear()
         if self.software_focus is not None:
             initialise_fovs = getattr(self.software_focus, "initialise_fovs", None)
             if callable(initialise_fovs):
@@ -292,7 +426,13 @@ class FocusNavigator:
                     fov_configs=software_focus_configs or None,
                 )
 
-    def move(
+    def move(self, fov_id: int, manage_focus: bool = True,
+             stop_event: threading.Event | None = None) -> FocusNavigatorFovRecord:
+        self._require_fov(fov_id)
+        with self._for_fov(fov_id):
+            return self._move_configured(fov_id, manage_focus, stop_event)
+
+    def _move_configured(
             self,
             fov_id: int,
             manage_focus: bool = True,
@@ -320,26 +460,65 @@ class FocusNavigator:
             raise TypeError(f"FocusNavigator.move: manage_focus must be bool, received {type(manage_focus)}.")
         try:
             self._check_cancelled(stop_event)
+            if self._workflow_config.focus_mode == FocusMode.REFERENCE_PROFILE:
+                focus = self.reference_for_fov(fov_id)
+                if manage_focus and focus.reference is None:
+                    if self.review_reference is None:
+                        self.validate_ready()
+                    self._disable_reference_autofocus()
+                    target = self._fov_states[fov_id].coordinate.copy()
+                    if target.z is None:
+                        raise RuntimeError("Initial reference calibration needs a saved focal Z.")
+                    self.stage.move(target=target, block=True)
+                    self._current_fov_id = fov_id
+                    profile = focus.calibrate(stop_event=stop_event)
+                    if not self.review_reference(profile, fov_id, stop_event):
+                        raise ReferenceFocusCancelled("Reference rejected.")
+                    focus.accept_reference()
+                self._disable_reference_autofocus()
+                self.stage.move(
+                    target=self._stage_registration_coordinate(self._fov_states[fov_id].coordinate, True),
+                    block=True,
+                )
+                self._current_fov_id = fov_id
+                self._initial_focus_prepared = True
+                self._check_cancelled(stop_event)
+                if manage_focus:
+                    return self.manage_focus(fov_id=fov_id, stop_event=stop_event)
+                return self._result(fov_id, False, False, FocusStatusType.UNKNOWN)
+            if not self._workflow_config.use_autofocus:
+                self._disable_reference_autofocus()
+            if not self._initial_focus_prepared:
+                if self._workflow_config.initialise_from_first_fov_z:
+                    self._disable_reference_autofocus()
+                    self.stage.move(target=self._fov_states[fov_id].coordinate.copy(), block=True)
+                    self.invalidate_hardware_focus()
+                self._initial_focus_prepared = True
             self._prepare_for_departure(target_fov_id=fov_id)
             self._check_cancelled(stop_event)
             if self._should_toggle_autofocus(target_fov_id=fov_id):
-                self._move_with_autofocus_toggle(fov_id=fov_id, stop_event=stop_event)
+                arrival_status = self._move_with_autofocus_toggle(fov_id=fov_id, stop_event=stop_event)
             else:
-                self.stage.move(target=fov_id, block=True)
+                target = self._stage_registration_coordinate(
+                    self._fov_states[fov_id].coordinate, self._workflow_config.use_autofocus)
+                self.stage.move(target=target, block=True)
                 self._current_fov_id = fov_id
                 self._check_cancelled(stop_event)
-                self._handle_arrival(fov_id=fov_id, stop_event=stop_event)
+                arrival_status = self._handle_arrival(fov_id=fov_id, stop_event=stop_event)
             self._check_cancelled(stop_event)
             self._current_fov_id = fov_id
             if manage_focus:
-                return self.manage_focus(fov_id=fov_id, stop_event=stop_event)
+                result = self.manage_focus(fov_id=fov_id, stop_event=stop_event)
+                if result.software_focus_status == FocusStatusType.UNKNOWN:
+                    result.software_focus_status = arrival_status
+                return result
             return self._result(
                 fov_id=fov_id,
                 is_locked=self._autofocus_is_locked(default=False),
                 refocusing=False,
-                software_focus_status=FocusStatusType.UNKNOWN,
+                software_focus_status=arrival_status,
             )
-        except _FocusNavigationCancelled:
+        except (_FocusNavigationCancelled, ReferenceFocusCancelled):
             current_fov_id = (
                 fov_id if self._current_fov_id is None else self._current_fov_id
             )
@@ -352,7 +531,13 @@ class FocusNavigator:
                 skip_reason="Focus navigation cancelled.",
             )
 
-    def manage_focus(
+    def manage_focus(self, fov_id: int, refocus_on_all_fovs: bool | None = None,
+                     stop_event: threading.Event | None = None) -> FocusNavigatorFovRecord:
+        self._require_fov(fov_id)
+        with self._for_fov(fov_id):
+            return self._manage_focus_configured(fov_id, refocus_on_all_fovs, stop_event)
+
+    def _manage_focus_configured(
             self,
             fov_id: int,
             refocus_on_all_fovs: bool | None = None,
@@ -383,7 +568,31 @@ class FocusNavigator:
                 name="refocus_on_all_fovs",
             )
         self._current_fov_id = fov_id
-        if not self.config.use_autofocus:
+        if self._workflow_config.focus_mode == FocusMode.REFERENCE_PROFILE:
+            focus = self.reference_for_fov(fov_id)
+            if focus.reference is None:
+                raise RuntimeError("Accept the reference before focusing.")
+            self._disable_reference_autofocus()
+            shared = focus is self.reference_focus
+            if shared and focus.config.allow_peak_reset:
+                local = ReferenceProfileFocus(focus.acquisition_manager, focus.config)
+                local.reference = focus.reference
+                local.process_events = focus.process_events
+                focus = local
+            self.last_reference_focus = focus
+            result = focus.run(fov_id=fov_id, stop_event=stop_event)
+            if shared and result.reference_reset:
+                self._reference_by_fov[fov_id] = focus
+            self.last_reference_focus = focus
+            self._check_cancelled(stop_event)
+            succeeded = result.focus_status == FocusStatusType.IN_FOCUS
+            if succeeded:
+                self._record_current_z(fov_id=fov_id, is_locked=False)
+            return self._result(
+                fov_id, False, result.recovery_attempted, result.focus_status,
+                skipped=not succeeded, skip_reason=result.failure_reason,
+            )
+        if not self._workflow_config.use_autofocus:
             self._record_current_z(fov_id=fov_id, is_locked=False)
             return self._result(
                 fov_id=fov_id,
@@ -393,7 +602,7 @@ class FocusNavigator:
             )
         self._require_autofocus()
         if self.autofocus.get_status() == AutoFocusStatusType.OUT_OF_FOCUS:
-            self._wait(self.config.out_of_focus_wait_s, stop_event=stop_event)
+            self._wait(self._workflow_config.out_of_focus_wait_s, stop_event=stop_event)
         if self.autofocus.is_locked():
             self._record_current_z(fov_id=fov_id, is_locked=True)
             return self._result(
@@ -402,9 +611,9 @@ class FocusNavigator:
                 refocusing=False,
                 software_focus_status=FocusStatusType.UNKNOWN,
             )
-        if not self.config.refocus:
+        if not self._workflow_config.refocus:
             raise RuntimeError("FocusNavigator.manage_focus: autofocus lock lost and refocus is disabled.")
-        if self._num_refocus >= self.config.max_refocus_trials:
+        if self._num_refocus >= self._workflow_config.max_refocus_trials:
             self._record_current_z(fov_id=fov_id, is_locked=False)
             return self._result(
                 fov_id=fov_id,
@@ -414,18 +623,18 @@ class FocusNavigator:
                 skipped=True,
                 skip_reason=(
                     "FocusNavigator.manage_focus: maximum refocus trials reached "
-                    f"({self.config.max_refocus_trials})."
+                    f"({self._workflow_config.max_refocus_trials})."
                 ),
                 max_refocus_trials_reached=True,
             )
         self._num_refocus += 1
         self.autofocus.unlock()
         try:
-            if self.config.refocus_using_software_focus:
+            if self._workflow_config.refocus_using_software_focus:
                 software_focus_status = self._recover_with_software_focus(
                     original_fov_id=fov_id,
                     refocus_on_all_fovs=(
-                        self.config.refocus_on_all_fovs
+                        self._workflow_config.refocus_on_all_fovs
                         if refocus_on_all_fovs is None
                         else refocus_on_all_fovs
                     ),
@@ -441,7 +650,7 @@ class FocusNavigator:
             raise
         except RuntimeError as exc:
             self._record_current_z(fov_id=fov_id, is_locked=False)
-            if self._num_refocus >= self.config.max_refocus_trials:
+            if self._num_refocus >= self._workflow_config.max_refocus_trials:
                 return self._result(
                     fov_id=fov_id,
                     is_locked=False,
@@ -511,6 +720,8 @@ class FocusNavigator:
         if not isinstance(fov_config, FovConfig):
             raise TypeError(f"FocusNavigator.update_fov_config: fov_config must be FovConfig, received {type(fov_config)}.")
         self._fov_states[fov_id].fov_config = fov_config
+        self._reference_by_fov.pop(fov_id, None)
+        self._register_stage_fovs()
         if fov_config.software_focus_config is not None and self.software_focus is not None:
             update_config = getattr(self.software_focus, "update_config", None)
             if callable(update_config):
@@ -594,7 +805,7 @@ class FocusNavigator:
             Per-fov override or navigator default.
         """
         if fov_configs is None or fov_id not in fov_configs:
-            return self.config.default_fov_config
+            return self._workflow_config.default_fov_config
         fov_config = fov_configs[fov_id]
         if not isinstance(fov_config, FovConfig):
             raise TypeError("FocusNavigator.initialise_fovs: every fov config must be FovConfig.")
@@ -696,7 +907,7 @@ class FocusNavigator:
         """
         if self._current_fov_id is None or self._current_fov_id == target_fov_id:
             return
-        if not self.config.use_autofocus or self.autofocus is None:
+        if not self._workflow_config.use_autofocus or self.autofocus is None:
             return
         current_config = self._fov_states[self._current_fov_id].fov_config
         if not current_config.lock_autofocus_during_departure_move and self.autofocus.is_locked():
@@ -725,7 +936,7 @@ class FocusNavigator:
         fov_config = self._fov_states[fov_id].fov_config
         self._check_cancelled(stop_event)
         if (
-                self.config.use_autofocus
+                self._workflow_config.use_autofocus
                 and self.autofocus is not None
                 and not fov_config.lock_autofocus_during_arrival_move
                 and self.autofocus.is_locked()
@@ -733,6 +944,8 @@ class FocusNavigator:
             self.autofocus.unlock()
         software_focus_status = FocusStatusType.UNKNOWN
         if fov_config.run_software_focus_on_arrival:
+            if self.autofocus is not None and self.autofocus.is_locked():
+                self.autofocus.unlock()
             software_focus_status = self._run_software_focus(
                 fov_id=fov_id,
                 stop_event=stop_event,
@@ -743,9 +956,11 @@ class FocusNavigator:
                     f"FocusNavigator.move: software focus failed with status {software_focus_status}."
                 )
             self._update_recorded_z(fov_id=fov_id)
-            self._wait(self.config.post_move_wait_s, stop_event=stop_event)
+            self._wait(self._workflow_config.post_move_wait_s, stop_event=stop_event)
         reinitialised = False
-        if self.config.use_autofocus:
+        if self._workflow_config.use_autofocus:
+            if software_focus_status == FocusStatusType.IN_FOCUS:
+                self._active_autofocus_initialise_config = object()
             reinitialised = self._ensure_autofocus_config(
                 fov_id=fov_id,
                 stop_event=stop_event,
@@ -789,7 +1004,7 @@ class FocusNavigator:
             lock_after_initialise=False,
             stop_event=stop_event,
         )
-        self._wait(self.config.post_autofocus_wait_s, stop_event=stop_event)
+        self._wait(self._workflow_config.post_autofocus_wait_s, stop_event=stop_event)
         self._active_autofocus_initialise_config = target_config
         return True
 
@@ -808,7 +1023,7 @@ class FocusNavigator:
             Per-fov autofocus config, global fallback config, or None.
         """
         fov_config = self._fov_states[fov_id].fov_config.autofocus_initialise_config
-        return self.config.autofocus_initialise_config if fov_config is None else fov_config
+        return self._workflow_config.autofocus_initialise_config if fov_config is None else fov_config
 
     def _should_toggle_autofocus(self, target_fov_id: int) -> bool:
         """
@@ -825,8 +1040,8 @@ class FocusNavigator:
             True when channel IDs differ and toggle behavior is enabled.
         """
         if not (
-                self.config.use_autofocus
-                and self.config.toggle_autofocus_on_channel_change
+                self._workflow_config.use_autofocus
+                and self._workflow_config.toggle_autofocus_on_channel_change
                 and self._current_fov_id is not None
         ):
             return False
@@ -844,7 +1059,7 @@ class FocusNavigator:
             self,
             fov_id: int,
             stop_event: threading.Event | None = None,
-    ) -> None:
+    ) -> FocusStatusType:
         """
         Move using software focus and autofocus reinitialisation for channel changes.
 
@@ -857,7 +1072,8 @@ class FocusNavigator:
 
         Returns
         -------
-        None
+        FocusStatusType
+            Status of software focus performed during the move.
         """
         autofocus = self._require_autofocus()
         self._check_cancelled(stop_event)
@@ -868,14 +1084,14 @@ class FocusNavigator:
         fov_config = self._fov_states[fov_id].fov_config
         software_focus_status = (
             self._run_software_focus(fov_id=fov_id, stop_event=stop_event)
-            if fov_config.run_software_focus_on_arrival or self.config.refocus_using_software_focus
+            if fov_config.run_software_focus_on_arrival or self._workflow_config.refocus_using_software_focus
             else FocusStatusType.UNKNOWN
         )
         if software_focus_status != FocusStatusType.IN_FOCUS:
             raise RuntimeError(
                 f"FocusNavigator.move: software focus failed with status {software_focus_status}."
             )
-        self._wait(self.config.post_move_wait_s, stop_event=stop_event)
+        self._wait(self._workflow_config.post_move_wait_s, stop_event=stop_event)
         target_config = self._autofocus_initialise_config_for_fov(fov_id=fov_id)
         self._initialise_and_lock_autofocus(
             config=target_config,
@@ -883,8 +1099,9 @@ class FocusNavigator:
             stop_event=stop_event,
         )
         self._active_autofocus_initialise_config = target_config
-        self._wait(self.config.post_autofocus_wait_s, stop_event=stop_event)
+        self._wait(self._workflow_config.post_autofocus_wait_s, stop_event=stop_event)
         self._record_current_z(fov_id=fov_id, is_locked=autofocus.is_locked())
+        return software_focus_status
 
     def _recover_with_previous_fov(
             self,
@@ -916,7 +1133,7 @@ class FocusNavigator:
             stop_event=stop_event,
         )
         self._active_autofocus_initialise_config = self._autofocus_initialise_config_for_fov(fov_id=previous_fov_id)
-        self._wait(self.config.post_autofocus_wait_s, stop_event=stop_event)
+        self._wait(self._workflow_config.post_autofocus_wait_s, stop_event=stop_event)
         self.stage.move(target=original_fov_id, block=True)
         self._current_fov_id = original_fov_id
         self._check_cancelled(stop_event)
@@ -1031,7 +1248,7 @@ class FocusNavigator:
         autofocus = self._require_autofocus()
         self._check_cancelled(stop_event)
         is_success = autofocus.initialise_autofocus(
-            config=self.config.autofocus_initialise_config if config is None else config,
+            config=self._workflow_config.autofocus_initialise_config if config is None else config,
             lock_after_initialise=False,
         )
         if not is_success:

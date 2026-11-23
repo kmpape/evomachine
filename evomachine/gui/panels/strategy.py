@@ -30,7 +30,7 @@ from evomachine.gui.panels.common import (
     format_micrometre_value,
     muted_label,
 )
-from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
+from evomachine.gui.panels.focus_settings import CRISP_DEFAULTS, FocusSettingsDialog
 from evomachine.gui.protocol import GuiCommandType
 
 
@@ -156,9 +156,9 @@ class FovSetupPanel(QGroupBox):
         self.controller.operation_status_received.connect(self.update_operation_status)
         self.controller.strategy_status_received.connect(self.update_strategy_status)
         self.controller.fovs_received.connect(self.update_initialised_fovs)
-        self.controller.software_focus_status_received.connect(
-            self.update_software_focus_config
-        )
+        self._focus_dirty = False
+        self.controller.focus_defaults_received.connect(self.update_focus_defaults)
+        self.controller.refresh_focus_defaults()
         self.controller.request_error.connect(self._show_request_error)
         self._update_focus_summary()
         self._sync_buttons()
@@ -166,6 +166,10 @@ class FovSetupPanel(QGroupBox):
     @staticmethod
     def _default_global_focus_config() -> dict:
         return {
+            "focus_mode": "STANDARD",
+            "autofocus": dict(CRISP_DEFAULTS),
+            "initialise_from_first_fov_z": False,
+            "reference_profile": {},
             "use_autofocus": True,
             "refocus": True,
             "refocus_using_software_focus": True,
@@ -178,7 +182,7 @@ class FovSetupPanel(QGroupBox):
             "software_focus": {
                 "rel_range": 50,
                 "step_size": 5,
-                "algorithm": "STEEL",
+                "algorithm": "SQUARED_GRAD_AVG",
             },
             "default_fov_config": {
                 "lock_autofocus_during_arrival_move": True,
@@ -284,18 +288,13 @@ class FovSetupPanel(QGroupBox):
         self.controller.refresh_software_focus()
         self._sync_buttons()
 
-    def update_software_focus_config(self, payload: dict) -> None:
-        config = payload.get("config") or {}
-        software = self.global_focus_config["software_focus"]
-        rel_range = config.get("rel_range")
-        step_size = config.get("step_size")
-        algorithm = config.get("algorithm")
-        if isinstance(rel_range, int) and not isinstance(rel_range, bool):
-            software["rel_range"] = rel_range
-        if isinstance(step_size, int) and not isinstance(step_size, bool):
-            software["step_size"] = step_size
-        if isinstance(algorithm, str) and algorithm in self.SOFTWARE_FOCUS_ALGORITHMS:
-            software["algorithm"] = algorithm
+    def update_focus_defaults(self, payload):
+        if self._focus_dirty:
+            return
+        self.global_focus_config["software_focus"] = payload.get("software_focus") or self.global_focus_config["software_focus"]
+        self.global_focus_config["reference_profile"] = payload.get("reference_profile") or {}
+        if payload.get("autofocus"):
+            self.global_focus_config["autofocus"] = payload["autofocus"]
         self._update_focus_summary()
 
     def _append_coordinate(self, coordinate: dict) -> None:
@@ -306,7 +305,10 @@ class FovSetupPanel(QGroupBox):
             *(format_micrometre_value(coordinate[axis]) for axis in ("x", "y", "z")),
         )
         for column, value in enumerate(values):
-            self.table.setItem(row, column, QTableWidgetItem(value))
+            item = QTableWidgetItem(value)
+            if column in (1, 2, 3):
+                item.setData(Qt.UserRole, float(coordinate[("x", "y", "z")[column - 1]]))
+            self.table.setItem(row, column, item)
         self.table.setItem(row, 4, QTableWidgetItem("Global"))
         if self._selected_row() is None:
             self.table.selectRow(row)
@@ -353,14 +355,19 @@ class FovSetupPanel(QGroupBox):
                 focus_config=self.global_focus_config,
             )
 
+    def _axis_value(self, row, column):
+        item = self.table.item(row, column)
+        value = item.data(Qt.UserRole)
+        return float(item.text()) if value is None else float(value)
+
     def _fov_payload(self) -> list[dict]:
         payload = []
         for row in range(self.table.rowCount()):
             item = dict(
                 fov_id=row,
-                x=float(self.table.item(row, 1).text()),
-                y=float(self.table.item(row, 2).text()),
-                z=float(self.table.item(row, 3).text()),
+                x=self._axis_value(row, 1),
+                y=self._axis_value(row, 2),
+                z=self._axis_value(row, 3),
                 channel_id=0,
             )
             if row in self.fov_focus_configs:
@@ -368,111 +375,30 @@ class FovSetupPanel(QGroupBox):
             payload.append(item)
         return payload
 
-    def _configure_global_focus(self) -> None:
-        config = self.global_focus_config
-        default = config["default_fov_config"]
-        software = config["software_focus"]
-        dialog = ConfigDialog(
-            title="Global Strategy Focus Settings",
-            fields=[
-                ConfigFieldSpec("Use CRISP autofocus", "use_autofocus", config["use_autofocus"], kind="bool"),
-                ConfigFieldSpec("Recover a lost CRISP lock", "refocus", config["refocus"], kind="bool"),
-                ConfigFieldSpec("Use software focus for recovery", "refocus_using_software_focus", config["refocus_using_software_focus"], kind="bool"),
-                ConfigFieldSpec("Try recovery on all FoVs", "refocus_on_all_fovs", config["refocus_on_all_fovs"], kind="bool"),
-                ConfigFieldSpec("Maximum recovery attempts", "max_refocus_trials", config["max_refocus_trials"], kind="int", minimum=1, maximum=100),
-                ConfigFieldSpec("Out-of-focus wait (s)", "out_of_focus_wait_s", config["out_of_focus_wait_s"], kind="float", minimum=0, maximum=120),
-                ConfigFieldSpec("Post-CRISP wait (s)", "post_autofocus_wait_s", config["post_autofocus_wait_s"], kind="float", minimum=0, maximum=120),
-                ConfigFieldSpec("Post-move focus wait (s)", "post_move_wait_s", config["post_move_wait_s"], kind="float", minimum=0, maximum=120),
-                ConfigFieldSpec("Toggle CRISP on channel change", "toggle_autofocus_on_channel_change", config["toggle_autofocus_on_channel_change"], kind="bool"),
-                ConfigFieldSpec("Keep CRISP locked on arrival move", "lock_autofocus_during_arrival_move", default["lock_autofocus_during_arrival_move"], kind="bool"),
-                ConfigFieldSpec("Lock CRISP at FoV", "lock_autofocus_on_fov", default["lock_autofocus_on_fov"], kind="bool"),
-                ConfigFieldSpec("Keep CRISP locked on departure", "lock_autofocus_during_departure_move", default["lock_autofocus_during_departure_move"], kind="bool"),
-                ConfigFieldSpec("Always software-focus on arrival", "run_software_focus_on_arrival", default["run_software_focus_on_arrival"], kind="bool"),
-                ConfigFieldSpec("Software-focus range", "rel_range", software["rel_range"], kind="int", minimum=1, maximum=1999),
-                ConfigFieldSpec("Software-focus step", "step_size", software["step_size"], kind="int", minimum=1, maximum=1999),
-                ConfigFieldSpec("Software-focus algorithm", "algorithm", software["algorithm"], kind="choice", choices=self.SOFTWARE_FOCUS_ALGORITHMS),
-            ],
-            parent=self,
-        )
+    def _configure_global_focus(self):
+        dialog = FocusSettingsDialog("Global Strategy Focus Settings", self.global_focus_config, parent=self)
         if dialog.exec_() != QDialog.Accepted:
             return
-        values = dialog.values()
-        for key in (
-            "use_autofocus", "refocus", "refocus_using_software_focus", "refocus_on_all_fovs",
-            "max_refocus_trials", "out_of_focus_wait_s", "post_autofocus_wait_s",
-            "post_move_wait_s", "toggle_autofocus_on_channel_change",
-        ):
-            config[key] = values[key]
-        for key in (
-            "lock_autofocus_during_arrival_move", "lock_autofocus_on_fov",
-            "lock_autofocus_during_departure_move", "run_software_focus_on_arrival",
-        ):
-            default[key] = values[key]
-        for key in ("rel_range", "step_size", "algorithm"):
-            software[key] = values[key]
+        self.global_focus_config = dialog.values()
+        self._focus_dirty = True
         self._mark_changed()
         self._update_focus_summary()
 
-    def _configure_selected_fov(self) -> None:
+    def _configure_selected_fov(self):
         row = self._selected_row()
         if row is None:
             return
-        existing = self.fov_focus_configs.get(row, {})
-        software = existing.get("software_focus") or self.global_focus_config["software_focus"]
-        autofocus = existing.get("autofocus") or {
-            "averaging": 5, "led_intensity": 70, "lock_range": 0.1,
-            "loop_gain": 10, "update_rate": 10, "objective_na": 0.9,
-            "min_snr": 2.0, "min_error": 100,
-        }
-        fields = [
-            ConfigFieldSpec("Override global settings", "override_enabled", bool(existing), kind="bool", emphasized=True),
-            ConfigFieldSpec("Keep CRISP locked on arrival move", "lock_autofocus_during_arrival_move", existing.get("lock_autofocus_during_arrival_move", True), kind="bool", enabled_when_key="override_enabled"),
-            ConfigFieldSpec("Lock CRISP at FoV", "lock_autofocus_on_fov", existing.get("lock_autofocus_on_fov", True), kind="bool", enabled_when_key="override_enabled"),
-            ConfigFieldSpec("Keep CRISP locked on departure", "lock_autofocus_during_departure_move", existing.get("lock_autofocus_during_departure_move", True), kind="bool", enabled_when_key="override_enabled"),
-            ConfigFieldSpec("Always software-focus on arrival", "run_software_focus_on_arrival", existing.get("run_software_focus_on_arrival", False), kind="bool", enabled_when_key="override_enabled"),
-            ConfigFieldSpec("Override software-focus scan", "software_override", "software_focus" in existing, kind="bool", enabled_when_key="override_enabled", emphasized=True),
-            ConfigFieldSpec("Software-focus range", "rel_range", software["rel_range"], kind="int", minimum=1, maximum=1999, enabled_when_key="software_override"),
-            ConfigFieldSpec("Software-focus step", "step_size", software["step_size"], kind="int", minimum=1, maximum=1999, enabled_when_key="software_override"),
-            ConfigFieldSpec("Software-focus algorithm", "algorithm", software["algorithm"], kind="choice", choices=self.SOFTWARE_FOCUS_ALGORITHMS, enabled_when_key="software_override"),
-            ConfigFieldSpec("Override CRISP calibration", "autofocus_override", "autofocus" in existing, kind="bool", enabled_when_key="override_enabled", emphasized=True),
-        ]
-        for label, key, kind, minimum, maximum in (
-            ("CRISP averaging", "averaging", "int", 0, 99),
-            ("CRISP LED intensity", "led_intensity", "int", 2, 100),
-            ("CRISP lock range", "lock_range", "float", 0.001, 0.999),
-            ("CRISP loop gain", "loop_gain", "int", 1, 100),
-            ("CRISP update rate", "update_rate", "int", 0, 1000),
-            ("Objective NA", "objective_na", "float", 0.01, 9.999),
-            ("Minimum SNR", "min_snr", "float", 0, 1000),
-            ("Minimum absolute calibration measurement", "min_error", "float", 0, 100000),
-        ):
-            fields.append(ConfigFieldSpec(label, key, autofocus[key], kind=kind, minimum=minimum, maximum=maximum, enabled_when_key="autofocus_override"))
-        dialog = ConfigDialog(title=f"FoV {row} Focus Settings", fields=fields, parent=self)
+        dialog = FocusSettingsDialog(f"FoV {row} Focus Settings", self.fov_focus_configs.get(row, {}),
+                                     global_config=self.global_focus_config, parent=self)
         if dialog.exec_() != QDialog.Accepted:
             return
         values = dialog.values()
-        if not values["override_enabled"]:
-            self.fov_focus_configs.pop(row, None)
+        if values:
+            self.fov_focus_configs[row] = values
         else:
-            override = {
-                key: values[key] for key in (
-                    "lock_autofocus_during_arrival_move", "lock_autofocus_on_fov",
-                    "lock_autofocus_during_departure_move", "run_software_focus_on_arrival",
-                )
-            }
-            if values["software_override"]:
-                override["software_focus"] = {
-                    key: values[key] for key in ("rel_range", "step_size", "algorithm")
-                }
-            if values["autofocus_override"]:
-                override["autofocus"] = {
-                    key: values[key] for key in (
-                        "averaging", "led_intensity", "lock_range", "loop_gain",
-                        "update_rate", "objective_na", "min_snr", "min_error",
-                    )
-                }
-            self.fov_focus_configs[row] = override
-        self.table.item(row, 4).setText("Custom" if row in self.fov_focus_configs else "Global")
+            self.fov_focus_configs.pop(row, None)
+        self.table.item(row, 4).setText("Custom" if values else "Global")
+        self._focus_dirty = True
         self._mark_changed()
         self._update_focus_summary()
 
@@ -501,6 +427,9 @@ class FovSetupPanel(QGroupBox):
 
     def _update_focus_summary(self) -> None:
         row = self._selected_row()
+        if self.global_focus_config.get("focus_mode") == "REFERENCE_PROFILE":
+            self.focus_summary_label.setText("Reference profile: sparse matching, denser recovery, optional local peak reset")
+            return
         mode = "on" if self.global_focus_config["use_autofocus"] else "off"
         fallback = "software-focus fallback on" if self.global_focus_config["refocus_using_software_focus"] else "software-focus fallback off"
         if row is None:

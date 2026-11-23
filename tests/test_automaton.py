@@ -14,7 +14,7 @@ from evomachine.delta_processing import ProjectionExposureError
 from evomachine.frame import Frame, FrameMetaData
 from evomachine.image_processing_config import ImageProcessorConfigFactory
 from evomachine.coordinates import Coordinate
-from evomachine.navigation import FocusNavigator, FovConfig
+from evomachine.navigation import FocusNavigatorConfig, FocusNavigator, FovConfig
 from evomachine.peripherals.dmd import (
     Dmd,
     DmdCalibrationConfig,
@@ -272,6 +272,11 @@ class FakeFocusNavigator(FocusNavigator):
         self.stage = stage if stage is not None else FakePeripheral()
         self.autofocus = autofocus
         self.software_focus = software_focus
+        self.reference_focus = None
+        self.config = FocusNavigatorConfig()
+        self._fov_states = {}
+        self._reference_by_fov = {}
+        self.review_reference = None
         self.moves: list[int] = []
         self.fovs: dict[int, Coordinate] = {}
         self.fov_order: list[int] = []
@@ -650,6 +655,7 @@ def test_command_failure_is_delivered_to_strategy_and_stops_the_batch() -> None:
     failed = factory.command_move(fov_id=1)
     skipped = factory.command_wait(duration=0)
     automaton.next_commands = [failed, skipped]
+    cursor = gui_log_handler.latest_sequence
 
     automaton._process()
 
@@ -660,6 +666,15 @@ def test_command_failure_is_delivered_to_strategy_and_stops_the_batch() -> None:
     assert supplied.original_error.args == ("stage blip",)
     assert skipped.command_execution_time is None
     assert automaton.runtime_failure_history == (supplied,)
+    errors = [
+        record
+        for record in gui_log_handler.records_after(cursor)
+        if record["level"] == "ERROR"
+    ]
+    assert len(errors) == 1
+    assert "MOVE" in errors[0]["message"]
+    assert "Traceback" in errors[0]["formatted"]
+    assert "RuntimeError: stage blip" in errors[0]["formatted"]
 
 
 def test_unexpected_callback_failure_aborts_and_is_recorded() -> None:
