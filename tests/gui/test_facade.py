@@ -15,7 +15,7 @@ from evomachine.bindings.software_focus.software_focus_algorithms import (
     create_software_focus_algorithm,
 )
 from evomachine.coordinates import Coordinate, CoordinateBounds
-from evomachine.filemanager import FileManager, FileNameConfig
+from evomachine.filemanager import FileManager, FileNameConfig, FileNameField
 from evomachine.frame import Frame
 from evomachine.image_processing_config import ImageProcessorConfigFactory
 from evomachine.peripherals.camera import CameraConfig, ImageConfigType, ObjectiveConfigType
@@ -919,7 +919,50 @@ def test_facade_selects_local_output_directory(tmp_path) -> None:
 
     assert response.ok
     assert response.payload["acquisition_directory"] == str(selected)
+    assert response.payload["filename_pattern"] == file_manager.config.filename_pattern
     assert file_manager.config.directory == selected
+
+
+def test_facade_updates_and_validates_output_filename_pattern(tmp_path) -> None:
+    """
+    Check the GUI facade applies valid patterns and preserves invalid updates.
+
+    Parameters
+    ----------
+    tmp_path
+        Pytest temporary directory used as the FileManager output folder.
+
+    Returns
+    -------
+    None
+    """
+    file_manager = FileManager(FileNameConfig(directory=tmp_path))
+    facade = AutomatonGuiFacade(FakeAutomaton(file_manager=file_manager))
+    original_pattern = file_manager.config.filename_pattern
+
+    response = facade.handle(
+        GuiRequest(
+            command=GuiCommandType.ACQUISITION_SET_FILENAME_PATTERN,
+            payload={"filename_pattern": "{channel}_{frame_id:04d}"},
+        )
+    )
+
+    assert response.ok
+    assert response.payload["filename_pattern"] == "{channel}_{frame_id:04d}"
+    assert response.payload["filename_pattern_fields"] == [field.value for field in FileNameField]
+    assert file_manager.config.filename_pattern == "{channel}_{frame_id:04d}"
+
+    file_manager.update_config(filename_pattern=original_pattern)
+    invalid = facade.handle(
+        GuiRequest(
+            command=GuiCommandType.ACQUISITION_SET_FILENAME_PATTERN,
+            payload={"filename_pattern": "{experiment}"},
+        )
+    )
+
+    assert not invalid.ok
+    assert "unsupported fields" in invalid.error
+    assert file_manager.config.filename_pattern == original_pattern
 
 
 def test_facade_browses_images_without_changing_output_directory(tmp_path) -> None:
@@ -1581,9 +1624,15 @@ def test_facade_rejects_mutating_requests_during_strategy() -> None:
     facade = AutomatonGuiFacade(automaton)
 
     rejected = facade.handle(GuiRequest(command=GuiCommandType.LED_SET, payload={"led": "LED_450_NM", "brightness": 22}))
+    pattern_rejected = facade.handle(GuiRequest(
+        command=GuiCommandType.ACQUISITION_SET_FILENAME_PATTERN,
+        payload={"filename_pattern": "{frame_id}"},
+    ))
     allowed = facade.handle(GuiRequest(command=GuiCommandType.LED_DISABLE_ALL))
 
     assert not rejected.ok
+    assert not pattern_rejected.ok
+    assert "not allowed while a strategy is running" in pattern_rejected.error
     assert allowed.ok
 
 

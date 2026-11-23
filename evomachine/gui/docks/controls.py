@@ -20,7 +20,7 @@ from evomachine.gui.panels.acquisition import (
     AcquisitionStatusPanel,
     FrameAcquisitionSettingsPanel,
     ManualAcquisitionPanel,
-    OutputDirectoryPanel,
+    OutputConfigurationPanel,
     SavedImageLoaderPanel,
     ZStackSettingsPanel,
 )
@@ -155,7 +155,7 @@ class EvoMachineControlsDock(QWidget):
         layout = QVBoxLayout()
         settings_panel = FrameAcquisitionSettingsPanel()
         layout.addWidget(settings_panel)
-        layout.addWidget(OutputDirectoryPanel(controller=self.controller))
+        layout.addWidget(OutputConfigurationPanel(controller=self.controller))
         layout.addWidget(ManualAcquisitionPanel(
             controller=self.controller,
             settings_provider=settings_panel.payload,
@@ -177,7 +177,7 @@ class EvoMachineControlsDock(QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         for panel in (
             FovSetupPanel(controller=self.controller),
-            OutputDirectoryPanel(controller=self.controller),
+            OutputConfigurationPanel(controller=self.controller),
             StrategySetupPanel(controller=self.controller),
         ):
             panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
