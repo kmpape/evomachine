@@ -1734,3 +1734,47 @@ def test_facade_rejects_software_focus_request_before_devices_initialised() -> N
 
     assert not response.ok
     assert "Initialise devices before using software focus controls" in response.error
+
+
+def test_gui_z_stack_with_save_writes_one_file_on_virtual_microscope(tmp_path) -> None:
+    """GUI 'Acquire Z Stack' with Save on writes one stack file (issue #96)."""
+    import re
+
+    from evomachine.gui.runtime import build_virtual_automaton
+
+    automaton = build_virtual_automaton()
+    facade = AutomatonGuiFacade(automaton)
+    assert facade.handle(GuiRequest(command=GuiCommandType.INITIALISE_DEVICES)).ok
+    assert facade.handle(GuiRequest(
+        command=GuiCommandType.ACQUISITION_SET_DIRECTORY, payload={"directory": str(tmp_path)},
+    )).ok
+
+    response = facade.handle(GuiRequest(
+        command=GuiCommandType.ACQUISITION_TAKE_Z_STACK,
+        payload={
+            "start_z": -1, "end_z": 1, "step_z": 0.5,
+            "leds": {"LED_450_NM": 10},
+            "settings": {"save": True, "illuminate_dmd": False},
+            "image_transport": IMAGE_TRANSPORT_RAW,
+        },
+    ))
+    assert response.ok, response
+    operation = wait_for_operation(facade, "z_stack_acquisition", timeout=30.0)
+    assert operation["state"] == "completed", operation
+
+    (path,) = tmp_path.glob("*.tiff")
+    assert re.fullmatch(r"000001_\w+_FOV-?\d+_Z-1,0.5,1_\d{6}_\d{6}\.tiff", path.name), path.name
+    payload = operation["result"]["frame"]
+    assert payload["planes"] == 5
+    assert set(payload["saved_paths"]) == {str(path)}
+    image, metadata = FileManager.load_frame(path)
+    assert image.shape[0] == 5 and len(metadata["FrameMetaData"]) == 5
+
+    listed = facade.handle(GuiRequest(command=GuiCommandType.ACQUISITION_LIST_FILES))
+    assert [item["label"] for item in listed.payload["acquisition_files"]] == [path.name]
+    loaded = facade.handle(GuiRequest(
+        command=GuiCommandType.ACQUISITION_LOAD_FRAME,
+        payload={"filename": str(path), "image_transport": IMAGE_TRANSPORT_RAW},
+    ))
+    assert loaded.ok and loaded.payload["frame"]["kind"] == "loaded_z_stack"
+    assert loaded.payload["frame"]["planes"] == 5

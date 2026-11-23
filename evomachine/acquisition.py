@@ -239,7 +239,9 @@ class FrameAcquisitionManager:
         Returns
         -------
         Frame
-            Acquired Z-stack as one leading-axis frame stack.
+            Acquired Z-stack as one leading-axis frame stack. With settings.save, each
+            channel's stack is saved as ONE multi-page TIFF via FileManager.save_z_stack,
+            and every plane's saved_paths entry is the path of its stack file.
         """
         if self.stage is None:
             raise RuntimeError("FrameAcquisitionManager.take_z_stack: stage is required for Z-stack acquisition.")
@@ -247,12 +249,25 @@ class FrameAcquisitionManager:
         self._validate_frame_metadata_fov(frame_metadata=metadata_items)
         z_coordinates = self._validate_z_coordinates(z_coordinates=z_coordinates)
         settings = self._normalise_settings(settings=settings)
+        if settings.save and self.file_manager is None:
+            raise RuntimeError("FrameAcquisitionManager: saving requested but no file manager was provided.")
+        # Planes are saved together as stack files after acquisition, not one file each.
+        plane_settings = settings.updated(save=False) if settings.save else settings
         previous_coordinate = self.stage.get_coordinates(query_hardware=True)
         if previous_coordinate.z is None:
             raise RuntimeError("FrameAcquisitionManager.take_z_stack: current stage coordinate does not contain Z.")
         captured_metadata: list[FrameMetaData] = []
         frames: list[np.ndarray] = []
-        saved_paths: list[Path | None] = []
+
+        def save_stacks() -> list[Path | None]:
+            return self._save_z_stacks(
+                frames=frames,
+                frame_metadata=captured_metadata,
+                channels=len(metadata_items),
+                centre_z=previous_coordinate.z,
+                expected_planes=len(z_coordinates),
+            )
+
         try:
             for z_coordinate in z_coordinates:
                 if stop_event is not None and stop_event.is_set():
@@ -266,23 +281,61 @@ class FrameAcquisitionManager:
                     replace(metadata, coordinate=stack_coordinate.copy())
                     for metadata in metadata_items
                 ]
-                frame = self.take_frame(frame_metadata=stack_metadata, settings=settings)
+                frame = self.take_frame(frame_metadata=stack_metadata, settings=plane_settings)
                 captured_metadata.extend(frame.frame_metadata)
                 frames.extend(frame.array[index] for index in range(frame.array.shape[0]))
-                saved_paths.extend(frame.saved_paths)
                 callback = step_callback or self.step_callback
                 if callback is not None:
                     callback()
+        except BaseException:
+            # Keep the planes already captured, as per-plane saving used to.
+            if settings.save and frames:
+                try:
+                    save_stacks()
+                except Exception:
+                    logger.exception("FrameAcquisitionManager.take_z_stack: failed to save the partial z-stack.")
+            raise
         finally:
             if stop_event is None or not stop_event.is_set():
                 self.stage.move(target=Coordinate(None, None, previous_coordinate.z), block=True)
         if not frames:
             raise RuntimeError("FrameAcquisitionManager.take_z_stack: no frames were acquired.")
+        saved_paths = save_stacks() if settings.save else [None] * len(frames)
         return Frame(
             frame_metadata=captured_metadata,
             array=np.stack(frames, axis=0),
             saved_paths=saved_paths,
         )
+
+    def _save_z_stacks(
+            self,
+            frames: list[np.ndarray],
+            frame_metadata: list[FrameMetaData],
+            channels: int,
+            centre_z: float,
+            expected_planes: int,
+    ) -> list[Path | None]:
+        """
+        Save one stack file per channel and return the path for every plane.
+
+        Planes are interleaved by channel (all channels at the first Z, then the next Z),
+        so channel ``c`` owns planes ``c, c + channels, ...``.
+        """
+        saved_paths: list[Path | None] = [None] * len(frames)
+        for channel in range(channels):
+            indices = list(range(channel, len(frames), channels))
+            if not indices:
+                continue
+            path = self.file_manager.save_z_stack(
+                stack=np.stack([frames[index] for index in indices], axis=0),
+                frame_metadata=[frame_metadata[index] for index in indices],
+                centre_z=centre_z,
+                expected_planes=expected_planes,
+            )
+            logger.debug("FrameAcquisitionManager: saved z-stack to %s.", path)
+            for index in indices:
+                saved_paths[index] = path
+        return saved_paths
 
     def stop(self) -> None:
         """

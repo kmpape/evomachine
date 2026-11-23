@@ -1,8 +1,9 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import importlib
 import json
 import logging
 import logging.handlers
+import re
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -468,7 +469,8 @@ def test_default_and_configured_filename_generation(tmp_path) -> None:
 
     filename = manager.get_filename(frame_metadata=frame_metadata)
     assert filename.parent == tmp_path
-    assert filename.name.startswith("LED450NM_FOV3_X10_Y20_Z30_F1_")
+    # Coordinates are in the metadata only; the next free ID leads the name.
+    assert re.fullmatch(r"000001_450NM_FOV3_\d{6}_\d{6}\.tiff", filename.name)
     assert filename.suffix == ".tiff"
 
     manager.update_config(
@@ -519,7 +521,7 @@ def test_missing_filename_values_use_stable_placeholders(tmp_path) -> None:
 
     filename = manager.get_filename(frame_metadata=frame_metadata)
 
-    assert filename.name.startswith("NO_LED_FOV-1_X_Y_Zauto_FNone_")
+    assert re.fullmatch(r"000001_NOLED_FOV-1_\d{6}_\d{6}\.tiff", filename.name)
 
 
 def test_save_tiff_frame_writes_frame_metadata(tmp_path) -> None:
@@ -691,3 +693,134 @@ def test_list_filenames_rejects_invalid_inputs(tmp_path) -> None:
         FileManager.list_filenames(directory=tmp_path, filename_pattern=1)
     with pytest.raises(ValueError):
         FileManager.list_filenames(directory=tmp_path, filename_pattern="/absolute/*.tiff")
+
+
+# ------------------------------------------------------------- file IDs and z-stacks (#96)
+def _stack_planes(offsets=(0, 1, 2, -1, -2), centre: float = 7.0, **updates) -> list[FrameMetaData]:
+    """Per-plane metadata in Z_STACK acquisition order (centre, +, -), 0.5 s apart."""
+    start = datetime(2026, 11, 8, 15, 57, 54, 123456, tzinfo=ZoneInfo("UTC"))
+    return [
+        _frame_metadata(
+            coordinate=Coordinate(1.5, 2.5, centre + offset),
+            execution_time=start + timedelta(seconds=0.5 * index),
+            **updates,
+        )
+        for index, offset in enumerate(offsets)
+    ]
+
+
+def _plane_images(planes: list[FrameMetaData]) -> np.ndarray:
+    # Each plane is filled with its own Z so the file order can be checked from the pixels.
+    return np.stack([np.full((4, 5), int(round(m.coordinate.z * 10)), dtype=np.uint16) for m in planes])
+
+
+def test_saved_files_get_unique_increasing_ids_across_restarts(tmp_path) -> None:
+    """Check IDs increase per save, survive a new FileManager, and are not reused after deletion."""
+    frame = np.zeros((4, 4), dtype=np.uint16)
+    (tmp_path / "20261108_overview.tiff").write_bytes(b"")  # not an ID-prefixed file
+    manager = FileManager(FileNameConfig(directory=tmp_path))
+    preview = manager.get_filename(frame_metadata=_frame_metadata())
+    first = manager.save_frame(frame=frame, frame_metadata=_frame_metadata())
+    second = manager.save_frame(frame=frame, frame_metadata=_frame_metadata())
+    assert preview.name[:6] == first.name[:6] == "000001"  # get_filename does not reserve
+    assert second.name.startswith("000002_450NM_FOV3_")
+    second.unlink()
+
+    restarted = FileManager(FileNameConfig(directory=tmp_path))
+    third = restarted.save_frame(frame=frame, frame_metadata=_frame_metadata())
+    assert third.name.startswith("000003_")
+    assert (tmp_path / FileManager.FILE_ID_COUNTER_FILENAME).read_text().strip() == "3"
+
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "000041_450NM_FOV0_261108_155754.tiff").write_bytes(b"")  # copied in, no counter
+    restarted.set_output_directory(other)
+    assert restarted.save_frame(frame=frame, frame_metadata=_frame_metadata()).name.startswith("000042_")
+
+
+def test_custom_pattern_without_file_id_does_not_create_counter(tmp_path) -> None:
+    manager = FileManager(FileNameConfig(directory=tmp_path, filename_pattern="{channel}_F{frame_id}"))
+    path = manager.save_frame(frame=np.zeros((2, 2), dtype=np.uint16), frame_metadata=_frame_metadata())
+    assert path.name == "LED450NM_F7.tiff"
+    assert not (tmp_path / FileManager.FILE_ID_COUNTER_FILENAME).exists()
+
+
+def test_light_label_appends_nm_and_joins_leds(tmp_path) -> None:
+    manager = FileManager(FileNameConfig(directory=tmp_path, filename_pattern="{light}"))
+    both = _frame_metadata(leds={LEDType.LED_450_NM: 25, LEDType.LED_565_NM: 30})
+    assert manager.get_filename(frame_metadata=both).name == "450NM+565NM.tiff"
+    tiger = _frame_metadata(leds={LEDType.LED_OVERHEAD_TIGER: 5})
+    assert manager.get_filename(frame_metadata=tiger).name == "OVERHEADTIGER.tiff"
+
+
+def test_save_z_stack_writes_one_sorted_file_with_metadata(tmp_path) -> None:
+    """Check a z-stack becomes one Z-sorted multi-page TIFF named ID_light_FOV_Zmin,step,max_datetime."""
+    manager = FileManager(FileNameConfig(directory=tmp_path))
+    planes = _stack_planes()
+
+    path = manager.save_z_stack(stack=_plane_images(planes), frame_metadata=planes, centre_z=7.0,
+                                expected_planes=5)
+
+    # Europe/London is UTC in November, so 15:57:54 UTC stays 15:57:54.
+    assert path.name == "000001_450NM_FOV3_Z-2,1,2_261108_155754.tiff"
+    assert [p.name for p in tmp_path.iterdir() if p.suffix == ".tiff"] == [path.name]
+    image, metadata = FileManager.load_frame(path)
+    assert image.shape == (5, 4, 5)
+    assert [int(plane[0, 0]) for plane in image] == [50, 60, 70, 80, 90]  # sorted by Z
+    stack = metadata["ZStack"]
+    assert stack["z_positions"] == [5.0, 6.0, 7.0, 8.0, 9.0]
+    assert stack["z_offsets"] == [-2.0, -1.0, 0.0, 1.0, 2.0]
+    assert stack["z_step"] == 1.0 and stack["complete"] is True
+    assert stack["acquisition_order"] == [2, 3, 4, 1, 0]
+    assert [m["coordinate"]["Z"] for m in metadata["FrameMetaData"]] == [5.0, 6.0, 7.0, 8.0, 9.0]
+    assert metadata["FrameMetaData"][0]["coordinate"]["X"] == 1.5  # coordinates kept in metadata
+    with tifffile.TiffFile(path) as tiff:
+        assert len(tiff.pages) == 5
+        assert sum("ImageDescription" in page.tags for page in tiff.pages) == 1
+
+
+def test_save_z_stack_small_stacks_load_as_planes_and_ids_are_shared(tmp_path) -> None:
+    """Check 3-plane stacks are not read as RGB, and frames and stacks share one ID sequence."""
+    manager = FileManager(FileNameConfig(directory=tmp_path))
+    frame_path = manager.save_frame(frame=np.zeros((4, 5), dtype=np.uint16), frame_metadata=_frame_metadata())
+    planes = _stack_planes(offsets=(0, 0.25, -0.25))
+    path = manager.save_z_stack(stack=_plane_images(planes), frame_metadata=planes, centre_z=7.0)
+
+    assert frame_path.name.startswith("000001_") and path.name.startswith("000002_")
+    assert "_Z-0.25,0.25,0.25_" in path.name
+    assert FileManager.load_image(path).shape == (3, 4, 5)
+
+
+def test_save_z_stack_absolute_range_and_incomplete_stack(tmp_path) -> None:
+    manager = FileManager(FileNameConfig(directory=tmp_path))
+    planes = _stack_planes(offsets=(0, 0.1, -0.1), centre=0.6799999999999999)
+
+    path = manager.save_z_stack(stack=_plane_images(planes), frame_metadata=planes, expected_planes=21)
+
+    assert "_Z0.58,0.1,0.78_" in path.name  # absolute Z without float noise
+    metadata = FileManager.load_tiff_metadata(path)["ZStack"]
+    assert metadata["complete"] is False and metadata["n_planes"] == 3
+    manager.update_config(zstack_filename_pattern="{file_id}_Z{z_range_abs}")
+    assert manager.save_z_stack(stack=_plane_images(planes), frame_metadata=planes,
+                                centre_z=0.68).name == "000002_Z0.58,0.1,0.78.tiff"
+
+
+def test_save_z_stack_rejects_inconsistent_input_before_writing(tmp_path) -> None:
+    manager = FileManager(FileNameConfig(directory=tmp_path))
+    planes = _stack_planes()
+    with pytest.raises(ValueError):
+        manager.save_z_stack(stack=_plane_images(planes)[:4], frame_metadata=planes)
+    with pytest.raises(ValueError):
+        manager.save_z_stack(stack=_plane_images(planes), frame_metadata=[*planes[:4], _frame_metadata(fov_id=9)])
+    with pytest.raises(ValueError):
+        manager.save_z_stack(stack=_plane_images(planes)[0], frame_metadata=planes)
+    assert not list(tmp_path.iterdir())
+
+
+def test_file_name_config_validates_new_fields(tmp_path) -> None:
+    with pytest.raises(ValueError):
+        FileNameConfig(directory=tmp_path, zstack_filename_pattern="")
+    with pytest.raises(ValueError):
+        FileNameConfig(directory=tmp_path, file_id_digits=0)
+    with pytest.raises(TypeError):
+        FileNameConfig(directory=tmp_path, file_id_digits=True)

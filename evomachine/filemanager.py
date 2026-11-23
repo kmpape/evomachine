@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import re
+import string
+import threading
 from typing import Any
 
 import numpy as np
@@ -25,7 +29,12 @@ class FileNameConfig(EvoConfig):
     """Configuration object for FileManager output paths and filename patterns."""
 
     directory: Path
-    filename_pattern: str = "{channel}_FOV{fov_id}_X{x}_Y{y}_Z{z}_F{filter_wheel}_{timestamp}"
+    filename_pattern: str = "{file_id}_{light}_FOV{fov_id}_{datetime}"
+    "Pattern for single frames, e.g. 000124_450NM_FOV3_261108_155754.tiff."
+    zstack_filename_pattern: str = "{file_id}_{light}_FOV{fov_id}_Z{z_range}_{datetime}"
+    "Pattern for z-stack files, e.g. 000123_450NM_FOV3_Z-10,1,10_261108_155754.tiff."
+    file_id_digits: int = 6
+    "Zero-padded width of the {file_id} filename field."
     create_directory: bool = True
     time_config: TimeConfig = Field(default_factory=TimeConfig)
 
@@ -36,11 +45,20 @@ class FileNameConfig(EvoConfig):
             raise TypeError(f"FileNameConfig: directory must be Path or str, received {type(value)}.")
         return value
 
-    @field_validator("filename_pattern", mode="before")
+    @field_validator("filename_pattern", "zstack_filename_pattern", mode="before")
     @classmethod
-    def _validate_filename_pattern_type(cls, value: object) -> object:
+    def _validate_filename_pattern_type(cls, value: object, info) -> object:
         if not isinstance(value, str):
-            raise TypeError(f"FileNameConfig: filename_pattern must be str, received {type(value)}.")
+            raise TypeError(f"FileNameConfig: {info.field_name} must be str, received {type(value)}.")
+        return value
+
+    @field_validator("file_id_digits", mode="before")
+    @classmethod
+    def _validate_file_id_digits(cls, value: object) -> object:
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise TypeError(f"FileNameConfig: file_id_digits must be int, received {type(value)}.")
+        if not 1 <= value <= 12:
+            raise ValueError(f"FileNameConfig: file_id_digits must be in [1, 12], received {value}.")
         return value
 
     @field_validator("create_directory", mode="before")
@@ -59,6 +77,8 @@ class FileNameConfig(EvoConfig):
             raise TypeError(f"FileNameConfig: filename_pattern must be str, received {type(self.filename_pattern)}.")
         if self.filename_pattern == "":
             raise ValueError("FileNameConfig: filename_pattern must not be empty.")
+        if self.zstack_filename_pattern == "":
+            raise ValueError("FileNameConfig: zstack_filename_pattern must not be empty.")
         if not isinstance(self.create_directory, bool):
             raise TypeError(f"FileNameConfig: create_directory must be bool, received {type(self.create_directory)}.")
         if not isinstance(self.time_config, TimeConfig):
@@ -70,6 +90,9 @@ class FileManager:
 
     TIFF_EXTENSION = "tiff"
     NON_TIFF_IMAGE_SUFFIXES = {".tif", ".png", ".jpg", ".jpeg", ".bmp"}
+    FILE_ID_COUNTER_FILENAME = ".evomachine_file_id"
+    "Hidden file in each output directory holding the last reserved {file_id}."
+
     def __init__(self, config: FileNameConfig):
         """
         Initialise a file manager from a file name configuration.
@@ -86,6 +109,8 @@ class FileManager:
         if not isinstance(config, FileNameConfig):
             raise TypeError(f"FileManager.__init__: config must be FileNameConfig, received {type(config)}.")
         self.config: FileNameConfig = config
+        self._file_id_lock = threading.Lock()
+        self._last_file_ids: dict[Path, int] = {}
         self._ensure_directory()
 
     def set_output_directory(self, directory: Path | str) -> Path:
@@ -148,9 +173,63 @@ class FileManager:
         if not self.config.directory.is_dir():
             raise NotADirectoryError(f"FileManager: output path is not a directory: {self.config.directory}.")
 
+    def next_file_id(self) -> int:
+        """
+        Reserve and return the next {file_id} for the current output directory.
+
+        IDs are one more than the highest ID found in the directory's counter file or in
+        existing ID-prefixed TIFF filenames. The counter file is updated before returning,
+        so IDs keep increasing across restarts and are not reused if files are deleted.
+
+        Returns
+        -------
+        int
+            Reserved file ID, starting at 1.
+        """
+        with self._file_id_lock:
+            directory = self.config.directory
+            file_id = self._current_max_file_id(directory=directory) + 1
+            counter_path = directory / self.FILE_ID_COUNTER_FILENAME
+            temporary = counter_path.with_name(f"{counter_path.name}.tmp")
+            temporary.write_text(f"{file_id}\n")
+            os.replace(temporary, counter_path)
+            self._last_file_ids[directory] = file_id
+            return file_id
+
+    def _current_max_file_id(self, directory: Path) -> int:
+        """Return the highest file ID already used in ``directory``, or 0."""
+        highest = self._last_file_ids.get(directory)
+        if highest is None:
+            # First use of this directory: scan once for files written before a restart.
+            highest = 0
+            id_pattern = re.compile(rf"^(\d{{{self.config.file_id_digits}}})_.*\.tiff?$", re.IGNORECASE)
+            if directory.is_dir():
+                for entry in directory.iterdir():
+                    match = id_pattern.match(entry.name)
+                    if match:
+                        highest = max(highest, int(match.group(1)))
+            self._last_file_ids[directory] = highest
+        counter_path = directory / self.FILE_ID_COUNTER_FILENAME
+        try:
+            highest = max(highest, int(counter_path.read_text().strip() or 0))
+        except FileNotFoundError:
+            pass
+        except ValueError as error:
+            raise RuntimeError(f"FileManager: file ID counter {counter_path} is corrupt.") from error
+        return highest
+
+    @staticmethod
+    def _pattern_uses_field(pattern: str, field_name: str) -> bool:
+        """Return whether a str.format pattern references ``field_name``."""
+        return any(
+            name is not None and re.split(r"[.\[]", name, maxsplit=1)[0] == field_name
+            for _, name, _, _ in string.Formatter().parse(pattern)
+        )
+
     def get_filename(
             self,
             frame_metadata: FrameMetaData,
+            file_id: int | None = None,
     ) -> Path:
         """
         Return an output path generated from the active filename pattern.
@@ -159,6 +238,9 @@ class FileManager:
         ----------
         frame_metadata
             FrameMetaData supplying default filename variables.
+        file_id
+            ID for the {file_id} field. When None, the next free ID is shown without
+            reserving it; save_frame() reserves one.
 
         Returns
         -------
@@ -169,12 +251,22 @@ class FileManager:
             raise TypeError(
                 f"FileManager.get_filename: frame_metadata must be FrameMetaData, received {type(frame_metadata)}."
             )
-        format_values = self._format_values(frame_metadata=frame_metadata)
-        filename = self.config.filename_pattern.format(**format_values)
-        filename_path = Path(filename)
+        return self._render_filename(
+            pattern=self.config.filename_pattern,
+            format_values=self._format_values(frame_metadata=frame_metadata, file_id=file_id),
+            action="FileManager.get_filename",
+        )
+
+    def _render_filename(self, pattern: str, format_values: dict[str, Any], action: str) -> Path:
+        """Format ``pattern`` and return a TIFF path under the output directory."""
+        filename_path = Path(pattern.format(**format_values))
         if filename_path.is_absolute():
-            raise ValueError("FileManager.get_filename: filename_pattern must produce a relative path.")
+            raise ValueError(f"{action}: filename pattern must produce a relative path.")
         return self.config.directory / self._with_tiff_suffix(path=filename_path)
+
+    def _reserve_file_id(self, pattern: str) -> int | None:
+        """Reserve a file ID only when the pattern actually contains {file_id}."""
+        return self.next_file_id() if self._pattern_uses_field(pattern, "file_id") else None
 
     def save_frame(
             self,
@@ -202,6 +294,122 @@ class FileManager:
             raise TypeError(
                 f"FileManager.save_frame: frame_metadata must be FrameMetaData, received {type(frame_metadata)}."
             )
+        self._normalise_execution_time(frame_metadata=frame_metadata)
+        # Serialise before reserving an ID so invalid metadata leaves the directory untouched.
+        metadata = {"FrameMetaData": frame_metadata.to_metadata_dict()}
+        file_id = self._reserve_file_id(pattern=self.config.filename_pattern)
+        filename = self.get_filename(frame_metadata=frame_metadata, file_id=file_id)
+        filename.parent.mkdir(parents=True, exist_ok=True)
+        tifffile.imwrite(filename, frame, description=json.dumps(metadata))
+        return filename
+
+    def save_z_stack(
+            self,
+            stack: np.ndarray,
+            frame_metadata: list[FrameMetaData],
+            centre_z: float | None = None,
+            expected_planes: int | None = None,
+    ) -> Path:
+        """
+        Save a z-stack as one multi-page TIFF and return the output path.
+
+        Planes are written sorted by Z (bottom to top). The ImageDescription holds
+        {"FrameMetaData": [one dict per plane, in file order], "ZStack": {...}}, where
+        "ZStack" records the Z positions, offsets from ``centre_z``, step, acquisition
+        order and completeness. Load the file with load_frame() or tifffile.imread().
+
+        Parameters
+        ----------
+        stack
+            Planes with shape (n_planes, height, width), in acquisition order.
+        frame_metadata
+            One FrameMetaData per plane, aligned with ``stack``.
+        centre_z
+            Z the stack was taken around. The {z_range} filename field is relative to it
+            when given, and absolute otherwise.
+        expected_planes
+            Number of planes requested, used to mark stopped stacks as incomplete.
+
+        Returns
+        -------
+        Path
+            Path of the saved stack file.
+        """
+        if not isinstance(stack, np.ndarray) or stack.ndim != 3:
+            raise ValueError(
+                "FileManager.save_z_stack: stack must be a 3D np.ndarray, "
+                f"received {getattr(stack, 'shape', type(stack))}."
+            )
+        if (not isinstance(frame_metadata, list)
+                or not all(isinstance(metadata, FrameMetaData) for metadata in frame_metadata)):
+            raise TypeError("FileManager.save_z_stack: frame_metadata must be list[FrameMetaData].")
+        if len(frame_metadata) != stack.shape[0]:
+            raise ValueError(
+                f"FileManager.save_z_stack: {len(frame_metadata)} metadata entries for {stack.shape[0]} planes."
+            )
+        if len({metadata.fov_id for metadata in frame_metadata}) != 1:
+            raise ValueError("FileManager.save_z_stack: all planes must share one fov_id.")
+        for metadata in frame_metadata:
+            self._normalise_execution_time(frame_metadata=metadata)
+
+        z_values = [None if m.coordinate is None else m.coordinate.z for m in frame_metadata]
+        has_z = all(value is not None for value in z_values)
+        order = sorted(range(len(z_values)), key=lambda index: z_values[index]) if has_z else list(range(len(z_values)))
+        z_positions = [float(z_values[index]) for index in order] if has_z else None
+        z_offsets = None if z_positions is None or centre_z is None else [z - centre_z for z in z_positions]
+        z_step = None
+        if z_positions is not None and len(z_positions) > 1:
+            z_step = z_positions[1] - z_positions[0]
+        sorted_metadata = [frame_metadata[index] for index in order]
+        times = [metadata.execution_time or metadata.creation_time for metadata in frame_metadata]
+        description = json.dumps({
+            "FrameMetaData": [metadata.to_metadata_dict() for metadata in sorted_metadata],
+            "ZStack": {
+                "axes": "ZYX",
+                "n_planes": len(order),
+                "expected_planes": expected_planes,
+                "complete": expected_planes is None or expected_planes == len(order),
+                "z_positions": z_positions,
+                "z_centre": None if centre_z is None else float(centre_z),
+                "z_offsets": z_offsets,
+                "z_step": z_step,
+                # acquisition_order[k] is the file position of the k-th acquired plane.
+                "acquisition_order": [order.index(index) for index in range(len(order))],
+                "start_time": min(times).isoformat(),
+                "end_time": max(times).isoformat(),
+            },
+        })
+
+        pattern = self.config.zstack_filename_pattern
+        file_id = self._reserve_file_id(pattern=pattern)
+        # Name the file after the first acquired plane (stack start time).
+        format_values = self._format_values(frame_metadata=frame_metadata[0], file_id=file_id)
+        format_values.update(self._z_range_values(
+            z_positions=z_positions, z_step=z_step, centre_z=centre_z,
+        ))
+        filename = self._render_filename(
+            pattern=pattern, format_values=format_values, action="FileManager.save_z_stack",
+        )
+        filename.parent.mkdir(parents=True, exist_ok=True)
+        # Write under a hidden temporary name, then rename, so a crash never leaves a
+        # truncated stack under the final name.
+        temporary = filename.with_name(f".{filename.name}.partial")
+        try:
+            tifffile.imwrite(
+                temporary,
+                stack[order],
+                photometric="minisblack",  # greyscale planes, never RGB
+                description=description,
+                metadata=None,  # keep a single ImageDescription
+            )
+            os.replace(temporary, filename)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+        return filename
+
+    def _normalise_execution_time(self, frame_metadata: FrameMetaData) -> None:
+        """Fill a missing execution time and convert it to the configured timezone."""
         if frame_metadata.execution_time is None:
             frame_metadata.execution_time = now(config=self.config.time_config)
         else:
@@ -209,21 +417,51 @@ class FileManager:
                 value=frame_metadata.execution_time,
                 config=self.config.time_config,
             )
-        filename = self.get_filename(frame_metadata=frame_metadata)
-        filename.parent.mkdir(parents=True, exist_ok=True)
-        metadata = {"FrameMetaData": frame_metadata.to_metadata_dict()}
-        tifffile.imwrite(filename, frame, description=json.dumps(metadata))
-        return filename
+
+    @classmethod
+    def _z_range_values(
+            cls,
+            z_positions: list[float] | None,
+            z_step: float | None,
+            centre_z: float | None,
+    ) -> dict[str, str]:
+        """Return {z_range} (relative to centre_z when known) and {z_range_abs} as 'min,step,max'."""
+        if not z_positions:
+            return {"z_range": "auto", "z_range_abs": "auto"}
+
+        def render(reference: float, decimals: int) -> str:
+            low = cls._format_number(z_positions[0] - reference, decimals)
+            if len(z_positions) == 1:
+                return low
+            high = cls._format_number(z_positions[-1] - reference, decimals)
+            return f"{low},{cls._format_number(z_step, 3)},{high}"
+
+        absolute = render(0.0, 2)
+        return {
+            "z_range": absolute if centre_z is None else render(float(centre_z), 3),
+            "z_range_abs": absolute,
+        }
+
+    @staticmethod
+    def _format_number(value: float, decimals: int) -> str:
+        """Round for filenames without float noise, trailing zeros or '-0'."""
+        rounded = round(float(value), decimals)
+        if rounded == 0:
+            rounded = 0.0
+        return f"{rounded:.{decimals}f}".rstrip("0").rstrip(".")
 
     @staticmethod
     def load_image(path: Path | str) -> np.ndarray:
         """
         Load an image from a path.
 
+        TIFF files are read with tifffile, so a multi-page z-stack is always returned as
+        (n_planes, height, width); other formats use skimage.io.imread.
+
         Parameters
         ----------
         path
-            Path to an image file supported by skimage.io.imread.
+            Path to an image file.
 
         Returns
         -------
@@ -231,6 +469,9 @@ class FileManager:
             Loaded image data.
         """
         image_path = FileManager._validate_file_path(path=path, action="FileManager.load_image")
+        if image_path.suffix.lower() in {".tif", ".tiff"}:
+            # skimage would return 3- and 4-plane stacks as (H, W, N) "colour" images.
+            return tifffile.imread(image_path)
         return skimage.io.imread(image_path)
 
     @classmethod
@@ -358,7 +599,7 @@ class FileManager:
             return path.with_suffix(f".{cls.TIFF_EXTENSION}")
         return path.with_name(f"{path.name}.{cls.TIFF_EXTENSION}")
 
-    def _format_values(self, frame_metadata: FrameMetaData) -> dict[str, Any]:
+    def _format_values(self, frame_metadata: FrameMetaData, file_id: int | None = None) -> dict[str, Any]:
         """
         Return default filename format values derived from FrameMetaData.
 
@@ -366,6 +607,8 @@ class FileManager:
         ----------
         frame_metadata
             FrameMetaData supplying metadata for filename variables.
+        file_id
+            Reserved file ID. When None and the pattern needs it, the next free ID is shown.
 
         Returns
         -------
@@ -389,6 +632,9 @@ class FileManager:
             "timezone": format_timezone_id(value=timestamp_source, config=self.config.time_config),
             "frame_id": frame_metadata.frame_id,
             "callback_id": "" if frame_metadata.callback_id is None else frame_metadata.callback_id,
+            "file_id": self._format_file_id(file_id=file_id),
+            "light": self._format_light(frame_metadata=frame_metadata),
+            "datetime": timestamp_source.strftime("%y%m%d_%H%M%S"),
         }
         format_values.update(frame_metadata.additional_metadata)
         return format_values
@@ -411,6 +657,27 @@ class FileManager:
         if not frame_metadata.leds:
             return LEDType.NO_LED.name
         return ".".join(led_type.name.replace("_", "") for led_type in frame_metadata.leds)
+
+    def _format_file_id(self, file_id: int | None) -> str:
+        """Return the zero-padded {file_id}; the next free ID when none was reserved."""
+        if file_id is None:
+            with self._file_id_lock:
+                file_id = self._current_max_file_id(directory=self.config.directory) + 1
+        return f"{file_id:0{self.config.file_id_digits}d}"
+
+    @staticmethod
+    def _format_light(frame_metadata: FrameMetaData) -> str:
+        """
+        Return the condensed light label for filenames.
+
+        LED_450_NM becomes 450NM, several LEDs are joined with '+', and no LED is NOLED.
+        """
+        if not frame_metadata.leds:
+            return "NOLED"
+        return "+".join(
+            "NOLED" if led_type is LEDType.NO_LED else led_type.name.removeprefix("LED_").replace("_", "")
+            for led_type in frame_metadata.leds
+        )
 
     @staticmethod
     def _format_filter_wheel(filter_wheel: FilterWheelType | None) -> str:

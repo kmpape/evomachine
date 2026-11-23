@@ -658,7 +658,8 @@ class AcquisitionStatusPanel(QGroupBox):
         self.last_label.setText(
             f"{kind}: {payload.get('planes')} plane(s), image {payload.get('image_shape')}"
         )
-        saved_paths = [path for path in payload.get("saved_paths", []) if path]
+        # Every plane of a z-stack points at the same stack file, so count files once.
+        saved_paths = list(dict.fromkeys(path for path in payload.get("saved_paths", []) if path))
         if not saved_paths:
             self.saved_label.setText("-")
             self.saved_label.setToolTip("")

@@ -298,6 +298,25 @@ Configuration when TIFF output is required. Strategies request that an image
 is saved but do not choose a path; they use this shared folder through
 `FrameAcquisitionManager`.
 
+Every saved file starts with a unique, increasing six-digit ID, so sorting by
+name gives acquisition order. IDs continue across restarts through a hidden
+`.evomachine_file_id` counter in the output folder. Stage coordinates are kept
+in the TIFF metadata rather than the filename:
+
+- single frame: `000124_450NM_FOV3_261108_155754.tiff`
+  (ID, light, FoV, `yymmdd_HHMMSS`)
+- z-stack: `000123_450NM_FOV3_Z-10,1,10_261108_155754.tiff`
+  (Z as `min,step,max` relative to the stack centre)
+
+A saved z-stack (GUI **Acquire Z Stack** or the `Z_STACK` command with
+`save=True`) is one multi-page TIFF per channel, with planes sorted by Z. Its
+description holds every plane's `FrameMetaData` and a `ZStack` entry with the Z
+positions, offsets, acquisition order and whether the stack completed. Each
+plane's `saved_paths` entry points to that stack file. Load files with
+`FileManager.load_frame()` or `tifffile.imread()`. The patterns are
+`FileNameConfig.filename_pattern` and `zstack_filename_pattern`; the old
+`{channel}`, `{x}`, `{y}`, `{z}` and `{timestamp}` fields remain available.
+
 The default hardware folder is `images/` and can be changed at startup with
 `EVOMACHINE_GUI_OUTPUT_DIR`. The **Load Saved Images** panel has its own
 **Choose Loading Folder** control. Browsing a different folder does not change
