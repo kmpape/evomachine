@@ -9,7 +9,7 @@ import numpy as np
 from evomachine.acquisition import FrameAcquisitionSettings
 from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT, get_logger, gui_log_handler
 from evomachine.coordinates import Coordinate
-from evomachine.filemanager import FileManager
+from evomachine.filemanager import FileManager, FileNameField
 from evomachine.frame import FrameMetaDataFactory
 from evomachine.gui.image_payloads import (
     IMAGE_TRANSPORT_SOCKET_TIFF,
@@ -858,9 +858,30 @@ def gui_acquisition_files_payload(
             paths[path] = None
     files = sorted(paths, key=lambda item: item.stat().st_mtime, reverse=True)
     return {
-        "acquisition_directory": str(file_manager.config.directory),
+        **gui_output_configuration_payload(file_manager=file_manager),
         "loading_directory": str(loading_directory),
         "acquisition_files": [gui_acquisition_file_payload(path) for path in files],
+    }
+
+
+def gui_output_configuration_payload(file_manager: FileManager) -> dict[str, Any]:
+    """
+    Serialize the active output directory and filename-pattern configuration.
+
+    Parameters
+    ----------
+    file_manager
+        FileManager whose active configuration should be exposed to the GUI.
+
+    Returns
+    -------
+    dict[str, Any]
+        Output directory, filename pattern, and allowed substitution fields.
+    """
+    return {
+        "acquisition_directory": str(file_manager.config.directory),
+        "filename_pattern": file_manager.config.filename_pattern,
+        "filename_pattern_fields": [field.value for field in FileNameField],
     }
 
 
@@ -874,8 +895,29 @@ def gui_acquisition_list_files(facade: Any, payload: dict[str, Any]) -> dict[str
 def gui_acquisition_set_directory(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     """Select the existing local directory used for saved acquisitions."""
     file_manager = gui_acquisition_file_manager(facade)
-    output_directory = file_manager.set_output_directory(payload.get("directory"))
-    return {"acquisition_directory": str(output_directory)}
+    file_manager.set_output_directory(payload.get("directory"))
+    return gui_output_configuration_payload(file_manager=file_manager)
+
+
+def gui_acquisition_set_filename_pattern(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Validate and select the filename pattern used for subsequent saved frames.
+
+    Parameters
+    ----------
+    facade
+        GUI facade providing access to the shared acquisition FileManager.
+    payload
+        Request payload containing the candidate ``filename_pattern`` string.
+
+    Returns
+    -------
+    dict[str, Any]
+        Authoritative output configuration after the update.
+    """
+    file_manager = gui_acquisition_file_manager(facade)
+    file_manager.update_config(filename_pattern=payload.get("filename_pattern"))
+    return gui_output_configuration_payload(file_manager=file_manager)
 
 
 def gui_acquisition_load_frame(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1559,6 +1601,7 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.CAMERA_STATUS: gui_camera_status,
     GuiCommandType.CAMERA_SET_EXPOSURE: gui_camera_set_exposure,
     GuiCommandType.ACQUISITION_SET_DIRECTORY: gui_acquisition_set_directory,
+    GuiCommandType.ACQUISITION_SET_FILENAME_PATTERN: gui_acquisition_set_filename_pattern,
     GuiCommandType.ACQUISITION_LIST_FILES: gui_acquisition_list_files,
     GuiCommandType.ACQUISITION_LOAD_FRAME: gui_acquisition_load_frame,
     GuiCommandType.ACQUISITION_TAKE_FRAME: gui_acquisition_take_frame,

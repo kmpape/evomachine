@@ -6,19 +6,24 @@ from typing import Any
 
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
     QLabel,
+    QLineEdit,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from evomachine.gui.image_payloads import IMAGE_TRANSPORT_SOCKET_TIFF
+from evomachine.filemanager import FileNameConfig, FileNameField
 from evomachine.gui.panels.common import NoWheelComboBox
 from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
 from evomachine.gui.panels.leds import LED_GROUPS, LED_LABELS
+from evomachine.gui.protocol import GuiCommandType
 from evomachine.types import FilterWheelType, LEDType
 
 
@@ -40,6 +45,19 @@ ACQUISITION_LED_TYPES = tuple(
     led_type
     for _group_name, led_types in LED_GROUPS
     for led_type in led_types
+)
+
+FILENAME_FIELD_HELP = (
+    (FileNameField.CHANNEL, "configured LED channel name"),
+    (FileNameField.FOV_ID, "field-of-view ID, blank when unknown"),
+    (FileNameField.X, "stage X coordinate, blank when unavailable"),
+    (FileNameField.Y, "stage Y coordinate, blank when unavailable"),
+    (FileNameField.Z, "stage Z coordinate, or 'auto' when unavailable"),
+    (FileNameField.FILTER_WHEEL, "filter-wheel value, or 'None' when unset"),
+    (FileNameField.TIMESTAMP, "acquisition timestamp formatted for filenames"),
+    (FileNameField.TIMEZONE, "acquisition timezone identifier"),
+    (FileNameField.FRAME_ID, "image-plane identifier"),
+    (FileNameField.CALLBACK_ID, "strategy callback identifier, blank when unset"),
 )
 
 
@@ -425,26 +443,174 @@ class ZStackSettingsPanel(QGroupBox):
             self.status_label.setText(error)
 
 
-class OutputDirectoryPanel(QGroupBox):
-    """Select the shared local destination for saved acquisitions and strategies."""
+class FilenamePatternDialog(QDialog):
+    """Edit and validate one output filename pattern without applying it directly."""
+
+    def __init__(self, current_pattern: str, parent: QWidget | None = None):
+        """
+        Initialise the filename-pattern editor.
+
+        Parameters
+        ----------
+        current_pattern
+            Active pattern shown initially in the editable field.
+        parent
+            Optional parent widget that owns the modal dialog.
+
+        Returns
+        -------
+        None
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Filename Pattern")
+        self.pattern_input = QLineEdit(current_pattern)
+        self.validate_button = QPushButton("Validate Pattern")
+        self.validation_label = QLabel("")
+        self.validation_label.setWordWrap(True)
+        self.help_label = QLabel(self._help_text())
+        self.help_label.setWordWrap(True)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Filename pattern"))
+        layout.addWidget(self.pattern_input)
+        layout.addWidget(self.validate_button)
+        layout.addWidget(self.validation_label)
+        layout.addWidget(self.help_label)
+        layout.addWidget(self.buttons)
+
+        self.pattern_input.textChanged.connect(self._clear_validation)
+        self.validate_button.clicked.connect(self.validate_pattern)
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        self.setMinimumWidth(560)
+
+    def pattern(self) -> str:
+        """
+        Return the pattern currently entered by the user.
+
+        Returns
+        -------
+        str
+            Unmodified text from the pattern input field.
+        """
+        return self.pattern_input.text()
+
+    def validate_pattern(self) -> bool:
+        """
+        Validate the entered pattern and display an immediate result.
+
+        Returns
+        -------
+        bool
+            True when FileNameConfig accepts the pattern, otherwise False.
+        """
+        try:
+            FileNameConfig(directory=Path("."), filename_pattern=self.pattern())
+        except (TypeError, ValueError) as error:
+            self.validation_label.setStyleSheet("color: #d9534f;")
+            self.validation_label.setText(str(error))
+            return False
+        self.validation_label.setStyleSheet("color: #4caf50;")
+        self.validation_label.setText("Pattern is valid.")
+        return True
+
+    def accept(self) -> None:
+        """
+        Accept the dialog only when the current pattern validates successfully.
+
+        Returns
+        -------
+        None
+        """
+        if self.validate_pattern():
+            super().accept()
+
+    def _clear_validation(self, _text: str) -> None:
+        """
+        Clear stale validation feedback after the pattern text changes.
+
+        Parameters
+        ----------
+        _text
+            Updated input text supplied by Qt; the value is already available
+            from ``pattern_input`` and is intentionally unused.
+
+        Returns
+        -------
+        None
+        """
+        self.validation_label.clear()
+        self.validation_label.setStyleSheet("")
+
+    @staticmethod
+    def _help_text() -> str:
+        """
+        Build the filename-pattern syntax and field reference shown to users.
+
+        Returns
+        -------
+        str
+            Multi-line instructions covering syntax, fields, and uniqueness.
+        """
+        field_lines = "\n".join(
+            f"  {{{field.value}}}: {description}"
+            for field, description in FILENAME_FIELD_HELP
+        )
+        return (
+            "Combine literal text with fields in braces, for example "
+            "FOV{fov_id}_{timestamp}_{frame_id}. Use doubled braces {{ and }} "
+            "for literal braces. Python format specifications are supported, "
+            "for example {frame_id:04d}.\n\nAvailable fields:\n"
+            f"{field_lines}\n\nThe .tiff extension is added automatically. Include "
+            "timestamp, frame_id, or callback_id to avoid overwriting files."
+        )
+
+
+class OutputConfigurationPanel(QGroupBox):
+    """Configure the shared output destination and filename pattern."""
 
     def __init__(self, controller, parent: QWidget | None = None):
-        super().__init__("Output Folder", parent)
+        """
+        Initialise output-folder and filename-pattern controls.
+
+        Parameters
+        ----------
+        controller
+            GUI controller used to read and update server-side configuration.
+        parent
+            Optional parent widget.
+
+        Returns
+        -------
+        None
+        """
+        super().__init__("Output Configuration", parent)
         self.controller = controller
         self.directory = ""
+        self.filename_pattern = ""
+        self._pattern_update_pending = False
         self.path_label = QLabel("folder: loading configured destination...")
         self.path_label.setWordWrap(True)
+        self.pattern_label = QLabel("pattern: loading configured pattern...")
+        self.pattern_label.setWordWrap(True)
         self.choose_directory_button = QPushButton("Choose Output Folder")
+        self.modify_pattern_button = QPushButton("Modify Pattern")
 
         layout = QVBoxLayout()
         layout.addWidget(self.path_label)
         layout.addWidget(self.choose_directory_button)
         layout.addWidget(QLabel("Used by saved manual acquisitions, z-stacks, and strategies."))
+        layout.addWidget(self.pattern_label)
+        layout.addWidget(self.modify_pattern_button)
         self.setLayout(layout)
 
         self.choose_directory_button.clicked.connect(self._choose_directory)
+        self.modify_pattern_button.clicked.connect(self._open_pattern_dialog)
         self.controller.acquisition_directory_received.connect(self.update_directory)
+        self.controller.output_configuration_received.connect(self.update_configuration)
         self.controller.response_error.connect(self._show_error)
+        self.controller.request_error.connect(self._show_request_error)
         self.controller.refresh_acquisition_files()
 
     def _choose_directory(self) -> None:
@@ -458,14 +624,92 @@ class OutputDirectoryPanel(QGroupBox):
             self.controller.set_acquisition_directory(directory)
 
     def update_directory(self, payload: dict) -> None:
+        """
+        Update the displayed output directory from a controller response.
+
+        Parameters
+        ----------
+        payload
+            Mapping containing the authoritative ``directory`` value.
+
+        Returns
+        -------
+        None
+        """
         directory = str(payload.get("directory") or "")
         if directory:
             self.directory = directory
             self.path_label.setText(f"folder: {directory}")
 
+    def update_configuration(self, payload: dict) -> None:
+        """
+        Display authoritative output configuration returned by the server.
+
+        Parameters
+        ----------
+        payload
+            Mapping containing optional directory and filename-pattern values.
+
+        Returns
+        -------
+        None
+        """
+        self.update_directory(payload)
+        filename_pattern = payload.get("filename_pattern")
+        if isinstance(filename_pattern, str) and filename_pattern:
+            self.filename_pattern = filename_pattern
+            self.pattern_label.setText(f"pattern: {filename_pattern}")
+            self._pattern_update_pending = False
+
+    def _open_pattern_dialog(self) -> None:
+        """
+        Open the pattern editor and submit an accepted valid pattern.
+
+        Returns
+        -------
+        None
+        """
+        dialog = FilenamePatternDialog(current_pattern=self.filename_pattern, parent=self)
+        if dialog.exec_() != dialog.Accepted:
+            return
+        self._pattern_update_pending = True
+        self.pattern_label.setText("pattern: updating...")
+        self.controller.set_acquisition_filename_pattern(dialog.pattern())
+
     def _show_error(self, error: str) -> None:
+        """
+        Display an output-directory request failure when one is pending.
+
+        Parameters
+        ----------
+        error
+            User-facing error text emitted by the controller.
+
+        Returns
+        -------
+        None
+        """
         if self.path_label.text().startswith("selecting:"):
             self.path_label.setText(error)
+
+    def _show_request_error(self, command: object, error: str) -> None:
+        """
+        Display a failed filename-pattern update without affecting folder state.
+
+        Parameters
+        ----------
+        command
+            GuiCommandType associated with the failed request.
+        error
+            User-facing error returned by the server.
+
+        Returns
+        -------
+        None
+        """
+        if command is GuiCommandType.ACQUISITION_SET_FILENAME_PATTERN and self._pattern_update_pending:
+            self.pattern_label.setText(f"pattern error: {error}")
+            self._pattern_update_pending = False
 
 
 class SavedImageLoaderPanel(QGroupBox):

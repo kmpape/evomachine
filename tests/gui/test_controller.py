@@ -168,6 +168,41 @@ def test_gui_controller_sends_output_directory_request() -> None:
     assert client.requests[-1].payload == {"directory": "/tmp/previous-images"}
 
 
+def test_gui_controller_sends_and_dispatches_filename_pattern_configuration() -> None:
+    """
+    Check filename-pattern requests and authoritative configuration dispatch.
+
+    Returns
+    -------
+    None
+    """
+    client = RecordingClient()
+    controller = EvoMachineGuiController(client=client, start_worker=False)
+    received = []
+    controller.output_configuration_received.connect(received.append)
+
+    controller.set_acquisition_filename_pattern("{channel}_{frame_id:04d}")
+
+    assert client.requests[-1].command is GuiCommandType.ACQUISITION_SET_FILENAME_PATTERN
+    assert client.requests[-1].payload == {"filename_pattern": "{channel}_{frame_id:04d}"}
+
+    controller._handle_response(GuiResponse(
+        request_id="output-config",
+        ok=True,
+        payload={
+            "acquisition_directory": "/tmp/images",
+            "filename_pattern": "{channel}_{frame_id:04d}",
+            "filename_pattern_fields": ["channel", "frame_id"],
+        },
+    ))
+
+    assert received == [{
+        "directory": "/tmp/images",
+        "filename_pattern": "{channel}_{frame_id:04d}",
+        "filename_pattern_fields": ["channel", "frame_id"],
+    }]
+
+
 def test_gui_controller_requests_and_dispatches_incremental_logs() -> None:
     client = RecordingClient()
     controller = EvoMachineGuiController(client=client, start_worker=False)

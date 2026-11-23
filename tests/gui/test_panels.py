@@ -10,6 +10,7 @@ if os.environ.get("EVOMACHINE_GUI_RUN_QT_TESTS") != "1":
 from PyQt5.QtCore import QObject, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
+    QDialog,
     QFileDialog,
     QLabel,
     QPushButton,
@@ -19,13 +20,15 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from evomachine.filemanager import FileNameField
 from evomachine.gui.docks import controls as controls_module
 from evomachine.gui.docks.controls import EvoMachineControlsDock
 from evomachine.gui.panels.acquisition import (
     ACQUISITION_LED_TYPES,
+    FilenamePatternDialog,
     FrameAcquisitionSettingsPanel,
     ManualAcquisitionPanel,
-    OutputDirectoryPanel,
+    OutputConfigurationPanel,
     SavedImageLoaderPanel,
     ZStackSettingsPanel,
 )
@@ -65,6 +68,7 @@ class FakeController(QObject):
     camera_status_received = pyqtSignal(dict)
     acquisition_files_received = pyqtSignal(list)
     acquisition_directory_received = pyqtSignal(dict)
+    output_configuration_received = pyqtSignal(dict)
     acquisition_loading_directory_received = pyqtSignal(str)
     frame_received = pyqtSignal(dict)
     filter_wheel_status_received = pyqtSignal(dict)
@@ -172,6 +176,9 @@ class FakeController(QObject):
 
     def set_acquisition_directory(self, directory):
         self.calls.append(("set_acquisition_directory", directory))
+
+    def set_acquisition_filename_pattern(self, filename_pattern):
+        self.calls.append(("set_acquisition_filename_pattern", filename_pattern))
 
     def load_acquisition_frame(self, filename, image_transport=None):
         self.calls.append(("load_acquisition_frame", filename, image_transport))
@@ -802,11 +809,24 @@ def test_saved_image_loader_panel_selects_and_displays_loading_directory(monkeyp
     assert panel.path_label.text() == "loading folder: /tmp/images"
 
 
-def test_output_directory_panel_selects_and_displays_shared_destination(monkeypatch) -> None:
+def test_output_configuration_panel_controls_folder_and_pattern(monkeypatch) -> None:
+    """
+    Check output configuration displays server state and submits both controls.
+
+    Parameters
+    ----------
+    monkeypatch
+        Pytest fixture used to replace modal folder and pattern dialogs.
+
+    Returns
+    -------
+    None
+    """
     _app()
     controller = FakeController()
-    panel = OutputDirectoryPanel(controller=controller)
+    panel = OutputConfigurationPanel(controller=controller)
     controller.calls.clear()
+    assert panel.title() == "Output Configuration"
     monkeypatch.setattr(
         QFileDialog,
         "getExistingDirectory",
@@ -818,6 +838,72 @@ def test_output_directory_panel_selects_and_displays_shared_destination(monkeypa
     assert controller.calls == [("set_acquisition_directory", "/tmp/output")]
     panel.update_directory({"directory": "/tmp/output"})
     assert panel.path_label.text() == "folder: /tmp/output"
+
+    panel.update_configuration({
+        "directory": "/tmp/output",
+        "filename_pattern": "{channel}_{frame_id}",
+    })
+    assert panel.pattern_label.text() == "pattern: {channel}_{frame_id}"
+    monkeypatch.setattr(FilenamePatternDialog, "exec_", lambda _dialog: QDialog.Accepted)
+    monkeypatch.setattr(FilenamePatternDialog, "pattern", lambda _dialog: "{timestamp}_{frame_id}")
+
+    panel.modify_pattern_button.click()
+
+    assert controller.calls[-1] == (
+        "set_acquisition_filename_pattern",
+        "{timestamp}_{frame_id}",
+    )
+
+
+def test_filename_pattern_dialog_validates_and_documents_supported_fields() -> None:
+    """
+    Check pattern help covers every field and invalid input cannot be accepted.
+
+    Returns
+    -------
+    None
+    """
+    _app()
+    dialog = FilenamePatternDialog(current_pattern="{frame_id}")
+
+    for field in FileNameField:
+        assert f"{{{field.value}}}" in dialog.help_label.text()
+    dialog.pattern_input.setText("{experiment}")
+    assert not dialog.validate_pattern()
+    assert "unsupported fields" in dialog.validation_label.text()
+    dialog.accept()
+    assert dialog.result() != QDialog.Accepted
+
+    dialog.pattern_input.setText("{{frame}}_{channel}_{frame_id:04d}")
+    assert dialog.validation_label.text() == ""
+    assert dialog.validate_pattern()
+    assert dialog.validation_label.text() == "Pattern is valid."
+    dialog.accept()
+    assert dialog.result() == QDialog.Accepted
+
+
+def test_output_configuration_pattern_dialog_cancel_sends_no_update(monkeypatch) -> None:
+    """
+    Check cancelling the pattern editor leaves server configuration untouched.
+
+    Parameters
+    ----------
+    monkeypatch
+        Pytest fixture used to cancel the modal pattern dialog.
+
+    Returns
+    -------
+    None
+    """
+    _app()
+    controller = FakeController()
+    panel = OutputConfigurationPanel(controller=controller)
+    controller.calls.clear()
+    monkeypatch.setattr(FilenamePatternDialog, "exec_", lambda _dialog: QDialog.Rejected)
+
+    panel.modify_pattern_button.click()
+
+    assert controller.calls == []
 
 
 def test_filter_wheel_panel_sends_set_request() -> None:
