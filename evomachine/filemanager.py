@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from enum import Enum
 import json
 from pathlib import Path
+from string import Formatter
 from typing import Any
 
 import numpy as np
@@ -18,14 +20,29 @@ from evomachine.config import (
     now,
 )
 from evomachine.frame import FrameMetaData
-from evomachine.types import FilterWheelType, LEDType
+from evomachine.types import FilterWheelType, LEDType, UNKNOWN_FOV_ID
+
+
+class FileNameField(str, Enum):
+    """Fields available for substitution in file name patterns."""
+
+    CHANNEL = "channel"
+    FOV_ID = "fov_id"
+    X = "x"
+    Y = "y"
+    Z = "z"
+    FILTER_WHEEL = "filter_wheel"
+    TIMESTAMP = "timestamp"
+    TIMEZONE = "timezone"
+    FRAME_ID = "frame_id"
+    CALLBACK_ID = "callback_id"
 
 
 class FileNameConfig(EvoConfig):
     """Configuration object for FileManager output paths and filename patterns."""
 
     directory: Path
-    filename_pattern: str = "{channel}_FOV{fov_id}_X{x}_Y{y}_Z{z}_F{filter_wheel}_{timestamp}"
+    filename_pattern: str = "FOV{fov_id}_{timestamp}_{callback_id}"
     create_directory: bool = True
     time_config: TimeConfig = Field(default_factory=TimeConfig)
 
@@ -39,8 +56,44 @@ class FileNameConfig(EvoConfig):
     @field_validator("filename_pattern", mode="before")
     @classmethod
     def _validate_filename_pattern_type(cls, value: object) -> object:
+        """
+        Validate the filename pattern type, syntax, and substitution fields.
+
+        Parameters
+        ----------
+        value
+            Candidate filename pattern.
+
+        Returns
+        -------
+        object
+            The validated filename pattern.
+        """
         if not isinstance(value, str):
             raise TypeError(f"FileNameConfig: filename_pattern must be str, received {type(value)}.")
+        allowed_fields = {field.value for field in FileNameField}
+        invalid_fields: set[str] = set()
+        patterns_to_parse = [value]
+        formatter = Formatter()
+        try:
+            while patterns_to_parse:
+                pattern = patterns_to_parse.pop()
+                for _, field_name, format_spec, conversion in formatter.parse(pattern):
+                    if field_name is not None and field_name not in allowed_fields:
+                        invalid_fields.add(field_name)
+                    if conversion is not None and conversion not in {"a", "r", "s"}:
+                        raise ValueError(f"invalid conversion '!{conversion}'")
+                    if format_spec:
+                        patterns_to_parse.append(format_spec)
+        except ValueError as error:
+            raise ValueError(f"FileNameConfig: filename_pattern has invalid format syntax: {error}.") from error
+        if invalid_fields:
+            invalid = ", ".join(repr(field) for field in sorted(invalid_fields))
+            allowed = ", ".join(sorted(allowed_fields))
+            raise ValueError(
+                f"FileNameConfig: filename_pattern contains unsupported fields: {invalid}. "
+                f"Allowed fields are: {allowed}."
+            )
         return value
 
     @field_validator("create_directory", mode="before")
@@ -379,18 +432,25 @@ class FileManager:
             config=self.config.time_config,
         )
         format_values = {
-            "channel": self._format_channel(frame_metadata=frame_metadata),
-            "fov_id": frame_metadata.fov_id,
-            "x": coordinate_dict.get("X", ""),
-            "y": coordinate_dict.get("Y", ""),
-            "z": coordinate_dict.get("Z", "auto"),
-            "filter_wheel": self._format_filter_wheel(frame_metadata.filter_wheel),
-            "timestamp": format_timestamp_for_filename(value=timestamp_source, config=self.config.time_config),
-            "timezone": format_timezone_id(value=timestamp_source, config=self.config.time_config),
-            "frame_id": frame_metadata.frame_id,
-            "callback_id": "" if frame_metadata.callback_id is None else frame_metadata.callback_id,
+            FileNameField.CHANNEL.value: self._format_channel(frame_metadata=frame_metadata),
+            FileNameField.FOV_ID.value: (
+                "" if frame_metadata.fov_id == UNKNOWN_FOV_ID else frame_metadata.fov_id
+            ),
+            FileNameField.X.value: coordinate_dict.get("X", ""),
+            FileNameField.Y.value: coordinate_dict.get("Y", ""),
+            FileNameField.Z.value: coordinate_dict.get("Z", "auto"),
+            FileNameField.FILTER_WHEEL.value: self._format_filter_wheel(frame_metadata.filter_wheel),
+            FileNameField.TIMESTAMP.value: format_timestamp_for_filename(
+                value=timestamp_source,
+                config=self.config.time_config,
+            ),
+            FileNameField.TIMEZONE.value: format_timezone_id(
+                value=timestamp_source,
+                config=self.config.time_config,
+            ),
+            FileNameField.FRAME_ID.value: frame_metadata.frame_id,
+            FileNameField.CALLBACK_ID.value: "" if frame_metadata.callback_id is None else frame_metadata.callback_id,
         }
-        format_values.update(frame_metadata.additional_metadata)
         return format_values
 
     @staticmethod

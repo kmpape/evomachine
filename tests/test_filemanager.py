@@ -23,7 +23,7 @@ from evomachine.config import (
     get_logger,
     now,
 )
-from evomachine.filemanager import FileNameConfig
+from evomachine.filemanager import FileNameConfig, FileNameField
 from evomachine.frame import FrameMetaData, FrameMetaDataFactory
 from evomachine.coordinates import Coordinate
 from evomachine.filemanager import FileManager
@@ -335,6 +335,52 @@ def test_filename_config_validation_and_updates(tmp_path) -> None:
         config.updated(missing=True)
 
 
+def test_filename_fields_are_fixed_and_validated(tmp_path) -> None:
+    """
+    Check filename patterns accept only the declared substitution fields.
+
+    Parameters
+    ----------
+    tmp_path
+        Pytest temporary directory fixture.
+
+    Returns
+    -------
+    None
+    """
+    assert {field.value for field in FileNameField} == {
+        "channel",
+        "fov_id",
+        "x",
+        "y",
+        "z",
+        "filter_wheel",
+        "timestamp",
+        "timezone",
+        "frame_id",
+        "callback_id",
+    }
+    valid_pattern = "{{frame}}_{channel!s}_{frame_id:04d}"
+    assert FileNameConfig(directory=tmp_path, filename_pattern=valid_pattern).filename_pattern == valid_pattern
+
+    invalid_patterns = (
+        "{experiment}",
+        "{channel",
+        "{}",
+        "{0}",
+        "{channel.name}",
+        "{channel[0]}",
+        "{channel!x}",
+    )
+    for invalid_pattern in invalid_patterns:
+        with pytest.raises(ValueError):
+            FileNameConfig(directory=tmp_path, filename_pattern=invalid_pattern)
+
+    config = FileNameConfig(directory=tmp_path)
+    with pytest.raises(ValueError):
+        config.updated(filename_pattern="{experiment}")
+
+
 def test_file_manager_creates_directory_and_updates_config(tmp_path) -> None:
     """
     Check FileManager creates configured directories and accepts config updates.
@@ -464,19 +510,21 @@ def test_default_and_configured_filename_generation(tmp_path) -> None:
     None
     """
     manager = FileManager(FileNameConfig(directory=tmp_path))
-    frame_metadata = _frame_metadata(additional_metadata={"experiment": "demo"})
+    frame_metadata = _frame_metadata(
+        additional_metadata={"experiment": "demo", "channel": "metadata-channel"},
+    )
 
     filename = manager.get_filename(frame_metadata=frame_metadata)
     assert filename.parent == tmp_path
-    assert filename.name.startswith("LED450NM_FOV3_X10_Y20_Z30_F1_")
+    assert filename.name.startswith("FOV3_2026-01-02_03-04-05-006000+0000_")
     assert filename.suffix == ".tiff"
 
     manager.update_config(
-        filename_pattern="{experiment}_{channel}_{timezone}_F{frame_id}_C{callback_id}.png",
+        filename_pattern="{{frame}}_{channel!s}_{timezone}_F{frame_id:04d}_C{callback_id}.png",
     )
     frame_metadata.callback_id = 12
     custom = manager.get_filename(frame_metadata=frame_metadata)
-    assert custom == tmp_path / "demo_LED450NM_Europe-London_F7_C12.tiff"
+    assert custom == tmp_path / "{frame}_LED450NM_Europe-London_F0007_C12.tiff"
 
 
 def test_multiple_led_filename_uses_period_separator(tmp_path) -> None:
@@ -514,12 +562,17 @@ def test_missing_filename_values_use_stable_placeholders(tmp_path) -> None:
     -------
     None
     """
-    manager = FileManager(FileNameConfig(directory=tmp_path))
+    manager = FileManager(
+        FileNameConfig(
+            directory=tmp_path,
+            filename_pattern="{channel}_FOV{fov_id}_X{x}_Y{y}_Z{z}_F{filter_wheel}",
+        )
+    )
     frame_metadata = FrameMetaData(frame_id=0, leds=None, filter_wheel=None, exposure=None)
 
     filename = manager.get_filename(frame_metadata=frame_metadata)
 
-    assert filename.name.startswith("NO_LED_FOV-1_X_Y_Zauto_FNone_")
+    assert filename.name == "NO_LED_FOV_X_Y_Zauto_FNone.tiff"
 
 
 def test_save_tiff_frame_writes_frame_metadata(tmp_path) -> None:
