@@ -3,6 +3,7 @@ from __future__ import annotations
 from enum import Enum
 import json
 from pathlib import Path
+import re
 from string import Formatter
 from typing import Any
 
@@ -360,7 +361,36 @@ class FileManager:
             )
         if Path(filename_pattern).is_absolute():
             raise ValueError("FileManager.list_filenames: filename_pattern must be relative.")
-        return sorted(path for path in directory.glob(filename_pattern) if path.is_file())
+        return sorted(
+            (path for path in directory.glob(filename_pattern) if path.is_file()),
+            key=lambda path: FileManager._natural_path_key(path=path, directory=directory),
+        )
+
+    @staticmethod
+    def _natural_path_key(path: Path, directory: Path) -> tuple[tuple[tuple[int, int | str], ...], str]:
+        """
+        Return a deterministic, case-insensitive natural-sort key for a path.
+
+        Parameters
+        ----------
+        path
+            File path being sorted.
+        directory
+            Directory against which the path is represented.
+
+        Returns
+        -------
+        tuple[tuple[tuple[int, int | str], ...], str]
+            Numeric-aware key followed by the original relative path as a
+            deterministic tie breaker.
+        """
+        relative_path = path.relative_to(directory).as_posix()
+        components: list[tuple[int, int | str]] = []
+        for component in re.split(r"(\d+)", relative_path.casefold()):
+            if not component:
+                continue
+            components.append((0, int(component)) if component.isdigit() else (1, component))
+        return tuple(components), relative_path
 
     @staticmethod
     def _validate_file_path(path: Path | str, action: str) -> Path:

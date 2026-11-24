@@ -9,6 +9,10 @@ import pytest
 
 from evomachine.bindings.binding_types import BindingType
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
+from evomachine.bindings.virtual.camera import (
+    VirtualImageSource,
+    VirtualImageSourceMode,
+)
 from evomachine.peripherals import camera as camera_module
 from evomachine.peripherals.camera import (
     CameraConfig,
@@ -267,6 +271,119 @@ def test_virtual_camera_normalised_frame() -> None:
     assert frame.dtype == np.dtype("float64")
     assert np.min(frame) >= 0
     assert np.max(frame) <= 1
+
+
+def test_virtual_camera_folder_source_uses_natural_cyclic_order(tmp_path, monkeypatch) -> None:
+    """
+    Check folder frames are naturally ordered, cyclic, and reset on reconfiguration.
+
+    Parameters
+    ----------
+    tmp_path
+        Pytest temporary directory containing source TIFFs.
+    monkeypatch
+        Pytest fixture used to reduce source dimensions for this unit test.
+
+    Returns
+    -------
+    None
+    """
+    import tifffile
+
+    monkeypatch.setattr(VirtualImageSource, "IMAGE_SHAPE", (6, 8))
+    for index in (10, 2, 1):
+        tifffile.imwrite(tmp_path / f"P0_{index}.tiff", np.full((6, 8), index, dtype=np.uint16))
+    camera = CameraFactory.create(
+        config=CameraConfig(binding=BindingType.VIRTUAL, image=_image_config()),
+        peripheral_controllers=_initialised_virtual_controller(),
+    )
+    camera.initialise()
+    source = VirtualImageSource.from_folder(
+        directory=tmp_path,
+        filename_glob="P0_*.tiff",
+    )
+
+    status = camera.configure_image_source(source)
+    values = [int(camera.get_frame()[0, 0]) for _ in range(4)]
+    camera.configure_image_source(source)
+
+    assert [path.name for path in status.usable_files] == ["P0_1.tiff", "P0_2.tiff", "P0_10.tiff"]
+    assert values == [1, 2, 10, 1]
+    assert int(camera.get_frame()[0, 0]) == 1
+
+
+def test_virtual_camera_folder_source_skips_invalid_files_atomically(tmp_path, monkeypatch) -> None:
+    """
+    Check incompatible TIFFs are skipped and all-invalid updates preserve state.
+
+    Parameters
+    ----------
+    tmp_path
+        Pytest temporary directory containing valid and invalid TIFFs.
+    monkeypatch
+        Pytest fixture used to reduce source dimensions for this unit test.
+
+    Returns
+    -------
+    None
+    """
+    import tifffile
+
+    monkeypatch.setattr(VirtualImageSource, "IMAGE_SHAPE", (6, 8))
+    valid_directory = tmp_path / "valid"
+    invalid_directory = tmp_path / "invalid"
+    valid_directory.mkdir()
+    invalid_directory.mkdir()
+    tifffile.imwrite(valid_directory / "valid.tiff", np.ones((6, 8), dtype=np.uint16))
+    tifffile.imwrite(valid_directory / "wrong_dtype.tiff", np.ones((6, 8), dtype=np.uint8))
+    tifffile.imwrite(invalid_directory / "wrong_shape.tiff", np.ones((3, 4), dtype=np.uint16))
+    camera = CameraFactory.create(
+        config=CameraConfig(binding=BindingType.VIRTUAL, image=_image_config()),
+        peripheral_controllers=_initialised_virtual_controller(),
+    )
+    active_source = VirtualImageSource.from_folder(
+        directory=valid_directory,
+    )
+
+    status = camera.configure_image_source(active_source)
+    with pytest.raises(ValueError, match="no matched files are usable"):
+        camera.configure_image_source(VirtualImageSource.from_folder(
+            directory=invalid_directory,
+        ))
+
+    current = camera.image_source_status()
+    assert [path.name for path in status.usable_files] == ["valid.tiff"]
+    assert [path.name for path, _reason in status.skipped_files] == ["wrong_dtype.tiff"]
+    assert current.mode == active_source.mode
+    assert current.directory == active_source.directory
+    assert current.filename_glob == active_source.filename_glob
+    assert current.usable_files == status.usable_files
+
+
+def test_virtual_camera_folder_source_requires_full_size_uint16_camera(tmp_path) -> None:
+    """
+    Check folder mode rejects virtual cameras not configured for 3200-square uint16 images.
+
+    Parameters
+    ----------
+    tmp_path
+        Pytest temporary directory used as the candidate source folder.
+
+    Returns
+    -------
+    None
+    """
+    camera = CameraFactory.create(
+        config=CameraConfig(binding=BindingType.VIRTUAL, image=_image_config()),
+        peripheral_controllers=_initialised_virtual_controller(),
+    )
+
+    with pytest.raises(ValueError, match="3200 x 3200 uint16"):
+        camera.configure_image_source(VirtualImageSource(
+            mode=VirtualImageSourceMode.FOLDER,
+            directory=tmp_path,
+            usable_files=(tmp_path / "image.tiff",),
+        ))
 
 
 def test_camera_factory_rejects_unsupported_valid_binding() -> None:

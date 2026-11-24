@@ -223,7 +223,7 @@ def build_virtual_automaton():
     camera = CameraFactory.create(
         CameraConfig(
             binding=BindingType.VIRTUAL,
-            image=ImageConfigType(pxl_horiz=64, pxl_vert=48, pxl_dtype=np.dtype("uint16")),
+            image=ImageConfigType(pxl_horiz=3200, pxl_vert=3200, pxl_dtype=np.dtype("uint16")),
             objective_config=ObjectiveConfigTypeFactory.default_air(),
             check_alive=False,
         ),

@@ -153,7 +153,7 @@ class EvoMachineControlsDock(QWidget):
     def _build_acquisition_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout()
-        settings_panel = FrameAcquisitionSettingsPanel()
+        settings_panel = FrameAcquisitionSettingsPanel(controller=self.controller)
         layout.addWidget(settings_panel)
         layout.addWidget(OutputConfigurationPanel(controller=self.controller))
         layout.addWidget(ManualAcquisitionPanel(

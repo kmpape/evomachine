@@ -11,9 +11,11 @@ from PyQt5.QtWidgets import (
     QFileDialog,
     QGridLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -21,7 +23,7 @@ from PyQt5.QtWidgets import (
 from evomachine.gui.image_payloads import IMAGE_TRANSPORT_SOCKET_TIFF
 from evomachine.filemanager import FileNameConfig, FileNameField
 from evomachine.gui.panels.common import NoWheelComboBox
-from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
+from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec, ConfigForm
 from evomachine.gui.panels.leds import LED_GROUPS, LED_LABELS
 from evomachine.gui.protocol import GuiCommandType
 from evomachine.types import FilterWheelType, LEDType
@@ -61,6 +63,296 @@ FILENAME_FIELD_HELP = (
 )
 
 
+class AcquisitionConfigurationDialog(QDialog):
+    """Edit manual acquisition settings and an optional virtual image source."""
+
+    def __init__(
+            self,
+            fields: list[ConfigFieldSpec],
+            controller: Any | None,
+            virtual_source: dict[str, Any] | None,
+            parent: QWidget | None = None,
+    ):
+        """
+        Initialise a tabbed acquisition configuration dialog.
+
+        Parameters
+        ----------
+        fields
+            Acquisition setting fields displayed on the first tab.
+        controller
+            GUI controller used to submit a virtual-source update.
+        virtual_source
+            Latest authoritative virtual-source payload, or None when unsupported.
+        parent
+            Optional parent widget.
+
+        Returns
+        -------
+        None
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Acquisition Configuration")
+        self.controller = controller
+        self._virtual_source = None if virtual_source is None else dict(virtual_source)
+        self._source_update_pending = False
+        self._form = ConfigForm(fields=fields)
+        self._widgets = self._form._widgets
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._form, "Acquisition Settings")
+
+        self.source_mode: NoWheelComboBox | None = None
+        self.source_directory: QLineEdit | None = None
+        self.source_glob: QLineEdit | None = None
+        self.source_status_label: QLabel | None = None
+        self.source_browse_button: QPushButton | None = None
+        if virtual_source is not None and bool(virtual_source.get("supported")):
+            self.tabs.addTab(self._build_virtual_source_tab(virtual_source), "Virtual Image Source")
+
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box.accepted.connect(self._accept_configuration)
+        self.button_box.rejected.connect(self.reject)
+        if controller is not None:
+            controller.virtual_image_source_received.connect(self._receive_virtual_source)
+            controller.request_error.connect(self._receive_request_error)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.tabs)
+        layout.addWidget(self.button_box)
+        self.setMinimumWidth(460)
+
+    def values(self) -> dict[str, Any]:
+        """
+        Return the values from the acquisition settings tab.
+
+        Returns
+        -------
+        dict[str, Any]
+            Current acquisition setting values keyed by field name.
+        """
+        return self._form.values()
+
+    def _build_virtual_source_tab(self, source: dict[str, Any]) -> QWidget:
+        """
+        Build controls for the virtual image-source tab.
+
+        Parameters
+        ----------
+        source
+            Authoritative virtual-source payload used for initial values.
+
+        Returns
+        -------
+        QWidget
+            Populated virtual image-source tab.
+        """
+        widget = QWidget()
+        self.source_mode = NoWheelComboBox()
+        self.source_mode.addItem("Random images", "random")
+        self.source_mode.addItem("Image folder", "folder")
+        mode_index = self.source_mode.findData(source.get("mode", "random"))
+        self.source_mode.setCurrentIndex(max(0, mode_index))
+        self.source_directory = QLineEdit(source.get("directory") or "")
+        self.source_glob = QLineEdit(str(source.get("filename_glob", "*.tiff")))
+        self.source_browse_button = QPushButton("Choose Folder")
+        self.source_status_label = QLabel()
+        self.source_status_label.setWordWrap(True)
+        help_label = QLabel(
+            "Folder mode uses naturally sorted 3200 × 3200 uint16 TIFF images in a "
+            "fixed cyclic sequence. The relative glob selects files, for example *.tiff."
+        )
+        help_label.setWordWrap(True)
+
+        directory_row = QHBoxLayout()
+        directory_row.addWidget(self.source_directory, stretch=1)
+        directory_row.addWidget(self.source_browse_button)
+        layout = QVBoxLayout(widget)
+        layout.addWidget(QLabel("Source mode"))
+        layout.addWidget(self.source_mode)
+        layout.addWidget(QLabel("Image folder"))
+        layout.addLayout(directory_row)
+        layout.addWidget(QLabel("File glob"))
+        layout.addWidget(self.source_glob)
+        layout.addWidget(help_label)
+        layout.addWidget(self.source_status_label)
+        layout.addStretch(1)
+
+        self.source_mode.currentIndexChanged.connect(self._sync_source_controls)
+        self.source_browse_button.clicked.connect(self._choose_source_directory)
+        self._sync_source_controls()
+        self._update_source_status(source)
+        return widget
+
+    def _sync_source_controls(self) -> None:
+        """
+        Enable folder controls only while folder mode is selected.
+
+        Returns
+        -------
+        None
+        """
+        if self.source_mode is None:
+            return
+        enabled = self.source_mode.currentData() == "folder"
+        for control in (self.source_directory, self.source_glob, self.source_browse_button):
+            if control is not None:
+                control.setEnabled(enabled)
+
+    def _choose_source_directory(self) -> None:
+        """
+        Select an existing folder for virtual camera images.
+
+        Returns
+        -------
+        None
+        """
+        if self.source_directory is None:
+            return
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Choose Virtual Image Folder",
+            self.source_directory.text() or str(Path.home()),
+        )
+        if selected:
+            self.source_directory.setText(selected)
+
+    def _source_values(self) -> tuple[str, str | None, str]:
+        """
+        Return values from the virtual-source controls.
+
+        Returns
+        -------
+        tuple[str, str | None, str]
+            Mode, optional folder, and relative filename glob.
+        """
+        if self.source_mode is None or self.source_directory is None or self.source_glob is None:
+            return "random", None, "*.tiff"
+        mode = str(self.source_mode.currentData())
+        directory = self.source_directory.text().strip() or None
+        return mode, directory if mode == "folder" else None, self.source_glob.text().strip()
+
+    def _source_has_changed(self) -> bool:
+        """
+        Return whether virtual-source controls differ from server state.
+
+        Returns
+        -------
+        bool
+            True when submitting the dialog requires a server update.
+        """
+        if self._virtual_source is None or self.source_mode is None:
+            return False
+        mode, directory, filename_glob = self._source_values()
+        current_directory = self._virtual_source.get("directory")
+        if mode == "random":
+            current_directory = None
+        return (
+            mode != self._virtual_source.get("mode")
+            or directory != current_directory
+            or filename_glob != self._virtual_source.get("filename_glob")
+        )
+
+    def _accept_configuration(self) -> None:
+        """
+        Apply a changed source before accepting the complete dialog.
+
+        Returns
+        -------
+        None
+        """
+        if not self._source_has_changed():
+            self.accept()
+            return
+        if self.controller is None or self.source_status_label is None:
+            self.accept()
+            return
+        mode, directory, filename_glob = self._source_values()
+        if not filename_glob:
+            self.source_status_label.setText("File glob must not be empty.")
+            return
+        if mode == "folder" and directory is None:
+            self.source_status_label.setText("Choose an image folder before applying folder mode.")
+            return
+        self._source_update_pending = True
+        self.button_box.setEnabled(False)
+        self.source_status_label.setText("Validating virtual image source...")
+        self.controller.set_virtual_image_source(mode, directory, filename_glob)
+
+    def _receive_virtual_source(self, source: dict[str, Any]) -> None:
+        """
+        Accept the dialog after a pending server update succeeds.
+
+        Parameters
+        ----------
+        source
+            Authoritative source state returned by the server.
+
+        Returns
+        -------
+        None
+        """
+        if not self._source_update_pending:
+            self._virtual_source = dict(source)
+            self._update_source_status(source)
+            return
+        self._virtual_source = dict(source)
+        self._source_update_pending = False
+        self.button_box.setEnabled(True)
+        self._update_source_status(source)
+        self.accept()
+
+    def _receive_request_error(self, command: object, error: str) -> None:
+        """
+        Display a rejected source update without closing the dialog.
+
+        Parameters
+        ----------
+        command
+            GUI command associated with the failed request.
+        error
+            User-facing validation or request error.
+
+        Returns
+        -------
+        None
+        """
+        if command is not GuiCommandType.VIRTUAL_IMAGE_SOURCE_SET or not self._source_update_pending:
+            return
+        self._source_update_pending = False
+        self.button_box.setEnabled(True)
+        if self.source_status_label is not None:
+            self.source_status_label.setText(f"Source error: {error}")
+
+    def _update_source_status(self, source: dict[str, Any]) -> None:
+        """
+        Render usable, skipped, and next-file source information.
+
+        Parameters
+        ----------
+        source
+            Virtual-source payload containing counts and file information.
+
+        Returns
+        -------
+        None
+        """
+        if self.source_status_label is None:
+            return
+        skipped = source.get("skipped_files", [])
+        skipped_text = "; ".join(
+            f"{Path(item['filename']).name}: {item['reason']}"
+            for item in skipped[:3]
+        )
+        next_filename = source.get("next_filename")
+        summary = (
+            f"usable: {source.get('usable_count', 0)}; skipped: {source.get('skipped_count', 0)}; "
+            f"next: {Path(next_filename).name if next_filename else '-'}"
+        )
+        if skipped_text:
+            summary += f"\nSkipped: {skipped_text}"
+        self.source_status_label.setText(summary)
+
+
 class FrameAcquisitionSettingsPanel(QGroupBox):
     """Config values used by manual frame and z-stack acquisition panels."""
 
@@ -73,8 +365,10 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
         ("disable_leds_after", "Disable LEDs After", False),
     )
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, controller: Any | None = None, parent: QWidget | None = None):
         super().__init__("Acquisition Configuration", parent)
+        self.controller = controller
+        self.virtual_source: dict[str, Any] | None = None
         self.config_values = self._default_config_values()
         self.configure_button = QPushButton("Configure")
         self.summary_label = QLabel()
@@ -86,6 +380,9 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
         self.setLayout(layout)
 
         self.configure_button.clicked.connect(self._open_config_dialog)
+        if self.controller is not None:
+            self.controller.virtual_image_source_received.connect(self.update_virtual_source)
+            self.controller.refresh_virtual_image_source()
         self._update_summary()
 
     def payload(self) -> dict:
@@ -116,15 +413,33 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
         return payload
 
     def _open_config_dialog(self) -> None:
-        dialog = ConfigDialog(
-            title="Acquisition Configuration",
+        dialog = AcquisitionConfigurationDialog(
             fields=self._config_fields(),
+            controller=self.controller,
+            virtual_source=self.virtual_source,
             parent=self,
         )
+        if self.controller is not None:
+            self.controller.refresh_virtual_image_source()
         if dialog.exec_() != dialog.Accepted:
             return
         self.config_values.update(dialog.values())
         self._update_summary()
+
+    def update_virtual_source(self, payload: dict[str, Any]) -> None:
+        """
+        Store authoritative virtual-source state for the configuration dialog.
+
+        Parameters
+        ----------
+        payload
+            Virtual-source support or configuration payload from the server.
+
+        Returns
+        -------
+        None
+        """
+        self.virtual_source = dict(payload) if bool(payload.get("supported")) else None
 
     def _config_fields(self) -> list[ConfigFieldSpec]:
         fields = [

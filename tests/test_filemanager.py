@@ -706,18 +706,20 @@ def test_list_filenames_returns_sorted_matching_files_only(tmp_path) -> None:
     -------
     None
     """
-    first = tmp_path / "LED450NM_a_ref.tiff"
-    second = tmp_path / "LED450NM_b_ref.tiff"
+    first = tmp_path / "LED450NM_1_ref.tiff"
+    second = tmp_path / "LED450NM_2_ref.tiff"
+    tenth = tmp_path / "LED450NM_10_ref.tiff"
     other = tmp_path / "LED565NM_c_ref.tiff"
     match_directory = tmp_path / "LED450NM_dir_ref.tiff"
     second.write_text("second")
+    tenth.write_text("tenth")
     first.write_text("first")
     other.write_text("other")
     match_directory.mkdir()
 
     filenames = FileManager.list_filenames(directory=tmp_path, filename_pattern="LED450NM_*_ref.tiff")
 
-    assert filenames == [first, second]
+    assert filenames == [first, second, tenth]
 
 
 def test_list_filenames_rejects_invalid_inputs(tmp_path) -> None:
