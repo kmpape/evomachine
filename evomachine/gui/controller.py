@@ -57,6 +57,7 @@ class EvoMachineGuiController(QObject):
     stage_status_received = pyqtSignal(dict)
     stage_coordinates_received = pyqtSignal(dict)
     camera_status_received = pyqtSignal(dict)
+    virtual_image_source_received = pyqtSignal(dict)
     acquisition_files_received = pyqtSignal(list)
     acquisition_directory_received = pyqtSignal(dict)
     output_configuration_received = pyqtSignal(dict)
@@ -226,6 +227,43 @@ class EvoMachineGuiController(QObject):
 
     def set_camera_exposure(self, exposure: float) -> None:
         self._send(GuiCommandType.CAMERA_SET_EXPOSURE, {"exposure": exposure})
+
+    def refresh_virtual_image_source(self) -> None:
+        """
+        Request the active virtual-camera image-source configuration.
+
+        Returns
+        -------
+        None
+        """
+        self._send(GuiCommandType.VIRTUAL_IMAGE_SOURCE_STATUS)
+
+    def set_virtual_image_source(
+            self,
+            mode: str,
+            directory: str | None,
+            filename_glob: str,
+    ) -> None:
+        """
+        Request a new virtual-camera image source.
+
+        Parameters
+        ----------
+        mode
+            Source mode value, either ``random`` or ``folder``.
+        directory
+            Folder containing source TIFFs, or None for random mode.
+        filename_glob
+            Relative glob used to select source TIFFs.
+
+        Returns
+        -------
+        None
+        """
+        self._send(
+            GuiCommandType.VIRTUAL_IMAGE_SOURCE_SET,
+            {"mode": mode, "directory": directory, "filename_glob": filename_glob},
+        )
 
     def refresh_acquisition_files(self, directory: str | None = None) -> None:
         payload = {} if directory is None else {"directory": directory}
@@ -515,6 +553,8 @@ class EvoMachineGuiController(QObject):
             self.stage_status_received.emit(payload["stage"])
         if "camera" in payload:
             self.camera_status_received.emit(payload["camera"])
+        if "virtual_image_source" in payload:
+            self.virtual_image_source_received.emit(payload["virtual_image_source"])
         if "acquisition_files" in payload:
             self.acquisition_files_received.emit(payload["acquisition_files"])
         if "acquisition_directory" in payload:

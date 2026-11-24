@@ -2,9 +2,28 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
-from evomachine.gui.runtime import HardwareGuiRuntimeSettings, _find_serial_port_by_hwid_fragment
+from evomachine.gui.runtime import (
+    HardwareGuiRuntimeSettings,
+    _find_serial_port_by_hwid_fragment,
+    build_virtual_automaton,
+)
+
+
+def test_virtual_gui_camera_uses_full_size_uint16_frames() -> None:
+    """
+    Check the virtual GUI camera matches the full-size TIFF source contract.
+
+    Returns
+    -------
+    None
+    """
+    automaton = build_virtual_automaton()
+
+    assert automaton.acq_mngr.camera.image.shape == (3200, 3200)
+    assert automaton.acq_mngr.camera.image.pxl_dtype == np.dtype("uint16")
 
 
 def test_hardware_gui_settings_can_be_overridden_from_env(monkeypatch) -> None:

@@ -25,6 +25,7 @@ from evomachine.gui.docks import controls as controls_module
 from evomachine.gui.docks.controls import EvoMachineControlsDock
 from evomachine.gui.panels.acquisition import (
     ACQUISITION_LED_TYPES,
+    AcquisitionConfigurationDialog,
     FilenamePatternDialog,
     FrameAcquisitionSettingsPanel,
     ManualAcquisitionPanel,
@@ -66,6 +67,7 @@ class FakeController(QObject):
     stage_coordinates_received = pyqtSignal(dict)
     stage_status_received = pyqtSignal(dict)
     camera_status_received = pyqtSignal(dict)
+    virtual_image_source_received = pyqtSignal(dict)
     acquisition_files_received = pyqtSignal(list)
     acquisition_directory_received = pyqtSignal(dict)
     output_configuration_received = pyqtSignal(dict)
@@ -161,6 +163,12 @@ class FakeController(QObject):
 
     def set_camera_exposure(self, exposure):
         self.calls.append(("set_camera_exposure", exposure))
+
+    def refresh_virtual_image_source(self):
+        self.calls.append(("refresh_virtual_image_source",))
+
+    def set_virtual_image_source(self, mode, directory, filename_glob):
+        self.calls.append(("set_virtual_image_source", mode, directory, filename_glob))
 
     def acquire_frame(self, payload=None):
         self.calls.append(("acquire_frame", payload))
@@ -691,6 +699,155 @@ def test_manual_acquisition_panel_sends_settings_payload() -> None:
             },
         )
     ]
+
+
+def test_acquisition_configuration_dialog_shows_virtual_source_controls() -> None:
+    """
+    Check the virtual backend adds a populated image-source tab.
+
+    Returns
+    -------
+    None
+    """
+    _app()
+    controller = FakeController()
+    source = {
+        "supported": True,
+        "mode": "folder",
+        "directory": "/tmp/images",
+        "filename_glob": "P0_*.tiff",
+        "usable_count": 3,
+        "skipped_count": 1,
+        "skipped_files": [{"filename": "/tmp/images/bad.tiff", "reason": "wrong shape"}],
+        "next_filename": "/tmp/images/P0_1.tiff",
+    }
+    dialog = AcquisitionConfigurationDialog(
+        fields=[ConfigFieldSpec("Save", "save", False, kind="bool")],
+        controller=controller,
+        virtual_source=source,
+    )
+
+    assert [dialog.tabs.tabText(index) for index in range(dialog.tabs.count())] == [
+        "Acquisition Settings",
+        "Virtual Image Source",
+    ]
+    assert dialog.source_mode.currentData() == "folder"
+    assert dialog.source_directory.text() == "/tmp/images"
+    assert dialog.source_glob.text() == "P0_*.tiff"
+    assert "usable: 3" in dialog.source_status_label.text()
+    assert "skipped: 1" in dialog.source_status_label.text()
+    assert "P0_1.tiff" in dialog.source_status_label.text()
+
+
+def test_acquisition_configuration_dialog_applies_source_after_server_accepts() -> None:
+    """
+    Check OK waits for an authoritative source response before accepting.
+
+    Returns
+    -------
+    None
+    """
+    _app()
+    controller = FakeController()
+    source = {
+        "supported": True,
+        "mode": "random",
+        "directory": None,
+        "filename_glob": "*.tiff",
+        "usable_count": 0,
+        "skipped_count": 0,
+        "skipped_files": [],
+        "next_filename": None,
+    }
+    dialog = AcquisitionConfigurationDialog(
+        fields=[],
+        controller=controller,
+        virtual_source=source,
+    )
+    dialog.source_mode.setCurrentIndex(dialog.source_mode.findData("folder"))
+    dialog.source_directory.setText("/tmp/images")
+    dialog.source_glob.setText("P0_*.tiff")
+
+    dialog._accept_configuration()
+
+    assert controller.calls == [
+        ("set_virtual_image_source", "folder", "/tmp/images", "P0_*.tiff")
+    ]
+    assert dialog.result() == QDialog.Rejected
+    assert not dialog.button_box.isEnabled()
+
+    accepted = dict(source)
+    accepted.update({
+        "mode": "folder",
+        "directory": "/tmp/images",
+        "filename_glob": "P0_*.tiff",
+        "usable_count": 2,
+        "next_filename": "/tmp/images/P0_1.tiff",
+    })
+    controller.virtual_image_source_received.emit(accepted)
+
+    assert dialog.result() == QDialog.Accepted
+
+
+def test_acquisition_configuration_dialog_keeps_invalid_source_open() -> None:
+    """
+    Check validation errors preserve the active dialog and source controls.
+
+    Returns
+    -------
+    None
+    """
+    _app()
+    controller = FakeController()
+    source = {
+        "supported": True,
+        "mode": "random",
+        "directory": None,
+        "filename_glob": "*.tiff",
+        "usable_count": 0,
+        "skipped_count": 0,
+        "skipped_files": [],
+        "next_filename": None,
+    }
+    dialog = AcquisitionConfigurationDialog(fields=[], controller=controller, virtual_source=source)
+    dialog.source_mode.setCurrentIndex(dialog.source_mode.findData("folder"))
+    dialog.source_directory.setText("/tmp/empty")
+
+    dialog._accept_configuration()
+    controller.request_error.emit(GuiCommandType.VIRTUAL_IMAGE_SOURCE_SET, "no files match")
+
+    assert dialog.result() == QDialog.Rejected
+    assert dialog.button_box.isEnabled()
+    assert "no files match" in dialog.source_status_label.text()
+
+
+def test_acquisition_configuration_dialog_cancel_sends_no_source_update() -> None:
+    """
+    Check cancelling source edits leaves the controller untouched.
+
+    Returns
+    -------
+    None
+    """
+    _app()
+    controller = FakeController()
+    source = {
+        "supported": True,
+        "mode": "random",
+        "directory": None,
+        "filename_glob": "*.tiff",
+        "usable_count": 0,
+        "skipped_count": 0,
+        "skipped_files": [],
+        "next_filename": None,
+    }
+    dialog = AcquisitionConfigurationDialog(fields=[], controller=controller, virtual_source=source)
+    dialog.source_mode.setCurrentIndex(dialog.source_mode.findData("folder"))
+    dialog.source_directory.setText("/tmp/images")
+
+    dialog.reject()
+
+    assert controller.calls == []
 
 
 def test_acquisition_config_does_not_offer_unknown_filter_wheel() -> None:

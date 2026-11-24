@@ -11,6 +11,7 @@ import pytest
 import tifffile
 
 from evomachine.bindings.binding_types import BindingType
+from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
 from evomachine.bindings.software_focus.software_focus_algorithms import (
     create_software_focus_algorithm,
 )
@@ -18,7 +19,7 @@ from evomachine.coordinates import Coordinate, CoordinateBounds
 from evomachine.filemanager import FileManager, FileNameConfig, FileNameField
 from evomachine.frame import Frame
 from evomachine.image_processing_config import ImageProcessorConfigFactory
-from evomachine.peripherals.camera import CameraConfig, ImageConfigType, ObjectiveConfigType
+from evomachine.peripherals.camera import CameraConfig, CameraFactory, ImageConfigType, ObjectiveConfigType
 from evomachine.types import (
     AutoFocusStatusType,
     FilterWheelType,
@@ -963,6 +964,93 @@ def test_facade_updates_and_validates_output_filename_pattern(tmp_path) -> None:
     assert not invalid.ok
     assert "unsupported fields" in invalid.error
     assert file_manager.config.filename_pattern == original_pattern
+
+
+def test_facade_configures_virtual_image_folder_and_reports_skips(tmp_path) -> None:
+    """
+    Check the facade applies a virtual TIFF folder and reports incompatible matches.
+
+    Parameters
+    ----------
+    tmp_path
+        Pytest temporary directory containing virtual source TIFFs.
+
+    Returns
+    -------
+    None
+    """
+    tifffile.imwrite(tmp_path / "P0_1.tiff", np.ones((3200, 3200), dtype=np.uint16))
+    tifffile.imwrite(tmp_path / "P0_2.tiff", np.ones((4, 5), dtype=np.uint16))
+    camera = CameraFactory.create(
+        config=CameraConfig(
+            binding=BindingType.VIRTUAL,
+            image=ImageConfigType(pxl_horiz=3200, pxl_vert=3200, pxl_dtype=np.dtype("uint16")),
+        ),
+        peripheral_controllers=VirtualPeripheralController(),
+    )
+    automaton = FakeAutomaton()
+    automaton.acq_mngr.camera = camera
+    facade = AutomatonGuiFacade(automaton)
+
+    response = facade.handle(GuiRequest(
+        command=GuiCommandType.VIRTUAL_IMAGE_SOURCE_SET,
+        payload={
+            "mode": "folder",
+            "directory": str(tmp_path),
+            "filename_glob": "P0_*.tiff",
+        },
+    ))
+
+    assert response.ok
+    source = response.payload["virtual_image_source"]
+    assert source["mode"] == "folder"
+    assert source["usable_count"] == 1
+    assert source["skipped_count"] == 1
+    assert source["next_filename"].endswith("P0_1.tiff")
+    assert source["skipped_files"][0]["filename"].endswith("P0_2.tiff")
+
+
+def test_facade_reports_virtual_source_support_and_rejects_hardware_updates() -> None:
+    """
+    Check status is non-failing while source mutations remain virtual-only.
+
+    Returns
+    -------
+    None
+    """
+    facade = AutomatonGuiFacade(FakeAutomaton())
+
+    status = facade.handle(GuiRequest(command=GuiCommandType.VIRTUAL_IMAGE_SOURCE_STATUS))
+    update = facade.handle(GuiRequest(
+        command=GuiCommandType.VIRTUAL_IMAGE_SOURCE_SET,
+        payload={"mode": "random", "directory": None, "filename_glob": "*.tiff"},
+    ))
+
+    assert status.ok
+    assert status.payload["virtual_image_source"] == {"supported": False}
+    assert not update.ok
+    assert "only for a virtual camera" in update.error
+
+
+def test_facade_rejects_virtual_source_updates_during_strategy() -> None:
+    """
+    Check virtual source changes are blocked while a strategy is active.
+
+    Returns
+    -------
+    None
+    """
+    automaton = FakeAutomaton()
+    automaton.strategy_started = True
+    facade = AutomatonGuiFacade(automaton)
+
+    response = facade.handle(GuiRequest(
+        command=GuiCommandType.VIRTUAL_IMAGE_SOURCE_SET,
+        payload={"mode": "random", "directory": None, "filename_glob": "*.tiff"},
+    ))
+
+    assert not response.ok
+    assert "not allowed while a strategy is running" in response.error
 
 
 def test_facade_browses_images_without_changing_output_directory(tmp_path) -> None:

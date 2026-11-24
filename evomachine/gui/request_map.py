@@ -844,6 +844,108 @@ def gui_camera_set_exposure(facade: Any, payload: dict[str, Any]) -> dict[str, A
     return {"camera": facade.gui_camera_status_payload()}
 
 
+def gui_virtual_image_source_payload(camera: Any) -> dict[str, Any]:
+    """
+    Serialize the active source configuration for a virtual camera.
+
+    Parameters
+    ----------
+    camera
+        Candidate camera that must be a VirtualCamera.
+
+    Returns
+    -------
+    dict[str, Any]
+        Source mode, folder, glob, validated files, skipped files, and next file.
+    """
+    from evomachine.bindings.virtual.camera import VirtualCamera
+
+    if not isinstance(camera, VirtualCamera):
+        raise RuntimeError("Virtual image sources are available only for a virtual camera.")
+    status = camera.image_source_status()
+    return {
+        "supported": True,
+        "mode": status.mode.value,
+        "directory": None if status.directory is None else str(status.directory),
+        "filename_glob": status.filename_glob,
+        "usable_count": len(status.usable_files),
+        "usable_files": [str(path) for path in status.usable_files],
+        "skipped_count": len(status.skipped_files),
+        "skipped_files": [
+            {"filename": str(path), "reason": reason}
+            for path, reason in status.skipped_files
+        ],
+        "next_filename": None if status.next_filename is None else str(status.next_filename),
+    }
+
+
+def gui_virtual_image_source_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Return virtual image-source support and current state.
+
+    Parameters
+    ----------
+    facade
+        GUI facade providing the active camera.
+    payload
+        Unused request payload.
+
+    Returns
+    -------
+    dict[str, Any]
+        Supported source state, or a payload marking non-virtual cameras unsupported.
+    """
+    from evomachine.bindings.virtual.camera import VirtualCamera
+
+    del payload
+    camera = facade.gui_camera()
+    if not isinstance(camera, VirtualCamera):
+        return {"virtual_image_source": {"supported": False}}
+    return {"virtual_image_source": gui_virtual_image_source_payload(camera)}
+
+
+def gui_virtual_image_source_set(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Validate and apply a virtual-camera image source.
+
+    Parameters
+    ----------
+    facade
+        GUI facade providing the active camera.
+    payload
+        Source mode, optional directory, and filename glob.
+
+    Returns
+    -------
+    dict[str, Any]
+        Payload containing the authoritative active source.
+    """
+    from evomachine.bindings.virtual.camera import (
+        VirtualCamera,
+        VirtualImageSource,
+        VirtualImageSourceMode,
+    )
+
+    camera = facade.gui_camera()
+    if not isinstance(camera, VirtualCamera):
+        raise RuntimeError("Virtual image sources are available only for a virtual camera.")
+    try:
+        mode = VirtualImageSourceMode(payload.get("mode"))
+    except (TypeError, ValueError) as error:
+        raise ValueError("Virtual image source mode must be 'random' or 'folder'.") from error
+    filename_glob = payload.get("filename_glob", "*.tiff")
+    source = (
+        VirtualImageSource.from_folder(
+            directory=payload.get("directory"),
+            filename_glob=filename_glob,
+        )
+        if mode is VirtualImageSourceMode.FOLDER
+        else VirtualImageSource(mode=mode, filename_glob=filename_glob)
+    )
+    camera.configure_image_source(source=source)
+    return {"virtual_image_source": gui_virtual_image_source_payload(camera)}
+
+
 def gui_acquisition_files_payload(
         file_manager: FileManager,
         directory: Path | str | None = None,
@@ -1600,6 +1702,8 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.STAGE_RETURN_ORIGIN: gui_stage_return_origin,
     GuiCommandType.CAMERA_STATUS: gui_camera_status,
     GuiCommandType.CAMERA_SET_EXPOSURE: gui_camera_set_exposure,
+    GuiCommandType.VIRTUAL_IMAGE_SOURCE_STATUS: gui_virtual_image_source_status,
+    GuiCommandType.VIRTUAL_IMAGE_SOURCE_SET: gui_virtual_image_source_set,
     GuiCommandType.ACQUISITION_SET_DIRECTORY: gui_acquisition_set_directory,
     GuiCommandType.ACQUISITION_SET_FILENAME_PATTERN: gui_acquisition_set_filename_pattern,
     GuiCommandType.ACQUISITION_LIST_FILES: gui_acquisition_list_files,
