@@ -21,7 +21,7 @@ singleton into a panel or make blocking socket/model calls from a button handler
 | File | What to change there |
 | --- | --- |
 | `evomachine/gui/panels/` | Widgets, input collection, display and control enablement |
-| `gui/docks/controls.py` | Compose panels into main controls and Acquisition/Strategy/Focus tabs |
+| `gui/docks/controls.py` | Compose device tabs and Acquisition/Strategy/Focus workflow tabs |
 | `gui/controller.py` | Request methods, Qt signals and response routing |
 | `gui/protocol.py` | Allowlisted command enum, request/response dataclasses and mutation policy |
 | `gui/request_map.py` | Validated backend handlers and `GUI_REQUEST_HANDLERS` registration |
@@ -29,9 +29,33 @@ singleton into a panel or make blocking socket/model calls from a button handler
 | `gui/operations.py` | Background operation state, progress and cooperative cancellation |
 | `gui/focus.py` | Focus configuration transport, independent manual state and strategy reference review |
 | `gui/runtime.py` | Virtual and hardware application construction |
-| `gui/central_workspace.py` | Image/plot presentation in the central workspace |
+| `gui/central_workspace.py` | Mutually exclusive Microscope/DMD layers and compact metadata presentation |
 
 Paths beginning `gui/` in this table are relative to `evomachine/`.
+
+## Current layout composition
+
+The right **Device Controls** group presents Stage, LEDs, Camera, DMD, and Filter
+Wheel as independently scrollable tabs. The device panel classes are flat
+`QWidget` contents because the tab already names the device; internal headings
+identify meaningful subsections. A trailing stretch keeps short Camera and
+Filter Wheel content compact at the top of tall tabs. Acquisition, Strategy, and Focus remain
+separate workflow tabs. Automaton lifecycle actions do not belong to a device
+tab: the upper-left Controller Status dock renders one flat, scrollable list with
+lifecycle actions first, Automaton status below them, and peripheral controllers
+after it. The single Refresh Status
+action uses `PING`, whose response contains both lifecycle and peripheral status.
+Napari Image Settings occupies the lower-left dock row, approximately 40%
+of the usable height; the status row receives approximately 60%. The native Layer
+List stays hidden.
+
+The central workspace owns exactly two image layers, selected by **Microscope**
+and **DMD** tabs. Camera frames and stacks update only the microscope layer, while
+DMD previews retain the existing hardware-to-display orientation. A fixed-height
+strip beneath the canvas formats existing response fields and follows Napari's
+selected stack plane. The first real image and each explicit tab switch are fit
+to the canvas; later image updates preserve the user's zoom. Do not reintroduce a
+composited dashboard or derive extra metadata by expanding the wire protocol.
 
 ## Add a panel using an existing operation
 
@@ -72,6 +96,32 @@ class CameraSummaryPanel(QGroupBox):
 
 Check the controller's emitted payload shape: some signals receive a nested value,
 others the entire response payload. Do not assume every signal unwraps the same way.
+
+## Configuration forms and manual acquisition
+
+`ConfigFieldSpec` describes each simple configuration value. Supply `help_text`
+with units, effects, ranges, interactions, and the meaning of read-only values;
+`ConfigForm` applies it to both the label and input so disabled widgets do not hide
+their explanation. Numeric bounds and choices remain validation hints in the GUI,
+not replacements for backend validation. Dock-panel composition normalises action
+buttons to expanding horizontal and fixed vertical policies using a font-derived
+minimum height.
+
+`FrameAcquisitionSettingsPanel` retains the existing wire key
+`use_current_main_controls` for compatibility, but presents it as **Use current
+device settings**. Its general dialog owns exposure and acquisition cleanup
+options. Separate LED, DMD, and filter dialogs own only their existing override
+values and are disabled while live device state is selected. The shared
+`ManualAcquisitionSaveConfig` is an explicit UI-state object linking the
+Acquisition-tab Output Configuration checkbox to manual-frame and Z-stack
+payloads. Do not attach it to the Strategy-tab output panel. `ZStackSettingsPanel`
+owns relative start/end/step values and merges them with the shared acquisition
+payload when submitting a stack.
+
+`FilterWheelPanel` builds checkable position buttons from authoritative status.
+A click sends the existing set command, while only a subsequent status response
+changes the authoritative checked position. Retain lifecycle and strategy gates
+when changing this presentation.
 
 ## Add a new GUI operation end to end
 

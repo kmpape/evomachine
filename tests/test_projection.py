@@ -299,7 +299,7 @@ class FakeLedManager:
 class FakeFilterWheel:
     """Filter wheel fake that records requested positions."""
 
-    def __init__(self, current_filter_type: FilterWheelType = FilterWheelType.FILTER):
+    def __init__(self, current_filter_type: FilterWheelType = FilterWheelType.BANDPASS_405_445_514_561_640nm):
         """
         Initialise fake filter wheel state.
 
@@ -428,7 +428,7 @@ def test_projection_manager_calibrates_dmd_and_restores_peripherals(tmp_path: Pa
     assert camera.live_mode_disabled
     assert led_manager.set_calls == [(LEDType.LED_450_NM, 25)]
     assert led_manager.disable_count == 1
-    assert filter_wheel.set_calls == [FilterWheelType.FILTER_527nm, FilterWheelType.FILTER]
+    assert filter_wheel.set_calls == [FilterWheelType.FILTER_527nm, FilterWheelType.BANDPASS_405_445_514_561_640nm]
     assert dmd.display_none_count >= 1
     assert manager.photodiode is photodiode
     assert result is None
@@ -475,5 +475,5 @@ def test_projection_manager_stops_calibration_and_cleans_up(tmp_path: Path) -> N
     assert result is None
     assert not filename.exists()
     assert led_manager.disable_count == 1
-    assert filter_wheel.set_calls == [FilterWheelType.FILTER_527nm, FilterWheelType.FILTER]
+    assert filter_wheel.set_calls == [FilterWheelType.FILTER_527nm, FilterWheelType.BANDPASS_405_445_514_561_640nm]
     assert dmd.display_none_count == 1

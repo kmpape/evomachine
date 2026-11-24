@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
     QDialog,
     QDialogButtonBox,
+    QCheckBox,
     QFileDialog,
     QGridLayout,
     QGroupBox,
@@ -353,11 +355,21 @@ class AcquisitionConfigurationDialog(QDialog):
         self.source_status_label.setText(summary)
 
 
+@dataclass
+class ManualAcquisitionSaveConfig:
+    """Share the manual save choice between acquisition and output panels.
+
+    Args:
+        enabled: Whether workflow manual frames and Z-stacks should be saved.
+    """
+
+    enabled: bool = False
+
+
 class FrameAcquisitionSettingsPanel(QGroupBox):
-    """Config values used by manual frame and z-stack acquisition panels."""
+    """Configure general and device-specific manual acquisition values."""
 
     SETTINGS = (
-        ("save", "Save", False),
         ("normalise", "Normalise", False),
         ("illuminate_dmd", "Illuminate DMD", False),
         ("clear_dmd_after", "Clear DMD After", False),
@@ -365,31 +377,74 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
         ("disable_leds_after", "Disable LEDs After", False),
     )
 
-    def __init__(self, controller: Any | None = None, parent: QWidget | None = None):
+    def __init__(
+        self,
+        controller: Any | None = None,
+        parent: QWidget | None = None,
+        save_config: ManualAcquisitionSaveConfig | None = None,
+    ):
+        """Create acquisition configuration controls.
+
+        Args:
+            controller: Optional GUI controller used for virtual-source state.
+            parent: Optional owning Qt widget.
+            save_config: Shared manual-save choice used in emitted payloads.
+        """
         super().__init__("Acquisition Configuration", parent)
         self.controller = controller
+        self.save_config = (
+            save_config if save_config is not None else ManualAcquisitionSaveConfig()
+        )
         self.virtual_source: dict[str, Any] | None = None
         self.config_values = self._default_config_values()
+        self.use_current_device_settings = QCheckBox("Use current device settings")
+        self.use_current_device_settings.setChecked(True)
+        self.use_current_device_settings.setToolTip(
+            "Use the exposure, LEDs, filter wheel, and DMD state already selected in Device "
+            "Controls. General image processing and cleanup options still apply."
+        )
         self.configure_button = QPushButton("Configure")
+        self.configure_button.setToolTip(
+            "Configure exposure, normalisation, illumination cleanup, and virtual images."
+        )
+        self.leds_button = QPushButton("LEDs")
+        self.leds_button.setToolTip("Choose acquisition LED channels and brightness values.")
+        self.dmd_button = QPushButton("DMD")
+        self.dmd_button.setToolTip("Choose the DMD pattern used by explicit acquisitions.")
+        self.filter_wheel_button = QPushButton("Filter Wheel")
+        self.filter_wheel_button.setToolTip("Choose the acquisition filter-wheel position.")
         self.summary_label = QLabel()
         self.summary_label.setWordWrap(True)
 
+        device_buttons = QGridLayout()
+        device_buttons.addWidget(self.leds_button, 0, 0)
+        device_buttons.addWidget(self.dmd_button, 0, 1)
+        device_buttons.addWidget(self.filter_wheel_button, 1, 0, 1, 2)
         layout = QVBoxLayout()
+        layout.addWidget(self.use_current_device_settings)
         layout.addWidget(self.summary_label)
         layout.addWidget(self.configure_button)
+        layout.addLayout(device_buttons)
         self.setLayout(layout)
 
+        self.use_current_device_settings.toggled.connect(self._set_use_current_device_settings)
         self.configure_button.clicked.connect(self._open_config_dialog)
+        self.leds_button.clicked.connect(self._open_led_config_dialog)
+        self.dmd_button.clicked.connect(self._open_dmd_config_dialog)
+        self.filter_wheel_button.clicked.connect(self._open_filter_wheel_config_dialog)
         if self.controller is not None:
             self.controller.virtual_image_source_received.connect(self.update_virtual_source)
             self.controller.refresh_virtual_image_source()
+        self._sync_device_buttons()
         self._update_summary()
 
     def payload(self) -> dict:
+        """Return the existing GUI acquisition payload from the reorganised controls."""
         settings = {
             key: bool(self.config_values[key])
             for key, _label, _default in self.SETTINGS
         }
+        settings["save"] = self.save_config.enabled
         use_current_main_controls = bool(self.config_values[USE_CURRENT_MAIN_CONTROLS_KEY])
         if use_current_main_controls:
             settings["illuminate_dmd"] = False
@@ -403,16 +458,8 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
             payload.update(self._explicit_peripheral_payload())
         return payload
 
-    def z_stack_payload(self) -> dict:
-        payload = self.payload()
-        payload.update({
-            "start_z": float(self.config_values["start_z"]),
-            "end_z": float(self.config_values["end_z"]),
-            "step_z": float(self.config_values["step_z"]),
-        })
-        return payload
-
     def _open_config_dialog(self) -> None:
+        """Open the general acquisition and optional virtual-source dialog."""
         dialog = AcquisitionConfigurationDialog(
             fields=self._config_fields(),
             controller=self.controller,
@@ -425,6 +472,47 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
             return
         self.config_values.update(dialog.values())
         self._update_summary()
+
+    def _open_led_config_dialog(self) -> None:
+        """Open and apply explicit acquisition LED settings."""
+        self._apply_simple_dialog("Acquisition LEDs", self._led_config_fields())
+
+    def _open_dmd_config_dialog(self) -> None:
+        """Open and apply the explicit acquisition DMD pattern."""
+        self._apply_simple_dialog("Acquisition DMD", self._dmd_config_fields())
+
+    def _open_filter_wheel_config_dialog(self) -> None:
+        """Open and apply the explicit acquisition filter position."""
+        self._apply_simple_dialog("Acquisition Filter Wheel", self._filter_config_fields())
+
+    def _apply_simple_dialog(self, title: str, fields: list[ConfigFieldSpec]) -> None:
+        """Apply values from one accepted device-specific configuration dialog.
+
+        Args:
+            title: Dialog window title.
+            fields: Device-specific fields to display.
+        """
+        dialog = ConfigDialog(title=title, fields=fields, parent=self)
+        if dialog.exec_() != dialog.Accepted:
+            return
+        self.config_values.update(dialog.values())
+        self._update_summary()
+
+    def _set_use_current_device_settings(self, checked: bool) -> None:
+        """Update acquisition mode from the visible checkbox.
+
+        Args:
+            checked: Whether current live device settings should be used.
+        """
+        self.config_values[USE_CURRENT_MAIN_CONTROLS_KEY] = checked
+        self._sync_device_buttons()
+        self._update_summary()
+
+    def _sync_device_buttons(self) -> None:
+        """Disable explicit device dialogs while live device settings are selected."""
+        enabled = not bool(self.config_values[USE_CURRENT_MAIN_CONTROLS_KEY])
+        for button in (self.leds_button, self.dmd_button, self.filter_wheel_button):
+            button.setEnabled(enabled)
 
     def update_virtual_source(self, payload: dict[str, Any]) -> None:
         """
@@ -442,13 +530,9 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
         self.virtual_source = dict(payload) if bool(payload.get("supported")) else None
 
     def _config_fields(self) -> list[ConfigFieldSpec]:
+        """Return general acquisition fields retained in the main dialog."""
+        use_current = bool(self.config_values[USE_CURRENT_MAIN_CONTROLS_KEY])
         fields = [
-            ConfigFieldSpec(
-                "Use current main controls",
-                USE_CURRENT_MAIN_CONTROLS_KEY,
-                self.config_values[USE_CURRENT_MAIN_CONTROLS_KEY],
-                kind="bool",
-            ),
             ConfigFieldSpec(
                 "Exposure ms",
                 "exposure",
@@ -458,70 +542,77 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
                 maximum=1000.0,
                 decimals=1,
                 single_step=10.0,
-                enabled_when_key=USE_CURRENT_MAIN_CONTROLS_KEY,
-                enabled_when_value=False,
-            ),
-            ConfigFieldSpec(
-                "Start ΔZ (µm)",
-                "start_z",
-                self.config_values["start_z"],
-                kind="float",
-                minimum=-1e7,
-                maximum=1e7,
-                decimals=3,
-                single_step=1.0,
-            ),
-            ConfigFieldSpec(
-                "End ΔZ (µm)",
-                "end_z",
-                self.config_values["end_z"],
-                kind="float",
-                minimum=-1e7,
-                maximum=1e7,
-                decimals=3,
-                single_step=1.0,
-            ),
-            ConfigFieldSpec(
-                "ΔZ step (µm)",
-                "step_z",
-                self.config_values["step_z"],
-                kind="float",
-                minimum=0.001,
-                maximum=1e7,
-                decimals=3,
-                single_step=1.0,
+                editable=not use_current,
+                help_text=(
+                    "Camera exposure in milliseconds for explicit acquisition settings. "
+                    "Ignored while current device settings are selected."
+                ),
             ),
         ]
         for key, label, _default in self.SETTINGS:
-            kwargs = (
-                {
-                    "enabled_when_key": USE_CURRENT_MAIN_CONTROLS_KEY,
-                    "enabled_when_value": False,
-                }
-                if key == "illuminate_dmd"
-                else {}
+            help_texts = {
+                "normalise": "Request camera-supported normalisation for the returned image.",
+                "illuminate_dmd": (
+                    "Display the configured DMD pattern before capture. Ignored while current "
+                    "device settings are selected."
+                ),
+                "clear_dmd_after": "Blank the DMD after acquisition completes.",
+                "restore_leds_after": (
+                    "Restore LED states captured before acquisition unless Disable LEDs After is set."
+                ),
+                "disable_leds_after": (
+                    "Disable all LEDs after acquisition; this takes precedence over LED restoration."
+                ),
+            }
+            editable = not use_current if key == "illuminate_dmd" else True
+            fields.append(
+                ConfigFieldSpec(
+                    label,
+                    key,
+                    self.config_values[key],
+                    kind="bool",
+                    editable=editable,
+                    help_text=help_texts[key],
+                )
             )
-            fields.append(ConfigFieldSpec(label, key, self.config_values[key], kind="bool", **kwargs))
-        fields.extend([
+        return fields
+
+    def _filter_config_fields(self) -> list[ConfigFieldSpec]:
+        """Return the explicit acquisition filter-wheel field."""
+        return [
             ConfigFieldSpec(
                 "Filter wheel",
                 "filter_wheel",
                 self.config_values["filter_wheel"],
                 kind="choice",
                 choices=FILTER_WHEEL_CHOICES,
-                enabled_when_key=USE_CURRENT_MAIN_CONTROLS_KEY,
-                enabled_when_value=False,
+                help_text=(
+                    "Filter-wheel position applied before an explicitly configured capture. "
+                    "BANDPASS_405_445_514_561_640nm is the Chroma "
+                    "ZET405/445/514/561/640m multi-bandpass filter."
+                ),
             ),
+        ]
+
+    def _dmd_config_fields(self) -> list[ConfigFieldSpec]:
+        """Return the explicit acquisition DMD pattern field."""
+        return [
             ConfigFieldSpec(
                 "DMD pattern",
                 "dmd_pattern",
                 self.config_values["dmd_pattern"],
                 kind="choice",
                 choices=DMD_PATTERN_CHOICES,
-                enabled_when_key=USE_CURRENT_MAIN_CONTROLS_KEY,
-                enabled_when_value=False,
+                help_text=(
+                    "Built-in DMD pattern prepared when Illuminate DMD is enabled for an "
+                    "explicitly configured capture."
+                ),
             ),
-        ])
+        ]
+
+    def _led_config_fields(self) -> list[ConfigFieldSpec]:
+        """Return channel-enable and brightness fields for explicit acquisition LEDs."""
+        fields: list[ConfigFieldSpec] = []
         for led_type in ACQUISITION_LED_TYPES:
             fields.extend([
                 ConfigFieldSpec(
@@ -529,8 +620,10 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
                     self._led_enabled_key(led_type),
                     self.config_values[self._led_enabled_key(led_type)],
                     kind="bool",
-                    enabled_when_key=USE_CURRENT_MAIN_CONTROLS_KEY,
-                    enabled_when_value=False,
+                    help_text=(
+                        f"Include the {LED_LABELS.get(led_type, led_type.name)} channel in "
+                        "explicit acquisition metadata."
+                    ),
                 ),
                 ConfigFieldSpec(
                     f"{LED_LABELS.get(led_type, led_type.name)} brightness",
@@ -541,8 +634,9 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
                     maximum=100.0,
                     decimals=0,
                     single_step=1.0,
-                    enabled_when_key=USE_CURRENT_MAIN_CONTROLS_KEY,
-                    enabled_when_value=False,
+                    enabled_when_key=self._led_enabled_key(led_type),
+                    enabled_when_value=True,
+                    help_text="LED brightness percentage from 0 to 100 for this acquisition.",
                 ),
             ])
         return fields
@@ -552,9 +646,6 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
         values: dict[str, Any] = {
             USE_CURRENT_MAIN_CONTROLS_KEY: True,
             "exposure": 200.0,
-            "start_z": -10.0,
-            "end_z": 10.0,
-            "step_z": 1.0,
             "filter_wheel": FilterWheelType.NO_FILTER.name,
             "dmd_pattern": "full",
         }
@@ -582,15 +673,23 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
 
     def _update_summary(self) -> None:
         use_current_main_controls = bool(self.config_values[USE_CURRENT_MAIN_CONTROLS_KEY])
-        exposure = "main controls" if use_current_main_controls else f"{float(self.config_values['exposure']):.1f} ms"
+        exposure = (
+            "current device settings"
+            if use_current_main_controls
+            else f"{float(self.config_values['exposure']):.1f} ms"
+        )
         dmd_pattern = (
-            "main controls"
+            "current device settings"
             if use_current_main_controls
             else str(self.config_values["dmd_pattern"])
             if bool(self.config_values["illuminate_dmd"])
             else "off"
         )
-        mode = "current main controls" if use_current_main_controls else "explicit acquisition config"
+        mode = (
+            "current device settings"
+            if use_current_main_controls
+            else "explicit acquisition config"
+        )
         settings = ", ".join(
             label
             for key, label, _default in self.SETTINGS
@@ -599,9 +698,6 @@ class FrameAcquisitionSettingsPanel(QGroupBox):
         self.summary_label.setText(
             f"mode: {mode}; exposure: {exposure}; "
             f"DMD: {dmd_pattern}; "
-            f"Δz: {float(self.config_values['start_z']):.3f} -> "
-            f"{float(self.config_values['end_z']):.3f} by "
-            f"{float(self.config_values['step_z']):.3f}; "
             f"settings: {settings or '-'}"
         )
 
@@ -688,29 +784,86 @@ class ZStackSettingsPanel(QGroupBox):
         self.settings_provider = settings_provider or (lambda: {})
         self.devices_initialised = False
         self.acquisition_running = False
+        self.start_z = -10.0
+        self.end_z = 10.0
+        self.step_z = 1.0
+        self.summary_label = QLabel()
+        self.summary_label.setWordWrap(True)
+        self.configure_button = QPushButton("Configure")
+        self.configure_button.setToolTip("Configure the relative Z-stack range and step size.")
         self.acquire_button = QPushButton("Acquire Z Stack")
         self.status_label = QLabel("Run Initialise Devices before z-stack acquisition.")
         self.operation_poll_timer = QTimer(self)
         self.operation_poll_timer.setInterval(250)
 
         layout = QVBoxLayout()
+        layout.addWidget(self.summary_label)
+        layout.addWidget(self.configure_button)
         layout.addWidget(self.acquire_button)
         layout.addWidget(self.status_label)
         self.setLayout(layout)
 
+        self.configure_button.clicked.connect(self._open_config_dialog)
         self.acquire_button.clicked.connect(self._acquire_z_stack)
         self.controller.frame_received.connect(self.update_frame_status)
         self.controller.lifecycle_status_received.connect(self.update_lifecycle_status)
         self.controller.response_error.connect(self._show_error)
         self.controller.operation_status_received.connect(self.update_operation_status)
         self.operation_poll_timer.timeout.connect(self.controller.refresh_z_stack_operation)
+        self._update_summary()
         self._sync_controls_enabled()
+
+    def _open_config_dialog(self) -> None:
+        """Open and apply relative Z-stack range configuration."""
+        dialog = ConfigDialog(
+            title="Z Stack Configuration",
+            fields=self._config_fields(),
+            parent=self,
+        )
+        if dialog.exec_() != dialog.Accepted:
+            return
+        values = dialog.values()
+        self.start_z = float(values["start_z"])
+        self.end_z = float(values["end_z"])
+        self.step_z = float(values["step_z"])
+        self._update_summary()
+
+    def _config_fields(self) -> list[ConfigFieldSpec]:
+        """Return relative Z-stack range fields."""
+        return [
+            ConfigFieldSpec(
+                "Start ΔZ (µm)", "start_z", self.start_z, kind="float",
+                minimum=-1e7, maximum=1e7, decimals=3, single_step=1.0,
+                help_text="Relative Z offset in micrometres for the first stack plane.",
+            ),
+            ConfigFieldSpec(
+                "End ΔZ (µm)", "end_z", self.end_z, kind="float",
+                minimum=-1e7, maximum=1e7, decimals=3, single_step=1.0,
+                help_text="Relative Z offset in micrometres for the final stack plane.",
+            ),
+            ConfigFieldSpec(
+                "ΔZ step (µm)", "step_z", self.step_z, kind="float",
+                minimum=0.001, maximum=1e7, decimals=3, single_step=1.0,
+                help_text="Positive spacing in micrometres between successive stack planes.",
+            ),
+        ]
+
+    def _update_summary(self) -> None:
+        """Display the active relative Z-stack range."""
+        self.summary_label.setText(
+            f"ΔZ: {self.start_z:.3f} → {self.end_z:.3f} µm; step: {self.step_z:.3f} µm"
+        )
 
     def _acquire_z_stack(self) -> None:
         if not self.devices_initialised:
             self.status_label.setText("Run Initialise Devices before z-stack acquisition.")
             return
         payload = self.settings_provider()
+        payload.update({
+            "start_z": self.start_z,
+            "end_z": self.end_z,
+            "step_z": self.step_z,
+        })
         self.status_label.setText("Acquiring z-stack.")
         self.acquisition_running = True
         self.operation_poll_timer.start()
@@ -748,6 +901,7 @@ class ZStackSettingsPanel(QGroupBox):
             self.status_label.setText("Ready to acquire a z-stack.")
 
     def _sync_controls_enabled(self) -> None:
+        self.configure_button.setEnabled(not self.acquisition_running)
         self.acquire_button.setEnabled(self.devices_initialised and not self.acquisition_running)
 
     def _show_error(self, error: str) -> None:
@@ -885,7 +1039,12 @@ class FilenamePatternDialog(QDialog):
 class OutputConfigurationPanel(QGroupBox):
     """Configure the shared output destination and filename pattern."""
 
-    def __init__(self, controller, parent: QWidget | None = None):
+    def __init__(
+        self,
+        controller,
+        parent: QWidget | None = None,
+        save_config: ManualAcquisitionSaveConfig | None = None,
+    ):
         """
         Initialise output-folder and filename-pattern controls.
 
@@ -895,6 +1054,9 @@ class OutputConfigurationPanel(QGroupBox):
             GUI controller used to read and update server-side configuration.
         parent
             Optional parent widget.
+        save_config
+            Optional shared manual-save state. When supplied, this panel exposes
+            the manual frame and Z-stack saving checkbox.
 
         Returns
         -------
@@ -902,6 +1064,7 @@ class OutputConfigurationPanel(QGroupBox):
         """
         super().__init__("Output Configuration", parent)
         self.controller = controller
+        self.save_config = save_config
         self.directory = ""
         self.filename_pattern = ""
         self._pattern_update_pending = False
@@ -911,8 +1074,23 @@ class OutputConfigurationPanel(QGroupBox):
         self.pattern_label.setWordWrap(True)
         self.choose_directory_button = QPushButton("Choose Output Folder")
         self.modify_pattern_button = QPushButton("Modify Pattern")
+        self.save_checkbox: QCheckBox | None = None
 
         layout = QVBoxLayout()
+        if self.save_config is not None:
+            self.save_checkbox = QCheckBox("Save manual acquisitions")
+            self.save_checkbox.setChecked(self.save_config.enabled)
+            self.save_checkbox.setToolTip(
+                "Save frames acquired from the Acquisition workflow and its Z-stack control."
+            )
+            self.save_checkbox.toggled.connect(self._set_manual_save)
+            layout.addWidget(self.save_checkbox)
+            save_help = QLabel(
+                "Applies to GUI manual frames and Z-stacks only. Python and AutoStrat "
+                "strategies control their own saving."
+            )
+            save_help.setWordWrap(True)
+            layout.addWidget(save_help)
         layout.addWidget(self.path_label)
         layout.addWidget(self.choose_directory_button)
         layout.addWidget(QLabel("Used by saved manual acquisitions, z-stacks, and strategies."))
@@ -927,6 +1105,15 @@ class OutputConfigurationPanel(QGroupBox):
         self.controller.response_error.connect(self._show_error)
         self.controller.request_error.connect(self._show_request_error)
         self.controller.refresh_acquisition_files()
+
+    def _set_manual_save(self, enabled: bool) -> None:
+        """Store the manual acquisition save choice.
+
+        Args:
+            enabled: Whether workflow frames and Z-stacks should be saved.
+        """
+        if self.save_config is not None:
+            self.save_config.enabled = enabled
 
     def _choose_directory(self) -> None:
         directory = QFileDialog.getExistingDirectory(

@@ -43,7 +43,7 @@ class TigerFilterWheel(FilterWheel):
     """
 
     DEFAULT_FILTER_WHEEL_SETTINGS: dict[FilterWheelType, int] = {
-        FilterWheelType.FILTER: 0,
+        FilterWheelType.BANDPASS_405_445_514_561_640nm: 0,
         FilterWheelType.FILTER_465nm: 1,
         FilterWheelType.FILTER_527nm: 2,
         FilterWheelType.FILTER_592nm: 3,

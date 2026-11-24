@@ -20,12 +20,12 @@ from evomachine.gui.panels.acquisition import (
     AcquisitionStatusPanel,
     FrameAcquisitionSettingsPanel,
     ManualAcquisitionPanel,
+    ManualAcquisitionSaveConfig,
     OutputConfigurationPanel,
     SavedImageLoaderPanel,
     ZStackSettingsPanel,
 )
 from evomachine.gui.panels.autofocus import AutofocusPanel
-from evomachine.gui.panels.automaton import AutomatonPanel
 from evomachine.gui.panels.camera import CameraPanel
 from evomachine.gui.panels.dmd import DmdPanel
 from evomachine.gui.panels.filterwheel import FilterWheelPanel
@@ -54,13 +54,11 @@ class EvoMachineControlsDock(QWidget):
         )
         self.controller.probe_image_transport()
 
-        main_controls = QGroupBox("Main Controls")
+        main_controls = QGroupBox("Device Controls")
         main_controls.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         main_controls_layout = QVBoxLayout()
-        main_controls_layout.addWidget(
-            self._scrollable_tab(self._build_main_controls_column()),
-            stretch=1,
-        )
+        self.device_tabs = self._build_device_tabs()
+        main_controls_layout.addWidget(self.device_tabs, stretch=1)
         main_controls.setLayout(main_controls_layout)
 
         workflow_tabs = QTabWidget()
@@ -114,20 +112,25 @@ class EvoMachineControlsDock(QWidget):
         for button in widget.findChildren(QPushButton):
             button.setMinimumWidth(0)
             button.setMinimumHeight(button.fontMetrics().height() + 10)
-            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-    def _build_main_controls_column(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout()
-        layout.addWidget(AutomatonPanel(controller=self.controller))
-        layout.addWidget(StagePanel(controller=self.controller))
-        layout.addWidget(LedManagerPanel(controller=self.controller))
-        layout.addWidget(CameraPanel(controller=self.controller))
-        layout.addWidget(DmdPanel(controller=self.controller))
-        layout.addWidget(FilterWheelPanel(controller=self.controller))
-        layout.addStretch(1)
-        widget.setLayout(layout)
-        return widget
+    def _build_device_tabs(self) -> QTabWidget:
+        """Build device panels as independently scrollable tabs.
+
+        Returns:
+            Device tabs ordered by stage, LEDs, camera, DMD, and filter wheel.
+        """
+        tabs = QTabWidget()
+        device_panels = (
+            ("Stage", StagePanel(controller=self.controller)),
+            ("LEDs", LedManagerPanel(controller=self.controller)),
+            ("Camera", CameraPanel(controller=self.controller)),
+            ("DMD", DmdPanel(controller=self.controller)),
+            ("Filter Wheel", FilterWheelPanel(controller=self.controller)),
+        )
+        for title, panel in device_panels:
+            tabs.addTab(self._scrollable_tab(panel), title)
+        return tabs
 
     def _review_reference(self, payload):
         review = payload.get("review")
@@ -153,16 +156,23 @@ class EvoMachineControlsDock(QWidget):
     def _build_acquisition_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout()
-        settings_panel = FrameAcquisitionSettingsPanel(controller=self.controller)
+        save_config = ManualAcquisitionSaveConfig()
+        settings_panel = FrameAcquisitionSettingsPanel(
+            controller=self.controller,
+            save_config=save_config,
+        )
         layout.addWidget(settings_panel)
-        layout.addWidget(OutputConfigurationPanel(controller=self.controller))
+        layout.addWidget(OutputConfigurationPanel(
+            controller=self.controller,
+            save_config=save_config,
+        ))
         layout.addWidget(ManualAcquisitionPanel(
             controller=self.controller,
             settings_provider=settings_panel.payload,
         ))
         layout.addWidget(ZStackSettingsPanel(
             controller=self.controller,
-            settings_provider=settings_panel.z_stack_payload,
+            settings_provider=settings_panel.payload,
         ))
         layout.addWidget(SavedImageLoaderPanel(controller=self.controller))
         layout.addWidget(AcquisitionStatusPanel(controller=self.controller))

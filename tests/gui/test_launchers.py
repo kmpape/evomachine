@@ -8,7 +8,6 @@ import pytest
 from evomachine.bindings.binding_types import BindingType
 from evomachine.gui import launchers
 from evomachine.gui import napari_app
-from evomachine.gui.central_workspace import CENTRAL_VIEW_ZOOM
 from evomachine.gui.image_payloads import IMAGE_TRANSPORT_ENV, IMAGE_TRANSPORT_SOCKET_TIFF
 
 
@@ -170,7 +169,7 @@ def test_napari_app_schedules_one_startup_view_fit(monkeypatch) -> None:
     startup_fit()
 
     assert viewer.reset_count == 1
-    assert viewer.camera.zoom == 2.0 * CENTRAL_VIEW_ZOOM
+    assert viewer.camera.zoom == 2.0
 
 
 def test_napari_app_restores_window_geometry_before_sizing_docks(monkeypatch) -> None:
@@ -197,12 +196,11 @@ def test_napari_app_restores_window_geometry_before_sizing_docks(monkeypatch) ->
     assert calls == ["show", "layout", "fit"]
 
 
-def test_napari_app_hides_layer_list_and_tabifies_status_with_layer_controls() -> None:
+def test_napari_app_hides_layer_list_and_splits_status_above_layer_controls() -> None:
     class FakeDock:
         def __init__(self):
             self.shown = False
             self.hidden = False
-            self.raised = False
             self.title = None
 
         def show(self):
@@ -211,22 +209,19 @@ def test_napari_app_hides_layer_list_and_tabifies_status_with_layer_controls() -
         def hide(self):
             self.hidden = True
 
-        def raise_(self):
-            self.raised = True
-
         def setWindowTitle(self, title):  # noqa: N802
             self.title = title
 
     class FakeQtWindow:
         def __init__(self):
             self.added = []
-            self.tabified = []
+            self.split = []
 
         def addDockWidget(self, area, dock):  # noqa: N802
             self.added.append((area, dock))
 
-        def tabifyDockWidget(self, first, second):  # noqa: N802
-            self.tabified.append((first, second))
+        def splitDockWidget(self, first, second, orientation):  # noqa: N802
+            self.split.append((first, second, orientation))
 
     controls = FakeDock()
     layers = FakeDock()
@@ -247,10 +242,38 @@ def test_napari_app_hides_layer_list_and_tabifies_status_with_layer_controls() -
     assert controls.shown
     assert controls.title == "Image Settings"
     assert layers.hidden
-    assert qt_window.added[0][1] is controls
-    assert qt_window.tabified == [(controls, status)]
+    assert [dock for _area, dock in qt_window.added] == [controls, status]
+    assert qt_window.split[0][:2] == (status, controls)
     assert status.shown
-    assert status.raised
+
+
+def test_napari_app_sizes_left_docks_to_sixty_forty() -> None:
+    """The usable left column allocates 60% to status and 40% to settings."""
+    class FakeQtWindow:
+        def __init__(self):
+            self.calls = []
+
+        def height(self):
+            return 800
+
+        def resizeDocks(self, docks, sizes, orientation):  # noqa: N802
+            self.calls.append((docks, sizes, orientation))
+
+    status = object()
+    controls = object()
+    qt_window = FakeQtWindow()
+    viewer = SimpleNamespace(
+        window=SimpleNamespace(
+            _qt_window=qt_window,
+            _qt_viewer=SimpleNamespace(dockLayerControls=controls),
+        )
+    )
+
+    napari_app._resize_left_docks(viewer, status_dock_widget=status)
+
+    docks, sizes, _orientation = qt_window.calls[0]
+    assert docks == [status, controls]
+    assert sizes == [420, 280]
 
 
 @pytest.mark.parametrize(("window_height", "expected_height"), [(800, 100), (1200, 150)])

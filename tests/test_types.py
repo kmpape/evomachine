@@ -51,7 +51,12 @@ def test_protocol_facing_enum_values_are_stable():
     assert LEDType.LED_OVERHEAD_TIGER.value == 6
 
     assert FilterWheelType.UNKNOWN.value == -1
-    assert FilterWheelType.FILTER.value == 0
+    assert FilterWheelType.BANDPASS_405_445_514_561_640nm.value == 0
+    assert FilterWheelType.FILTER is FilterWheelType.BANDPASS_405_445_514_561_640nm
+    assert FilterWheelType["FILTER"] is FilterWheelType.BANDPASS_405_445_514_561_640nm
+    assert FilterWheelType.BANDPASS_405_445_514_561_640nm.name == (
+        "BANDPASS_405_445_514_561_640nm"
+    )
     assert FilterWheelType.FILTER_465nm.value == 1
     assert FilterWheelType.FILTER_527nm.value == 2
     assert FilterWheelType.FILTER_592nm.value == 3

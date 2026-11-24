@@ -11,7 +11,7 @@ from evomachine.types import FilterWheelType
 
 # TODO(CODEX): This and all other test files should grab the settings from evomachine
 AVAILABLE_FILTERS = [
-    FilterWheelType.FILTER,
+    FilterWheelType.BANDPASS_405_445_514_561_640nm,
     FilterWheelType.FILTER_527nm,
     FilterWheelType.BLOCKING,
 ]
@@ -36,20 +36,20 @@ def test_filter_wheel_config_requires_non_empty_filter_list():
     with pytest.raises(TypeError):
         FilterWheelConfig(
             binding="virtual",
-            available_filters=[FilterWheelType.FILTER],
+            available_filters=[FilterWheelType.BANDPASS_405_445_514_561_640nm],
         )
 
     with pytest.raises(TypeError):
         FilterWheelConfig(
             binding=BindingType.VIRTUAL,
-            available_filters=[FilterWheelType.FILTER],
+            available_filters=[FilterWheelType.BANDPASS_405_445_514_561_640nm],
             check_alive="yes",
         )
 
     with pytest.raises(TypeError):
         FilterWheelConfig(
             binding=BindingType.VIRTUAL,
-            available_filters=FilterWheelType.FILTER,
+            available_filters=FilterWheelType.BANDPASS_405_445_514_561_640nm,
         )
 
     with pytest.raises(ValueError):
@@ -61,7 +61,7 @@ def test_filter_wheel_config_requires_non_empty_filter_list():
     with pytest.raises(TypeError):
         FilterWheelConfig(
             binding=BindingType.VIRTUAL,
-            available_filters=[FilterWheelType.FILTER, "bad"],
+            available_filters=[FilterWheelType.BANDPASS_405_445_514_561_640nm, "bad"],
         )
 
 
@@ -104,16 +104,16 @@ def test_filter_wheel_rejects_unavailable_filter():
 def test_filter_wheel_readiness_checks_can_be_disabled():
     filter_wheel = make_virtual_filter_wheel(check_initialised=False, check_alive=False)
 
-    filter_wheel.set_filter_wheel(FilterWheelType.FILTER)
+    filter_wheel.set_filter_wheel(FilterWheelType.BANDPASS_405_445_514_561_640nm)
 
-    assert filter_wheel.get_filter_wheel() == FilterWheelType.FILTER
+    assert filter_wheel.get_filter_wheel() == FilterWheelType.BANDPASS_405_445_514_561_640nm
 
 
 def test_filter_wheel_set_before_initialise_raises_by_default():
     filter_wheel = make_virtual_filter_wheel()
 
     with pytest.raises(RuntimeError):
-        filter_wheel.set_filter_wheel(FilterWheelType.FILTER)
+        filter_wheel.set_filter_wheel(FilterWheelType.BANDPASS_405_445_514_561_640nm)
 
 
 def test_tiger_filter_wheel_initialise_reads_without_setting():
@@ -153,11 +153,11 @@ def test_tiger_filter_wheel_uses_custom_position_mapping():
     filter_wheel = TigerFilterWheel(
         peripheral_ctrl=peripheral_ctrl,
         available_filters=AVAILABLE_FILTERS,
-        filter_wheel_settings={FilterWheelType.FILTER: 42},
+        filter_wheel_settings={FilterWheelType.BANDPASS_405_445_514_561_640nm: 42},
     )
     filter_wheel.initialise()
 
-    filter_wheel.set_filter_wheel(FilterWheelType.FILTER)
+    filter_wheel.set_filter_wheel(FilterWheelType.BANDPASS_405_445_514_561_640nm)
 
     assert tiger.filter_wheel_calls == [(42, 10)]
 
@@ -172,13 +172,13 @@ def test_filter_wheel_factory_creates_virtual_filter_wheel():
             name="Debug Filter Wheel",
         ),
         peripheral_controllers=peripheral_ctrl,
-        current_filter_type=FilterWheelType.FILTER,
+        current_filter_type=FilterWheelType.BANDPASS_405_445_514_561_640nm,
     )
 
     assert isinstance(filter_wheel, VirtualFilterWheel)
     assert filter_wheel.name == "Debug Filter Wheel"
     filter_wheel.initialise()
-    assert filter_wheel.get_filter_wheel() == FilterWheelType.FILTER
+    assert filter_wheel.get_filter_wheel() == FilterWheelType.BANDPASS_405_445_514_561_640nm
 
 
 def test_filter_wheel_factory_requires_tiger_peripheral_controller_for_asitiger():
