@@ -223,7 +223,7 @@ def build_virtual_automaton():
     camera = CameraFactory.create(
         CameraConfig(
             binding=BindingType.VIRTUAL,
-            image=ImageConfigType(pxl_horiz=64, pxl_vert=48, pxl_dtype=np.dtype("uint16")),
+            image=ImageConfigType(pxl_horiz=3200, pxl_vert=3200, pxl_dtype=np.dtype("uint16")),
             objective_config=ObjectiveConfigTypeFactory.default_air(),
             check_alive=False,
         ),
@@ -233,7 +233,7 @@ def build_virtual_automaton():
         FilterWheelConfig(
             binding=BindingType.VIRTUAL,
             available_filters=[
-                FilterWheelType.FILTER,
+                FilterWheelType.BANDPASS_405_445_514_561_640nm,
                 FilterWheelType.FILTER_465nm,
                 FilterWheelType.FILTER_527nm,
                 FilterWheelType.FILTER_592nm,
@@ -447,7 +447,7 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
         FilterWheelConfig(
             binding=BindingType.ASI_TIGER,
             available_filters=[
-                FilterWheelType.FILTER,
+                FilterWheelType.BANDPASS_405_445_514_561_640nm,
                 FilterWheelType.FILTER_465nm,
                 FilterWheelType.FILTER_527nm,
                 FilterWheelType.FILTER_592nm,

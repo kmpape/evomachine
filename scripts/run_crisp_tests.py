@@ -44,7 +44,7 @@ cfg.brightness = 1.0
 cam = EvoCamerav2(cfg_camera=camera_config)
 cam.initialise()
 cam.set_led(i_chan=LEDType.LED_450_NM, brightness=15.0)
-cam.set_filter_wheel(FilterWheelType.FILTER)
+cam.set_filter_wheel(FilterWheelType.BANDPASS_405_445_514_561_640nm)
 cam.set_exposure(exposure_time=100)
 
 dmd = DMDControl()

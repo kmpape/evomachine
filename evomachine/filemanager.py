@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from enum import Enum
 import json
 import os
 from pathlib import Path
 import re
-import string
+from string import Formatter
 import threading
 from typing import Any
 
@@ -22,17 +23,33 @@ from evomachine.config import (
     now,
 )
 from evomachine.frame import FrameMetaData
-from evomachine.types import FilterWheelType, LEDType
+from evomachine.types import FilterWheelType, LEDType, UNKNOWN_FOV_ID
+
+
+class FileNameField(str, Enum):
+    """Fields available for substitution in file name patterns."""
+
+    CHANNEL = "channel"
+    FOV_ID = "fov_id"
+    X = "x"
+    Y = "y"
+    Z = "z"
+    FILTER_WHEEL = "filter_wheel"
+    TIMESTAMP = "timestamp"
+    TIMEZONE = "timezone"
+    FRAME_ID = "frame_id"
+    CALLBACK_ID = "callback_id"
+    FILE_ID = "file_id"
+    LIGHT = "light"
+    DATETIME = "datetime"
+    Z_RANGE = "z_range"
 
 
 class FileNameConfig(EvoConfig):
     """Configuration object for FileManager output paths and filename patterns."""
 
     directory: Path
-    filename_pattern: str = "{file_id}_{light}_FOV{fov_id}_{datetime}"
-    "Pattern for single frames, e.g. 000124_450NM_FOV3_261108_155754.tiff."
-    zstack_filename_pattern: str = "{file_id}_{light}_FOV{fov_id}_Z{z_range}_{datetime}"
-    "Pattern for z-stack files, e.g. 000123_450NM_FOV3_Z-10,1,10_261108_155754.tiff."
+    filename_pattern: str = "FOV{fov_id}_{timestamp}_{callback_id}"
     file_id_digits: int = 6
     "Zero-padded width of the {file_id} filename field."
     create_directory: bool = True
@@ -45,11 +62,47 @@ class FileNameConfig(EvoConfig):
             raise TypeError(f"FileNameConfig: directory must be Path or str, received {type(value)}.")
         return value
 
-    @field_validator("filename_pattern", "zstack_filename_pattern", mode="before")
+    @field_validator("filename_pattern", mode="before")
     @classmethod
-    def _validate_filename_pattern_type(cls, value: object, info) -> object:
+    def _validate_filename_pattern_type(cls, value: object) -> object:
+        """
+        Validate the filename pattern type, syntax, and substitution fields.
+
+        Parameters
+        ----------
+        value
+            Candidate filename pattern.
+
+        Returns
+        -------
+        object
+            The validated filename pattern.
+        """
         if not isinstance(value, str):
-            raise TypeError(f"FileNameConfig: {info.field_name} must be str, received {type(value)}.")
+            raise TypeError(f"FileNameConfig: filename_pattern must be str, received {type(value)}.")
+        allowed_fields = {field.value for field in FileNameField}
+        invalid_fields: set[str] = set()
+        patterns_to_parse = [value]
+        formatter = Formatter()
+        try:
+            while patterns_to_parse:
+                pattern = patterns_to_parse.pop()
+                for _, field_name, format_spec, conversion in formatter.parse(pattern):
+                    if field_name is not None and field_name not in allowed_fields:
+                        invalid_fields.add(field_name)
+                    if conversion is not None and conversion not in {"a", "r", "s"}:
+                        raise ValueError(f"invalid conversion '!{conversion}'")
+                    if format_spec:
+                        patterns_to_parse.append(format_spec)
+        except ValueError as error:
+            raise ValueError(f"FileNameConfig: filename_pattern has invalid format syntax: {error}.") from error
+        if invalid_fields:
+            invalid = ", ".join(repr(field) for field in sorted(invalid_fields))
+            allowed = ", ".join(sorted(allowed_fields))
+            raise ValueError(
+                f"FileNameConfig: filename_pattern contains unsupported fields: {invalid}. "
+                f"Allowed fields are: {allowed}."
+            )
         return value
 
     @field_validator("file_id_digits", mode="before")
@@ -77,8 +130,6 @@ class FileNameConfig(EvoConfig):
             raise TypeError(f"FileNameConfig: filename_pattern must be str, received {type(self.filename_pattern)}.")
         if self.filename_pattern == "":
             raise ValueError("FileNameConfig: filename_pattern must not be empty.")
-        if self.zstack_filename_pattern == "":
-            raise ValueError("FileNameConfig: zstack_filename_pattern must not be empty.")
         if not isinstance(self.create_directory, bool):
             raise TypeError(f"FileNameConfig: create_directory must be bool, received {type(self.create_directory)}.")
         if not isinstance(self.time_config, TimeConfig):
@@ -223,7 +274,7 @@ class FileManager:
         """Return whether a str.format pattern references ``field_name``."""
         return any(
             name is not None and re.split(r"[.\[]", name, maxsplit=1)[0] == field_name
-            for _, name, _, _ in string.Formatter().parse(pattern)
+            for _, name, _, _ in Formatter().parse(pattern)
         )
 
     def get_filename(
@@ -380,13 +431,13 @@ class FileManager:
             },
         })
 
-        pattern = self.config.zstack_filename_pattern
+        pattern = self.config.filename_pattern
         file_id = self._reserve_file_id(pattern=pattern)
         # Name the file after the first acquired plane (stack start time).
         format_values = self._format_values(frame_metadata=frame_metadata[0], file_id=file_id)
-        format_values.update(self._z_range_values(
+        format_values[FileNameField.Z_RANGE.value] = self._format_z_range(
             z_positions=z_positions, z_step=z_step, centre_z=centre_z,
-        ))
+        )
         filename = self._render_filename(
             pattern=pattern, format_values=format_values, action="FileManager.save_z_stack",
         )
@@ -419,28 +470,26 @@ class FileManager:
             )
 
     @classmethod
-    def _z_range_values(
+    def _format_z_range(
             cls,
             z_positions: list[float] | None,
-            z_step: float | None,
-            centre_z: float | None,
-    ) -> dict[str, str]:
-        """Return {z_range} (relative to centre_z when known) and {z_range_abs} as 'min,step,max'."""
+            z_step: float | None = None,
+            centre_z: float | None = None,
+    ) -> str:
+        """
+        Return the {z_range} filename field as 'min,step,max'.
+
+        Offsets are relative to ``centre_z`` when known (3 decimals) and absolute
+        otherwise (2 decimals). One plane gives just its Z; no Z gives 'auto'.
+        """
         if not z_positions:
-            return {"z_range": "auto", "z_range_abs": "auto"}
-
-        def render(reference: float, decimals: int) -> str:
-            low = cls._format_number(z_positions[0] - reference, decimals)
-            if len(z_positions) == 1:
-                return low
-            high = cls._format_number(z_positions[-1] - reference, decimals)
-            return f"{low},{cls._format_number(z_step, 3)},{high}"
-
-        absolute = render(0.0, 2)
-        return {
-            "z_range": absolute if centre_z is None else render(float(centre_z), 3),
-            "z_range_abs": absolute,
-        }
+            return "auto"
+        reference, decimals = (0.0, 2) if centre_z is None else (float(centre_z), 3)
+        low = cls._format_number(z_positions[0] - reference, decimals)
+        if len(z_positions) == 1:
+            return low
+        high = cls._format_number(z_positions[-1] - reference, decimals)
+        return f"{low},{cls._format_number(z_step, 3)},{high}"
 
     @staticmethod
     def _format_number(value: float, decimals: int) -> str:
@@ -548,7 +597,36 @@ class FileManager:
             )
         if Path(filename_pattern).is_absolute():
             raise ValueError("FileManager.list_filenames: filename_pattern must be relative.")
-        return sorted(path for path in directory.glob(filename_pattern) if path.is_file())
+        return sorted(
+            (path for path in directory.glob(filename_pattern) if path.is_file()),
+            key=lambda path: FileManager._natural_path_key(path=path, directory=directory),
+        )
+
+    @staticmethod
+    def _natural_path_key(path: Path, directory: Path) -> tuple[tuple[tuple[int, int | str], ...], str]:
+        """
+        Return a deterministic, case-insensitive natural-sort key for a path.
+
+        Parameters
+        ----------
+        path
+            File path being sorted.
+        directory
+            Directory against which the path is represented.
+
+        Returns
+        -------
+        tuple[tuple[tuple[int, int | str], ...], str]
+            Numeric-aware key followed by the original relative path as a
+            deterministic tie breaker.
+        """
+        relative_path = path.relative_to(directory).as_posix()
+        components: list[tuple[int, int | str]] = []
+        for component in re.split(r"(\d+)", relative_path.casefold()):
+            if not component:
+                continue
+            components.append((0, int(component)) if component.isdigit() else (1, component))
+        return tuple(components), relative_path
 
     @staticmethod
     def _validate_file_path(path: Path | str, action: str) -> Path:
@@ -622,21 +700,31 @@ class FileManager:
             config=self.config.time_config,
         )
         format_values = {
-            "channel": self._format_channel(frame_metadata=frame_metadata),
-            "fov_id": frame_metadata.fov_id,
-            "x": coordinate_dict.get("X", ""),
-            "y": coordinate_dict.get("Y", ""),
-            "z": coordinate_dict.get("Z", "auto"),
-            "filter_wheel": self._format_filter_wheel(frame_metadata.filter_wheel),
-            "timestamp": format_timestamp_for_filename(value=timestamp_source, config=self.config.time_config),
-            "timezone": format_timezone_id(value=timestamp_source, config=self.config.time_config),
-            "frame_id": frame_metadata.frame_id,
-            "callback_id": "" if frame_metadata.callback_id is None else frame_metadata.callback_id,
-            "file_id": self._format_file_id(file_id=file_id),
-            "light": self._format_light(frame_metadata=frame_metadata),
-            "datetime": timestamp_source.strftime("%y%m%d_%H%M%S"),
+            FileNameField.CHANNEL.value: self._format_channel(frame_metadata=frame_metadata),
+            FileNameField.FOV_ID.value: (
+                "" if frame_metadata.fov_id == UNKNOWN_FOV_ID else frame_metadata.fov_id
+            ),
+            FileNameField.X.value: coordinate_dict.get("X", ""),
+            FileNameField.Y.value: coordinate_dict.get("Y", ""),
+            FileNameField.Z.value: coordinate_dict.get("Z", "auto"),
+            FileNameField.FILTER_WHEEL.value: self._format_filter_wheel(frame_metadata.filter_wheel),
+            FileNameField.TIMESTAMP.value: format_timestamp_for_filename(
+                value=timestamp_source,
+                config=self.config.time_config,
+            ),
+            FileNameField.TIMEZONE.value: format_timezone_id(
+                value=timestamp_source,
+                config=self.config.time_config,
+            ),
+            FileNameField.FRAME_ID.value: frame_metadata.frame_id,
+            FileNameField.CALLBACK_ID.value: "" if frame_metadata.callback_id is None else frame_metadata.callback_id,
+            FileNameField.FILE_ID.value: self._format_file_id(file_id=file_id),
+            FileNameField.LIGHT.value: self._format_light(frame_metadata=frame_metadata),
+            FileNameField.DATETIME.value: timestamp_source.strftime("%y%m%d_%H%M%S"),
+            FileNameField.Z_RANGE.value: self._format_z_range(
+                z_positions=None if "Z" not in coordinate_dict else [float(coordinate_dict["Z"])],
+            ),
         }
-        format_values.update(frame_metadata.additional_metadata)
         return format_values
 
     @staticmethod

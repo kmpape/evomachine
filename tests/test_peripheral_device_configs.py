@@ -58,8 +58,8 @@ CONFIG_CASES = (
     ),
     (
         FilterWheelConfig,
-        {"binding": BindingType.VIRTUAL, "available_filters": [FilterWheelType.FILTER]},
-        (BindingType.VIRTUAL, [FilterWheelType.FILTER]),
+        {"binding": BindingType.VIRTUAL, "available_filters": [FilterWheelType.BANDPASS_405_445_514_561_640nm]},
+        (BindingType.VIRTUAL, [FilterWheelType.BANDPASS_405_445_514_561_640nm]),
     ),
     (
         PhotodiodeConfig,
@@ -161,7 +161,7 @@ def test_device_config_common_validation_comes_from_peripheral_config():
     with pytest.raises(TypeError, match="FilterWheelConfig: check_alive must be bool"):
         FilterWheelConfig(
             binding=BindingType.VIRTUAL,
-            available_filters=[FilterWheelType.FILTER],
+            available_filters=[FilterWheelType.BANDPASS_405_445_514_561_640nm],
             check_alive="yes",
         )
 

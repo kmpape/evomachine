@@ -26,7 +26,24 @@ from evomachine.gui.panels.common import (
 
 @dataclass(frozen=True)
 class ConfigFieldSpec:
-    """One editable or read-only field in a GUI configuration dialog."""
+    """Describe one editable or read-only GUI configuration field.
+
+    Args:
+        label: User-facing field name.
+        key: Stable payload key returned by the form.
+        value: Current field value.
+        kind: Widget kind: text, bool, int, float, or choice.
+        minimum: Optional inclusive numeric minimum.
+        maximum: Optional inclusive numeric maximum.
+        decimals: Decimal precision for floating-point fields.
+        single_step: Step used by numeric controls.
+        choices: Allowed values for choice fields.
+        editable: Whether the user may change the value.
+        enabled_when_key: Optional controlling field key.
+        enabled_when_value: Controlling value which enables this field.
+        emphasized: Whether label and value are rendered in bold.
+        help_text: Hover text explaining the field's effect and constraints.
+    """
 
     label: str
     key: str
@@ -41,6 +58,22 @@ class ConfigFieldSpec:
     enabled_when_key: str | None = None
     enabled_when_value: Any = True
     emphasized: bool = False
+    help_text: str = ""
+
+    def __post_init__(self) -> None:
+        """Supply useful range and editability help when none is provided."""
+        if self.help_text.strip():
+            return
+        details = [f"{self.label} configuration value."]
+        if not self.editable:
+            details.append("Read-only value reported by the current configuration.")
+        if self.minimum is not None or self.maximum is not None:
+            low = "unbounded" if self.minimum is None else str(self.minimum)
+            high = "unbounded" if self.maximum is None else str(self.maximum)
+            details.append(f"Accepted range: {low} to {high}.")
+        if self.choices:
+            details.append(f"Available choices: {', '.join(self.choices)}.")
+        object.__setattr__(self, "help_text", " ".join(details))
 
 
 class ConfigForm(QWidget):
@@ -60,6 +93,8 @@ class ConfigForm(QWidget):
             widget = self._make_widget(field)
             self._widgets[field.key] = widget
             label = QLabel(field.label)
+            label.setToolTip(field.help_text)
+            widget.setToolTip(field.help_text)
             if field.emphasized:
                 label_font = label.font()
                 label_font.setBold(True)

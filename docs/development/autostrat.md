@@ -1,7 +1,11 @@
 # Extending the AutoStrat integration
 
+[Documentation](../README.md) › [Developer guide](README.md) › Extending AutoStrat
+
 This guide covers AutoStrat **inside EvoMachine**, not developing a new language
-feature in the sibling AutoStrat repository. See also [GUI extensions](gui.md).
+feature in the sibling AutoStrat repository. See also the user
+[strategy guide](../user/strategies.md), [runtime behavior](runtime.md), and
+[GUI extensions](gui.md).
 
 ## Who owns what?
 
@@ -170,8 +174,8 @@ non-editable installs. Local editable sources can hide packaging/version mistake
 From the EvoMachine repository root:
 
 ```bash
-.venv/bin/python -m pytest tests/test_strategy_generation_integration.py tests/test_delta_processing.py -q
-EVOMACHINE_GUI_RUN_QT_TESTS=1 QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/gui/test_strategy_generation.py -q
+uv run pytest tests/test_strategy_generation_integration.py tests/test_delta_processing.py -q
+EVOMACHINE_GUI_RUN_QT_TESTS=1 QT_QPA_PLATFORM=offscreen uv run pytest tests/gui/test_strategy_generation.py -q
 ```
 
 Cover domain loading/validation, adapter translation, observation scope and
@@ -183,8 +187,9 @@ wrapper just for testing.
 Generation acceptance is not evidence of hardware success. Check runtime failures,
 saved outputs and expected command execution separately. DeLTA-RT's Python package
 does not include EvoMachine's custom trained model files: configure matching model
-paths and input sizes in `image_processing_config.py`. The virtual camera supplies
-random pixels; use recorded microscopy frames for meaningful processing validation.
+paths and input sizes in `image_processing_config.py`. The virtual camera can
+supply random pixels or a deterministic cyclic folder of compatible recorded
+TIFFs; use representative recorded images for meaningful processing validation.
 
 Runtime command failures and tracebacks are written to the shared application logger,
 which is visible in both the terminal and GUI log. AutoStrat also logs the selected
@@ -194,3 +199,7 @@ remain available on the Automaton and strategy for programmatic inspection.
 The compact GUI strategy status does not expose the full runtime histories. Check
 the application log and failure histories rather than treating a stopped label as
 proof of successful completion.
+
+---
+
+← [Extending the GUI](gui.md) | [Developer guide](README.md) | [Image processing](image-processing.md) →

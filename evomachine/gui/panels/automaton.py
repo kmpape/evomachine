@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PyQt5.QtWidgets import QGridLayout, QGroupBox, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import QGroupBox, QLabel, QPushButton, QVBoxLayout, QWidget
 
 
 class AutomatonPanel(QGroupBox):
@@ -21,16 +21,13 @@ class AutomatonPanel(QGroupBox):
         self.shutdown_button = QPushButton("Shutdown")
         self.shutdown_button.setToolTip("Terminal shutdown. Restart the GUI to reconnect afterwards.")
 
-        buttons = QGridLayout()
-        buttons.addWidget(self.ping_button, 0, 0)
-        buttons.addWidget(self.initialise_button, 0, 1)
-        buttons.addWidget(self.stop_button, 1, 0)
-        buttons.addWidget(self.shutdown_button, 1, 1)
-
         layout = QVBoxLayout()
         layout.addWidget(self.status_label)
         layout.addWidget(self.initialisation_label)
-        layout.addLayout(buttons)
+        layout.addWidget(self.initialise_button)
+        layout.addWidget(self.stop_button)
+        layout.addWidget(self.shutdown_button)
+        layout.addWidget(self.ping_button)
         self.setLayout(layout)
 
         self.ping_button.clicked.connect(self.controller.ping)

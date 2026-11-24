@@ -9,7 +9,6 @@ from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
     QFileDialog,
     QGridLayout,
-    QGroupBox,
     QLabel,
     QPushButton,
     QSizePolicy,
@@ -53,11 +52,11 @@ SHAPE_CONFIG_FIELDS = (
 )
 
 
-class DmdPanel(QGroupBox):
+class DmdPanel(QWidget):
     """DMD controls and pattern buttons."""
 
     def __init__(self, controller, parent: QWidget | None = None):
-        super().__init__("DMD", parent)
+        super().__init__(parent)
         self.controller = controller
         self.devices_initialised = False
         self.strategy_running = False
@@ -87,7 +86,7 @@ class DmdPanel(QGroupBox):
         self.show_calibration_plot_button = QPushButton("Show Plot")
         self.cancel_calibration_button = QPushButton("Stop")
         self.cancel_calibration_button.setToolTip("Stop the running DMD calibration.")
-        self.calibration_operation_label = QLabel("operation: -")
+        self.calibration_operation_label = QLabel("calibration status: idle")
         self.calibration_operation_label.setWordWrap(True)
         self.calibration_poll_timer = QTimer(self)
         self.calibration_poll_timer.setInterval(250)
@@ -103,6 +102,7 @@ class DmdPanel(QGroupBox):
         self._add_calibration_section(layout)
         self._add_button_section(layout, "Utilities", UTILITY_ACTIONS, self.utility_buttons)
         layout.addWidget(self.status_label)
+        layout.addStretch(1)
         self.setLayout(layout)
 
         for pattern, button in self.pattern_buttons.items():
@@ -249,7 +249,7 @@ class DmdPanel(QGroupBox):
             return
         self.status_label.setText("Starting DMD calibration.")
         self.calibration_running = True
-        self.calibration_operation_label.setText("operation: starting")
+        self.calibration_operation_label.setText("calibration status: starting")
         self.calibration_poll_timer.start()
         self._sync_controls_enabled()
         self.controller.calibrate_dmd()
@@ -259,7 +259,9 @@ class DmdPanel(QGroupBox):
             return
         state = str(operation.get("state", "-"))
         message = operation.get("message") or ""
-        self.calibration_operation_label.setText(f"operation: {state} — {message}")
+        self.calibration_operation_label.setText(
+            f"calibration status: {state} — {message}"
+        )
         self.calibration_running = state == "running"
         if not self.calibration_running:
             self.calibration_poll_timer.stop()

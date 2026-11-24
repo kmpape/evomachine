@@ -35,7 +35,10 @@ class GuiCommandType(str, Enum):
     STAGE_RETURN_ORIGIN = "stage.return_origin"
     CAMERA_STATUS = "camera.status"
     CAMERA_SET_EXPOSURE = "camera.set_exposure"
+    VIRTUAL_IMAGE_SOURCE_STATUS = "virtual_image_source.status"
+    VIRTUAL_IMAGE_SOURCE_SET = "virtual_image_source.set"
     ACQUISITION_SET_DIRECTORY = "acquisition.set_directory"
+    ACQUISITION_SET_FILENAME_PATTERN = "acquisition.set_filename_pattern"
     ACQUISITION_LIST_FILES = "acquisition.list_files"
     ACQUISITION_LOAD_FRAME = "acquisition.load_frame"
     ACQUISITION_TAKE_FRAME = "acquisition.take_frame"
@@ -110,7 +113,9 @@ MUTATING_COMMANDS = frozenset(
         GuiCommandType.STAGE_STOP,
         GuiCommandType.STAGE_RETURN_ORIGIN,
         GuiCommandType.CAMERA_SET_EXPOSURE,
+        GuiCommandType.VIRTUAL_IMAGE_SOURCE_SET,
         GuiCommandType.ACQUISITION_SET_DIRECTORY,
+        GuiCommandType.ACQUISITION_SET_FILENAME_PATTERN,
         GuiCommandType.ACQUISITION_TAKE_FRAME,
         GuiCommandType.ACQUISITION_TAKE_Z_STACK,
         GuiCommandType.FILTER_WHEEL_SET,

@@ -174,7 +174,7 @@ def make_fake_tiger_stage() -> TigerStage:
 
 
 AVAILABLE_FILTERS = [
-    FilterWheelType.FILTER,
+    FilterWheelType.BANDPASS_405_445_514_561_640nm,
     FilterWheelType.FILTER_527nm,
     FilterWheelType.BLOCKING,
 ]

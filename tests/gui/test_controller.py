@@ -168,6 +168,85 @@ def test_gui_controller_sends_output_directory_request() -> None:
     assert client.requests[-1].payload == {"directory": "/tmp/previous-images"}
 
 
+def test_gui_controller_sends_and_dispatches_filename_pattern_configuration() -> None:
+    """
+    Check filename-pattern requests and authoritative configuration dispatch.
+
+    Returns
+    -------
+    None
+    """
+    client = RecordingClient()
+    controller = EvoMachineGuiController(client=client, start_worker=False)
+    received = []
+    controller.output_configuration_received.connect(received.append)
+
+    controller.set_acquisition_filename_pattern("{channel}_{frame_id:04d}")
+
+    assert client.requests[-1].command is GuiCommandType.ACQUISITION_SET_FILENAME_PATTERN
+    assert client.requests[-1].payload == {"filename_pattern": "{channel}_{frame_id:04d}"}
+
+    controller._handle_response(GuiResponse(
+        request_id="output-config",
+        ok=True,
+        payload={
+            "acquisition_directory": "/tmp/images",
+            "filename_pattern": "{channel}_{frame_id:04d}",
+            "filename_pattern_fields": ["channel", "frame_id"],
+        },
+    ))
+
+    assert received == [{
+        "directory": "/tmp/images",
+        "filename_pattern": "{channel}_{frame_id:04d}",
+        "filename_pattern_fields": ["channel", "frame_id"],
+    }]
+
+
+def test_gui_controller_sends_and_dispatches_virtual_image_source() -> None:
+    """
+    Check virtual-source requests and authoritative status dispatch.
+
+    Returns
+    -------
+    None
+    """
+    client = RecordingClient()
+    controller = EvoMachineGuiController(client=client, start_worker=False)
+    received = []
+    controller.virtual_image_source_received.connect(received.append)
+
+    controller.refresh_virtual_image_source()
+    controller.set_virtual_image_source("folder", "/tmp/source", "P0_*.tiff")
+
+    assert client.requests[-2].command is GuiCommandType.VIRTUAL_IMAGE_SOURCE_STATUS
+    assert client.requests[-1].command is GuiCommandType.VIRTUAL_IMAGE_SOURCE_SET
+    assert client.requests[-1].payload == {
+        "mode": "folder",
+        "directory": "/tmp/source",
+        "filename_glob": "P0_*.tiff",
+    }
+
+    payload = {
+        "supported": True,
+        "mode": "folder",
+        "directory": "/tmp/source",
+        "filename_glob": "P0_*.tiff",
+        "usable_count": 2,
+        "usable_files": ["/tmp/source/P0_1.tiff", "/tmp/source/P0_2.tiff"],
+        "skipped_count": 0,
+        "skipped_files": [],
+        "next_filename": "/tmp/source/P0_1.tiff",
+    }
+    controller._handle_response(GuiResponse(
+        request_id="virtual-source",
+        ok=True,
+        payload={"virtual_image_source": payload},
+    ))
+
+    assert received == [payload]
+
+
 def test_gui_controller_requests_and_dispatches_incremental_logs() -> None:
     client = RecordingClient()
     controller = EvoMachineGuiController(client=client, start_worker=False)

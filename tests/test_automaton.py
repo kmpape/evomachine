@@ -2016,6 +2016,9 @@ def test_strategy_z_stack_with_save_writes_one_file_per_stack(tmp_path) -> None:
     automaton = build_virtual_automaton()
     AutomatonGuiFacade(automaton).gui_initialise_controllers()  # as the GUI Initialise button does
     automaton.acq_mngr.file_manager.set_output_directory(tmp_path)
+    automaton.acq_mngr.file_manager.update_config(
+        filename_pattern="{file_id}_{light}_FOV{fov_id}_Z{z_range}_{datetime}",
+    )
     strategy = SavingZStackStrategy(cfg=make_cfg())
     automaton.set_strategy(strategy)
     automaton.initialise(fovs={0: Coordinate(0, 0, 0), 1: Coordinate(50, 0, 3)})
@@ -2032,6 +2035,6 @@ def test_strategy_z_stack_with_save_writes_one_file_per_stack(tmp_path) -> None:
     assert strategy.saved_paths == [[files[0]] * 5, [files[1]] * 5]
     for path, centre in zip(files, (0.0, 3.0)):
         image, metadata = FileManager.load_frame(path)
-        assert image.shape == (5, 48, 64)
+        assert image.shape[0] == 5 and image.ndim == 3
         assert metadata["ZStack"]["z_offsets"] == pytest.approx([-2, -1, 0, 1, 2])
         assert metadata["ZStack"]["z_centre"] == pytest.approx(centre)

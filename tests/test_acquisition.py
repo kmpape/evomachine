@@ -833,7 +833,10 @@ def _saving_z_stack_manager(tmp_path: Path, stage: FakeStage) -> FrameAcquisitio
 
     return _manager(
         stage=stage,
-        file_manager=FileManager(FileNameConfig(directory=tmp_path)),
+        file_manager=FileManager(FileNameConfig(
+            directory=tmp_path,
+            filename_pattern="{file_id}_{light}_FOV{fov_id}_Z{z_range}_{datetime}",
+        )),
         default_settings=FrameAcquisitionSettings(illuminate_dmd=False, restore_leds_after=False),
     )
 
