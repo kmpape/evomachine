@@ -1,6 +1,9 @@
 # Extending the EvoMachine GUI
 
-See [AutoStrat integration](autostrat.md) for generated commands and observations.
+[Documentation](../README.md) › [Developer guide](README.md) › Extending the GUI
+
+See [architecture](architecture.md), [runtime behavior](runtime.md), and
+[AutoStrat integration](autostrat.md) for the boundaries surrounding the GUI.
 This guide covers the current PyQt5/Napari GUI and its application boundary.
 
 ## Request and response path
@@ -198,9 +201,9 @@ device call may need to finish before cancellation takes effect.
 From the repository root:
 
 ```bash
-EVOMACHINE_GUI_RUN_QT_TESTS=1 QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/gui -q
-EVOMACHINE_GUI_RUN_QT_TESTS=1 QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest -q
-.venv/bin/python scripts/launch_virtual_gui.py
+EVOMACHINE_GUI_RUN_QT_TESTS=1 QT_QPA_PLATFORM=offscreen uv run pytest tests/gui -q
+EVOMACHINE_GUI_RUN_QT_TESTS=1 QT_QPA_PLATFORM=offscreen uv run pytest -q
+uv run python scripts/launch_virtual_gui.py
 ```
 
 Qt tests are opt-in; a run that skips them is not GUI verification. Use panel tests
@@ -213,3 +216,7 @@ Manually check narrow layouts, long labels, pending/error states, stop during a
 wait, and Set/Start after completion. Virtual tests do not establish physical
 projection accuracy or DeLTA model performance. Do not trigger real hardware or
 live paid model requests as part of the default test suite.
+
+---
+
+← [Virtual implementations](virtual-mode.md) | [Developer guide](README.md) | [AutoStrat](autostrat.md) →
