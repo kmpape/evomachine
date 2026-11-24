@@ -209,7 +209,8 @@ class FilterWheelType(EvoType):
     """Filter wheel positions used when acquiring fluorescence and brightfield images."""
 
     UNKNOWN = -1
-    FILTER = 0          # non-specific
+    BANDPASS_405_445_514_561_640nm = 0
+    FILTER = 0  # Backward-compatible alias for saved configurations.
     FILTER_465nm = 1
     FILTER_527nm = 2
     FILTER_592nm = 3

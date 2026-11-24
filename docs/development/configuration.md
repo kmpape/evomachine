@@ -142,6 +142,12 @@ This is request metadata plus runtime-populated metadata for one image plane.
 | `additional_metadata` | `dict[str, JSON value] = {}` | Saved inside TIFF metadata; never used as filename fields. | strategy |
 | `acquisition_monotonic` | finite number or `None` | Capture-start monotonic clock for runtime calculations; not meaningful after reload. | internal |
 
+`FilterWheelType.BANDPASS_405_445_514_561_640nm` identifies wheel position 0,
+which contains the Chroma ZET405/445/514/561/640m multi-bandpass filter. The old
+member name `FILTER` is retained as an alias for loading older configurations;
+new code, GUI payloads, and saved enum metadata use the descriptive canonical
+name.
+
 ### `FileNameConfig`
 
 | Field | Type/default | Meaning and validation | Editable |

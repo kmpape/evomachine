@@ -15,10 +15,16 @@ LOG_DOCK_HEIGHT_RATIO = REFERENCE_LOG_DOCK_HEIGHT / REFERENCE_WINDOW_HEIGHT
 MINIMUM_CONTROLS_DOCK_WIDTH = 480
 MINIMUM_LOG_DOCK_HEIGHT = 72
 MAXIMUM_LOG_DOCK_HEIGHT_RATIO = 0.2
+STATUS_DOCK_HEIGHT_RATIO = 0.6
 
 
 def _configure_left_docks(viewer, *, status_dock_widget) -> None:
-    """Show image settings and status as tabs while hiding the layer list."""
+    """Stack controller status above image settings and hide the layer list.
+
+    Args:
+        viewer: Napari viewer whose native docks are being configured.
+        status_dock_widget: Application controller-status dock.
+    """
     qt_window = getattr(viewer.window, "_qt_window", None)
     qt_viewer = getattr(viewer.window, "_qt_viewer", None)
     if qt_window is None or qt_viewer is None:
@@ -43,10 +49,10 @@ def _configure_left_docks(viewer, *, status_dock_widget) -> None:
     from PyQt5.QtCore import Qt
 
     qt_window.addDockWidget(Qt.LeftDockWidgetArea, layer_controls)
+    qt_window.addDockWidget(Qt.LeftDockWidgetArea, status_dock_widget)
     layer_controls.show()
-    qt_window.tabifyDockWidget(layer_controls, status_dock_widget)
     status_dock_widget.show()
-    status_dock_widget.raise_()
+    qt_window.splitDockWidget(status_dock_widget, layer_controls, Qt.Vertical)
 
 
 def _schedule_startup_central_viewer_fit(viewer) -> None:
@@ -86,7 +92,35 @@ def _apply_startup_dock_layout(
         _configure_left_docks(viewer, status_dock_widget=status_dock_widget)
     if logs_dock_widget is not None:
         _resize_logs_dock(viewer, logs_dock_widget=logs_dock_widget)
+    if status_dock_widget is not None:
+        _resize_left_docks(viewer, status_dock_widget=status_dock_widget)
     _resize_controls_dock(viewer, controls_dock_widget=controls_dock_widget)
+
+
+def _resize_left_docks(viewer, *, status_dock_widget) -> None:
+    """Allocate the usable left column 60/40 to status and image settings.
+
+    Args:
+        viewer: Napari viewer containing the native image-settings dock.
+        status_dock_widget: Controller-status dock occupying the upper row.
+    """
+    qt_window = getattr(viewer.window, "_qt_window", None)
+    qt_viewer = getattr(viewer.window, "_qt_viewer", None)
+    layer_controls = getattr(qt_viewer, "dockLayerControls", None)
+    resize_docks = getattr(qt_window, "resizeDocks", None)
+    if layer_controls is None or not callable(resize_docks):
+        return
+    window_height = _widget_extent(qt_window, "height", REFERENCE_WINDOW_HEIGHT)
+    usable_height = max(1, window_height - _log_dock_target_height(window_height))
+    status_height = round(usable_height * STATUS_DOCK_HEIGHT_RATIO)
+    image_settings_height = usable_height - status_height
+    from PyQt5.QtCore import Qt
+
+    resize_docks(
+        [status_dock_widget, layer_controls],
+        [status_height, image_settings_height],
+        Qt.Vertical,
+    )
 
 
 def _resize_logs_dock(viewer, *, logs_dock_widget) -> None:
@@ -107,10 +141,7 @@ def _resize_logs_dock(viewer, *, logs_dock_widget) -> None:
     if not callable(resize_docks):
         return
     window_height = _widget_extent(qt_window, "height", REFERENCE_WINDOW_HEIGHT)
-    target_height = max(
-        MINIMUM_LOG_DOCK_HEIGHT,
-        round(window_height * LOG_DOCK_HEIGHT_RATIO),
-    )
+    target_height = _log_dock_target_height(window_height)
     maximum_height = max(
         target_height,
         round(window_height * MAXIMUM_LOG_DOCK_HEIGHT_RATIO),
@@ -121,6 +152,18 @@ def _resize_logs_dock(viewer, *, logs_dock_widget) -> None:
     from PyQt5.QtCore import Qt
 
     resize_docks([logs_dock_widget], [target_height], Qt.Vertical)
+
+
+def _log_dock_target_height(window_height: int) -> int:
+    """Calculate the preferred application-log height.
+
+    Args:
+        window_height: Current outer window height in pixels.
+
+    Returns:
+        Preferred log-dock height in pixels.
+    """
+    return max(MINIMUM_LOG_DOCK_HEIGHT, round(window_height * LOG_DOCK_HEIGHT_RATIO))
 
 
 def _configure_bottom_dock_corners(viewer) -> None:

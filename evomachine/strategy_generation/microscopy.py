@@ -46,7 +46,7 @@ _LED_BY_DOMAIN_VALUE = {
 }
 
 _FILTER_BY_DOMAIN_VALUE = {
-    "filter": FilterWheelType.FILTER,
+    "filter": FilterWheelType.BANDPASS_405_445_514_561_640nm,
     "465nm": FilterWheelType.FILTER_465nm,
     "527nm": FilterWheelType.FILTER_527nm,
     "592nm": FilterWheelType.FILTER_592nm,

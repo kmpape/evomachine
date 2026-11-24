@@ -5,7 +5,6 @@ import time
 from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
     QGridLayout,
-    QGroupBox,
     QLabel,
     QPushButton,
     QVBoxLayout,
@@ -65,11 +64,11 @@ SYNCBOARD_WAVELENGTH_COLOURS = {
 }
 
 
-class LedManagerPanel(QGroupBox):
+class LedManagerPanel(QWidget):
     """Simple LEDManager control panel."""
 
     def __init__(self, controller, parent: QWidget | None = None):
-        super().__init__("LEDManager", parent)
+        super().__init__(parent)
         self.controller = controller
         self.led_buttons: dict[LEDType, QPushButton] = {}
         self.brightness_inputs: dict[LEDType, NoWheelDoubleSpinBox] = {}
@@ -101,6 +100,7 @@ class LedManagerPanel(QGroupBox):
         layout.addLayout(led_layout)
         layout.addLayout(buttons)
         layout.addWidget(self.state_label)
+        layout.addStretch(1)
         self.setLayout(layout)
 
         refresh_button.clicked.connect(self.controller.refresh_leds)

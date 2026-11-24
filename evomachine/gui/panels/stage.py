@@ -14,7 +14,7 @@ from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
 from evomachine.gui.panels.common import NoWheelDoubleSpinBox, format_micrometre_value
 
 
-class StagePanel(QGroupBox):
+class StagePanel(QWidget):
     """Simple Stage control panel."""
 
     FOV_DIRECTIONS = (
@@ -25,7 +25,7 @@ class StagePanel(QGroupBox):
     )
 
     def __init__(self, controller, parent: QWidget | None = None):
-        super().__init__("Stage", parent)
+        super().__init__(parent)
         self.controller = controller
         self._latest_coordinate: dict = {}
         self._latest_status: dict = {}
@@ -104,6 +104,7 @@ class StagePanel(QGroupBox):
         layout.addLayout(buttons)
         layout.addWidget(QLabel("Relative movement by one camera FoV"))
         layout.addLayout(fov_buttons)
+        layout.addStretch(1)
         self.setLayout(layout)
 
         self.refresh_button.clicked.connect(self.controller.refresh_stage)

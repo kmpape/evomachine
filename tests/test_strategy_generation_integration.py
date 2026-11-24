@@ -751,7 +751,7 @@ def test_microscopy_adapter_builds_existing_automaton_commands() -> None:
     image_args = commands[1].command_args
     assert image_args["frame_metadata"].exposure == 25
     assert image_args["frame_metadata"].leds == {LEDType.LED_515_NM: 12}
-    assert image_args["frame_metadata"].filter_wheel is FilterWheelType.FILTER
+    assert image_args["frame_metadata"].filter_wheel is FilterWheelType.BANDPASS_405_445_514_561_640nm
     assert image_args["segment"] is False
     assert image_args["save"] is True
     project_args = commands[2].command_args

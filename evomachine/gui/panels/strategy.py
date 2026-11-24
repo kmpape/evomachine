@@ -65,7 +65,8 @@ class FovSetupPanel(QGroupBox):
         self.status_label.setWordWrap(True)
         self.add_button = QPushButton("Add current")
         self.add_button.setToolTip("Read the stage position and append it as the next FoV.")
-        self.remove_button = QPushButton("Remove last")
+        self.remove_button = QPushButton("Remove Selected")
+        self.remove_button.setToolTip("Remove the highlighted FoV from the staged setup.")
         self.clear_button = QPushButton("Clear")
         self.initialise_button = QPushButton("Initialise")
         self.global_focus_button = QPushButton("Global Focus Settings")
@@ -140,7 +141,7 @@ class FovSetupPanel(QGroupBox):
         self.set_linear_start_button.clicked.connect(lambda: self._capture("start"))
         self.set_linear_end_button.clicked.connect(lambda: self._capture("end"))
         self.generate_line_button.clicked.connect(self._generate_linear_fovs)
-        self.remove_button.clicked.connect(self._remove_last_fov)
+        self.remove_button.clicked.connect(self._remove_selected_fov)
         self.clear_button.clicked.connect(self._clear_fovs)
         self.initialise_button.clicked.connect(self._initialise_fovs)
         self.global_focus_button.clicked.connect(self._configure_global_focus)
@@ -324,12 +325,22 @@ class FovSetupPanel(QGroupBox):
         self._mark_changed()
         self.status_label.setText(f"Generated {len(coordinates)} linear FoV(s); initialise to apply.")
 
-    def _remove_last_fov(self) -> None:
+    def _remove_selected_fov(self) -> None:
+        """Remove the highlighted FoV and renumber later rows and focus overrides."""
+        selected_row = self._selected_row()
+        if selected_row is None:
+            return
+        self.table.removeRow(selected_row)
+        self.fov_focus_configs = {
+            row if row < selected_row else row - 1: config
+            for row, config in self.fov_focus_configs.items()
+            if row != selected_row
+        }
+        for row in range(self.table.rowCount()):
+            self.table.item(row, 0).setText(str(row))
         if self.table.rowCount():
-            last_row = self.table.rowCount() - 1
-            self.fov_focus_configs.pop(last_row, None)
-            self.table.removeRow(last_row)
-            self._mark_changed()
+            self.table.selectRow(min(selected_row, self.table.rowCount() - 1))
+        self._mark_changed()
 
     def _clear_fovs(self) -> None:
         self.table.setRowCount(0)
@@ -450,9 +461,10 @@ class FovSetupPanel(QGroupBox):
             editable and self.linear_start is not None and self.linear_end is not None
             and self.camera_fov_step_size is not None
         )
-        for button in (self.remove_button, self.clear_button, self.initialise_button):
+        for button in (self.clear_button, self.initialise_button):
             button.setEnabled(editable and self.table.rowCount() > 0)
         selected = self._selected_row() is not None
+        self.remove_button.setEnabled(editable and selected)
         self.global_focus_button.setEnabled(editable)
         self.configure_fov_focus_button.setEnabled(editable and selected)
         self.move_test_button.setEnabled(

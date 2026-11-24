@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from PyQt5.QtWidgets import (
     QGridLayout,
-    QGroupBox,
     QLabel,
     QPushButton,
     QVBoxLayout,
@@ -13,11 +12,11 @@ from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
 from evomachine.gui.panels.common import NoWheelDoubleSpinBox
 
 
-class CameraPanel(QGroupBox):
+class CameraPanel(QWidget):
     """Low-level camera controls."""
 
     def __init__(self, controller, parent: QWidget | None = None):
-        super().__init__("Camera", parent)
+        super().__init__(parent)
         self.controller = controller
         self.devices_initialised = False
         self.strategy_running = False
@@ -40,9 +39,11 @@ class CameraPanel(QGroupBox):
 
         layout = QVBoxLayout()
         layout.addWidget(self.status_label)
+        layout.addWidget(self.exposure_label)
         layout.addWidget(self.image_label)
         layout.addWidget(self.readout_label)
         layout.addLayout(buttons)
+        layout.addStretch(1)
         self.setLayout(layout)
 
         self.refresh_button.clicked.connect(self.controller.refresh_camera)

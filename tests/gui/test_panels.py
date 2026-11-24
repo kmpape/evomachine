@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+import numpy as np
 import pytest
 
 if os.environ.get("EVOMACHINE_GUI_RUN_QT_TESTS") != "1":
@@ -10,8 +11,10 @@ if os.environ.get("EVOMACHINE_GUI_RUN_QT_TESTS") != "1":
 from PyQt5.QtCore import QObject, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QApplication,
+    QCheckBox,
     QDialog,
     QFileDialog,
+    QGroupBox,
     QLabel,
     QPushButton,
     QScrollArea,
@@ -21,14 +24,23 @@ from PyQt5.QtWidgets import (
 )
 
 from evomachine.filemanager import FileNameField
+from evomachine.gui.central_workspace import (
+    CentralVisualWorkspace,
+    DMD_FRAME_THICKNESS,
+    DMD_LAYER,
+    MICROSCOPE_LAYER,
+)
+from evomachine.gui.docks.controller_status import PeripheralControllerStatusDock
 from evomachine.gui.docks import controls as controls_module
 from evomachine.gui.docks.controls import EvoMachineControlsDock
+from evomachine.gui.image_payloads import array_to_preview_payload, stack_to_preview_payload
 from evomachine.gui.panels.acquisition import (
     ACQUISITION_LED_TYPES,
     AcquisitionConfigurationDialog,
     FilenamePatternDialog,
     FrameAcquisitionSettingsPanel,
     ManualAcquisitionPanel,
+    ManualAcquisitionSaveConfig,
     OutputConfigurationPanel,
     SavedImageLoaderPanel,
     ZStackSettingsPanel,
@@ -40,7 +52,7 @@ from evomachine.gui.panels.common import (
     NoWheelDoubleSpinBox,
     NoWheelSpinBox,
 )
-from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec
+from evomachine.gui.panels.config_dialog import ConfigDialog, ConfigFieldSpec, ConfigForm
 from evomachine.gui.panels.dmd import DmdPanel
 from evomachine.gui.panels.filterwheel import FilterWheelPanel
 from evomachine.gui.panels.leds import LedManagerPanel
@@ -100,6 +112,22 @@ class FakeController(QObject):
     def __init__(self):
         super().__init__()
         self.calls = []
+
+    def ping(self):
+        """Record one combined lifecycle and peripheral status refresh."""
+        self.calls.append(("ping",))
+
+    def initialise_devices(self):
+        """Record an Automaton device-initialisation request."""
+        self.calls.append(("initialise_devices",))
+
+    def stop(self):
+        """Record an Automaton stop request."""
+        self.calls.append(("stop",))
+
+    def shutdown_automaton(self):
+        """Record an Automaton shutdown request."""
+        self.calls.append(("shutdown_automaton",))
 
     def refresh_focus_defaults(self):
         pass
@@ -367,6 +395,38 @@ def test_config_inputs_ignore_wheel_events() -> None:
         assert ConfigDialog._widget_value(widget) == value_before
 
 
+def test_config_help_is_available_on_labels_and_disabled_inputs() -> None:
+    """Configuration help remains visible on both labels and read-only widgets."""
+    _app()
+    field = ConfigFieldSpec(
+        "Reported value",
+        "reported_value",
+        12,
+        editable=False,
+        help_text="Read-only value reported by the connected device.",
+    )
+    form = ConfigForm([field])
+    label = next(label for label in form.findChildren(QLabel) if label.text() == field.label)
+
+    assert label.toolTip() == field.help_text
+    assert form._widgets[field.key].toolTip() == field.help_text
+    assert not form._widgets[field.key].isEnabled()
+
+
+def test_config_fields_always_supply_meaningful_hover_help() -> None:
+    """Every configuration field supplies non-empty help, including legacy fields."""
+    fields = [
+        ConfigFieldSpec("Exposure", "exposure", 100, minimum=1, maximum=1000),
+        ConfigFieldSpec("Status", "status", "ready", editable=False),
+        ConfigFieldSpec("Mode", "mode", "a", kind="choice", choices=("a", "b")),
+    ]
+
+    assert all(field.help_text.strip() for field in fields)
+    assert "1 to 1000" in fields[0].help_text
+    assert "Read-only" in fields[1].help_text
+    assert "a, b" in fields[2].help_text
+
+
 def test_controls_dock_keeps_main_controls_beside_workflow_tabs(monkeypatch) -> None:
     _app()
 
@@ -380,13 +440,20 @@ def test_controls_dock_keeps_main_controls_beside_workflow_tabs(monkeypatch) -> 
 
     seen_controllers = []
 
+    class StubDevicePanel(QWidget):
+        """Record the controller supplied to a device tab."""
+
+        def __init__(self, controller):
+            super().__init__()
+            seen_controllers.append(controller)
+
+    for panel_name in ("StagePanel", "LedManagerPanel", "CameraPanel", "DmdPanel", "FilterWheelPanel"):
+        monkeypatch.setattr(controls_module, panel_name, StubDevicePanel)
+
     class StubControlsDock(EvoMachineControlsDock):
         def _placeholder(self) -> QWidget:
             seen_controllers.append(self.controller)
             return QWidget()
-
-        def _build_main_controls_column(self) -> QWidget:
-            return self._placeholder()
 
         def _build_acquisition_tab(self) -> QWidget:
             return self._placeholder()
@@ -411,13 +478,170 @@ def test_controls_dock_keeps_main_controls_beside_workflow_tabs(monkeypatch) -> 
         scroll_area.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
         for scroll_area in dock.findChildren(QScrollArea)
     )
-    assert dock.main_controls.title() == "Main Controls"
+    assert dock.main_controls.title() == "Device Controls"
+    assert [dock.device_tabs.tabText(index) for index in range(dock.device_tabs.count())] == [
+        "Stage",
+        "LEDs",
+        "Camera",
+        "DMD",
+        "Filter Wheel",
+    ]
     assert [dock.workflow_tabs.tabText(index) for index in range(dock.workflow_tabs.count())] == [
         "Acquisition",
         "Strategy",
         "Focus",
     ]
-    assert seen_controllers == [dock.controller] * 4
+    assert seen_controllers == [dock.controller] * 8
+
+
+def test_controller_status_is_flat_and_uses_one_refresh_action() -> None:
+    """The status dock exposes flat lifecycle and controller status with one refresh."""
+    _app()
+
+    class StubController(QObject):
+        """Record status and lifecycle actions from the flat panel."""
+
+        lifecycle_status_received = pyqtSignal(dict)
+        controller_status_received = pyqtSignal(dict)
+        request_error = pyqtSignal(object, str)
+
+        def __init__(self):
+            super().__init__()
+            self.calls = []
+
+        def ping(self) -> None:
+            self.calls.append("ping")
+
+        def initialise_devices(self) -> None:
+            self.calls.append("initialise")
+
+        def stop(self) -> None:
+            self.calls.append("stop")
+
+        def shutdown_automaton(self) -> None:
+            self.calls.append("shutdown")
+
+    controller = StubController()
+    dock = PeripheralControllerStatusDock(controller=controller)
+    panel = dock.controller_status_panel
+    labels = [label.text() for label in panel.findChildren(QLabel)]
+
+    assert not hasattr(dock, "automaton_panel")
+    assert "Peripheral Controllers" not in labels
+    assert not any(text.startswith("Key:") for text in labels)
+    assert panel.refresh_button.text() == "Refresh Status"
+    assert panel.layout().itemAt(0).layout().itemAt(0).widget() is panel.initialise_button
+    assert panel.layout().itemAt(1).widget() is panel.automaton_row
+    assert panel.layout().itemAt(2).layout() is panel.rows_layout
+    assert panel.automaton_row.dot.accessibleName() == "Disconnected"
+    panel.refresh_button.click()
+    assert controller.calls == ["ping"]
+    panel.refresh_timer.timeout.emit()
+    assert controller.calls == ["ping", "ping"]
+    controller.lifecycle_status_received.emit({
+        "devices_initialised": True,
+        "strategy_active": True,
+        "stopped": False,
+        "shutdown": False,
+    })
+    assert panel.automaton_row.dot.accessibleName() == "Connected"
+    assert "strategy running: True" in panel.automaton_row.description_label.text()
+    controller.controller_status_received.emit({
+        "controllers": [
+            {
+                "name": "Virtual controller",
+                "connected": True,
+                "is_initialised": True,
+                "is_alive": True,
+                "owners": ["camera"],
+            }
+        ],
+        "checked_at": "2026-11-24T10:20:30+00:00",
+    })
+    peripheral_row = panel.rows_layout.itemAt(0).widget()
+    assert peripheral_row.dot.accessibleName() == "Connected"
+    assert peripheral_row.frameShape() == peripheral_row.NoFrame
+
+    panel.initialise_button.click()
+    panel.stop_button.click()
+    panel.shutdown_button.click()
+    assert controller.calls[-3:] == ["initialise", "stop", "shutdown"]
+
+    controller.request_error.emit(GuiCommandType.PING, "connection failed")
+    assert panel.automaton_row.dot.accessibleName() == "Disconnected"
+    assert panel.refresh_button.isEnabled()
+
+
+def test_central_workspace_uses_two_exclusive_layers_and_plane_metadata(monkeypatch) -> None:
+    """Camera stacks and DMD previews remain separate and metadata follows the plane."""
+    _app()
+    import napari
+
+    controller = FakeController()
+    viewer = napari.Viewer(show=False)
+    fit_calls = []
+    monkeypatch.setattr(
+        "evomachine.gui.central_workspace.fit_central_viewer",
+        lambda selected_viewer: fit_calls.append(selected_viewer),
+    )
+    try:
+        workspace = CentralVisualWorkspace(viewer, controller)
+        assert [layer.name for layer in viewer.layers] == [MICROSCOPE_LAYER, DMD_LAYER]
+        assert workspace.microscope_layer.visible
+        assert not workspace.dmd_layer.visible
+        assert workspace.microscope_layer.bounding_box.visible
+        assert workspace.microscope_layer.bounding_box.lines
+        assert not workspace.microscope_layer.bounding_box.points
+        assert workspace.microscope_layer.bounding_box.line_thickness == DMD_FRAME_THICKNESS
+        assert np.allclose(
+            workspace.microscope_layer.bounding_box.line_color,
+            np.array([1.0, 48 / 255, 48 / 255, 1.0]),
+        )
+        assert workspace.dmd_layer.bounding_box.visible
+        assert workspace.dmd_layer.bounding_box.lines
+        assert not workspace.dmd_layer.bounding_box.points
+        assert workspace.dmd_layer.bounding_box.line_thickness == DMD_FRAME_THICKNESS
+        assert np.allclose(
+            workspace.dmd_layer.bounding_box.line_color,
+            np.array([1.0, 48 / 255, 48 / 255, 1.0]),
+        )
+
+        stack = np.arange(3 * 4 * 5, dtype=np.uint16).reshape(3, 4, 5)
+        workspace.update_frame({
+            "kind": "z_stack",
+            "stack_preview": stack_to_preview_payload(stack),
+            "stack_shape": list(stack.shape),
+            "dtype": "uint16",
+            "fov_id": 7,
+            "planes": 3,
+            "z_positions": [1.0, 2.0, 3.0],
+            "saved_paths": ["/tmp/p0.tiff", "/tmp/p1.tiff", "/tmp/p2.tiff"],
+        })
+        viewer.camera.zoom = 7.0
+        workspace.update_last_stack(stack + 1)
+        assert viewer.camera.zoom == 7.0
+        viewer.dims.set_current_step(0, 1)
+        workspace._on_dims_step_changed()
+        assert "plane 2/3" in workspace.metadata_text.text()
+        assert "Z 2.0" in workspace.metadata_text.text()
+        assert "p1.tiff" in workspace.metadata_text.text()
+
+        camera_data = np.asarray(workspace.microscope_layer.data)
+        dmd = np.zeros((10, 20), dtype=np.uint8)
+        workspace.update_dmd_status({
+            "last_pattern": "test pattern",
+            "width_height": [20, 10],
+            "calibration_file": "/tmp/calibration.json",
+            "preview": array_to_preview_payload(dmd),
+        })
+        assert np.array_equal(workspace.microscope_layer.data, camera_data)
+        workspace.display_tabs.setCurrentIndex(1)
+        assert not workspace.microscope_layer.visible
+        assert workspace.dmd_layer.visible
+        assert "test pattern" in workspace.metadata_text.text()
+        assert fit_calls == [viewer, viewer, viewer]
+    finally:
+        viewer.close()
 
 
 def test_scrollable_control_column_wraps_labels_and_sizes_buttons_for_font() -> None:
@@ -438,7 +662,53 @@ def test_scrollable_control_column_wraps_labels_and_sizes_buttons_for_font() -> 
     assert button.minimumWidth() == 0
     assert button.minimumHeight() >= button.fontMetrics().height() + 10
     assert button.sizePolicy().horizontalPolicy() == QSizePolicy.Expanding
+    assert button.sizePolicy().verticalPolicy() == QSizePolicy.Fixed
     assert scroll_area.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
+
+
+def test_camera_led_and_filter_action_buttons_share_fixed_heights() -> None:
+    """Frequently adjacent device actions use the central fixed-height policy."""
+    _app()
+    camera = CameraPanel(controller=FakeController())
+    leds = LedManagerPanel(controller=FakeController())
+    filter_wheel = FilterWheelPanel(controller=FakeController())
+    panels_and_buttons = (
+        (camera, (camera.refresh_button, camera.configure_button, camera.acquire_frame_button)),
+        (leds, (leds.refresh_button, leds.configure_button)),
+        (filter_wheel, (filter_wheel.refresh_button, filter_wheel.configure_button)),
+    )
+
+    for panel, buttons in panels_and_buttons:
+        EvoMachineControlsDock._make_panel_contents_responsive(panel)
+        minimum_heights = {button.minimumHeight() for button in buttons}
+        assert len(minimum_heights) == 1
+        assert all(
+            button.sizePolicy().verticalPolicy() == QSizePolicy.Fixed
+            for button in buttons
+        )
+
+
+def test_device_tabs_use_flat_top_aligned_panel_contents() -> None:
+    """Device panels omit redundant outer boxes and keep their controls at the top."""
+    _app()
+    controller = FakeController()
+    panels = (
+        StagePanel(controller),
+        LedManagerPanel(controller),
+        CameraPanel(controller),
+        DmdPanel(controller),
+        FilterWheelPanel(controller),
+    )
+
+    assert all(not isinstance(panel, QGroupBox) for panel in panels)
+    assert all(panel.layout().itemAt(panel.layout().count() - 1).spacerItem() for panel in panels)
+    assert panels[2].layout().indexOf(panels[2].exposure_label) >= 0
+    led_labels = {label.text() for label in panels[1].findChildren(QLabel)}
+    dmd_labels = {label.text() for label in panels[3].findChildren(QLabel)}
+    filter_labels = {label.text() for label in panels[4].findChildren(QLabel)}
+    assert {"SyncBoard", "ASI Tiger", "KWR103"} <= led_labels
+    assert {"Patterns", "Pattern config", "Custom pattern", "Calibration", "Utilities"} <= dmd_labels
+    assert {"Positions", "Actions"} <= filter_labels
 
 
 def test_stage_panel_sends_relative_delta_move_request() -> None:
@@ -605,7 +875,7 @@ def test_narrow_control_columns_use_compact_action_labels() -> None:
     assert autofocus.run_calibration_button.text() == "Calibrate"
     assert not hasattr(autofocus, "lock_after_calibration_checkbox")
     assert fovs.add_button.text() == "Add current"
-    assert fovs.remove_button.text() == "Remove last"
+    assert fovs.remove_button.text() == "Remove Selected"
     assert not hasattr(fovs, "use_autofocus_checkbox")
     assert fovs.initialise_button.text() == "Initialise"
 
@@ -699,6 +969,75 @@ def test_manual_acquisition_panel_sends_settings_payload() -> None:
             },
         )
     ]
+
+
+def test_acquisition_configuration_separates_general_and_device_fields() -> None:
+    """General, LED, DMD, and filter settings have distinct configuration dialogs."""
+    _app()
+    panel = FrameAcquisitionSettingsPanel()
+
+    assert panel.use_current_device_settings.text() == "Use current device settings"
+    assert panel.use_current_device_settings.isChecked()
+    assert not panel.leds_button.isEnabled()
+    assert not panel.dmd_button.isEnabled()
+    assert not panel.filter_wheel_button.isEnabled()
+    assert {field.key for field in panel._config_fields()} == {
+        "exposure",
+        "normalise",
+        "illuminate_dmd",
+        "clear_dmd_after",
+        "restore_leds_after",
+        "disable_leds_after",
+    }
+    assert {field.key for field in panel._dmd_config_fields()} == {"dmd_pattern"}
+    assert {field.key for field in panel._filter_config_fields()} == {"filter_wheel"}
+    assert all(
+        field.key.startswith("led_") for field in panel._led_config_fields()
+    )
+
+    panel.use_current_device_settings.setChecked(False)
+
+    assert panel.leds_button.isEnabled()
+    assert panel.dmd_button.isEnabled()
+    assert panel.filter_wheel_button.isEnabled()
+    assert "explicit acquisition config" in panel.summary_label.text()
+
+
+def test_manual_save_state_is_shared_with_frame_and_z_stack_payloads() -> None:
+    """The Output Configuration checkbox governs both workflow acquisition payloads."""
+    _app()
+    controller = FakeController()
+    save_config = ManualAcquisitionSaveConfig()
+    settings_panel = FrameAcquisitionSettingsPanel(save_config=save_config)
+    output_panel = OutputConfigurationPanel(
+        controller=controller,
+        save_config=save_config,
+    )
+    controller.calls.clear()
+
+    assert output_panel.save_checkbox is not None
+    assert not settings_panel.payload()["settings"]["save"]
+    output_panel.save_checkbox.setChecked(True)
+
+    assert save_config.enabled
+    assert settings_panel.payload()["settings"]["save"]
+    assert any(
+        "strategies control their own saving" in label.text()
+        for label in output_panel.findChildren(QLabel)
+    )
+    assert controller.calls == []
+
+
+def test_strategy_output_configuration_omits_manual_save_control() -> None:
+    """Output Configuration instances without shared state do not expose manual saving."""
+    _app()
+    panel = OutputConfigurationPanel(controller=FakeController())
+
+    assert panel.save_checkbox is None
+    assert not any(
+        checkbox.text() == "Save manual acquisitions"
+        for checkbox in panel.findChildren(QCheckBox)
+    )
 
 
 def test_acquisition_configuration_dialog_shows_virtual_source_controls() -> None:
@@ -851,10 +1190,11 @@ def test_acquisition_configuration_dialog_cancel_sends_no_source_update() -> Non
 
 
 def test_acquisition_config_does_not_offer_unknown_filter_wheel() -> None:
+    """The explicit acquisition filter dialog excludes the unknown sentinel."""
     _app()
     panel = FrameAcquisitionSettingsPanel()
 
-    filter_field = next(field for field in panel._config_fields() if field.key == "filter_wheel")
+    filter_field = panel._filter_config_fields()[0]
 
     assert FilterWheelType.UNKNOWN.name not in filter_field.choices
 
@@ -872,15 +1212,16 @@ def test_led_controls_and_acquisition_channels_default_to_ten_percent() -> None:
 
 
 def test_z_stack_panel_sends_request() -> None:
+    """Z-stack configuration is owned by and submitted from the Z-stack panel."""
     _app()
     controller = FakeController()
     settings_panel = FrameAcquisitionSettingsPanel()
-    settings_panel.config_values["start_z"] = -1.0
-    settings_panel.config_values["end_z"] = 1.0
-    settings_panel.config_values["step_z"] = 0.5
     panel = ZStackSettingsPanel(
-        controller=controller, settings_provider=settings_panel.z_stack_payload
+        controller=controller, settings_provider=settings_panel.payload
     )
+    panel.start_z = -1.0
+    panel.end_z = 1.0
+    panel.step_z = 0.5
     panel.update_lifecycle_status({"devices_initialised": True})
 
     panel.acquire_button.click()
@@ -907,14 +1248,35 @@ def test_z_stack_panel_sends_request() -> None:
 
 
 def test_z_stack_defaults_are_relative_ten_micrometres_around_origin() -> None:
+    """The Z-stack panel retains the default relative range and step."""
     _app()
-    settings_panel = FrameAcquisitionSettingsPanel()
+    panel = ZStackSettingsPanel(controller=FakeController())
 
-    payload = settings_panel.z_stack_payload()
+    assert panel.start_z == -10.0
+    assert panel.end_z == 10.0
+    assert panel.step_z == 1.0
 
-    assert payload["start_z"] == -10.0
-    assert payload["end_z"] == 10.0
-    assert payload["step_z"] == 1.0
+
+def test_z_stack_configuration_applies_only_after_acceptance(monkeypatch) -> None:
+    """Z-stack configuration keeps old values on Cancel and applies accepted values."""
+    _app()
+    panel = ZStackSettingsPanel(controller=FakeController())
+    monkeypatch.setattr(ConfigDialog, "exec_", lambda _dialog: QDialog.Rejected)
+
+    panel.configure_button.click()
+
+    assert (panel.start_z, panel.end_z, panel.step_z) == (-10.0, 10.0, 1.0)
+
+    monkeypatch.setattr(ConfigDialog, "exec_", lambda _dialog: QDialog.Accepted)
+    monkeypatch.setattr(
+        ConfigDialog,
+        "values",
+        lambda _dialog: {"start_z": -3.0, "end_z": 4.0, "step_z": 0.5},
+    )
+    panel.configure_button.click()
+
+    assert (panel.start_z, panel.end_z, panel.step_z) == (-3.0, 4.0, 0.5)
+    assert "-3.000 → 4.000" in panel.summary_label.text()
 
 
 def test_saved_image_loader_panel_sends_load_requests() -> None:
@@ -1064,6 +1426,7 @@ def test_output_configuration_pattern_dialog_cancel_sends_no_update(monkeypatch)
 
 
 def test_filter_wheel_panel_sends_set_request() -> None:
+    """Clicking a filter position immediately sends the existing set request."""
     _app()
     controller = FakeController()
     panel = FilterWheelPanel(controller=controller)
@@ -1079,11 +1442,61 @@ def test_filter_wheel_panel_sends_set_request() -> None:
             "is_alive": True,
         }
     )
-    panel.filter_combo.setCurrentIndex(panel.filter_combo.findData("BLOCKING"))
-
-    panel.set_button.click()
+    assert panel.filter_buttons["NO_FILTER"].isChecked()
+    assert controller.calls == []
+    panel.filter_buttons["BLOCKING"].click()
 
     assert controller.calls == [("set_filter_wheel", "BLOCKING")]
+    assert panel.filter_buttons["NO_FILTER"].isChecked()
+    panel.update_status(
+        {
+            "available_filters": [
+                {"name": "NO_FILTER", "value": 4},
+                {"name": "BLOCKING", "value": 5},
+            ],
+            "current_filter": {"name": "BLOCKING", "value": 5},
+            "is_initialised": True,
+            "is_alive": True,
+        }
+    )
+    assert panel.filter_buttons["BLOCKING"].isChecked()
+    assert not hasattr(panel, "filter_combo")
+    assert not hasattr(panel, "set_button")
+
+
+def test_filter_wheel_buttons_are_full_width_and_wavelength_coloured() -> None:
+    """Filter positions use one full-width row and wavelength-matched styling."""
+    _app()
+    panel = FilterWheelPanel(controller=FakeController())
+    names = (
+        "BANDPASS_405_445_514_561_640nm",
+        "FILTER_465nm",
+        "FILTER_527nm",
+        "FILTER_592nm",
+        "NO_FILTER",
+        "BLOCKING",
+    )
+    panel.update_status({
+        "available_filters": [
+            {"name": name, "value": index} for index, name in enumerate(names)
+        ],
+        "current_filter": {"name": names[0], "value": 0},
+        "is_initialised": True,
+        "is_alive": True,
+    })
+
+    assert panel.filter_buttons[names[0]].text() == "405/445/514/561/640 nm bandpass"
+    assert "ZET405/445/514/561/640m" in panel.filter_buttons[names[0]].toolTip()
+    for row, name in enumerate(names):
+        layout_item = panel.positions_layout.itemAtPosition(row, 0)
+        assert layout_item is not None
+        assert layout_item.widget() is panel.filter_buttons[name]
+        assert panel.filter_buttons[name].sizePolicy().horizontalPolicy() == QSizePolicy.Expanding
+        assert panel.positions_layout.itemAtPosition(row, 1) is None
+    assert "qlineargradient" in panel.filter_buttons[names[0]].styleSheet()
+    assert "#004cff" in panel.filter_buttons["FILTER_465nm"].styleSheet()
+    assert "#00e65c" in panel.filter_buttons["FILTER_527nm"].styleSheet()
+    assert "#ff9800" in panel.filter_buttons["FILTER_592nm"].styleSheet()
 
 
 def test_led_panel_sends_set_request() -> None:
@@ -1689,7 +2102,9 @@ def test_long_operation_status_updates_controls_and_cancellation() -> None:
             "message": "Scanning.",
         }
     )
-    assert dmd.calibration_operation_label.text() == "operation: running — Scanning."
+    assert dmd.calibration_operation_label.text() == (
+        "calibration status: running — Scanning."
+    )
     assert dmd.cancel_calibration_button.isEnabled()
     assert not dmd.pattern_buttons["full"].isEnabled()
     dmd.cancel_calibration_button.click()
@@ -1748,7 +2163,7 @@ def test_peripheral_panels_lock_unsafe_controls_while_strategy_runs() -> None:
         camera.configure_button,
         camera.acquire_frame_button,
         filter_wheel.configure_button,
-        filter_wheel.set_button,
+        filter_wheel.filter_buttons["FILTER_465nm"],
         leds.configure_button,
         leds.led_buttons[LEDType.LED_450_NM],
         dmd.configure_pattern_button,
@@ -1971,16 +2386,20 @@ def test_fov_setup_explains_selected_and_physical_fov_identity() -> None:
     assert "physical position" in panel.fov_identity_hint.text()
 
 
-def test_fov_setup_uses_append_remove_last_and_read_only_rows() -> None:
+def test_fov_setup_uses_append_remove_selected_and_read_only_rows() -> None:
+    """Removing a selected FoV preserves order and renumbers focus overrides."""
     _app()
     controller = FakeController()
     panel = FovSetupPanel(controller=controller)
     for x in (10, 20, 30):
         panel.add_button.click()
         controller.stage_coordinates_received.emit({"coordinate": {"x": x, "y": 0, "z": 0}})
-    panel.table.selectRow(0)
+    panel.fov_focus_configs = {0: {"mode": "first"}, 1: {"mode": "second"}, 2: {"mode": "third"}}
+    panel.table.selectRow(1)
     panel.remove_button.click()
-    assert [row["x"] for row in panel._fov_payload()] == [10, 20]
+    assert [row["x"] for row in panel._fov_payload()] == [10, 30]
+    assert [panel.table.item(row, 0).text() for row in range(2)] == ["0", "1"]
+    assert panel.fov_focus_configs == {0: {"mode": "first"}, 1: {"mode": "third"}}
     assert panel.table.editTriggers() == panel.table.NoEditTriggers
     assert panel.layout().indexOf(panel.initialise_button) > panel.layout().indexOf(panel.table)
     controller.operation_status_received.emit({"kind": "stage_movement", "state": "running"})
