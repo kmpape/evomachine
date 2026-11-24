@@ -4,7 +4,7 @@ import numpy as np
 from delta.utils import CroppingBox
 
 from evomachine.exceptions import ConfigError, ErrorCode
-from evomachine.types import FocusAlgorithmType, FocusCurveType
+from evomachine.types import FocusScoringType as FocusAlgorithmType, FocusCurveType
 
 
 # TODO(CODEX) START

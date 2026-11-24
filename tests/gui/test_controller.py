@@ -105,6 +105,26 @@ def test_gui_controller_sends_autofocus_offset_reset_request() -> None:
     assert client.requests[-1].payload == {}
 
 
+def test_gui_controller_uses_unified_software_focus_commands() -> None:
+    """Unified run, edit, cancel, and status actions use one protocol family."""
+    client = RecordingClient()
+    controller = EvoMachineGuiController(client=client, start_worker=False)
+
+    controller.run_software_focus("calibrate")
+    controller.edit_software_focus("refit", smoothing=1.5)
+    controller.cancel_software_focus()
+    controller.refresh_software_focus_operation()
+
+    assert [request.command for request in client.requests] == [
+        GuiCommandType.SOFTWARE_FOCUS_RUN,
+        GuiCommandType.SOFTWARE_FOCUS_EDIT,
+        GuiCommandType.SOFTWARE_FOCUS_CANCEL,
+        GuiCommandType.SOFTWARE_FOCUS_OPERATION_STATUS,
+    ]
+    assert client.requests[0].payload == {"action": "calibrate"}
+    assert client.requests[1].payload == {"action": "refit", "smoothing": 1.5}
+
+
 def test_gui_controller_dispatches_completed_stage_movement_coordinates() -> None:
     controller = EvoMachineGuiController(client=RecordingClient(), start_worker=False)
     received = []

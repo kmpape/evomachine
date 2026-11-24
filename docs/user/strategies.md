@@ -155,8 +155,9 @@ Focus is configured at three levels:
    waits, retry limit, and default FoV policy.
 2. `FovConfig` overrides arrival/departure locks, software focus, and focus
    configuration for one FoV.
-3. `SoftwareFocusConfig` or `ReferenceProfileFocusConfig` controls acquisition,
-   scan sampling, score algorithm, and reference matching.
+3. `SoftwareFocusConfig` controls shared focus frames, acquisition, typed scoring,
+   and crop boxes. Its typed selection pair chooses either maximum-score scanning
+   or `ReferenceFocusSelectionConfig` reference-profile matching.
 
 A strategy may populate `self.fov_configs` during `_initialise()` because
 `self.fovs` is available then:

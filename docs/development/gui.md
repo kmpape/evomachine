@@ -194,31 +194,42 @@ not be renamed. GUI generation runs in a disposable process so Cancel and the
 
 ## Focus panels and configuration
 
-Manual CRISP and software-focus panels live in the RHS Focus tab, alongside the
-reference-profile panel. The Strategy tab owns global and per-FoV mode selection.
+Manual CRISP and the unified Software Focus panel live in the RHS Focus tab.
+The Software Focus panel selects Maximum or Reference profile at the top level,
+then selects a typed scoring method. Method, scorer, imaging, and crop settings
+have separate editors. The Strategy tab owns global and per-FoV mode selection.
 Use `ConfigForm` inside larger editors and `ConfigDialog` for simple modal forms.
 A mode change selects a whole editor page; retain inactive page values.
 FoVs can inherit the global mode or select their own, with optional settings
 overrides. The manual Focus tab does not change these strategy settings.
 
-`panels/focus_settings.py` owns the mode-specific editors. Reference sampling uses
+`panels/focus_settings.py` owns the shared typed editors. Reference sampling uses
 `SamplingEditor`: generated outer range/step, optional denser centre, exact-position
 preview, and Custom mode for irregular lists. Image sampling controls acquisition;
 the matching range/step controls numerical Pearson candidates, not additional images.
 Preserve custom positions and fractional shift bounds when round-tripping settings.
+Reference profiles are owned per FoV by default; the reference configuration can
+explicitly opt into a single shared curve. `SoftwareFocus` owns the FoV reference
+registry, while `FocusNavigator` selects the appropriate state from that one engine.
 
 Applying unchanged configuration or editing scan/search settings must retain an
-accepted reference. `ReferenceProfileFocus.update_config` owns compatibility:
-smoothing/metric changes refit cached images for review; changed imaging settings
-keep the old curve visible but require a new capture. Panels should display the
+accepted reference. `SoftwareFocus.update_config` owns compatibility: smoothing
+changes refit cached images for review; scoring, frame, acquisition, or crop
+changes invalidate affected references. Scan offsets and matching thresholds retain
+compatible references. Panels should display the
 backend's acceptance, calibration-needed flag and explanatory message.
 
-`panels/reference_focus.py` embeds the dark Matplotlib plots. Latest samples appear
+`panels/reference_focus.py` supplies the shared diagnostic plot widget used by the
+unified panel and strategy review dialog. Latest samples appear
 as crosses over the reference; alignment and score scaling affect display only.
 Show sparse/recovery outcomes and rejection reasons, retaining rejected correlations
 for inspection. Explain undefined correlations instead of presenting a silent empty
 plot. Numeric curves cross JSON as lists, with unsupported correlations represented
 by null; hardware objects and image stacks remain in the application process.
+
+The microscope viewer also owns a read-only cyan Shapes layer for authoritative
+focus crops. Rectangle coordinates use left/top-inclusive and right/bottom-exclusive
+image coordinates. The layer is hidden in DMD mode and never edits backend state.
 
 Manual configuration/results are independent of strategy state. FoV setup must not
 subscribe to manual software-focus status as a source of strategy defaults. Load

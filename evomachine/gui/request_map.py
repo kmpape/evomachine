@@ -3,8 +3,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from dataclasses import replace
 
 import numpy as np
+from delta.utils import CroppingBox
 
 from evomachine.acquisition import FrameAcquisitionSettings
 from evomachine.config import CAM_WIDTH_HEIGHT, DMD_WIDTH_HEIGHT, get_logger, gui_log_handler
@@ -24,8 +26,11 @@ from evomachine.types import FilterWheelType, LEDType
 from evomachine.types import FovDirectionType
 from evomachine.gui.protocol import GuiCommandType
 from evomachine.navigation import FovConfig, FocusNavigatorConfig, FocusNavigatorFovRecord
-from evomachine.softwarefocus import SoftwareFocusConfig
-from evomachine.types import FocusAlgorithmType, FocusMode
+from evomachine.softwarefocus import (
+    MaximumFocusSelectionConfig, ReferenceFocusSelectionConfig, SCORING_CONFIG_TYPES,
+    SoftwareFocusConfig,
+)
+from evomachine.types import FocusMode, FocusScoringType, FocusSelectionType
 from evomachine.gui import focus as focus_handlers
 
 
@@ -325,41 +330,57 @@ def gui_software_focus_config_from_payload(
         raise TypeError("Software-focus config payload must be a dict.")
     base = (facade.gui_software_focus() if manual else facade.gui_strategy_software_focus()).default_config
     updates: dict[str, Any] = {}
-    if "rel_range" in payload:
-        updates["rel_range"] = int(payload["rel_range"])
-    if "step_size" in payload:
-        updates["step_size"] = int(payload["step_size"])
-    if "algorithm" in payload:
-        algorithm = payload["algorithm"]
-        if not isinstance(algorithm, str):
-            raise TypeError("Software-focus algorithm must be a string enum name.")
+    scoring_name = payload.get("scoring_type")
+    if scoring_name is not None:
         try:
-            algorithm_type = FocusAlgorithmType[algorithm]
-        except KeyError as error:
-            raise ValueError(f"Unknown software-focus algorithm {algorithm!r}.") from error
-        allowed_kwargs = {
-            FocusAlgorithmType.LAPLACIAN_VAR: frozenset(),
-            FocusAlgorithmType.SQUARED_GRAD_AVG: frozenset({"threshold"}),
-            FocusAlgorithmType.STEEL: frozenset({"rowshift", "colshift", "normalise"}),
-            FocusAlgorithmType.BANDPASS_FFT: frozenset({
-                "cell_radius", "downsample", "order", "saturation", "normalize_brightness",
-            }),
-        }[algorithm_type]
-        updates["algorithm"] = algorithm_type
-        updates["algorithm_kwargs"] = {
-            key: value
-            for key, value in base.algorithm_kwargs.items()
-            if key in allowed_kwargs
-        }
-    if "algorithm_kwargs" in payload:
-        updates["algorithm_kwargs"] = dict(payload["algorithm_kwargs"])
+            scoring_type = FocusScoringType[scoring_name]
+        except (KeyError, TypeError) as error:
+            raise ValueError(f"Unknown software-focus scoring type {scoring_name!r}.") from error
+        scoring_values = payload.get("scoring_config", {})
+        updates["scoring"] = (scoring_type, SCORING_CONFIG_TYPES[scoring_type](**scoring_values))
+    selection_name = payload.get("selection_type")
+    if selection_name is not None:
+        try:
+            selection_type = FocusSelectionType[selection_name]
+        except (KeyError, TypeError) as error:
+            raise ValueError(f"Unknown focus selection type {selection_name!r}.") from error
+        selection_values = dict(payload.get("selection_config", {}))
+        if selection_type is FocusSelectionType.MAXIMUM:
+            selection_config = MaximumFocusSelectionConfig(**selection_values)
+        else:
+            for key in ("sample_offsets", "recovery_offsets"):
+                if key in selection_values:
+                    selection_values[key] = tuple(selection_values[key])
+            selection_config = ReferenceFocusSelectionConfig(**selection_values)
+        updates["selection"] = (selection_type, selection_config)
+    elif "rel_range" in payload or "step_size" in payload:
+        current = base.selection[1]
+        if not isinstance(current, MaximumFocusSelectionConfig):
+            current = MaximumFocusSelectionConfig()
+        updates["selection"] = (
+            FocusSelectionType.MAXIMUM,
+            replace(
+                current,
+                rel_range=float(payload.get("rel_range", current.rel_range)),
+                step_size=float(payload.get("step_size", current.step_size)),
+            ),
+        )
     if "focus_frames" in payload:
-        updates["focus_frames"] = [focus_handlers.frame_from_payload(frame, base.focus_frames[0])
-                                  for frame in payload["focus_frames"]]
+        updates["focus_frames"] = tuple(
+            focus_handlers.frame_from_payload(frame, base.focus_frames[0])
+            for frame in payload["focus_frames"]
+        )
     if "acquisition_settings" in payload:
         updates["acquisition_settings"] = FrameAcquisitionSettings(**payload["acquisition_settings"])
-    updates["cropping_box"] = None
-    return base.updated(**updates)
+    if "cropping_boxes" in payload:
+        updates["cropping_boxes"] = tuple(
+            CroppingBox(
+                xtl=int(box["x_left"]), ytl=int(box["y_top"]),
+                xbr=int(box["x_right"]), ybr=int(box["y_bottom"]),
+            )
+            for box in payload["cropping_boxes"]
+        )
+    return replace(base, **updates)
 
 
 def _standard_focus_config(facade, payload, base=None):
@@ -411,8 +432,17 @@ def gui_fov_config_from_payload(facade, payload, *, base=None, standard=None):
     if "override_settings" in payload:
         values["navigator_config"] = _standard_focus_config(facade, payload, standard)
         if payload.get("reference_profile") is not None:
-            values["reference_focus_config"] = focus_handlers.reference_from_payload(
-                payload["reference_profile"], facade.automaton.focus_nav.reference_focus.config)
+            software = values.get("software_focus_config") or facade.gui_strategy_software_focus().config
+            current_reference = (
+                software.selection[1]
+                if software.selection[0] is FocusSelectionType.REFERENCE_PROFILE
+                else ReferenceFocusSelectionConfig()
+            )
+            reference = focus_handlers.reference_from_payload(payload["reference_profile"], current_reference)
+            values["software_focus_config"] = replace(
+                software,
+                selection=(FocusSelectionType.REFERENCE_PROFILE, reference),
+            )
     return FovConfig(**values)
 
 
@@ -436,9 +466,19 @@ def gui_focus_navigator_config_from_payload(facade, payload):
     if software is not None:
         facade.gui_strategy_software_focus().update_config(software)
     if config_payload.get("reference_profile") is not None:
-        facade.focus_state.reference()  # Ensure both independent components exist.
-        focus = facade.automaton.focus_nav.reference_focus
-        focus.update_config(focus_handlers.reference_from_payload(config_payload["reference_profile"], focus.config))
+        focus = facade.gui_strategy_software_focus()
+        current_reference = (
+            focus.config.selection[1]
+            if focus.config.selection[0] is FocusSelectionType.REFERENCE_PROFILE
+            else ReferenceFocusSelectionConfig()
+        )
+        reference = focus_handlers.reference_from_payload(
+            config_payload["reference_profile"], current_reference
+        )
+        focus.update_config(replace(
+            focus.config,
+            selection=(FocusSelectionType.REFERENCE_PROFILE, reference),
+        ))
     facade.automaton.focus_nav.standard_config = standard
     return replace(standard, focus_mode=mode,
                    use_autofocus=False if mode == FocusMode.REFERENCE_PROFILE else standard.use_autofocus), fov_configs or None
@@ -1354,14 +1394,23 @@ def gui_software_focus_status(facade: Any, payload: dict[str, Any]) -> dict[str,
 def gui_software_focus_run(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     gui_require_devices_initialised(facade, "software focus")
     fov_id = payload.get("fov_id")
+    action = payload.get("action", "run")
+    if action not in {"run", "calibrate", "test"}:
+        raise ValueError("Unknown software-focus operation.")
     def run(cancel_event, report):
         report(0.0, "Running software focus.")
         facade.focus_state.prepare_manual_scan()
-        result = facade.gui_software_focus().run(
-            fov_id=None if fov_id is None else int(fov_id),
-            stop_event=cancel_event,
-        )
-        result_payload = facade.gui_software_focus_result_payload(result)
+        focus = facade.gui_software_focus()
+        if action == "calibrate":
+            focus.calibrate(stop_event=cancel_event)
+            result_payload = None
+        else:
+            result = focus.run(
+                fov_id=None if fov_id is None else int(fov_id),
+                stop_event=cancel_event,
+                apply=action == "run",
+            )
+            result_payload = facade.gui_software_focus_result_payload(result)
         return {
             "software_focus": {
                 **facade.gui_software_focus_status_payload(),
@@ -1384,6 +1433,27 @@ def gui_software_focus_configure(facade: Any, payload: dict[str, Any]) -> dict[s
 
 def gui_software_focus_operation_status(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
     return {"operation": _require_operation_status(facade, "software_focus")}
+
+
+def gui_software_focus_edit(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """Accept, clear, or refit the unified engine's reference profile."""
+    focus = facade.gui_software_focus()
+    action = payload.get("action")
+    if action == "accept":
+        focus.accept_reference()
+    elif action == "clear":
+        focus.clear_reference()
+    elif action == "refit":
+        focus.refit_reference(payload.get("smoothing"))
+    else:
+        raise ValueError("Unknown software-focus edit action.")
+    return {"software_focus": facade.gui_software_focus_status_payload()}
+
+
+def gui_software_focus_cancel(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """Request cancellation of the active manual focus operation."""
+    facade.gui_software_focus().stop()
+    return {"operation": facade.gui_operations.cancel("software_focus")}
 
 
 def _require_operation_status(facade: Any, kind: str) -> dict[str, Any]:
@@ -1675,12 +1745,6 @@ def gui_strategy_stop(facade: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
 GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.FOCUS_DEFAULTS: focus_handlers.focus_defaults,
-    GuiCommandType.REFERENCE_FOCUS_STATUS: focus_handlers.manual_reference_status,
-    GuiCommandType.REFERENCE_FOCUS_CONFIGURE: focus_handlers.manual_reference_configure,
-    GuiCommandType.REFERENCE_FOCUS_RUN: focus_handlers.manual_reference_run,
-    GuiCommandType.REFERENCE_FOCUS_EDIT: focus_handlers.manual_reference_edit,
-    GuiCommandType.REFERENCE_FOCUS_CANCEL: focus_handlers.manual_reference_cancel,
-    GuiCommandType.REFERENCE_FOCUS_OPERATION: focus_handlers.manual_reference_operation,
     GuiCommandType.STRATEGY_REFERENCE_DECIDE: focus_handlers.strategy_reference_decide,
     GuiCommandType.PING: gui_ping,
     GuiCommandType.IMAGE_TRANSPORT_PROBE: gui_image_transport_probe,
@@ -1739,6 +1803,8 @@ GUI_REQUEST_HANDLERS: dict[GuiCommandType, GuiRequestHandler] = {
     GuiCommandType.SOFTWARE_FOCUS_STATUS: gui_software_focus_status,
     GuiCommandType.SOFTWARE_FOCUS_CONFIGURE: gui_software_focus_configure,
     GuiCommandType.SOFTWARE_FOCUS_RUN: gui_software_focus_run,
+    GuiCommandType.SOFTWARE_FOCUS_EDIT: gui_software_focus_edit,
+    GuiCommandType.SOFTWARE_FOCUS_CANCEL: gui_software_focus_cancel,
     GuiCommandType.SOFTWARE_FOCUS_OPERATION_STATUS: gui_software_focus_operation_status,
     GuiCommandType.STRATEGY_STATUS: gui_strategy_status,
     GuiCommandType.STRATEGY_GENERATE: gui_strategy_generate,

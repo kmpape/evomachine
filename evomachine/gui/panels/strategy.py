@@ -181,9 +181,10 @@ class FovSetupPanel(QGroupBox):
             "post_move_wait_s": 1.0,
             "toggle_autofocus_on_channel_change": True,
             "software_focus": {
-                "rel_range": 50,
-                "step_size": 5,
-                "algorithm": "SQUARED_GRAD_AVG",
+                "selection_type": "MAXIMUM",
+                "selection_config": {"rel_range": 50, "step_size": 5},
+                "scoring_type": "SQUARED_GRAD_AVG",
+                "scoring_config": {},
             },
             "default_fov_config": {
                 "lock_autofocus_during_arrival_move": True,

@@ -149,15 +149,22 @@ execution. See [Writing and running strategies](strategies.md).
 
 ## Focus
 
-The Focus tab separates hardware autofocus, software focus, and reference-profile
-focus.
+The Focus tab separates hardware autofocus from one unified software-focus engine.
 
 - **Autofocus** manages the binding-specific lock and calibration process.
-- **Software Focus** captures a Z scan and selects the best score using its
-  configured algorithm.
-- **Reference Focus** calibrates a whole-image reference profile and compares
-  later scans to estimate Z shift. Calibration must be reviewed and explicitly
-  accepted.
+- **Software Focus** offers **Maximum** selection or **Reference profile**
+  matching. Both use the same focus images, typed scoring method, acquisition
+  settings, and optional crop rectangles. Maximum selects the best Z score.
+  Reference profile compares later scans to an accepted calibrated curve.
+  Calibration must be reviewed and explicitly
+  accepted. Strategies acquire an independent curve when each FoV is first
+  visited by default. Enable **Use one reference curve for all FoVs** only for
+  samples whose focus-score profiles are expected to be comparable.
+
+Use **Configure Crop** to score the whole image or one GUI-defined rectangle.
+Python configurations may supply several rectangles. Crop coordinates include
+the left/top pixels and exclude the right/bottom pixels; the microscope view
+shows authoritative crops as a read-only cyan overlay.
 
 Strategy focus configuration has three levels: global navigation behavior,
 per-FoV policy, and the software/reference algorithm configuration. Per-FoV

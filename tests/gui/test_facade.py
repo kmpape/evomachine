@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import threading
 import time
@@ -13,7 +13,7 @@ import tifffile
 from evomachine.bindings.binding_types import BindingType
 from evomachine.bindings.virtual.peripheralcontroller import VirtualPeripheralController
 from evomachine.bindings.software_focus.software_focus_algorithms import (
-    create_software_focus_algorithm,
+    create_focus_scorer,
 )
 from evomachine.coordinates import Coordinate, CoordinateBounds
 from evomachine.filemanager import FileManager, FileNameConfig, FileNameField
@@ -23,7 +23,8 @@ from evomachine.peripherals.camera import CameraConfig, CameraFactory, ImageConf
 from evomachine.types import (
     AutoFocusStatusType,
     FilterWheelType,
-    FocusAlgorithmType,
+    FocusScoringType,
+    FocusSelectionType,
     FocusCurveType,
     FocusStatusType,
     FovDirectionType,
@@ -35,7 +36,11 @@ from evomachine.config import get_logger, gui_log_handler
 from evomachine.gui.image_payloads import IMAGE_TRANSPORT_DIR_ENV, IMAGE_TRANSPORT_RAW, array_from_preview_payload
 from evomachine.gui.protocol import GuiCommandType, GuiRequest
 from evomachine.gui.request_map import gui_z_coordinates_from_payload
-from evomachine.softwarefocus import SoftwareFocusConfigFactory
+from evomachine.softwarefocus import (
+    BandpassFFTScoringConfig,
+    MaximumFocusSelectionConfig,
+    SoftwareFocusConfigFactory,
+)
 
 
 @dataclass
@@ -390,27 +395,40 @@ class FakeAutofocus:
 
 class FakeSoftwareFocus:
     def __init__(self):
-        self.default_config = SoftwareFocusConfigFactory.default_config().updated(
-            rel_range=15,
-            step_size=5,
+        config = SoftwareFocusConfigFactory.default_config()
+        self.default_config = replace(
+            config,
+            selection=(
+                FocusSelectionType.MAXIMUM,
+                MaximumFocusSelectionConfig(rel_range=15, step_size=5),
+            ),
         )
         self.calls = []
+        self.last_result = None
+
+    @property
+    def config(self):
+        """Return the active fake configuration."""
+        return self.default_config
 
     def update_config(self, config, fov_id=None):
         self.calls.append(("update_config", fov_id, config))
         if fov_id is None:
             self.default_config = config
 
-    def run(self, fov_id=None, stop_event=None):
-        del stop_event
+    def run(self, fov_id=None, stop_event=None, apply=True):
+        """Record one fake focus run and return a representative result."""
+        del stop_event, apply
         self.calls.append(("run", fov_id))
-        return SimpleNamespace(
+        result = SimpleNamespace(
             focus_status=FocusStatusType.IN_FOCUS,
             curve_status=FocusCurveType.HAS_GLOBAL_MAXIMUM,
             best_coordinate=Coordinate(1, 2, 4),
             previous_coordinate=Coordinate(1, 2, 3),
-            z_coordinates=np.asarray([-5, 0, 5]),
+            scans=(SimpleNamespace(z_coordinates=np.asarray([-5, 0, 5])),),
         )
+        self.last_result = result
+        return result
 
 
 class FakeAcquisitionManager:
@@ -495,6 +513,7 @@ class FakeAutomaton:
             dmd=acq_mngr_attrs.get("dmd"),
             file_manager=file_manager,
         )
+        software_focus.acquisition_manager = self.acq_mngr
         for name in ("led_manager", "camera", "filter_wheel", "dmd"):
             if name not in acq_mngr_attrs:
                 delattr(self.acq_mngr, name)
@@ -1344,7 +1363,7 @@ def test_facade_handles_software_focus_requests() -> None:
 
     response = facade.handle(GuiRequest(command=GuiCommandType.SOFTWARE_FOCUS_STATUS))
     assert response.ok
-    assert response.payload["software_focus"]["config"]["algorithm"] == "STEEL"
+    assert response.payload["software_focus"]["config"]["scoring_type"] == "STEEL"
     assert response.payload["software_focus"]["last_result"] is None
 
     response = facade.handle(GuiRequest(command=GuiCommandType.SOFTWARE_FOCUS_RUN))
@@ -1365,18 +1384,19 @@ def test_facade_configures_shared_software_focus_defaults() -> None:
         command=GuiCommandType.SOFTWARE_FOCUS_CONFIGURE,
         payload={
             "config": {
-                "rel_range": 60,
-                "step_size": 6,
-                "algorithm": "LAPLACIAN_VAR",
+                "selection_type": "MAXIMUM",
+                "selection_config": {"rel_range": 60, "step_size": 6},
+                "scoring_type": "LAPLACIAN_VAR",
+                "scoring_config": {},
             },
         },
     ))
 
     assert response.ok
     config = automaton.focus_nav.software_focus.default_config
-    assert config.rel_range == 60
-    assert config.step_size == 6
-    assert config.algorithm.name == "LAPLACIAN_VAR"
+    assert config.selection[1].rel_range == 60
+    assert config.selection[1].step_size == 6
+    assert config.scoring[0].name == "LAPLACIAN_VAR"
 
 
 @pytest.mark.parametrize(
@@ -1387,9 +1407,9 @@ def test_gui_software_focus_algorithm_change_removes_incompatible_kwargs(algorit
     automaton = FakeAutomaton()
     if algorithm == "BANDPASS_FFT":
         automaton.focus_nav.software_focus.default_config = (
-            automaton.focus_nav.software_focus.default_config.updated(
-                algorithm=FocusAlgorithmType.BANDPASS_FFT,
-                algorithm_kwargs={"rowshift": 25, "colshift": 0},
+            replace(
+                automaton.focus_nav.software_focus.default_config,
+                scoring=(FocusScoringType.BANDPASS_FFT, BandpassFFTScoringConfig()),
             )
         )
     facade = AutomatonGuiFacade(automaton)
@@ -1398,16 +1418,17 @@ def test_gui_software_focus_algorithm_change_removes_incompatible_kwargs(algorit
         command=GuiCommandType.SOFTWARE_FOCUS_CONFIGURE,
         payload={
             "config": {
-                "rel_range": 50,
-                "step_size": 5,
-                "algorithm": algorithm,
+                "selection_type": "MAXIMUM",
+                "selection_config": {"rel_range": 50, "step_size": 5},
+                "scoring_type": algorithm,
+                "scoring_config": {},
             },
         },
     ))
 
     assert response.ok
     config = automaton.focus_nav.software_focus.default_config
-    scorer = create_software_focus_algorithm(config.algorithm, **config.algorithm_kwargs)
+    scorer = create_focus_scorer(config.scoring[0], **config.scoring[1].kwargs())
     assert scorer is not None
 
 
@@ -1416,8 +1437,9 @@ def test_blocking_software_focus_keeps_ping_and_stop_responsive() -> None:
     facade = AutomatonGuiFacade(automaton)
     started = threading.Event()
 
-    def blocking_run(fov_id=None, stop_event=None):
-        del fov_id
+    def blocking_run(fov_id=None, stop_event=None, apply=True):
+        """Block until the GUI cancellation event is set."""
+        del fov_id, apply
         started.set()
         assert stop_event is not None
         stop_event.wait(timeout=1)
@@ -1426,7 +1448,7 @@ def test_blocking_software_focus_keeps_ping_and_stop_responsive() -> None:
             curve_status=FocusCurveType.UNKNOWN,
             best_coordinate=None,
             previous_coordinate=Coordinate(1, 2, 3),
-            z_coordinates=np.asarray([]),
+            scans=(),
         )
 
     automaton.focus_nav.software_focus.run = blocking_run
@@ -1675,9 +1697,10 @@ def test_fov_initialisation_builds_global_and_per_fov_focus_policies() -> None:
                     "focus_config": {
                         "run_software_focus_on_arrival": True,
                         "software_focus": {
-                            "rel_range": 30,
-                            "step_size": 3,
-                            "algorithm": "LAPLACIAN_VAR",
+                            "selection_type": "MAXIMUM",
+                            "selection_config": {"rel_range": 30, "step_size": 3},
+                            "scoring_type": "LAPLACIAN_VAR",
+                            "scoring_config": {},
                         },
                     },
                 },
@@ -1687,9 +1710,10 @@ def test_fov_initialisation_builds_global_and_per_fov_focus_policies() -> None:
                 "refocus": True,
                 "refocus_using_software_focus": True,
                 "software_focus": {
-                    "rel_range": 40,
-                    "step_size": 4,
-                    "algorithm": "STEEL",
+                    "selection_type": "MAXIMUM",
+                    "selection_config": {"rel_range": 40, "step_size": 4},
+                    "scoring_type": "STEEL",
+                    "scoring_config": {"rowshift": 25, "colshift": 0, "normalise": False},
                 },
                 "default_fov_config": {
                     "lock_autofocus_on_fov": True,
@@ -1702,8 +1726,8 @@ def test_fov_initialisation_builds_global_and_per_fov_focus_policies() -> None:
     assert automaton.initialise_focus_config.use_autofocus
     assert automaton.initialise_focus_config.refocus_using_software_focus
     assert automaton.initialise_fov_configs[1].run_software_focus_on_arrival
-    assert automaton.initialise_fov_configs[1].software_focus_config.rel_range == 30
-    assert automaton.focus_nav.software_focus.default_config.rel_range == 40
+    assert automaton.initialise_fov_configs[1].software_focus_config.selection[1].rel_range == 30
+    assert automaton.focus_nav.software_focus.default_config.selection[1].rel_range == 40
 
 
 def test_facade_rejects_mutating_requests_during_strategy() -> None:

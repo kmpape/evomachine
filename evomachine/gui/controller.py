@@ -70,7 +70,6 @@ class EvoMachineGuiController(QObject):
     dmd_calibration_points_received = pyqtSignal(dict)
     autofocus_status_received = pyqtSignal(dict)
     software_focus_status_received = pyqtSignal(dict)
-    reference_focus_received = pyqtSignal(dict)
     focus_defaults_received = pyqtSignal(dict)
     strategy_focus_received = pyqtSignal(dict)
     operation_status_received = pyqtSignal(dict)
@@ -399,24 +398,6 @@ class EvoMachineGuiController(QObject):
     def refresh_focus_defaults(self):
         self._send(GuiCommandType.FOCUS_DEFAULTS)
 
-    def refresh_reference_focus(self):
-        self._send(GuiCommandType.REFERENCE_FOCUS_STATUS)
-
-    def configure_reference_focus(self, config):
-        self._send(GuiCommandType.REFERENCE_FOCUS_CONFIGURE, {"config": config})
-
-    def run_reference_focus(self, action="run"):
-        self._send(GuiCommandType.REFERENCE_FOCUS_RUN, {"action": action})
-
-    def edit_reference_focus(self, action, smoothing=None):
-        self._send(GuiCommandType.REFERENCE_FOCUS_EDIT, {"action": action, "smoothing": smoothing})
-
-    def cancel_reference_focus(self):
-        self._send(GuiCommandType.REFERENCE_FOCUS_CANCEL)
-
-    def refresh_reference_operation(self):
-        self._send(GuiCommandType.REFERENCE_FOCUS_OPERATION)
-
     def decide_strategy_reference(self, identifier, accepted):
         self._send(GuiCommandType.STRATEGY_REFERENCE_DECIDE, {"id": identifier, "accepted": accepted})
 
@@ -426,8 +407,17 @@ class EvoMachineGuiController(QObject):
     def configure_software_focus(self, config: dict[str, Any]) -> None:
         self._send(GuiCommandType.SOFTWARE_FOCUS_CONFIGURE, {"config": config})
 
-    def run_software_focus(self) -> None:
-        self._send(GuiCommandType.SOFTWARE_FOCUS_RUN)
+    def run_software_focus(self, action: str = "run") -> None:
+        """Start a run, test, or calibration on the unified focus engine."""
+        self._send(GuiCommandType.SOFTWARE_FOCUS_RUN, {"action": action})
+
+    def edit_software_focus(self, action: str, smoothing: float | None = None) -> None:
+        """Accept, clear, or refit the current reference profile."""
+        self._send(GuiCommandType.SOFTWARE_FOCUS_EDIT, {"action": action, "smoothing": smoothing})
+
+    def cancel_software_focus(self) -> None:
+        """Cancel the running unified focus operation."""
+        self._send(GuiCommandType.SOFTWARE_FOCUS_CANCEL)
 
     def refresh_software_focus_operation(self) -> None:
         self._send(GuiCommandType.SOFTWARE_FOCUS_OPERATION_STATUS)
@@ -588,8 +578,7 @@ class EvoMachineGuiController(QObject):
             self.autofocus_status_received.emit(payload["autofocus"])
         if "software_focus" in payload:
             self.software_focus_status_received.emit(payload["software_focus"])
-        for key, signal in (("reference_focus", self.reference_focus_received),
-                            ("focus_defaults", self.focus_defaults_received),
+        for key, signal in (("focus_defaults", self.focus_defaults_received),
                             ("strategy_focus", self.strategy_focus_received)):
             if key in payload:
                 signal.emit(payload[key])
@@ -602,8 +591,6 @@ class EvoMachineGuiController(QObject):
                     self.stage_coordinates_received.emit(result)
                 if "frame" in result:
                     self.frame_received.emit(result["frame"])
-                if "reference_focus" in result:
-                    self.reference_focus_received.emit(result["reference_focus"])
                 if "software_focus" in result:
                     self.software_focus_status_received.emit(result["software_focus"])
         if "strategies" in payload:

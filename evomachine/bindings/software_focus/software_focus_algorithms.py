@@ -6,14 +6,14 @@ import cv2
 import numpy as np
 from delta.utils import CroppingBox
 
-from evomachine.types import FocusAlgorithmType
+from evomachine.types import FocusScoringType
 
 
 DEFAULT_SQUARED_GRAD_THRESHOLD = 0
 
 
-class SoftwareFocusAlgorithm(ABC):
-    """Base class for software focus scoring algorithms."""
+class SoftwareFocusScorer(ABC):
+    """Base class for software-focus image scorers."""
 
     @abstractmethod
     def score_image(self, img: np.ndarray) -> float:
@@ -50,11 +50,11 @@ class SoftwareFocusAlgorithm(ABC):
             Sum of focus scores for all cropped regions.
         """
         if not isinstance(boxes, list):
-            raise TypeError(f"SoftwareFocusAlgorithm.score_rois: boxes must be list, received {type(boxes)}.")
+            raise TypeError(f"SoftwareFocusScorer.score_rois: boxes must be list, received {type(boxes)}.")
         return sum(self.score_image(img=box.crop(img)) for box in boxes)
 
 
-class LaplacianVarianceFocusAlgorithm(SoftwareFocusAlgorithm):
+class LaplacianVarianceFocusScorer(SoftwareFocusScorer):
     """Focus algorithm based on the variance of the squared Laplacian."""
 
     def score_image(self, img: np.ndarray) -> float:
@@ -75,7 +75,7 @@ class LaplacianVarianceFocusAlgorithm(SoftwareFocusAlgorithm):
         return float((lap[1:-1, 1:-1]**2).var())
 
 
-class SquaredGradientAverageFocusAlgorithm(SoftwareFocusAlgorithm):
+class SquaredGradientAverageFocusScorer(SoftwareFocusScorer):
     """Focus algorithm based on the mean squared horizontal gradient."""
 
     def __init__(self, threshold: float | None = None):
@@ -134,7 +134,7 @@ class SquaredGradientAverageFocusAlgorithm(SoftwareFocusAlgorithm):
         return float((tmp**2).mean())
 
 
-class SteelFocusAlgorithm(SoftwareFocusAlgorithm):
+class SteelFocusScorer(SoftwareFocusScorer):
     """Focus algorithm based on shifted row and column image differences."""
 
     def __init__(
@@ -215,7 +215,7 @@ class SteelFocusAlgorithm(SoftwareFocusAlgorithm):
         return score
 
 
-class BandpassFFTFocusAlgorithm(SoftwareFocusAlgorithm):
+class BandpassFFTFocusScorer(SoftwareFocusScorer):
     """Focus algorithm based on the variance of a cell-scale FFT bandpass."""
 
     def __init__(
@@ -369,17 +369,17 @@ class BandpassFFTFocusAlgorithm(SoftwareFocusAlgorithm):
         return score
 
 
-def create_software_focus_algorithm(
-        algorithm: FocusAlgorithmType,
+def create_focus_scorer(
+        scoring_type: FocusScoringType,
         **kwargs,
-) -> SoftwareFocusAlgorithm:
+) -> SoftwareFocusScorer:
     """
-    Create a focus scoring algorithm for a FocusAlgorithmType.
+    Create an image scorer for a focus-scoring type.
 
     Parameters
     ----------
-    algorithm
-        FocusAlgorithmType selecting the scoring implementation.
+    scoring_type
+        FocusScoringType selecting the scoring implementation.
     **kwargs
         Algorithm-specific keyword arguments forwarded to the selected
         algorithm's constructor (e.g. ``rowshift``/``colshift``/``normalise``
@@ -390,19 +390,19 @@ def create_software_focus_algorithm(
 
     Returns
     -------
-    SoftwareFocusAlgorithm
-        Focus scoring algorithm instance.
+    SoftwareFocusScorer
+        Focus image scorer instance.
     """
-    if not isinstance(algorithm, FocusAlgorithmType):
+    if not isinstance(scoring_type, FocusScoringType):
         raise TypeError(
-            f"create_software_focus_algorithm: algorithm must be FocusAlgorithmType, received {type(algorithm)}."
+            f"create_focus_scorer: scoring_type must be FocusScoringType, received {type(scoring_type)}."
         )
-    if algorithm == FocusAlgorithmType.LAPLACIAN_VAR:
-        return LaplacianVarianceFocusAlgorithm(**kwargs)
-    if algorithm == FocusAlgorithmType.SQUARED_GRAD_AVG:
-        return SquaredGradientAverageFocusAlgorithm(**kwargs)
-    if algorithm == FocusAlgorithmType.STEEL:
-        return SteelFocusAlgorithm(**kwargs)
-    if algorithm == FocusAlgorithmType.BANDPASS_FFT:
-        return BandpassFFTFocusAlgorithm(**kwargs)
-    raise ValueError(f"create_software_focus_algorithm: unsupported focus algorithm {algorithm}.")
+    if scoring_type == FocusScoringType.LAPLACIAN_VAR:
+        return LaplacianVarianceFocusScorer(**kwargs)
+    if scoring_type == FocusScoringType.SQUARED_GRAD_AVG:
+        return SquaredGradientAverageFocusScorer(**kwargs)
+    if scoring_type == FocusScoringType.STEEL:
+        return SteelFocusScorer(**kwargs)
+    if scoring_type == FocusScoringType.BANDPASS_FFT:
+        return BandpassFFTFocusScorer(**kwargs)
+    raise ValueError(f"create_focus_scorer: unsupported focus scoring type {scoring_type}.")

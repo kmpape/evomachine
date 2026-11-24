@@ -72,14 +72,10 @@ class GuiCommandType(str, Enum):
     SOFTWARE_FOCUS_STATUS = "software_focus.status"
     SOFTWARE_FOCUS_CONFIGURE = "software_focus.configure"
     SOFTWARE_FOCUS_RUN = "software_focus.run"
+    SOFTWARE_FOCUS_EDIT = "software_focus.edit"
+    SOFTWARE_FOCUS_CANCEL = "software_focus.cancel"
     SOFTWARE_FOCUS_OPERATION_STATUS = "software_focus.operation_status"
     FOCUS_DEFAULTS = "focus.defaults"
-    REFERENCE_FOCUS_STATUS = "reference_focus.status"
-    REFERENCE_FOCUS_CONFIGURE = "reference_focus.configure"
-    REFERENCE_FOCUS_RUN = "reference_focus.run"
-    REFERENCE_FOCUS_EDIT = "reference_focus.edit"
-    REFERENCE_FOCUS_CANCEL = "reference_focus.cancel"
-    REFERENCE_FOCUS_OPERATION = "reference_focus.operation"
     STRATEGY_REFERENCE_DECIDE = "strategy.reference_decide"
     STAGE_MOVEMENT_STATUS = "stage.movement_status"
     STRATEGY_STATUS = "strategy.status"
@@ -99,10 +95,6 @@ class GuiCommandType(str, Enum):
 
 MUTATING_COMMANDS = frozenset(
     {
-        GuiCommandType.REFERENCE_FOCUS_CONFIGURE,
-        GuiCommandType.REFERENCE_FOCUS_RUN,
-        GuiCommandType.REFERENCE_FOCUS_EDIT,
-        GuiCommandType.REFERENCE_FOCUS_CANCEL,
         GuiCommandType.STRATEGY_REFERENCE_DECIDE,
         GuiCommandType.INITIALISE_DEVICES,
         GuiCommandType.FOV_INITIALISE,
@@ -137,6 +129,8 @@ MUTATING_COMMANDS = frozenset(
         GuiCommandType.AUTOFOCUS_DISABLE,
         GuiCommandType.SOFTWARE_FOCUS_CONFIGURE,
         GuiCommandType.SOFTWARE_FOCUS_RUN,
+        GuiCommandType.SOFTWARE_FOCUS_EDIT,
+        GuiCommandType.SOFTWARE_FOCUS_CANCEL,
         GuiCommandType.AUTOSTRAT_STRATEGY_SAVE,
         GuiCommandType.STRATEGY_SET,
         GuiCommandType.STRATEGY_START,
@@ -146,7 +140,7 @@ MUTATING_COMMANDS = frozenset(
 
 ALWAYS_ALLOWED_MUTATING_COMMANDS = frozenset(
     {
-        GuiCommandType.REFERENCE_FOCUS_CANCEL,
+        GuiCommandType.SOFTWARE_FOCUS_CANCEL,
         GuiCommandType.STRATEGY_REFERENCE_DECIDE,
         GuiCommandType.STOP,
         GuiCommandType.SHUTDOWN,
@@ -161,8 +155,7 @@ ALWAYS_ALLOWED_MUTATING_COMMANDS = frozenset(
 # responsive while the Automaton thread is inside a long hardware command.
 RESPONSIVE_READ_COMMANDS = frozenset(
     {
-        GuiCommandType.REFERENCE_FOCUS_OPERATION,
-        GuiCommandType.REFERENCE_FOCUS_STATUS,
+        GuiCommandType.SOFTWARE_FOCUS_STATUS,
         GuiCommandType.LOGS_RECENT,
         GuiCommandType.FOV_MOVEMENT_STATUS,
         GuiCommandType.ACQUISITION_Z_STACK_STATUS,

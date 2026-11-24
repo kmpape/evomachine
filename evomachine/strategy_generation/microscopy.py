@@ -18,7 +18,7 @@ from evomachine.delta_processing import (
 )
 from evomachine.config import DMD_WIDTH_HEIGHT
 from evomachine.bindings.software_focus.software_focus_algorithms import (
-    LaplacianVarianceFocusAlgorithm,
+    LaplacianVarianceFocusScorer,
 )
 from evomachine.frame import FrameMetaDataFactory
 from evomachine.navigation import FocusNavigatorFovRecord
@@ -250,7 +250,7 @@ class MicroscopyObservationProvider(ObservationProvider):
     """Expose lifecycle, focus, and latest-image measurements to the strategy."""
 
     def __init__(self) -> None:
-        self._focus_algorithm = LaplacianVarianceFocusAlgorithm()
+        self._focus_algorithm = LaplacianVarianceFocusScorer()
         self._started_at: float | None = None
         self._latest: dict[str, ValidatedValue] = {}
         self._processing_state: MicroscopyState | None = None

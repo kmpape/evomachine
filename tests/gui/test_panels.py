@@ -57,7 +57,7 @@ from evomachine.gui.panels.dmd import DmdPanel
 from evomachine.gui.panels.filterwheel import FilterWheelPanel
 from evomachine.gui.panels.leds import LedManagerPanel
 from evomachine.gui.panels.logs import ApplicationLogPanel
-from evomachine.gui.panels.software_focus import SoftwareFocusPanel
+from evomachine.gui.panels.software_focus import FocusCropDialog, SoftwareFocusPanel
 from evomachine.gui.panels.stage import StagePanel
 from evomachine.gui.panels.strategy import FovSetupPanel, StrategySetupPanel
 from evomachine.gui.protocol import GuiCommandType
@@ -300,8 +300,17 @@ class FakeController(QObject):
     def configure_software_focus(self, config):
         self.calls.append(("configure_software_focus", config))
 
-    def run_software_focus(self):
-        self.calls.append(("run_software_focus",))
+    def run_software_focus(self, action="run"):
+        """Record a unified software-focus action."""
+        self.calls.append(("run_software_focus", action))
+
+    def edit_software_focus(self, action, smoothing=None):
+        """Record a unified reference-profile edit."""
+        self.calls.append(("edit_software_focus", action, smoothing))
+
+    def cancel_software_focus(self):
+        """Record cancellation of the unified focus operation."""
+        self.calls.append(("cancel_software_focus",))
 
     def refresh_software_focus_operation(self):
         self.calls.append(("refresh_software_focus_operation",))
@@ -586,7 +595,11 @@ def test_central_workspace_uses_two_exclusive_layers_and_plane_metadata(monkeypa
     )
     try:
         workspace = CentralVisualWorkspace(viewer, controller)
-        assert [layer.name for layer in viewer.layers] == [MICROSCOPE_LAYER, DMD_LAYER]
+        assert [layer.name for layer in viewer.layers] == [
+            MICROSCOPE_LAYER,
+            DMD_LAYER,
+            "Focus crops",
+        ]
         assert workspace.microscope_layer.visible
         assert not workspace.dmd_layer.visible
         assert workspace.microscope_layer.bounding_box.visible
@@ -605,6 +618,20 @@ def test_central_workspace_uses_two_exclusive_layers_and_plane_metadata(monkeypa
             workspace.dmd_layer.bounding_box.line_color,
             np.array([1.0, 48 / 255, 48 / 255, 1.0]),
         )
+        workspace.update_focus_crops({
+            "config": {
+                "cropping_boxes": [
+                    {"x_left": 2, "y_top": 3, "x_right": 12, "y_bottom": 13},
+                    {"x_left": 20, "y_top": 30, "x_right": 40, "y_bottom": 50},
+                ]
+            }
+        })
+        assert len(workspace.focus_crop_layer.data) == 2
+        assert workspace.focus_crop_layer.visible
+        workspace.select_display(1)
+        assert not workspace.focus_crop_layer.visible
+        workspace.select_display(0)
+        assert workspace.focus_crop_layer.visible
 
         stack = np.arange(3 * 4 * 5, dtype=np.uint16).reshape(3, 4, 5)
         workspace.update_frame({
@@ -639,7 +666,7 @@ def test_central_workspace_uses_two_exclusive_layers_and_plane_metadata(monkeypa
         assert not workspace.microscope_layer.visible
         assert workspace.dmd_layer.visible
         assert "test pattern" in workspace.metadata_text.text()
-        assert fit_calls == [viewer, viewer, viewer]
+        assert fit_calls == [viewer, viewer, viewer, viewer, viewer]
     finally:
         viewer.close()
 
@@ -1997,7 +2024,7 @@ def test_software_focus_panel_sends_run_request() -> None:
 
     panel.run_button.click()
 
-    assert controller.calls == [("run_software_focus",)]
+    assert controller.calls == [("run_software_focus", "run")]
 
 
 def test_software_focus_panel_updates_shared_defaults(monkeypatch) -> None:
@@ -2007,24 +2034,54 @@ def test_software_focus_panel_updates_shared_defaults(monkeypatch) -> None:
     panel.update_lifecycle_status({"devices_initialised": True})
     panel.update_status({
         "available": True,
-        "config": {"rel_range": 50, "step_size": 5, "algorithm": "STEEL"},
+        "config": {
+            "selection_type": "MAXIMUM",
+            "selection_config": {"rel_range": 50, "step_size": 5},
+            "scoring_type": "STEEL",
+            "scoring_config": {"rowshift": 25, "colshift": 50, "normalise": False},
+            "focus_frames": [],
+            "acquisition_settings": {},
+            "cropping_boxes": [],
+        },
     })
 
     def edit_config(dialog):
+        """Set revised maximum-selection values in the method dialog."""
         dialog._widgets["rel_range"].setValue(60)
         dialog._widgets["step_size"].setValue(6)
-        dialog._widgets["algorithm"].setCurrentText("LAPLACIAN_VAR")
         return dialog.Accepted
 
     monkeypatch.setattr(
         "evomachine.gui.panels.software_focus.ConfigDialog.exec_", edit_config
     )
-    panel.configure_button.click()
+    panel.configure_selection_button.click()
 
     assert controller.calls == [(
         "configure_software_focus",
-        {"rel_range": 60, "step_size": 6, "algorithm": "LAPLACIAN_VAR"},
+        {"selection_config": {"rel_range": 60.0, "step_size": 6.0}},
     )]
+
+
+def test_focus_crop_dialog_applies_clears_and_preserves_cancelled_values() -> None:
+    """The crop editor validates one rectangle and supports whole-image clearing."""
+    _app()
+    original = {"x_left": 1, "y_top": 2, "x_right": 30, "y_bottom": 40}
+    dialog = FocusCropDialog(original, (48, 64))
+    assert dialog.values() == original
+
+    dialog.inputs["x_right"].setValue(1)
+    dialog._validate_and_accept()
+    assert dialog.result() == dialog.Rejected
+    assert "must exceed" in dialog.message.text()
+
+    cleared = FocusCropDialog(original, (48, 64))
+    cleared._clear()
+    assert cleared.values() is None
+    assert cleared.result() == cleared.Accepted
+
+    cancelled = FocusCropDialog(original, (48, 64))
+    cancelled.reject()
+    assert cancelled.values() == original
 
 
 def test_application_log_panel_is_incremental_and_bounded() -> None:
@@ -2172,7 +2229,10 @@ def test_peripheral_panels_lock_unsafe_controls_while_strategy_runs() -> None:
         dmd.display_custom_pattern_button,
         autofocus.configure_button,
         autofocus.lock_button,
-        software_focus.configure_button,
+        software_focus.configure_selection_button,
+        software_focus.configure_scoring_button,
+        software_focus.configure_imaging_button,
+        software_focus.configure_crop_button,
         software_focus.run_button,
     )
     safe_controls = (

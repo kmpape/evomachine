@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 
+from evomachine.acquisition import FrameAcquisitionSettings
 from evomachine.config import CAM_WIDTH_HEIGHT, DATA_DIR, DMD_WIDTH_HEIGHT, EVOMACHINE_DIR
 
 
@@ -204,9 +205,12 @@ def build_virtual_automaton():
     from evomachine.peripherals.filterwheel import FilterWheelConfig, FilterWheelFactory
     from evomachine.peripherals.leds import LedConfig, LedFactory, LedManager
     from evomachine.peripherals.stage import StageConfig, StageFactory
-    from evomachine.softwarefocus import SoftwareFocus, SoftwareFocusConfig
+    from evomachine.softwarefocus import (
+        SoftwareFocus, SoftwareFocusConfig, SquaredGradientScoringConfig,
+        MaximumFocusSelectionConfig,
+    )
     from evomachine.strategy import NoStrategy
-    from evomachine.types import FilterWheelType, FocusAlgorithmType, LEDType
+    from evomachine.types import FilterWheelType, FocusScoringType, FocusSelectionType, LEDType
     from evomachine.automaton import Automaton
 
     controller = VirtualPeripheralController()
@@ -294,26 +298,19 @@ def build_virtual_automaton():
     software_focus = SoftwareFocus(
         acquisition_manager=acq_mngr,
         config=SoftwareFocusConfig(
-            focus_frames=[
+            focus_frames=(
                 FrameMetaDataFactory.default(
                     leds={LEDType.LED_450_NM: 29},
                     exposure=200,
                     fov_id=0,
-                )
-            ],
-            acquisition_settings=None,
-            rel_range=15,
-            step_size=5,
-            algorithm=FocusAlgorithmType.SQUARED_GRAD_AVG,
-            algorithm_kwargs={},
-            cropping_box=None,
+                ),
+            ),
+            acquisition_settings=FrameAcquisitionSettings(),
+            scoring=(FocusScoringType.SQUARED_GRAD_AVG, SquaredGradientScoringConfig()),
+            selection=(FocusSelectionType.MAXIMUM, MaximumFocusSelectionConfig(rel_range=15, step_size=5)),
         ),
     )
-    from evomachine.referencefocus import ReferenceProfileFocus, ReferenceProfileFocusConfig
-    reference_focus = ReferenceProfileFocus(acq_mngr, ReferenceProfileFocusConfig(
-        focus_frame=software_focus.default_config.focus_frames[0]))
-    focus_nav = FocusNavigator(stage=stage, autofocus=autofocus, software_focus=software_focus,
-                              reference_focus=reference_focus)
+    focus_nav = FocusNavigator(stage=stage, autofocus=autofocus, software_focus=software_focus)
     cfg = ImageProcessorConfigFactory.default_config(
         channels=[
             LEDType.LED_385_NM,
@@ -358,9 +355,12 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
     from evomachine.peripherals.peripheralcontrollers import PeripheralControllerFactory, SerialPeripheralControllerConfig
     from evomachine.peripherals.stage import StageConfig, StageFactory
     from evomachine.projection import ProjectionManager
-    from evomachine.softwarefocus import SoftwareFocus, SoftwareFocusConfig
+    from evomachine.softwarefocus import (
+        MaximumFocusSelectionConfig, SoftwareFocus, SoftwareFocusConfig,
+        SquaredGradientScoringConfig,
+    )
     from evomachine.strategy import NoStrategy
-    from evomachine.types import FilterWheelType, FocusAlgorithmType, LEDType
+    from evomachine.types import FilterWheelType, FocusScoringType, FocusSelectionType, LEDType
 
     settings = settings or HardwareGuiRuntimeSettings.from_env()
     syncboard_port = _resolve_serial_port(settings.syncboard_port, settings.syncboard_hwid, "SyncBoard")
@@ -503,26 +503,19 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
     software_focus = SoftwareFocus(
         acquisition_manager=acq_mngr,
         config=SoftwareFocusConfig(
-            focus_frames=[
+            focus_frames=(
                 FrameMetaDataFactory.default(
                     leds={LEDType.LED_515_NM: 29},
                     exposure=settings.camera_exposure_ms,
                     fov_id=0,
                 )
-            ],
-            acquisition_settings=None,
-            rel_range=100,
-            step_size=5,
-            algorithm=FocusAlgorithmType.SQUARED_GRAD_AVG,
-            algorithm_kwargs={},
-            cropping_box=None,
+            ),
+            acquisition_settings=FrameAcquisitionSettings(),
+            scoring=(FocusScoringType.SQUARED_GRAD_AVG, SquaredGradientScoringConfig()),
+            selection=(FocusSelectionType.MAXIMUM, MaximumFocusSelectionConfig(rel_range=100, step_size=5)),
         ),
     )
-    from evomachine.referencefocus import ReferenceProfileFocus, ReferenceProfileFocusConfig
-    reference_focus = ReferenceProfileFocus(acq_mngr, ReferenceProfileFocusConfig(
-        focus_frame=software_focus.default_config.focus_frames[0]))
-    focus_nav = FocusNavigator(stage=stage, autofocus=autofocus, software_focus=software_focus,
-                              reference_focus=reference_focus)
+    focus_nav = FocusNavigator(stage=stage, autofocus=autofocus, software_focus=software_focus)
     proj_mngr = None
     if dmd is not None:
         proj_mngr = ProjectionManager(

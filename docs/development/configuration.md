@@ -329,26 +329,36 @@ GUI per-FoV values override strategy values for the same ID.
 | `autofocus_initialise_config` | `None` | Optional binding-specific FoV calibration config. |
 | `focus_mode` | `None` | Optional per-FoV mode override. |
 | `navigator_config` | `None` | Optional per-FoV navigation behavior. |
-| `reference_focus_config` | `None` | Optional per-FoV reference-profile config. |
 
 ### `SoftwareFocusConfig`
 
 | Field | Factory default | Meaning and validation |
 | --- | --- | --- |
 | `focus_frames` | one 450 nm, brightness 29, 200 ms frame | Non-empty metadata list acquired at each Z. |
-| `acquisition_settings` | `None` | Optional settings for focus captures; `None` uses manager defaults. |
-| `rel_range` | `50` | Integer half-range in `(0, 2000)`. |
-| `step_size` | `5` | Integer in `[1, rel_range]`. |
-| `algorithm` | `FocusAlgorithmType.STEEL` | Focus scoring implementation. |
-| `algorithm_kwargs` | `{"rowshift": 25, "colshift": 0}` | Algorithm-specific string-keyed options. |
-| `cropping_box` | DeLTA box `(200, 300, 3000, 2900)` | One box, non-empty list of boxes, or `None` for whole image. |
+| `acquisition_settings` | `FrameAcquisitionSettings()` | Capture and saving behavior shared by maximum and reference scans. |
+| `scoring` | `(FocusScoringType.STEEL, SteelScoringConfig(...))` | Scoring enum paired with its required typed config. |
+| `selection` | `(FocusSelectionType.MAXIMUM, MaximumFocusSelectionConfig())` | Maximum or reference-profile selection paired with its required typed config. |
+| `cropping_boxes` | DeLTA box `(200, 300, 3000, 2900)` | Tuple of left/top-inclusive, right/bottom-exclusive boxes; an empty tuple scores the whole image. |
 
 The GUI can edit software-focus acquisition, scan, algorithm, and cropping
 settings. The factory values are microscope-specific starting points.
 
-### Reference-profile focus
+### Focus scoring and selection
 
-`SamplingPlan` produces symmetric image offsets:
+`FocusScoringConfig` subclasses hold scorer-specific parameters: squared-gradient
+threshold; Steel row/column shifts and normalization; or bandpass FFT radius,
+downsampling, order, saturation and brightness normalization. Laplacian variance
+has no parameters. The scoring enum and concrete config type must agree.
+
+`MaximumFocusSelectionConfig` contains `rel_range` (default `50` µm) and
+`step_size` (default `5` µm). `ReferenceFocusSelectionConfig` contains the
+reference-only settings below. Both policies use the same focus frames,
+acquisition settings, scorer, and crops.
+
+### Reference-profile selection
+
+`ReferenceFocusSelectionConfig.sampling_offsets()` produces symmetric image offsets
+for defaults and the GUI editor:
 
 | Field | Default | Meaning and validation |
 | --- | --- | --- |
@@ -360,36 +370,40 @@ settings. The factory values are microscope-specific starting points.
 The result includes both endpoints and zero, must contain at least five positions,
 and is limited to prevent thousands of captures.
 
-`ShiftSearchConfig` controls numerical matching, not image acquisition:
+The flat `sparse_*` and `recovery_*` fields control two independent numerical
+matching policies, not image acquisition:
 
 | Field | Default | Meaning and validation |
 | --- | --- | --- |
-| `shift_min`, `shift_max` | `-30.0`, `30.0` µm | Ordered finite candidate range. |
-| `shift_step` | `0.5` µm | Positive grid step, at most half the span. |
-| `min_correlation` | `0.90` | Accepted Pearson correlation in `[-1, 1]`. |
-| `min_peak_margin` | `0.05` | Required separation from another peak, `[0, 2]`. |
-| `boundary_margin` | `1.0` µm | Reject candidates too near a search boundary. |
-| `min_relative_variation` | `0.01` | Non-negative score-variation confidence threshold. |
+| `<prefix>_shift_min`, `<prefix>_shift_max` | `-20.0`, `20.0` µm | Ordered finite candidate range. |
+| `<prefix>_shift_step` | `0.1` µm | Positive grid step, at most half the span. |
+| `<prefix>_min_correlation` | `0.90` | Accepted Pearson correlation in `[-1, 1]`. |
+| `<prefix>_min_peak_margin` | `0.05` | Required separation from another peak, `[0, 2]`. |
+| `<prefix>_boundary_margin` | `1.0` µm | Reject candidates too near a search boundary. |
+| `<prefix>_min_relative_variation` | `0.01` | Non-negative score-variation confidence threshold. |
 
-`ReferenceProfileFocusConfig` fields are GUI/session or strategy editable:
+`ReferenceFocusSelectionConfig` fields are GUI/session or strategy editable:
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `focus_frame` | required | Metadata for every reference acquisition. |
-| `calibration_range` | `40.0` µm | Full calibration range; positive and sufficient for five planes. |
-| `calibration_step` | `1.0` µm | Calibration acquisition step, at most half the range. |
-| `sample_offsets` | `SamplingPlan().offsets()` | Increasing finite routine-scan offsets. |
+| `calibration_range` | `40.0` µm | Calibration half-range: images span `-40` to `+40` µm; positive and sufficient for five planes. |
+| `calibration_step` | `1.0` µm | Regular spacing used to measure the reference profile. |
+| `sample_offsets` | generated `±20`, step `5` | Increasing finite routine-scan offsets. |
 | `recovery_offsets` | dense-centre sampling offsets | Wider recovery sampling offsets. |
-| `search` | `-20..20`, step `0.1` | Routine shift matching config. |
-| `recovery_search` | `-20..20`, step `0.1` | Recovery matching config. |
-| `algorithm` | `SQUARED_GRAD_AVG` | Whole-image score algorithm. |
-| `algorithm_kwargs` | `{}` | Algorithm-specific options. |
+| `sparse_*` | `-20..20`, step `0.1` plus thresholds above | Sparse shift matching fields. |
+| `recovery_*` | `-20..20`, step `0.1` plus thresholds above | Recovery shift matching fields. |
 | `smoothing` | `0.0` | Non-negative spline lambda; `None` requests GCV. |
-| `acquisition_settings` | `FrameAcquisitionSettings()` | Capture behavior, including whether scan frames are saved. |
 | `allow_peak_reset` | `False` | Permit the workflow's explicit reference-peak reset behavior. |
+| `share_reference_across_fovs` | `False` | Reuse one measured reference curve across FoVs; by default each FoV acquires its own curve. |
 
 Calibration remains a candidate until reviewed and explicitly accepted. Editing
 scan/search settings does not implicitly accept a reference.
+
+Calibration uses a range and step because its grid is always regular and
+symmetric. Sparse and recovery matching support irregular and mixed-density
+sampling, so their resolved positions are stored as explicit offset tuples. The
+calibration half-range must cover the largest absolute acquisition offset plus
+the largest absolute candidate shift; matching does not extrapolate the spline.
 
 ## Image-processing configuration
 
