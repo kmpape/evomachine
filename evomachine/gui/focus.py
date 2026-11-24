@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 import threading
 from uuid import uuid4
 
 import numpy as np
 
 from evomachine.acquisition import FrameAcquisitionSettings
-from evomachine.focus_registration import ShiftSearchConfig
-from evomachine.referencefocus import ReferenceProfileFocus, ReferenceProfileFocusConfig
-from evomachine.types import FilterWheelType, FocusAlgorithmType, LEDType
+from evomachine.softwarefocus import (
+    FocusScoringConfig, ReferenceFocusSelectionConfig, SoftwareFocus,
+    SoftwareFocusConfig, SCORING_CONFIG_TYPES,
+)
+from evomachine.types import FilterWheelType, FocusScoringType, FocusSelectionType, LEDType
 
 
 def frame_payload(frame):
+    """Serialize one ``FrameMetaData`` object for GUI transport."""
     return dict(
         exposure=frame.exposure,
         filter_wheel=frame.filter_wheel.name if frame.filter_wheel else None,
@@ -23,6 +26,7 @@ def frame_payload(frame):
 
 
 def frame_from_payload(payload, base):
+    """Apply a GUI frame mapping to a base ``FrameMetaData`` value."""
     if not isinstance(payload, dict):
         raise ValueError("Focus frame settings must be an object.")
     values = dict(payload)
@@ -38,70 +42,72 @@ def frame_from_payload(payload, base):
 
 
 def settings_payload(settings):
+    """Serialize acquisition settings, using defaults when settings are absent."""
     return dict(FrameAcquisitionSettings().__dict__ if settings is None else settings.__dict__)
 
 
 def software_payload(config):
+    """Serialize a typed unified ``SoftwareFocusConfig`` for the GUI."""
+    scoring_type, scoring_config = config.scoring
+    selection_type, selection_config = config.selection
     return dict(
-        rel_range=config.rel_range,
-        step_size=config.step_size,
-        algorithm=config.algorithm.name,
-        algorithm_kwargs=dict(config.algorithm_kwargs),
+        scoring_type=scoring_type.name,
+        scoring_config=asdict(scoring_config),
+        selection_type=selection_type.name,
+        selection_config=asdict(selection_config),
         focus_frames=[frame_payload(frame) for frame in config.focus_frames],
         acquisition_settings=settings_payload(config.acquisition_settings),
+        cropping_boxes=[
+            dict(x_left=box.xtl, y_top=box.ytl, x_right=box.xbr, y_bottom=box.ybr)
+            for box in config.cropping_boxes
+        ],
     )
 
 
 def reference_payload(config):
-    return dict(
-        focus_frame=frame_payload(config.focus_frame),
+    """Serialize reference-profile selection settings from a config or engine config."""
+    if isinstance(config, SoftwareFocusConfig):
+        config = config.selection[1]
+    if not isinstance(config, ReferenceFocusSelectionConfig):
+        raise TypeError("Reference payload requires reference-profile selection settings.")
+    payload = dict(
         calibration_range=config.calibration_range,
         calibration_step=config.calibration_step,
         sample_offsets=list(config.sample_offsets),
         recovery_offsets=list(config.recovery_offsets),
-        search=dict(vars(config.search)),
-        recovery_search=dict(vars(config.recovery_search)),
-        algorithm=config.algorithm.name,
-        algorithm_kwargs=dict(config.algorithm_kwargs),
         smoothing=config.smoothing,
         allow_peak_reset=config.allow_peak_reset,
-        acquisition_settings=settings_payload(config.acquisition_settings),
+        share_reference_across_fovs=config.share_reference_across_fovs,
     )
+    for prefix in ("sparse", "recovery"):
+        payload.update(
+            {f"{prefix}_{key}": value for key, value in config.matching_settings(prefix).items()}
+        )
+    return payload
 
 
 def reference_from_payload(payload, base):
+    """Validate GUI reference settings and apply them to a typed base config."""
     if not isinstance(payload, dict):
         raise ValueError("Reference focus settings must be an object.")
     values = dict(payload)
-    unknown = set(values) - {item.name for item in fields(ReferenceProfileFocusConfig)}
+    unknown = set(values) - {item.name for item in fields(ReferenceFocusSelectionConfig)}
     if unknown:
         raise ValueError(f"Unknown reference setting(s): {', '.join(sorted(unknown))}.")
-    if "focus_frame" in values:
-        values["focus_frame"] = frame_from_payload(values["focus_frame"], base.focus_frame)
     for key in ("sample_offsets", "recovery_offsets"):
         if key in values:
             values[key] = tuple(values[key])
-    for key in ("search", "recovery_search"):
-        if key in values:
-            values[key] = ShiftSearchConfig(**values[key])
-    if "algorithm" in values:
-        values["algorithm"] = FocusAlgorithmType[values["algorithm"]]
-    if "acquisition_settings" in values:
-        values["acquisition_settings"] = FrameAcquisitionSettings(**values["acquisition_settings"])
-    if "allow_peak_reset" in values and not isinstance(values["allow_peak_reset"], bool):
-        raise ValueError("allow_peak_reset must be boolean.")
+    for key in ("allow_peak_reset", "share_reference_across_fovs"):
+        if key in values and not isinstance(values[key], bool):
+            raise ValueError(f"{key} must be boolean.")
     config = replace(base, **values)
-    from evomachine.bindings.software_focus.software_focus_algorithms import (
-        create_software_focus_algorithm,
-    )
-
-    create_software_focus_algorithm(config.algorithm, **config.algorithm_kwargs)
     if config.smoothing is not None and (not np.isfinite(config.smoothing) or config.smoothing < 0):
         raise ValueError("Smoothing must be nonnegative or automatic.")
     return config
 
 
 def curve_payload(profile):
+    """Serialize measured and fitted points for an optional reference profile."""
     if profile is None:
         return None
     grid = np.linspace(profile.z_offsets[0], profile.z_offsets[-1], 1001)
@@ -115,22 +121,23 @@ def curve_payload(profile):
     )
 
 
-def _match_payload(match):
+def _match_payload(scan):
+    """Serialize optional match diagnostics from one focus scan."""
     return dict(
-        accepted=bool(match and match.accepted),
-        rejection_reasons=list(match.rejection_reasons) if match else [],
-        shift=match.candidate_shift if match else None,
-        correlation=match.peak_correlation if match else None,
-        peak_margin=match.peak_margin if match else None,
-        peak_width=match.peak_width if match else None,
-        shifts=match.shifts.tolist() if match else [],
-        correlations=[float(x) if np.isfinite(x) else None for x in match.correlations]
-        if match
+        accepted=bool(scan and scan.accepted),
+        rejection_reasons=list(scan.rejection_reasons) if scan else [],
+        shift=scan.candidate_shift if scan else None,
+        correlation=scan.peak_correlation if scan else None,
+        peak_margin=scan.peak_margin if scan else None,
+        peak_width=scan.peak_width if scan else None,
+        shifts=scan.shifts.tolist() if scan else [],
+        correlations=[float(x) if np.isfinite(x) else None for x in scan.correlations]
+        if scan
         else [],
     )
 
 
-def _attempt_payload(profile, scan, match, label):
+def _attempt_payload(profile, scan, label):
     """Expose raw samples and optional display alignment/scaling.
 
     Offsets are relative to the scan centre; subtracting the candidate shift
@@ -138,7 +145,7 @@ def _attempt_payload(profile, scan, match, label):
     scores for plotting only. Neither transform changes matching or stage Z.
     """
     offsets = scan.z_coordinates - scan.centre_z
-    aligned = offsets - match.candidate_shift if match.candidate_shift is not None else offsets
+    aligned = offsets - scan.candidate_shift if scan.candidate_shift is not None else offsets
     display_scores = scan.focus_scores
     scaled = False
     if (
@@ -160,16 +167,17 @@ def _attempt_payload(profile, scan, match, label):
         scores=scan.focus_scores.tolist(),
         display_scores=display_scores.tolist(),
         scaled=scaled,
-        **_match_payload(match),
+        **_match_payload(scan),
     )
 
 
 def reference_status(focus):
+    """Return reference state and diagnostics for a unified focus engine."""
     result = focus.last_result
-    match = result.matches[-1] if result and result.matches else None
+    match = result.scans[-1] if result and result.scans else None
     profile = focus.pending_reference or focus.reference
     return dict(
-        config=reference_payload(focus.config),
+        config=software_payload(focus.config),
         accepted=focus.reference is not None,
         needs_calibration=focus.needs_calibration,
         message=focus.reference_message,
@@ -185,12 +193,12 @@ def reference_status(focus):
             method="peak reset"
             if result.reference_reset
             else "recovery"
-            if len(result.matches) > 1
+            if len(result.scans) > 1
             else "sparse",
             **_match_payload(match),
             attempts=[
-                _attempt_payload(profile, scan, attempt, "Sparse" if index == 0 else "Recovery")
-                for index, (scan, attempt) in enumerate(zip(result.scans, result.matches))
+                _attempt_payload(profile, scan, "Sparse" if index == 0 else "Recovery")
+                for index, scan in enumerate(result.scans)
             ],
         ),
     )
@@ -198,6 +206,7 @@ def reference_status(focus):
 
 @dataclass
 class ReferenceReview:
+    """Track one strategy-owned reference candidate awaiting a GUI decision."""
     identifier: str
     fov_id: int
     curve: dict
@@ -214,9 +223,9 @@ class FocusGuiState:
     """
 
     def __init__(self, facade):
+        """Attach independent manual focus and strategy review state to a facade."""
         self.facade = facade
         self.manual_software = None
-        self.manual_reference = None
         self.review: ReferenceReview | None = None
         self.lock = threading.Lock()
         acquisition = getattr(facade.automaton, "acq_mngr", None)
@@ -225,23 +234,26 @@ class FocusGuiState:
         navigator = getattr(facade.automaton, "focus_nav", None)
         if navigator is not None:
             navigator.review_reference = self.review_strategy_reference
-            reference = getattr(navigator, "reference_focus", None)
-            if reference is not None:
-                reference.process_events = self.process_events
+            software = getattr(navigator, "software_focus", None)
+            if software is not None:
+                software.process_events = self.process_events
 
     def process_events(self):
+        """Service queued GUI requests at acquisition-safe strategy boundaries."""
         if getattr(self.facade.automaton, "_strategy_processing", False):
             self.facade.automaton.gui_process_requests()
             if self.facade.automaton.strategy_has_stopped():
                 self.facade.automaton._stop_event.set()
 
     def invalidate_hardware_focus(self):
+        """Invalidate cached hardware-focus state when the navigator supports it."""
         navigator = getattr(self.facade.automaton, "focus_nav", None)
         invalidate = getattr(navigator, "invalidate_hardware_focus", None)
         if callable(invalidate):
             invalidate()
 
     def prepare_manual_scan(self):
+        """Disable hardware autofocus before a manual software-focus scan."""
         autofocus = getattr(self.facade.automaton.focus_nav, "autofocus", None)
         if autofocus is not None:
             if autofocus.is_locked():
@@ -250,21 +262,15 @@ class FocusGuiState:
         self.invalidate_hardware_focus()
 
     def reference(self):
-        if self.manual_reference is None:
-            nav = self.facade.automaton.focus_nav
-            base = getattr(nav, "reference_focus", None)
-            if base is None:
-                software = self.facade.gui_strategy_software_focus()
-                base = ReferenceProfileFocus(
-                    software.acquisition_manager,
-                    ReferenceProfileFocusConfig(
-                        focus_frame=software.default_config.focus_frames[0]
-                    ),
-                )
-                nav.reference_focus = base
-                base.process_events = self.process_events
-            self.manual_reference = ReferenceProfileFocus(base.acquisition_manager, base.config)
-        return self.manual_reference
+        """Return the single manual focus engine in reference-profile mode."""
+        focus = self.facade.gui_software_focus()
+        if focus.config.selection[0] is not FocusSelectionType.REFERENCE_PROFILE:
+            focus.update_config(replace(
+                focus.config,
+                selection=(FocusSelectionType.REFERENCE_PROFILE, ReferenceFocusSelectionConfig()),
+            ))
+        focus.process_events = self.process_events
+        return focus
 
     def review_strategy_reference(self, profile, fov_id, stop_event):
         """Wait for this strategy candidate's acceptance, rejection or cancellation."""
@@ -293,6 +299,7 @@ class FocusGuiState:
                     self.review = None
 
     def decide(self, identifier, accepted):
+        """Resolve the current strategy review by identifier with a Boolean decision."""
         if not isinstance(accepted, bool):
             raise ValueError("Reference acceptance must be boolean.")
         with self.lock:
@@ -302,6 +309,7 @@ class FocusGuiState:
             self.review.event.set()
 
     def strategy_status(self):
+        """Serialize the current strategy reference review, if one is pending."""
         with self.lock:
             review = self.review
             payload = (
@@ -312,78 +320,24 @@ class FocusGuiState:
         return dict(review=payload)
 
 
-def manual_reference_status(facade, payload):
-    return {"reference_focus": reference_status(facade.focus_state.reference())}
-
-
-def manual_reference_configure(facade, payload):
-    focus = facade.focus_state.reference()
-    focus.update_config(reference_from_payload(payload["config"], focus.config))
-    return manual_reference_status(facade, payload)
-
-
-def manual_reference_run(facade, payload):
-    if not facade.automaton.devices_is_initialised():
-        raise RuntimeError("Initialise devices before running reference focus.")
-    focus = facade.focus_state.reference()
-    action = payload.get("action", "run")
-    if action not in {"calibrate", "run", "test"}:
-        raise ValueError("Unknown reference operation.")
-
-    def run(cancel_event, report):
-        report(0, "Capturing reference focus images.")
-        facade.focus_state.prepare_manual_scan()
-        if action == "calibrate":
-            focus.calibrate(stop_event=cancel_event)
-        else:
-            focus.run(
-                focus.acquisition_manager.stage.get_fov_id(),
-                stop_event=cancel_event,
-                apply=action == "run",
-            )
-        report(1, "Inspect the reference curve and focus diagnostics.")
-        return {"reference_focus": reference_status(focus)}
-
-    return {"operation": facade.gui_operations.start("reference_focus", run)}
-
-
-def manual_reference_edit(facade, payload):
-    focus = facade.focus_state.reference()
-    action = payload.get("action")
-    if action == "accept":
-        focus.accept_reference()
-    elif action == "clear":
-        focus.clear_reference()
-    elif action == "refit":
-        focus.refit_reference(payload.get("smoothing"))
-    else:
-        raise ValueError("Unknown reference action.")
-    return manual_reference_status(facade, payload)
-
-
-def manual_reference_cancel(facade, payload):
-    facade.focus_state.reference().stop()
-    return {"operation": facade.gui_operations.cancel("reference_focus")}
-
-
-def manual_reference_operation(facade, payload):
-    return {
-        "operation": facade.gui_operations.status("reference_focus")
-        or {"kind": "reference_focus", "state": "idle"}
-    }
-
-
 def strategy_reference_decide(facade, payload):
+    """Apply a GUI decision to the current strategy reference candidate."""
     facade.focus_state.decide(payload["id"], payload["accepted"])
     return {"strategy_focus": facade.focus_state.strategy_status()}
 
 
 def focus_defaults(facade, payload):
+    """Return authoritative strategy focus and autofocus defaults for GUI editors."""
     facade.focus_state.reference()
     return {
         "focus_defaults": dict(
             software_focus=software_payload(facade.gui_strategy_software_focus().default_config),
-            reference_profile=reference_payload(facade.automaton.focus_nav.reference_focus.config),
+            reference_profile=reference_payload(
+                replace(
+                    facade.gui_strategy_software_focus().config,
+                    selection=(FocusSelectionType.REFERENCE_PROFILE, ReferenceFocusSelectionConfig()),
+                )
+            ),
             autofocus=facade._gui_autofocus_config_payload(
                 getattr(
                     getattr(facade.automaton.focus_nav, "autofocus", None), "tiger_config", None

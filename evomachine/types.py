@@ -176,13 +176,20 @@ class FocusMode(EvoType):
     REFERENCE_PROFILE = auto()
 
 
-class FocusAlgorithmType(EvoType):
-    """Software focus scoring algorithm selection used by focus configuration and routines."""
+class FocusScoringType(EvoType):
+    """Image-scoring method used by software-focus scans."""
 
     LAPLACIAN_VAR = auto()
     SQUARED_GRAD_AVG = auto()
     STEEL = auto()
     BANDPASS_FFT = auto()
+
+
+class FocusSelectionType(EvoType):
+    """Policy used to select the focal Z from acquired focus scores."""
+
+    MAXIMUM = auto()
+    REFERENCE_PROFILE = auto()
 
 
 class LEDType(EvoType):

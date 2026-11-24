@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -17,7 +18,7 @@ from evomachine.gui.protocol import (
 from evomachine.gui.image_payloads import array_to_preview_payload
 from evomachine.gui.autostrat_config import AutoStratModelConfig
 from evomachine.gui.operations import GuiOperationManager
-from evomachine.gui.focus import FocusGuiState, software_payload
+from evomachine.gui.focus import FocusGuiState, reference_status, software_payload
 from evomachine.gui.request_map import GUI_REQUEST_HANDLERS, gui_coordinate_to_payload
 from evomachine.strategy_generation.files import StrategyFileStore
 
@@ -199,14 +200,17 @@ class AutomatonGuiFacade:
 
     def gui_software_focus(self) -> Any:
         from copy import deepcopy
-        from evomachine.softwarefocus import SoftwareFocus
-        from evomachine.types import FocusAlgorithmType
+        from evomachine.softwarefocus import SoftwareFocus, SquaredGradientScoringConfig
+        from evomachine.types import FocusScoringType
         if self.focus_state.manual_software is None:
             base = self.gui_strategy_software_focus()
             if not isinstance(base, SoftwareFocus):
                 return base
-            config = deepcopy(base.default_config).updated(
-                cropping_box=None, algorithm=FocusAlgorithmType.SQUARED_GRAD_AVG, algorithm_kwargs={})
+            config = replace(
+                deepcopy(base.default_config),
+                cropping_boxes=(),
+                scoring=(FocusScoringType.SQUARED_GRAD_AVG, SquaredGradientScoringConfig()),
+            )
             self.focus_state.manual_software = SoftwareFocus(base.acquisition_manager, config)
         return self.focus_state.manual_software
 
@@ -509,21 +513,26 @@ class AutomatonGuiFacade:
 
     def gui_software_focus_status_payload(self) -> dict[str, Any]:
         software_focus = self.gui_software_focus()
-        config = getattr(software_focus, "default_config", None)
-        return {
+        config = getattr(software_focus, "config", None)
+        payload = {
             "available": True,
             "config": None
             if config is None
             else software_payload(config),
             "last_result": self._last_software_focus_result,
+            "camera_shape": list(software_focus.acquisition_manager.camera.image.shape),
         }
+        if config is not None and config.selection[0].name == "REFERENCE_PROFILE":
+            payload.update(reference_status(software_focus))
+        return payload
 
     def gui_software_focus_result_payload(self, result: Any) -> dict[str, Any]:
         focus_status = getattr(result, "focus_status", None)
         curve_status = getattr(result, "curve_status", None)
         best_coordinate = getattr(result, "best_coordinate", None)
         previous_coordinate = getattr(result, "previous_coordinate", None)
-        z_coordinates = getattr(result, "z_coordinates", None)
+        scans = tuple(getattr(result, "scans", ()))
+        z_coordinates = scans[-1].z_coordinates if scans else None
         payload = {
             "focus_status": {
                 "name": getattr(focus_status, "name", str(focus_status)),
@@ -542,6 +551,9 @@ class AutomatonGuiFacade:
             "z_points": None
             if z_coordinates is None
             else int(getattr(z_coordinates, "size", len(z_coordinates))),
+            "failure_reason": getattr(result, "failure_reason", None),
+            "recovery_attempted": bool(getattr(result, "recovery_attempted", False)),
+            "reference_reset": bool(getattr(result, "reference_reset", False)),
         }
         self._last_software_focus_result = payload
         return payload

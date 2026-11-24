@@ -31,7 +31,7 @@ from evomachine.gui.panels.dmd import DmdPanel
 from evomachine.gui.panels.filterwheel import FilterWheelPanel
 from evomachine.gui.panels.leds import LedManagerPanel
 from evomachine.gui.panels.software_focus import SoftwareFocusPanel
-from evomachine.gui.panels.reference_focus import ReferenceFocusPanel, StrategyReferenceDialog
+from evomachine.gui.panels.reference_focus import StrategyReferenceDialog
 from evomachine.gui.panels.stage import StagePanel
 from evomachine.gui.panels.strategy import FovSetupPanel, StrategySetupPanel
 
@@ -149,7 +149,6 @@ class EvoMachineControlsDock(QWidget):
         layout = QVBoxLayout(widget)
         layout.addWidget(AutofocusPanel(controller=self.controller))
         layout.addWidget(SoftwareFocusPanel(controller=self.controller))
-        layout.addWidget(ReferenceFocusPanel(controller=self.controller))
         layout.addStretch(1)
         return widget
 

@@ -8,13 +8,9 @@ import time
 from typing import Any
 
 from evomachine.coordinates import Coordinate
-from evomachine.focus_registration import ReferenceProfile
+from evomachine.softwarefocus import FocusCancelled, ReferenceProfile, SoftwareFocus, SoftwareFocusConfig
 from evomachine.peripherals.autofocus import Autofocus
 from evomachine.peripherals.stage import Stage
-from evomachine.referencefocus import (
-    ReferenceFocusCancelled, ReferenceProfileFocus, ReferenceProfileFocusConfig,
-)
-from evomachine.softwarefocus import SoftwareFocus, SoftwareFocusConfig
 from evomachine.types import AutoFocusStatusType, FocusMode, FocusStatusType, UNKNOWN_FOV_ID
 from evomachine.utils import validate_dataclass_fields
 
@@ -42,7 +38,6 @@ class FovConfig:
 
     focus_mode: FocusMode | None = None
     navigator_config: FocusNavigatorConfig | None = None
-    reference_focus_config: ReferenceProfileFocusConfig | None = None
 
     def __post_init__(self) -> None:
         validate_dataclass_fields(
@@ -175,8 +170,6 @@ class FocusNavigator:
             config: FocusNavigatorConfig | None = None,
             sleep_func: Callable[[float], None] = time.sleep,
             time_func: Callable[[], float] = time.time,
-            *,
-            reference_focus: ReferenceProfileFocus | None = None,
     ):
         """
         Initialise a focus navigator.
@@ -195,8 +188,6 @@ class FocusNavigator:
             Function used for wait periods, injected for tests.
         time_func
             Function used to timestamp Z records, injected for tests.
-        reference_focus
-            Optional acquisition-backed reference focus, selected explicitly by config.
 
         Returns
         -------
@@ -211,9 +202,9 @@ class FocusNavigator:
         self.stage: Stage = stage
         self.autofocus: Autofocus | None = autofocus
         self.software_focus: SoftwareFocus | None = software_focus
-        self.reference_focus = reference_focus
-        if reference_focus is not None and reference_focus.acquisition_manager.stage is not stage:
-            raise ValueError("FocusNavigator and reference_focus must share the same stage.")
+        focus_acquisition = getattr(software_focus, "acquisition_manager", None)
+        if focus_acquisition is not None and focus_acquisition.stage is not stage:
+            raise ValueError("FocusNavigator and software_focus must share the same stage.")
         self.config: FocusNavigatorConfig = config if config is not None else FocusNavigatorConfig()
         if not isinstance(self.config, FocusNavigatorConfig):
             raise TypeError(
@@ -232,10 +223,9 @@ class FocusNavigator:
         self._active_autofocus_initialise_config: Any | None = None
         self.standard_config: FocusNavigatorConfig | None = None
         self._execution_config: FocusNavigatorConfig | None = None
-        self._reference_by_fov: dict[int, ReferenceProfileFocus] = {}
         self._initial_focus_prepared = False
         self.review_reference: Callable | None = None
-        self.last_reference_focus: ReferenceProfileFocus | None = None
+        self.last_software_focus: SoftwareFocus | None = None
 
     def update_config(self, config: FocusNavigatorConfig) -> None:
         if not isinstance(config, FocusNavigatorConfig):
@@ -282,30 +272,24 @@ class FocusNavigator:
         self._initial_focus_prepared = False
         self._active_autofocus_initialise_config = None
         if self.review_reference is not None:
-            if self.reference_focus is not None:
-                self.reference_focus.clear_reference()
-            self._reference_by_fov.clear()
+            if self.software_focus is not None:
+                self.software_focus.clear_reference()
+                self.software_focus.clear_fov_references()
 
-    def reference_for_fov(self, fov_id: int) -> ReferenceProfileFocus:
-        if fov_id in self._reference_by_fov:
-            return self._reference_by_fov[fov_id]
+    def reference_for_fov(self, fov_id: int) -> SoftwareFocus:
         base = self._require_reference_focus()
-        config = self._fov_states[fov_id].fov_config.reference_focus_config
-        if config is not None:
-            self._reference_by_fov[fov_id] = ReferenceProfileFocus(base.acquisition_manager, config)
-            self._reference_by_fov[fov_id].process_events = base.process_events
-            return self._reference_by_fov[fov_id]
-        return base
+        config = self._fov_states[fov_id].fov_config.software_focus_config
+        return base.reference_for_fov(fov_id, config=config)
 
     def stop_reference_focus(self) -> None:
-        for focus in (self.reference_focus, self.last_reference_focus, *self._reference_by_fov.values()):
+        for focus in (self.software_focus, self.last_software_focus):
             if focus is not None:
                 focus.stop()
 
-    def _require_reference_focus(self) -> ReferenceProfileFocus:
-        if self.reference_focus is None:
-            raise RuntimeError("Reference-profile mode requires a reference_focus component.")
-        return self.reference_focus
+    def _require_reference_focus(self) -> SoftwareFocus:
+        if self.software_focus is None:
+            raise RuntimeError("Reference-profile mode requires a software_focus component.")
+        return self.software_focus
 
     def validate_ready(self) -> None:
         ids = [fov_id for fov_id in self._fov_states
@@ -417,7 +401,9 @@ class FocusNavigator:
         self._num_refocus = 0
         self._active_autofocus_initialise_config = None
         self._initial_focus_prepared = False
-        self._reference_by_fov.clear()
+        clear_fov_references = getattr(self.software_focus, "clear_fov_references", None)
+        if callable(clear_fov_references):
+            clear_fov_references()
         if self.software_focus is not None:
             initialise_fovs = getattr(self.software_focus, "initialise_fovs", None)
             if callable(initialise_fovs):
@@ -473,7 +459,7 @@ class FocusNavigator:
                     self._current_fov_id = fov_id
                     profile = focus.calibrate(stop_event=stop_event)
                     if not self.review_reference(profile, fov_id, stop_event):
-                        raise ReferenceFocusCancelled("Reference rejected.")
+                        raise FocusCancelled("Reference rejected.")
                     focus.accept_reference()
                 self._disable_reference_autofocus()
                 self.stage.move(
@@ -518,7 +504,7 @@ class FocusNavigator:
                 refocusing=False,
                 software_focus_status=arrival_status,
             )
-        except (_FocusNavigationCancelled, ReferenceFocusCancelled):
+        except (_FocusNavigationCancelled, FocusCancelled):
             current_fov_id = (
                 fov_id if self._current_fov_id is None else self._current_fov_id
             )
@@ -573,17 +559,17 @@ class FocusNavigator:
             if focus.reference is None:
                 raise RuntimeError("Accept the reference before focusing.")
             self._disable_reference_autofocus()
-            shared = focus is self.reference_focus
-            if shared and focus.config.allow_peak_reset:
-                local = ReferenceProfileFocus(focus.acquisition_manager, focus.config)
+            shared = focus is self.software_focus
+            if shared and focus.reference_config.allow_peak_reset:
+                local = SoftwareFocus(focus.acquisition_manager, focus.config)
                 local.reference = focus.reference
                 local.process_events = focus.process_events
                 focus = local
-            self.last_reference_focus = focus
+            self.last_software_focus = focus
             result = focus.run(fov_id=fov_id, stop_event=stop_event)
             if shared and result.reference_reset:
-                self._reference_by_fov[fov_id] = focus
-            self.last_reference_focus = focus
+                self.software_focus.set_reference_for_fov(fov_id, focus)
+            self.last_software_focus = focus
             self._check_cancelled(stop_event)
             succeeded = result.focus_status == FocusStatusType.IN_FOCUS
             if succeeded:
@@ -720,7 +706,9 @@ class FocusNavigator:
         if not isinstance(fov_config, FovConfig):
             raise TypeError(f"FocusNavigator.update_fov_config: fov_config must be FovConfig, received {type(fov_config)}.")
         self._fov_states[fov_id].fov_config = fov_config
-        self._reference_by_fov.pop(fov_id, None)
+        remove_reference = getattr(self.software_focus, "remove_reference_for_fov", None)
+        if callable(remove_reference):
+            remove_reference(fov_id)
         self._register_stage_fovs()
         if fov_config.software_focus_config is not None and self.software_focus is not None:
             update_config = getattr(self.software_focus, "update_config", None)

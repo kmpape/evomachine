@@ -18,6 +18,8 @@ DEFAULT_CAMERA_DISPLAY_SHAPE = (512, 512)
 DMD_DISPLAY_SHAPE = (DMD_WIDTH_HEIGHT[1], DMD_WIDTH_HEIGHT[0])
 DMD_FRAME_COLOR = "#ff3030"
 DMD_FRAME_THICKNESS = 3.0
+FOCUS_CROP_LAYER = "Focus crops"
+FOCUS_CROP_COLOR = "#26d9d9"
 AUTO_CONTRAST_PERCENTILES = (0.5, 99.5)
 CAMERA_VIEW_MARGIN = 0.05
 DISPLAY_TAB_HEIGHT = 30
@@ -105,6 +107,7 @@ class CentralVisualWorkspace:
     """
 
     def __init__(self, viewer: Any, controller: Any):
+        """Create image, DMD, and crop layers and connect their GUI signals."""
         self.viewer = viewer
         self.controller = controller
         self.camera_shape = DEFAULT_CAMERA_DISPLAY_SHAPE
@@ -148,7 +151,7 @@ class CentralVisualWorkspace:
     def _setup_layers(self) -> None:
         """Replace obsolete dashboard layers with microscope and DMD layers."""
         for layer in list(self.viewer.layers):
-            if layer.name in {"Visual workspace", "Brightness spectrum", "Last acquired image", DMD_LAYER}:
+            if layer.name in {"Visual workspace", "Brightness spectrum", "Last acquired image", DMD_LAYER, FOCUS_CROP_LAYER}:
                 self.viewer.layers.remove(layer)
         self.microscope_layer = self.viewer.add_image(
             make_main_image_placeholder(self.camera_shape), name=MICROSCOPE_LAYER, colormap="gray"
@@ -166,6 +169,15 @@ class CentralVisualWorkspace:
         self.dmd_layer.bounding_box.line_color = DMD_FRAME_COLOR
         self.dmd_layer.bounding_box.line_thickness = DMD_FRAME_THICKNESS
         self.dmd_layer.bounding_box.points = False
+        self.focus_crop_layer = self.viewer.add_shapes(
+            [],
+            name=FOCUS_CROP_LAYER,
+            shape_type="rectangle",
+            edge_color=FOCUS_CROP_COLOR,
+            face_color="transparent",
+            edge_width=3,
+        )
+        self.focus_crop_layer.editable = False
         self.viewer.grid.enabled = False
 
     def _install_canvas_chrome(self) -> None:
@@ -183,6 +195,7 @@ class CentralVisualWorkspace:
         self.controller.camera_status_received.connect(self.update_camera_status)
         self.controller.dmd_status_received.connect(self.update_dmd_status)
         self.controller.frame_received.connect(self.update_frame)
+        self.controller.software_focus_status_received.connect(self.update_focus_crops)
 
     def _connect_viewer(self) -> None:
         """Connect stack-plane navigation to metadata refreshes."""
@@ -199,6 +212,7 @@ class CentralVisualWorkspace:
         microscope_selected = index == 0
         self.microscope_layer.visible = microscope_selected
         self.dmd_layer.visible = not microscope_selected
+        self.focus_crop_layer.visible = microscope_selected
         selected = self.microscope_layer if microscope_selected else self.dmd_layer
         selection = getattr(self.viewer.layers, "selection", None)
         if selection is not None:
@@ -206,6 +220,23 @@ class CentralVisualWorkspace:
         self._set_dims_visible(microscope_selected and self.microscope_layer.ndim > 2)
         self._update_metadata()
         fit_central_viewer(self.viewer)
+
+    def update_focus_crops(self, payload: dict[str, Any]) -> None:
+        """Display authoritative focus crops as read-only microscope rectangles.
+
+        Args:
+            payload: Unified software-focus status containing configuration crops.
+        """
+        config = payload.get("config") or {}
+        rectangles = []
+        for box in config.get("cropping_boxes") or []:
+            left, top = float(box["x_left"]), float(box["y_top"])
+            right, bottom = float(box["x_right"]), float(box["y_bottom"])
+            rectangles.append(np.asarray([
+                [top, left], [top, right], [bottom, right], [bottom, left],
+            ]))
+        self.focus_crop_layer.data = rectangles
+        self.focus_crop_layer.visible = self.display_tabs.currentIndex() == 0
 
     def update_camera_status(self, payload: dict[str, Any]) -> None:
         """Update placeholder dimensions from a camera status payload.

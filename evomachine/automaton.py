@@ -1444,9 +1444,9 @@ class Automaton:
             )
         if self._swfocus is not None and callable(getattr(self._swfocus, "stop", None)):
             actions.append(("software focus", self._swfocus.stop))
-        reference_focus = getattr(self.focus_nav, "reference_focus", None)
-        if reference_focus is not None:
-            actions.append(("reference focus", self.focus_nav.stop_reference_focus))
+        navigator_focus = getattr(self.focus_nav, "software_focus", None)
+        if navigator_focus is not None and navigator_focus is not self._swfocus:
+            actions.append(("navigator software focus", navigator_focus.stop))
         if (
                 self._autofocus is not None
                 and self._autofocus.is_initialised()
