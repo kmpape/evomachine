@@ -826,3 +826,100 @@ def test_stop_attempts_remaining_devices_after_one_failure(monkeypatch) -> None:
     assert dmd.none_count == 1
     assert camera.stop_count == 1
     assert stage.stop_count == 1
+
+
+def _saving_z_stack_manager(tmp_path: Path, stage: FakeStage) -> FrameAcquisitionManager:
+    from evomachine.filemanager import FileManager, FileNameConfig
+
+    return _manager(
+        stage=stage,
+        file_manager=FileManager(FileNameConfig(
+            directory=tmp_path,
+            filename_pattern="{file_id}_{light}_FOV{fov_id}_Z{z_range}_{datetime}",
+        )),
+        default_settings=FrameAcquisitionSettings(illuminate_dmd=False, restore_leds_after=False),
+    )
+
+
+def test_saved_z_stack_is_one_file_shared_by_every_plane(tmp_path: Path) -> None:
+    """Check take_z_stack(save=True) writes one stack file instead of one file per plane."""
+    from evomachine.filemanager import FileManager
+
+    stage = FakeStage()
+    stage.coordinate = Coordinate(0, 0, 10)
+    manager = _saving_z_stack_manager(tmp_path, stage)
+
+    frame = manager.take_z_stack(
+        frame_metadata=_metadata(fov_id=2),
+        z_coordinates=[Coordinate(None, None, z) for z in (10, 11, 9)],
+        settings=FrameAcquisitionSettings(save=True, illuminate_dmd=False),
+    )
+
+    import re
+
+    files = sorted(tmp_path.glob("*.tiff"))
+    assert len(files) == 1
+    assert re.fullmatch(r"000001_450NM_FOV2_Z-1,1,1_\d{6}_\d{6}\.tiff", files[0].name)
+    assert frame.saved_paths == [files[0]] * 3
+    assert frame.array.shape == (3, 3, 4)  # returned frame keeps acquisition order
+    image, metadata = FileManager.load_frame(files[0])
+    assert image.shape == (3, 3, 4)
+    assert metadata["ZStack"]["z_positions"] == [9.0, 10.0, 11.0]
+    assert metadata["ZStack"]["complete"] is True
+    assert stage.coordinate.z == 10
+
+
+def test_saved_multichannel_z_stack_writes_one_file_per_channel(tmp_path: Path) -> None:
+    stage = FakeStage()
+    manager = _saving_z_stack_manager(tmp_path, stage)
+
+    frame = manager.take_z_stack(
+        frame_metadata=[_metadata(fov_id=1), _metadata(fov_id=1, leds={LEDType.LED_565_NM: 10})],
+        z_coordinates=[Coordinate(None, None, z) for z in (0, 1)],
+        settings=FrameAcquisitionSettings(save=True, illuminate_dmd=False),
+    )
+
+    names = sorted(path.name for path in tmp_path.glob("*.tiff"))
+    assert [name.split("_")[:2] for name in names] == [["000001", "450NM"], ["000002", "565NM"]]
+    assert [path.name.split("_")[1] for path in frame.saved_paths] == ["450NM", "565NM"] * 2
+
+
+def test_stopped_z_stack_still_saves_acquired_planes(tmp_path: Path) -> None:
+    import threading
+
+    stage = FakeStage()
+    manager = _saving_z_stack_manager(tmp_path, stage)
+    stop_event = threading.Event()
+    planes_done = []
+
+    def stop_after_two() -> None:
+        planes_done.append(1)
+        if len(planes_done) == 2:
+            stop_event.set()
+
+    frame = manager.take_z_stack(
+        frame_metadata=_metadata(fov_id=0),
+        z_coordinates=[Coordinate(None, None, z) for z in (0, 1, 2, 3)],
+        settings=FrameAcquisitionSettings(save=True, illuminate_dmd=False),
+        stop_event=stop_event,
+        step_callback=stop_after_two,
+    )
+
+    from evomachine.filemanager import FileManager
+
+    (path,) = tmp_path.glob("*.tiff")
+    assert frame.array.shape[0] == 2 and frame.saved_paths == [path, path]
+    stack = FileManager.load_tiff_metadata(path)["ZStack"]
+    assert stack["n_planes"] == 2 and stack["expected_planes"] == 4 and stack["complete"] is False
+
+
+def test_saving_z_stack_without_file_manager_fails_before_moving() -> None:
+    stage = FakeStage()
+    manager = _manager(stage=stage)
+    with pytest.raises(RuntimeError, match="no file manager"):
+        manager.take_z_stack(
+            frame_metadata=_metadata(),
+            z_coordinates=[Coordinate(None, None, 5)],
+            settings=FrameAcquisitionSettings(save=True),
+        )
+    assert stage.coordinate.z == 0

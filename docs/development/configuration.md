@@ -153,14 +153,38 @@ name.
 | Field | Type/default | Meaning and validation | Editable |
 | --- | --- | --- | --- |
 | `directory` | `Path \| str`, required | Output directory. Created when requested. | GUI/startup |
-| `filename_pattern` | `str = "FOV{fov_id}_{timestamp}_{callback_id}"` | Non-empty Python format pattern using only `FileNameField`. | GUI/startup |
+| `filename_pattern` | `str = "FOV{fov_id}_{timestamp}_{callback_id}"` | Non-empty Python format pattern using only `FileNameField`. Used for frames and z-stack files. | GUI/startup |
+| `file_id_digits` | `int = 6` | Zero-padded width of `{file_id}`, in `[1, 12]`. | startup/code |
 | `create_directory` | `bool = True` | Create a missing output directory. | startup/code |
 | `time_config` | `TimeConfig()` | Timestamp/timezone formatting. | startup/code |
 
 Allowed fields are `channel`, `fov_id`, `x`, `y`, `z`, `filter_wheel`,
-`timestamp`, `timezone`, `frame_id`, and `callback_id`. Positional fields,
-compound access, unknown names, and malformed syntax are rejected. `.tiff` is
-added automatically. Unknown FoV `-1` renders as an empty string.
+`timestamp`, `timezone`, `frame_id`, `callback_id`, `file_id`, `light`,
+`datetime`, and `z_range`. Positional fields, compound access, unknown names,
+and malformed syntax are rejected. `.tiff` is added automatically. Unknown FoV
+`-1` renders as an empty string.
+
+`{file_id}` reserves a unique, increasing ID per output directory, shared by
+frames and z-stacks. The last ID is kept in a hidden `.evomachine_file_id` file
+in that directory, so IDs continue after restarts and are not reused when files
+are deleted. No ID is reserved and no counter file is written unless the pattern
+uses `{file_id}`.
+
+A saved z-stack (`FrameAcquisitionManager.take_z_stack` with `save=True`, which
+serves the GUI, the `Z_STACK` command and focus routines) is written by
+`FileManager.save_z_stack` as one multi-page TIFF per channel, planes sorted by
+Z. It is named with the same `filename_pattern`, using the first acquired
+plane's metadata; `{z_range}` gives `min,step,max` offsets from the centre Z.
+The TIFF description is `{"FrameMetaData": [...one per plane, file order],
+"ZStack": {...}}`, where `ZStack` holds `z_positions`, `z_centre`, `z_offsets`,
+`z_step`, `acquisition_order`, `n_planes`, `expected_planes`, `complete`, and
+start/end times. A stopped or failed stack still saves its acquired planes with
+`complete: false`. Every plane's `Frame.saved_paths` entry is the stack file.
+Load stacks with `FileManager.load_frame()` or `tifffile.imread()`.
+
+For example, `{file_id}_{light}_FOV{fov_id}_Z{z_range}_{datetime}` names a
+stack `000123_450NM_FOV3_Z-10,1,10_261108_155754.tiff` and a single frame
+`000124_450NM_FOV3_Z5012.5_261108_155754.tiff`.
 
 ## Peripheral configuration
 

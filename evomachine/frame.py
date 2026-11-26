@@ -201,7 +201,8 @@ class Frame:
     LED channels, filters, DMD patterns, or Z-stack planes, but all metadata
     entries must refer to the same fov_id. saved_paths is filled by acquisition
     when saving is requested; each entry is None when the corresponding image
-    plane was not saved.
+    plane was not saved. Planes of a saved Z-stack all point to the same
+    multi-page stack file.
     """
 
     frame_metadata: list[FrameMetaData]

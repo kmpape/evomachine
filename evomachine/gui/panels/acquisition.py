@@ -62,6 +62,10 @@ FILENAME_FIELD_HELP = (
     (FileNameField.TIMEZONE, "acquisition timezone identifier"),
     (FileNameField.FRAME_ID, "image-plane identifier"),
     (FileNameField.CALLBACK_ID, "strategy callback identifier, blank when unset"),
+    (FileNameField.FILE_ID, "unique zero-padded file number, increasing per output folder"),
+    (FileNameField.LIGHT, "condensed LED wavelength, for example 450NM, or NOLED"),
+    (FileNameField.DATETIME, "compact acquisition date and time, for example 261108_155754"),
+    (FileNameField.Z_RANGE, "z-stack offsets as min,step,max around the centre Z; the Z position for single frames"),
 )
 
 
@@ -1404,7 +1408,8 @@ class AcquisitionStatusPanel(QGroupBox):
         self.last_label.setText(
             f"{kind}: {payload.get('planes')} plane(s), image {payload.get('image_shape')}"
         )
-        saved_paths = [path for path in payload.get("saved_paths", []) if path]
+        # Every plane of a z-stack points at the same stack file, so count files once.
+        saved_paths = list(dict.fromkeys(path for path in payload.get("saved_paths", []) if path))
         if not saved_paths:
             self.saved_label.setText("-")
             self.saved_label.setToolTip("")

@@ -118,7 +118,9 @@ and segmentation channels.
 A Z-stack uses one metadata template across its planes. `relative_range` is a
 positive half-range and `step_size` is a positive step no larger than the range.
 Capture order is centre, positive offsets, then negative offsets. Only complete
-steps inside the range are used.
+steps inside the range are used. With `save=True` the stack is saved as one
+multi-page TIFF per channel, planes sorted by Z, and every plane's
+`saved_paths` entry points to that file.
 
 Projection changes physical illumination. Validate DMD calibration, selection,
 brightness, duration, and occupied FoV manually. Never encode automatic retry for

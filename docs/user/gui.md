@@ -94,6 +94,10 @@ Available fields are:
 | `{timezone}` | Filename-safe timezone identifier. |
 | `{frame_id}` | ID assigned by `FrameMetaDataFactory`. |
 | `{callback_id}` | Strategy callback ID when one is supplied. |
+| `{file_id}` | Unique zero-padded file number, increasing per output folder. |
+| `{light}` | Condensed LED wavelength such as `450NM`, `450NM+565NM`, or `NOLED`. |
+| `{datetime}` | Compact acquisition time, `yymmdd_HHMMSS`. |
+| `{z_range}` | Z-stack offsets as `min,step,max` around the centre Z; a frame's Z. |
 
 Literal text, escaped braces (`{{` and `}}`), conversions, and Python format
 specifications such as `{frame_id:04d}` are accepted. Include `timestamp`,
@@ -108,6 +112,11 @@ and is saved only when saving is enabled.
 
 A Z-stack owns its relative start, end, and step values. Use **Configure** in the
 Z Stack Acquisition section to edit them; cancelling keeps the active values.
+When saving is enabled, the whole stack is saved as one multi-page TIFF (one per
+channel) named with the active filename pattern. A pattern such as
+`{file_id}_{light}_FOV{fov_id}_Z{z_range}_{datetime}` gives names like
+`000123_450NM_FOV3_Z-10,1,10_261108_155754.tiff`. Saved stacks can be reopened
+from the saved-images list.
 The request combines that range with the shared acquisition settings. The stack
 reads the starting Z, captures the centre followed by positive and then negative
 complete steps within the requested range, and normally restores the starting Z.
