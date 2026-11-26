@@ -23,6 +23,7 @@ dependencies = [
     "PyQt5>=5.15",
     "napari>=0.5.5",
     "pydantic>=2",
+    "tomli-w>=1.0",  # writes experiment configuration TOML files (reading uses the standard-library tomllib)
 
     # GPU stack for the Linux + CUDA microscope. TensorFlow is pulled in by the
     # `delta` sibling repo (it only requires `tensorflow >= 2.12`); we pin it here

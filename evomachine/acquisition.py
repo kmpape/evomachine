@@ -7,7 +7,7 @@ import threading
 import time
 
 import numpy as np
-from pydantic import field_validator
+from pydantic import ConfigDict, field_validator
 
 from evomachine.config_models import EvoConfig
 from evomachine.config import get_logger, now
@@ -25,7 +25,14 @@ logger = get_logger(name=__name__)
 
 
 class FrameAcquisitionSettings(EvoConfig):
-    """Runtime options controlling how frame acquisition uses peripherals."""
+    """
+    Runtime options controlling how frame acquisition uses peripherals.
+
+    Instances are immutable; use ``updated()`` to obtain a validated copy with
+    changed fields.
+    """
+
+    model_config = ConfigDict(frozen=True)
 
     save: bool = False
     "Save acquired frames with the configured FileManager."
@@ -54,6 +61,24 @@ class FrameAcquisitionSettings(EvoConfig):
         if not isinstance(value, bool):
             raise TypeError(f"FrameAcquisitionSettings: {info.field_name} must be bool, received {type(value)}.")
         return value
+
+    @classmethod
+    def experiment_defaults(cls) -> FrameAcquisitionSettings:
+        """
+        Return the default settings for acquisitions that are part of an experiment.
+
+        After every acquisition call the DMD is blanked and all LEDs are switched
+        off, so the sample is not left illuminated between images. This is safe
+        because every image applies its own DMD pattern, filter, exposure, and
+        LEDs before capture. The class defaults, which restore the previous LED
+        states instead, suit manual images taken outside an experiment.
+
+        Returns
+        -------
+        FrameAcquisitionSettings
+            Settings that blank the DMD and switch LEDs off after each acquisition call.
+        """
+        return cls(clear_dmd_after=True, restore_leds_after=False, disable_leds_after=True)
 
 
 class FrameAcquisitionManager:

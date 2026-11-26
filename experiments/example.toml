@@ -1,0 +1,75 @@
+# Example EvoMachine experiment configuration.
+#
+# An experiment file describes how an experiment is run and can be shared
+# between users and microscopes. It does not contain microscope hardware
+# settings (ports, camera, objective, stage limits) or FoV positions, which
+# are selected in the GUI before every initialisation.
+#
+# Keys that are left out use their default values. Unknown keys are rejected,
+# so a misspelt key is reported instead of being silently ignored.
+# Every accepted LED, filter, scoring type and matching type, and every
+# parameter default, is listed in all_options.toml next to this file.
+
+# Version of this file format. Required.
+schema_version = 1
+
+name = "Example experiment"
+description = "Example showing every supported section."
+
+# Default behaviour of every image acquisition. The values below are the
+# defaults: after each acquisition the DMD is blanked and all LEDs are switched
+# off. Every image sets its own LEDs, filter, exposure and DMD pattern first.
+[acquisition]
+save = false                # Save acquired images to the output directory.
+normalise = false           # Return camera-normalised image data where supported.
+illuminate_dmd = true       # Display DMD illumination before each image when a DMD is present.
+clear_dmd_after = true      # Blank the DMD after each acquisition.
+restore_leds_after = false  # Restore the previous LED states after each acquisition.
+disable_leds_after = true   # Switch all LEDs off after each acquisition.
+
+# Where saved images are written and how they are named. Required.
+[output]
+# Full path to the output directory. "~" expands to the home directory of the
+# user running EvoMachine. A relative path is accepted with a warning.
+directory = "~/evomachine_data/example_experiment"
+# Allowed fields: channel, fov_id, x, y, z, filter_wheel, timestamp, timezone,
+# frame_id, callback_id. ".tiff" is added automatically.
+filename_pattern = "FOV{fov_id}_{timestamp}_{callback_id}"
+
+# Software (image-based) focus. Required.
+[focus.software]
+# Image regions to score. Leave empty to score the whole image.
+crops = []
+# crops = [{ xtl = 200, ytl = 300, xbr = 3000, ybr = 2900 }]
+
+# Images taken at every Z position of a focus scan. Required, no defaults:
+# at least one frame, each with LEDs (name = brightness 0-100), exposure in
+# milliseconds (1-1000) and filter.
+[[focus.software.frames]]
+leds = { LED_450_NM = 29 }
+exposure_ms = 200
+filter = "BANDPASS_405_445_514_561_640nm"
+
+# How each image is scored. Optional; the default is STEEL with the
+# parameters below.
+[focus.software.scoring]
+type = "STEEL"              # LAPLACIAN_VAR, SQUARED_GRAD_AVG, STEEL or BANDPASS_FFT
+rowshift = 25
+colshift = 50
+normalise = false
+
+# How the focal Z is chosen from the scores. Optional; the default is
+# REFERENCE_PROFILE with default parameters.
+#   MAXIMUM: take the Z with the highest score (fails if it is at either end
+#            of the scan). Parameters: rel_range and step_size in µm.
+#   REFERENCE_PROFILE: compare the measured focus curve with a reference curve
+#            recorded during initialisation. More robust, but requires that
+#            initialisation. See all_options.toml for all parameters.
+[focus.software.matching]
+type = "REFERENCE_PROFILE"
+smoothing = "auto"          # Spline smoothing; "auto" chooses it automatically (default 0.0).
+
+# Acquisition behaviour of focus-scan images. Optional; same defaults as
+# [acquisition] above.
+# [focus.software.acquisition]
+# save = true

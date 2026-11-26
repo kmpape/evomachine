@@ -1,0 +1,132 @@
+# Every value accepted in EvoMachine experiment configuration files.
+#
+# This is a reference list, not an experiment file. Which LEDs and filters are
+# installed depends on the microscope. The parameter tables show the default
+# value of every scoring and matching parameter. [optional_parameters] lists
+# parameters that are unset by default; give them a value to use them.
+#
+# Future idea: offer these values as drop-down lists, for example in a GUI
+# experiment editor, instead of typing names by hand.
+#
+# Generated from the code; do not edit by hand. Regenerate with:
+#   python -c "from evomachine.experiment_config import all_options_toml; print(all_options_toml(), end='')" > experiments/all_options.toml
+
+leds = [
+    "LED_385_NM",
+    "LED_450_NM",
+    "LED_515_NM",
+    "LED_565_NM",
+    "LED_645_NM",
+    "LED_OVERHEAD",
+    "LED_OVERHEAD_TIGER",
+    "TIGER_LED_1",
+    "TIGER_LED_2",
+    "TIGER_LED_3",
+    "TIGER_LED_4",
+]
+filters = [
+    "BANDPASS_405_445_514_561_640nm",
+    "FILTER_465nm",
+    "FILTER_527nm",
+    "FILTER_592nm",
+    "NO_FILTER",
+    "BLOCKING",
+]
+scoring_types = [
+    "LAPLACIAN_VAR",
+    "SQUARED_GRAD_AVG",
+    "STEEL",
+    "BANDPASS_FFT",
+]
+matching_types = [
+    "MAXIMUM",
+    "REFERENCE_PROFILE",
+]
+
+[scoring_parameters.LAPLACIAN_VAR]
+
+[scoring_parameters.SQUARED_GRAD_AVG]
+
+[scoring_parameters.STEEL]
+rowshift = 25
+colshift = 50
+normalise = false
+
+[scoring_parameters.BANDPASS_FFT]
+cell_radius = 20.0
+downsample = 4
+order = 4
+normalize_brightness = true
+
+[matching_parameters.MAXIMUM]
+rel_range = 50.0
+step_size = 5.0
+
+[matching_parameters.REFERENCE_PROFILE]
+calibration_range = 40.0
+calibration_step = 1.0
+sample_offsets = [
+    -20.0,
+    -15.0,
+    -10.0,
+    -5.0,
+    0.0,
+    5.0,
+    10.0,
+    15.0,
+    20.0,
+]
+recovery_offsets = [
+    -20.0,
+    -15.0,
+    -10.0,
+    -5.0,
+    -4.5,
+    -4.0,
+    -3.5,
+    -3.0,
+    -2.5,
+    -2.0,
+    -1.5,
+    -1.0,
+    -0.5,
+    0.0,
+    0.5,
+    1.0,
+    1.5,
+    2.0,
+    2.5,
+    3.0,
+    3.5,
+    4.0,
+    4.5,
+    5.0,
+    10.0,
+    15.0,
+    20.0,
+]
+sparse_shift_min = -20.0
+sparse_shift_max = 20.0
+sparse_shift_step = 0.1
+sparse_min_correlation = 0.9
+sparse_min_peak_margin = 0.05
+sparse_boundary_margin = 1.0
+sparse_min_relative_variation = 0.01
+recovery_shift_min = -20.0
+recovery_shift_max = 20.0
+recovery_shift_step = 0.1
+recovery_min_correlation = 0.9
+recovery_min_peak_margin = 0.05
+recovery_boundary_margin = 1.0
+recovery_min_relative_variation = 0.01
+smoothing = 0.0
+allow_peak_reset = false
+share_reference_across_fovs = false
+
+[optional_parameters]
+SQUARED_GRAD_AVG = [
+    "threshold",
+]
+BANDPASS_FFT = [
+    "saturation",
+]

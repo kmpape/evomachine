@@ -19,6 +19,7 @@ Important repository directories are:
 | `evomachine/strategy_generation/` | EvoMachine AutoStrat adapter, providers, preview, storage, and service. |
 | `evomachine/domain_packs/` | Microscopy commands, observations, errors, policies, and generation guidance. |
 | `strategies/` | Discoverable user Python strategies. |
+| `experiments/` | Shareable experiment configuration files (TOML); see [Configuration](configuration.md#experiment-configuration-files). |
 | `scripts/` | Launchers, calibration utilities, and focused workflows. |
 | `tests/` | Unit, integration, binding-contract, runtime, and opt-in Qt tests. |
 
