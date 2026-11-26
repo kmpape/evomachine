@@ -734,6 +734,7 @@ dependencies = [
     { name = "tensorflow" },
     { name = "tensorflow", extra = ["and-cuda"], marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "tifffile" },
+    { name = "tomli-w" },
 ]
 
 [package.optional-dependencies]
@@ -775,6 +776,7 @@ requires-dist = [
     { name = "tensorflow", marker = "platform_machine != 'x86_64' or sys_platform != 'linux'", specifier = "==2.15.*" },
     { name = "tensorflow", extras = ["and-cuda"], marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = "==2.15.*" },
     { name = "tifffile", specifier = ">=2022.4.8" },
+    { name = "tomli-w", specifier = ">=1.0" },
 ]
 provides-extras = ["pvcam", "autostrat"]
 

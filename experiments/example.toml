@@ -1,0 +1,33 @@
+# Example EvoMachine experiment configuration.
+#
+# An experiment file describes how an experiment is run and can be shared
+# between users and microscopes. It does not contain microscope hardware
+# settings (ports, camera, objective, stage limits) or FoV positions, which
+# are selected in the GUI before every initialisation.
+#
+# Keys that are left out use their default values. Unknown keys are rejected,
+# so a misspelt key is reported instead of being silently ignored.
+
+# Version of this file format. Required.
+schema_version = 1
+
+name = "Example experiment"
+description = "Minimal example showing every supported section."
+
+# Default behaviour of every image acquisition.
+[acquisition]
+save = false                # Save acquired images to the output directory.
+normalise = false           # Return camera-normalised image data where supported.
+illuminate_dmd = true       # Display DMD illumination before each image when a DMD is present.
+clear_dmd_after = false     # Blank the DMD after each acquisition.
+restore_leds_after = true   # Restore the previous LED states after each acquisition.
+disable_leds_after = false  # Switch all LEDs off after each acquisition.
+
+# Where saved images are written and how they are named.
+[output]
+# Full path to the output directory. "~" expands to the home directory of the
+# user running EvoMachine. A relative path is accepted with a warning.
+directory = "~/evomachine_data/example_experiment"
+# Allowed fields: channel, fov_id, x, y, z, filter_wheel, timestamp, timezone,
+# frame_id, callback_id. ".tiff" is added automatically.
+filename_pattern = "FOV{fov_id}_{timestamp}_{callback_id}"

@@ -40,6 +40,65 @@ set more specific values than the class declaration. The **Editable** column use
 
 GUI changes are session-only unless a section explicitly describes persistence.
 
+## Experiment configuration files
+
+`ExperimentConfig` (`evomachine/experiment_config.py`) is the shareable,
+versioned description of how an experiment is run. It is stored as a TOML file
+and is intended to be loaded, saved, and reused between users and microscopes.
+`experiments/example.toml` is a commented example.
+
+An experiment file deliberately excludes:
+
+- microscope hardware settings such as serial ports, camera size, objective, and
+  stage limits, which belong to the machine configuration;
+- FoV positions, which are selected in the GUI before every initialisation;
+- runtime state such as counters, focus results, and reference profiles.
+
+Experiment configs are frozen Pydantic models. Construction and loading run full
+validation, unknown keys are rejected at every level, and changes are made with
+`updated(**fields)`, which returns a new validated object. Keys omitted from a
+file take their defaults from the runtime classes they describe, so each default
+is defined in one place.
+
+| API | Behavior |
+| --- | --- |
+| `ExperimentConfig.load(path)` | Read, version-check, and validate a TOML file. |
+| `ExperimentConfig.from_toml(text, source=...)` | The same for TOML text; `source` names the file in error messages. |
+| `config.to_toml()` | Return TOML text that loads back into an equal config. |
+| `config.save(path)` | Write via a temporary file so an interrupted save never leaves a partial file. |
+
+Every read, parse, version, and validation failure raises
+`ExperimentConfigError` with the file name and, where available, the dotted
+location of each problem (for example `output.filename_pattern`). Saved files
+contain no comments.
+
+### Schema version
+
+Every file must start with `schema_version`. The current version is
+`SCHEMA_VERSION = 1`. A file with a newer version is rejected with a request to
+update EvoMachine. When the version is increased, older supported versions
+should be upgraded in `_check_schema_version()` before validation.
+
+### Sections
+
+| Key or section | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `schema_version` | `int` | required in files | File-format version. |
+| `name` | `str` | `""` | Short experiment name. |
+| `description` | `str` | `""` | Free-text description. |
+| `[acquisition]` | `FrameAcquisitionSettings` | class defaults | Default behavior of every image acquisition; see below. |
+| `[output]` | `OutputConfig` | required | Where saved images go and how they are named. |
+
+`OutputConfig` fields:
+
+| Field | Type/default | Meaning and validation |
+| --- | --- | --- |
+| `directory` | `Path`, required | Full output path. `~` expands to the running user's home directory. A relative path is accepted with a logged warning because it resolves against the process working directory. |
+| `filename_pattern` | `FileNameConfig` default | Validated by `FileNameConfig`; see [`FileNameConfig`](#filenameconfig). |
+
+`OutputConfig.to_file_name_config(time_config=None)` returns a new
+`FileNameConfig` with `~` expanded, for constructing a `FileManager`.
+
 ## Application paths, time, and logging
 
 ### `EvoSettings`
@@ -111,6 +170,7 @@ All names above use the `EVOMACHINE_GUI_` prefix. Boolean values recognise
 ### `FrameAcquisitionSettings`
 
 All fields are booleans and editable in the GUI acquisition configuration.
+Instances are immutable; use `updated(**fields)` for a changed copy.
 
 | Field | Default | Effect |
 | --- | --- | --- |
