@@ -185,6 +185,41 @@ def _resolve_serial_port(explicit_port: str | None, hwid_fragment: str, display_
     return explicit_port or _find_serial_port_by_hwid_fragment(hwid_fragment, display_name)
 
 
+def _hardware_software_focus_config(settings: HardwareGuiRuntimeSettings):
+    """
+    Build the default software-focus configuration for the hardware GUI.
+
+    Parameters
+    ----------
+    settings
+        Hardware runtime settings providing the default camera exposure.
+
+    Returns
+    -------
+    SoftwareFocusConfig
+        Maximum-selection software-focus configuration using one 515 nm focus frame.
+    """
+    from evomachine.acquisition import FrameAcquisitionSettings
+    from evomachine.frame import FrameMetaDataFactory
+    from evomachine.softwarefocus import (
+        MaximumFocusSelectionConfig, SoftwareFocusConfig, SquaredGradientScoringConfig,
+    )
+    from evomachine.types import FocusScoringType, FocusSelectionType, LEDType
+
+    return SoftwareFocusConfig(
+        focus_frames=(
+            FrameMetaDataFactory.default(
+                leds={LEDType.LED_515_NM: 29},
+                exposure=settings.camera_exposure_ms,
+                fov_id=0,
+            ),
+        ),
+        acquisition_settings=FrameAcquisitionSettings(),
+        scoring=(FocusScoringType.SQUARED_GRAD_AVG, SquaredGradientScoringConfig()),
+        selection=(FocusSelectionType.MAXIMUM, MaximumFocusSelectionConfig(rel_range=100, step_size=5)),
+    )
+
+
 def build_virtual_automaton():
     """Build a small virtual automaton for GUI development."""
     from multiprocessing import Event
@@ -344,7 +379,6 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
     from evomachine.bindings.binding_types import BindingType
     from evomachine.bindings.em_dmd_window.peripheralcontroller import EmDmdWindowPeripheralController
     from evomachine.filemanager import FileManager, FileNameConfig
-    from evomachine.frame import FrameMetaDataFactory
     from evomachine.image_processing_config import ImageProcessorConfigFactory
     from evomachine.navigation import FocusNavigator
     from evomachine.peripherals.autofocus import AutofocusConfig, AutofocusFactory
@@ -355,12 +389,9 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
     from evomachine.peripherals.peripheralcontrollers import PeripheralControllerFactory, SerialPeripheralControllerConfig
     from evomachine.peripherals.stage import StageConfig, StageFactory
     from evomachine.projection import ProjectionManager
-    from evomachine.softwarefocus import (
-        MaximumFocusSelectionConfig, SoftwareFocus, SoftwareFocusConfig,
-        SquaredGradientScoringConfig,
-    )
+    from evomachine.softwarefocus import SoftwareFocus
     from evomachine.strategy import NoStrategy
-    from evomachine.types import FilterWheelType, FocusScoringType, FocusSelectionType, LEDType
+    from evomachine.types import FilterWheelType, LEDType
 
     settings = settings or HardwareGuiRuntimeSettings.from_env()
     syncboard_port = _resolve_serial_port(settings.syncboard_port, settings.syncboard_hwid, "SyncBoard")
@@ -502,18 +533,7 @@ def build_hardware_automaton(settings: HardwareGuiRuntimeSettings | None = None)
     )
     software_focus = SoftwareFocus(
         acquisition_manager=acq_mngr,
-        config=SoftwareFocusConfig(
-            focus_frames=(
-                FrameMetaDataFactory.default(
-                    leds={LEDType.LED_515_NM: 29},
-                    exposure=settings.camera_exposure_ms,
-                    fov_id=0,
-                )
-            ),
-            acquisition_settings=FrameAcquisitionSettings(),
-            scoring=(FocusScoringType.SQUARED_GRAD_AVG, SquaredGradientScoringConfig()),
-            selection=(FocusSelectionType.MAXIMUM, MaximumFocusSelectionConfig(rel_range=100, step_size=5)),
-        ),
+        config=_hardware_software_focus_config(settings),
     )
     focus_nav = FocusNavigator(stage=stage, autofocus=autofocus, software_focus=software_focus)
     proj_mngr = None

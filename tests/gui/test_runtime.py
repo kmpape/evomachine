@@ -8,8 +8,10 @@ import pytest
 from evomachine.gui.runtime import (
     HardwareGuiRuntimeSettings,
     _find_serial_port_by_hwid_fragment,
+    _hardware_software_focus_config,
     build_virtual_automaton,
 )
+from evomachine.types import FocusSelectionType, LEDType
 
 
 def test_virtual_gui_camera_uses_full_size_uint16_frames() -> None:
@@ -46,6 +48,26 @@ def test_hardware_gui_settings_can_be_overridden_from_env(monkeypatch) -> None:
     assert settings.stage_bounds.low.x == -123
     assert settings.stage_bounds.high.x == 456
     assert settings.tiger_stage_limits["X"] == (-1230, 4560)
+
+
+def test_hardware_software_focus_config_builds_one_focus_frame() -> None:
+    """
+    Check the hardware GUI software-focus config builds without hardware.
+
+    Returns
+    -------
+    None
+    """
+    settings = HardwareGuiRuntimeSettings(camera_exposure_ms=150.0)
+
+    config = _hardware_software_focus_config(settings)
+
+    assert len(config.focus_frames) == 1
+    assert config.focus_frames[0].leds == {LEDType.LED_515_NM: 29}
+    assert config.focus_frames[0].exposure == 150.0
+    selection_type, selection_config = config.selection
+    assert selection_type == FocusSelectionType.MAXIMUM
+    assert (selection_config.rel_range, selection_config.step_size) == (100, 5)
 
 
 def test_hardware_gui_settings_reject_inverted_stage_limits() -> None:
